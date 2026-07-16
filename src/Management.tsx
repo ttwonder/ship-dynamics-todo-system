@@ -41,6 +41,7 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
   const activeVessels = useMemo(() => data.vessels.filter(v => v.isActive), [data.vessels]);
   const [section, setSection] = useState<Section>('directory');
   const [query, setQuery] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('all');
   const [directoryKind, setDirectoryKind] = useState<DirectoryKind>('all');
   const [directorySelection, setDirectorySelection] = useState(() => `user:${currentUser.id}`);
   const [selectedUserId, setSelectedUserId] = useState(currentUser.id);
@@ -54,6 +55,7 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
   const [config, setConfig] = useState<SupabaseConfig>(() => getSupabaseConfig() || emptyConfig);
   const [ownerPanel, setOwnerPanel] = useState<'gate' | 'supabase' | 'cloud'>('gate');
   const [auditId, setAuditId] = useState(data.auditLogs[0]?.id || '');
+  const [saveNotice, setSaveNotice] = useState('');
 
   useEffect(() => {
     if (creatingUser) return;
@@ -65,6 +67,11 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
     const selected = data.vessels.find(v => v.id === selectedVesselId);
     if (selected) setShipDraft(vesselDraft(selected));
   }, [selectedVesselId, data.revision, creatingVessel]);
+  useEffect(() => {
+    if (!saveNotice) return;
+    const timer = window.setTimeout(() => setSaveNotice(''), 2600);
+    return () => window.clearTimeout(timer);
+  }, [saveNotice]);
 
   const go = (next: Section) => {
     setSection(next);
@@ -112,6 +119,7 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
         const user = d.users.find(u => u.id === currentUser.id);
         if (user) Object.assign(user, { name: personDraft.name.trim(), username: personDraft.username.trim(), passwordHash, updatedAt: nowIso() });
       }, '管理員更新自己的帳號', 'user', currentUser.id, personDraft.name.trim());
+      setSaveNotice('✓ 人員資料已保存');
       return;
     }
     const id = creatingUser ? uid('user') : selectedUserId;
@@ -135,6 +143,7 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
     }, creatingUser ? '新增人員' : '更新人員', 'user', id, personDraft.name.trim());
     setCreatingUser(false);
     setSelectedUserId(id);
+    setSaveNotice(`✓ ${creatingUser ? '人員已建立' : '人員資料已保存'}`);
   };
 
   const disablePerson = () => {
@@ -176,6 +185,7 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
     }, creatingVessel ? '新增船舶' : '更新船舶', 'vessel', id, shipDraft.shortName || shipDraft.name);
     setCreatingVessel(false);
     setSelectedVesselId(id);
+    setSaveNotice(`✓ ${creatingVessel ? '船舶已建立' : '船舶資料已保存'}`);
   };
 
   const disableVessel = () => {
@@ -197,7 +207,8 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
     const vessels = activeVessels.map(v => ({ key: `vessel:${v.id}`, kind: 'vessel' as const, title: v.shortName || v.name, subtitle: `${v.fullName || '未填全名'}｜${v.shipType || '未填船型'}`, meta: `${v.assignedUserIds.length} 人` }));
     return [...users, ...vessels].filter(item => (directoryKind === 'all' || item.kind === directoryKind) && (!q || `${item.title} ${item.subtitle} ${item.meta}`.toLowerCase().includes(q)));
   }, [activeUsers, activeVessels, directoryKind, query]);
-  const filteredPeople = activeUsers.filter(u => owner ? true : u.id === currentUser.id).filter(u => !query.trim() || `${u.name} ${u.department} ${u.username} ${roleLabel(u.role)}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const personDepartments = Array.from(new Set(activeUsers.map(user => user.department).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'zh-TW'));
+  const filteredPeople = activeUsers.filter(u => owner ? true : u.id === currentUser.id).filter(u => departmentFilter === 'all' || u.department === departmentFilter).filter(u => !query.trim() || `${u.name} ${u.department} ${u.username} ${roleLabel(u.role)}`.toLowerCase().includes(query.trim().toLowerCase()));
   const filteredVessels = activeVessels.filter(v => !query.trim() || `${v.name} ${v.shortName} ${v.fullName} ${v.shipType}`.toLowerCase().includes(query.trim().toLowerCase()));
   const selectedDirectory = directoryItems.find(item => item.key === directorySelection) || directoryItems[0];
   const selectedAudit = data.auditLogs.find(log => log.id === auditId) || data.auditLogs[0];
@@ -222,7 +233,7 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
       </>}
 
       {section === 'people' && <>
-        <div className="management-master"><MasterHeader title={owner ? '人員' : '我的帳號'} count={filteredPeople.length} query={query} setQuery={setQuery} action={owner ? { label: '＋ 新增', onClick: startNewUser } : undefined}/><div className="management-list">{filteredPeople.map(u => <button key={u.id} className={`management-list-item ${!creatingUser && selectedUserId === u.id ? 'active' : ''}`} onClick={() => selectUser(u.id)}><span className="management-avatar">{u.name.slice(0, 1)}</span><span><b>{u.name}</b><small>{u.department}｜{(u.managedVesselIds || []).length} 艘船</small></span><em className={`role-${u.role}`}>{roleLabel(u.role)}</em></button>)}</div></div>
+        <div className="management-master"><MasterHeader title={owner ? '人員' : '我的帳號'} count={filteredPeople.length} query={query} setQuery={setQuery} action={owner ? { label: '＋ 新增', onClick: startNewUser } : undefined}/>{owner && <label className="management-department-filter"><span>人員部門篩選</span><select aria-label="人員部門篩選" value={departmentFilter} onChange={event => setDepartmentFilter(event.target.value)}><option value="all">全部部門</option>{personDepartments.map(department => <option key={department} value={department}>{department}</option>)}</select></label>}<div className="management-list">{filteredPeople.map(u => <button key={u.id} className={`management-list-item ${!creatingUser && selectedUserId === u.id ? 'active' : ''}`} onClick={() => selectUser(u.id)}><span className="management-avatar">{u.name.slice(0, 1)}</span><span><b>{u.name}</b><small>{u.department}｜{(u.managedVesselIds || []).length} 艘船</small></span><em className={`role-${u.role}`}>{roleLabel(u.role)}</em></button>)}</div></div>
         <div className="management-detail"><PersonEditor draft={personDraft} setDraft={setPersonDraft} creating={creatingUser} owner={owner} currentUser={currentUser} selectedUserId={selectedUserId} departments={data.settings.departments} vessels={activeVessels} assignmentQuery={assignmentQuery} setAssignmentQuery={setAssignmentQuery} onSave={savePerson} onDisable={disablePerson}/></div>
       </>}
 
@@ -237,6 +248,7 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
 
       {section === 'audit' && <><div className="management-master"><MasterHeader title="操作紀錄" count={data.auditLogs.length} query={query} setQuery={setQuery}/><div className="management-list">{data.auditLogs.filter(log => !query.trim() || `${log.actorName} ${log.action} ${log.detail}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0,100).map(log => <button key={log.id} className={`management-list-item ${selectedAudit?.id === log.id ? 'active' : ''}`} onClick={() => setAuditId(log.id)}><span className="management-avatar audit">▤</span><span><b>{log.action}</b><small>{log.actorName}｜{new Date(log.at).toLocaleString()}</small></span></button>)}</div></div><div className="management-detail">{selectedAudit ? <div className="management-editor"><EditorHeading title={selectedAudit.action} subtitle="操作紀錄詳細資料"/><div className="management-summary-grid"><Summary label="操作者" value={selectedAudit.actorName}/><Summary label="角色" value={roleLabel(selectedAudit.actorRole)}/><Summary label="時間" value={new Date(selectedAudit.at).toLocaleString()}/></div><EditorSection title="內容"><p>{selectedAudit.detail || '無補充內容'}</p><p className="muted">{selectedAudit.entityType}｜{selectedAudit.entityId}</p></EditorSection></div>:<EmptyDetail text="目前沒有操作紀錄"/>}</div></>}
     </div>
+    {saveNotice && <div className="management-save-toast" role="status" aria-live="polite">{saveNotice}</div>}
   </section>;
 }
 

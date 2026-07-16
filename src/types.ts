@@ -1,6 +1,8 @@
 export type UserRole = 'owner' | 'admin' | 'operator';
 export type TaskPriority = '高' | '中' | '低';
 export type ShipStatus = '裝載' | '空載' | '去卸貨' | '去裝貨' | '等待order';
+export type TemporaryMeetingStatus = '待開會' | '進行中' | '追蹤中' | '已完成';
+export type MeetingVesselScopeMode = 'all' | 'types' | 'vessels';
 
 export interface UserAccount {
   id: string;
@@ -87,7 +89,10 @@ export interface TaskItem {
 export interface TemporaryMeeting {
   id: string;
   subject: string;
+  status?: TemporaryMeetingStatus;
   meetingDate: string;
+  vesselScopeMode?: MeetingVesselScopeMode;
+  vesselTypeScopes?: string[];
   vessels: string[];
   reason: string;
   departments: string[];
@@ -96,6 +101,7 @@ export interface TemporaryMeeting {
   priority: TaskPriority;
   createdBy: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface AgendaReport {
@@ -152,4 +158,5 @@ export interface FilterState {
   fromDate: string;
   toDate: string;
   closedMode: 'all' | 'open' | 'closed';
+  overdueOnly: boolean;
 }

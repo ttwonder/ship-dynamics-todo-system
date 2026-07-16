@@ -1,4 +1,4 @@
-# 船舶動態與早會待辦系統
+# 船舶動態與會議管理系統
 
 本專案由原始單檔 HTML 改造成 React + Vite + TypeScript，可部署到 GitHub Pages，並預留 Supabase 雲端同步。
 

@@ -785,7 +785,7 @@ export function createInitialData(): AppData {
     revision: 1,
     settings: {
       sitePasswordHash: DEFAULT_SITE_PASSWORD_HASH,
-      systemTitle: '船舶動態與早會待辦系統',
+      systemTitle: '船舶動態與會議管理系統',
       departments: [...DEPARTMENTS],
       taskCategories: [...TASK_CATEGORIES],
       vesselStatuses: [...VESSEL_STATUSES],
