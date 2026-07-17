@@ -27,9 +27,11 @@ interface DashboardProps {
   onTaskMetric: (mode: 'open' | 'high' | 'overdue') => void;
   canEdit: boolean;
   canCreateTasks: boolean;
+  canUseMeetings: boolean;
+  canUseReports: boolean;
 }
 
-export default function Dashboard({ user, vessels, tasks, selected, setSelected, onEdit, onAddTask, onToggleAttention, onStartMeeting, onOpenReport, onTaskMetric, canEdit, canCreateTasks }: DashboardProps) {
+export default function Dashboard({ user, vessels, tasks, selected, setSelected, onEdit, onAddTask, onToggleAttention, onStartMeeting, onOpenReport, onTaskMetric, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [fleetFilter, setFleetFilter] = useState('all');
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
@@ -40,7 +42,7 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
     const vesselTasks = tasks.filter(task => task.vesselId === vessel.id && !task.isClosed);
     if (fleetFilter === 'selected' && !selected.includes(vessel.id)) return false;
     if (fleetFilter === 'high' && !vesselTasks.some(task => task.priority === '急' || task.priority === '高')) return false;
-    if (fleetFilter === 'mine' && !vessel.assignedUserIds.includes(user.id)) return false;
+    if (fleetFilter === 'mine' && !vessel.assignedUserIds.includes(user.id) && !user.managedVesselIds.includes(vessel.id)) return false;
     if (!['all', 'selected', 'high', 'mine'].includes(fleetFilter) && !vessel.fleetCategory.toLowerCase().includes(fleetFilter)) return false;
     const query = keyword.trim().toLowerCase();
     return !query || [
@@ -69,7 +71,7 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
   return <section className="dashboard-view">
     <div className="page-heading">
       <div><h1>船舶看板</h1><p>集中查看上下港、位置、載況、時間、貨物、未來一週關注與重要要事。</p></div>
-      <div className="heading-actions no-print"><button className="btn pink" onClick={onStartMeeting}>開始今日早會</button><button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button></div>
+      {(canUseMeetings||canUseReports)&&<div className="heading-actions no-print">{canUseMeetings&&<button className="btn pink" onClick={onStartMeeting}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>}
     </div>
     <div className="metric-grid">
       <div className="metric-card blue"><small>今日船舶</small><b>{vessels.length}</b><span>艘</span></div>
@@ -77,12 +79,12 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
       <button type="button" className="metric-card metric-link purple" onClick={() => onTaskMetric('high')}><small>急／高關注</small><b>{urgentHighCount}</b><span>件</span></button>
       <button type="button" className="metric-card metric-link yellow" onClick={() => onTaskMetric('overdue')}><small>已逾期</small><b>{overdueCount}</b><span>件</span></button>
       <div className="metric-card mint"><small>今日已更新</small><b>{updatedToday}</b><span>艘</span></div>
-      <div className="metric-card"><small>選入會議</small><b>{selected.length}</b><span>艘</span></div>
+      {canUseMeetings&&<div className="metric-card"><small>選入會議</small><b>{selected.length}</b><span>艘</span></div>}
     </div>
     <div className="dashboard-toolbar no-print">
       <input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
       {[
-        ['all', '全部'], ['mine', '自管船舶'], ['tanker', '油輪'], ['bulk', '散貨'], ['high', '急／高關注'], ['selected', '選入會議'],
+        ['all', '全部'], ['mine', '自管船舶'], ['tanker', '油輪'], ['bulk', '散貨'], ['high', '急／高關注'], ...(canUseMeetings ? [['selected', '選入會議']] : []),
       ].map(([key, label]) => <button key={key} className={`filter-pill ${fleetFilter === key ? 'active' : ''}`} onClick={() => setFleetFilter(key)}>{label}</button>)}
     </div>
     <div className="fleet-card-grid">{visible.map(vessel => {
@@ -116,7 +118,7 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
           return <button type="button" key={option.key} disabled={!canEdit} className={`${active ? 'active' : ''} ${option.key === 'psc-window' ? 'psc' : ''}`} aria-pressed={active} onClick={() => onToggleAttention(vessel.id, option.key)}><i />{option.label}</button>;
         })}</div>
         <div className="ship-summary"><b>重要摘要：</b>{sortedTasks.length ? <ul>{sortedTasks.slice(0, 3).map(task => <li key={task.id}>{task.isAbnormal && <span>異常</span>}<strong>{task.priority}</strong>{task.description || '尚未輸入要事內容'}</li>)}</ul> : <p>目前無未結要事</p>}</div>
-        <div className="ship-card-foot"><span className="task-mini"><i className="urgent">急 {urgent}</i><i className="high">高 {high}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print">{canEdit && <button className="btn small" onClick={() => onEdit(vessel.id)}>快速更新</button>}{canCreateTasks && <button className="btn small ghost" onClick={() => onAddTask(vessel.id)}>新增要事</button>}<button className={`btn small ${selectedForMeeting ? 'pink' : 'ghost'}`} onClick={() => toggleMeeting(vessel.id)}>{selectedForMeeting ? '已選入會議' : '選入會議'}</button></div></div>
+        <div className="ship-card-foot"><span className="task-mini"><i className="urgent">急 {urgent}</i><i className="high">高 {high}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print">{canEdit && <button className="btn small" onClick={() => onEdit(vessel.id)}>快速更新</button>}{canCreateTasks && <button className="btn small ghost" onClick={() => onAddTask(vessel.id)}>新增要事</button>}{canUseMeetings&&<button className={`btn small ${selectedForMeeting ? 'pink' : 'ghost'}`} onClick={() => toggleMeeting(vessel.id)}>{selectedForMeeting ? '已選入會議' : '選入會議'}</button>}</div></div>
       </article>;
     })}</div>
     {!visible.length && <div className="empty-state">沒有符合條件的船舶</div>}

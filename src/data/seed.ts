@@ -782,6 +782,7 @@ export function createInitialData(): AppData {
     priority: (index % 3 === 0 ? '高' : index % 3 === 1 ? '中' : '低') as TaskPriority,
     isAware: index % 2 === 0,
     isAbnormal: index === 0,
+    isInternalControl: false,
     category: TASK_CATEGORIES[index % TASK_CATEGORIES.length],
     description: `${v.fullName} 早會跟進事項 ${index + 1}`,
     status: '昨日已更新，早會追蹤中',
@@ -813,6 +814,7 @@ export function createInitialData(): AppData {
     meetings: [],
     agendaReports: [],
     auditLogs: [],
+    notifications: [],
     updatedAt: now.toISOString(),
   };
 }

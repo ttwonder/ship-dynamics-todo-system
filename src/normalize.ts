@@ -10,6 +10,7 @@ import type {
   TaskPriority,
   TemporaryMeeting,
   TemporaryMeetingStatus,
+  UserNotification,
   UserRole,
   VesselPosition,
   WeeklyAttentionKey,
@@ -17,7 +18,7 @@ import type {
 import { nowIso } from './utils';
 import { normalizeRolePermissions } from './permissions';
 
-const roles: UserRole[] = ['owner', 'admin', 'operator'];
+const roles: UserRole[] = ['owner', 'admin', 'operator', 'vessel'];
 const auditRoles: Array<UserRole | 'system'> = [...roles, 'system'];
 const priorities: TaskPriority[] = ['急', '高', '中', '低'];
 const shipStatuses: ShipStatus[] = ['裝載', '空載', '去卸貨', '去裝貨', '等待order'];
@@ -71,6 +72,15 @@ function normalizeAuditLogs(value: unknown): AuditLog[] {
   })).filter(item => item.id);
 }
 
+function normalizeNotifications(value: unknown): UserNotification[] {
+  const kinds: UserNotification['kind'][] = ['task_created', 'task_updated', 'internal_control_cancelled', 'task_deleted'];
+  return objects(value).map(item => ({
+    id: text(item.id), userId: text(item.userId), vesselId: text(item.vesselId), taskId: text(item.taskId),
+    kind: oneOf(item.kind, kinds, 'task_updated'), title: text(item.title), message: text(item.message),
+    actorId: text(item.actorId), createdAt: text(item.createdAt), readAt: text(item.readAt) || undefined,
+  })).filter(item => item.id && item.userId && item.taskId);
+}
+
 function normalizeMeetings(value: unknown, timestamp: string): TemporaryMeeting[] {
   return objects(value).map(item => ({
     id: text(item.id),
@@ -99,7 +109,7 @@ export function normalizeAppData(value: unknown): AppData | null {
   if (!settings) return null;
   const timestamp = text(raw.updatedAt, nowIso());
 
-  return {
+  const normalized: AppData = {
     revision: finite(raw.revision),
     updatedAt: timestamp,
     settings: {
@@ -182,7 +192,10 @@ export function normalizeAppData(value: unknown): AppData | null {
       vesselId: text(item.vesselId),
       priority: oneOf(item.priority, priorities, '中'),
       isAware: bool(item.isAware),
-      isAbnormal: bool(item.isAbnormal),
+      isAbnormal: bool(item.isAbnormal) || bool(item.isInternalControl),
+      isInternalControl: bool(item.isInternalControl),
+      internalControlCancelledAt: text(item.internalControlCancelledAt) || undefined,
+      internalControlCancelledBy: text(item.internalControlCancelledBy) || undefined,
       category: text(item.category),
       description: text(item.description),
       status: text(item.status),
@@ -202,5 +215,20 @@ export function normalizeAppData(value: unknown): AppData | null {
     meetings: normalizeMeetings(raw.meetings, timestamp),
     agendaReports: normalizeAgendaReports(raw.agendaReports),
     auditLogs: normalizeAuditLogs(raw.auditLogs),
+    notifications: normalizeNotifications(raw.notifications),
   };
+  const activeVesselIds = new Set(normalized.vessels.filter(vessel => vessel.isActive).map(vessel => vessel.id));
+  const vesselUserIds = new Set(normalized.users.filter(user => user.role === 'vessel').map(user => user.id));
+  normalized.users.filter(user => user.role === 'vessel').forEach(user => {
+    const managed = user.managedVesselIds.filter((id, index, ids) => activeVesselIds.has(id) && ids.indexOf(id) === index);
+    const assigned = normalized.vessels.filter(vessel => vessel.isActive && vessel.assignedUserIds.includes(user.id)).map(vessel => vessel.id);
+    const binding = [...managed, ...assigned].find((id, index, ids) => activeVesselIds.has(id) && ids.indexOf(id) === index);
+    user.department = '船舶帳戶';
+    user.managedVesselIds = binding ? [binding] : [];
+    if (!binding) user.isActive = false;
+  });
+  normalized.vessels.forEach(vessel => {
+    vessel.assignedUserIds = vessel.assignedUserIds.filter(userId => !vesselUserIds.has(userId));
+  });
+  return normalized;
 }

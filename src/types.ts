@@ -1,5 +1,5 @@
-export type UserRole = 'owner' | 'admin' | 'operator';
-export type PermissionKey = 'viewAllVessels' | 'editBusinessContent' | 'createTasks' | 'closeTasks' | 'manageMeetings' | 'exportReports' | 'enterManagement' | 'manageUsers' | 'manageVessels' | 'viewAuditLogs' | 'manageRolePermissions' | 'manageSystemSettings';
+export type UserRole = 'owner' | 'admin' | 'operator' | 'vessel';
+export type PermissionKey = 'viewAllVessels' | 'editBusinessContent' | 'createTasks' | 'closeTasks' | 'deleteTasks' | 'manageMeetings' | 'exportReports' | 'enterManagement' | 'manageUsers' | 'manageVessels' | 'viewAuditLogs' | 'manageRolePermissions' | 'manageSystemSettings';
 export type RolePermissions = Record<UserRole, Record<PermissionKey, boolean>>;
 export type TaskPriority = '急' | '高' | '中' | '低';
 export type ShipStatus = '裝載' | '空載' | '去卸貨' | '去裝貨' | '等待order';
@@ -89,6 +89,9 @@ export interface TaskItem {
   priority: TaskPriority;
   isAware: boolean;
   isAbnormal: boolean;
+  isInternalControl: boolean;
+  internalControlCancelledAt?: string;
+  internalControlCancelledBy?: string;
   category: string;
   description: string;
   status: string;
@@ -104,6 +107,20 @@ export interface TaskItem {
   createdAt: string;
   updatedAt: string;
   statusLogs: StatusLog[];
+}
+
+export type NotificationKind = 'task_created' | 'task_updated' | 'internal_control_cancelled' | 'task_deleted';
+export interface UserNotification {
+  id: string;
+  userId: string;
+  vesselId: string;
+  taskId: string;
+  kind: NotificationKind;
+  title: string;
+  message: string;
+  actorId: string;
+  createdAt: string;
+  readAt?: string;
 }
 
 export interface TemporaryMeeting {
@@ -165,6 +182,7 @@ export interface AppData {
   meetings: TemporaryMeeting[];
   agendaReports: AgendaReport[];
   auditLogs: AuditLog[];
+  notifications: UserNotification[];
   updatedAt: string;
 }
 
@@ -180,4 +198,5 @@ export interface FilterState {
   toDate: string;
   closedMode: 'all' | 'open' | 'closed';
   overdueOnly: boolean;
+  internalControlOnly: boolean;
 }

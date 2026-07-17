@@ -10,6 +10,7 @@ import type {
 } from './types';
 import { nowIso, roleLabel, todayDate, uid } from './utils';
 import { hasPermission } from './permissions';
+import { buildTaskNotifications } from './taskWorkflow';
 
 type Props = {
   data: AppData;
@@ -181,13 +182,15 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       } else {
         Object.assign(meeting, { ...savedDraft, updatedAt: at });
       }
-      if (savedDraft.resolution.trim() && mayGenerate) savedDraft.vessels.filter(vesselId=>!linkedVesselIds.has(vesselId)).forEach(vesselId => draftData.tasks.unshift({
+      if (savedDraft.resolution.trim() && mayGenerate) savedDraft.vessels.filter(vesselId=>!linkedVesselIds.has(vesselId)).forEach(vesselId => {
+        const task = {
           id: uid('task'),
           sourceMeetingId: id,
           vesselId,
           priority: savedDraft.priority,
           isAware: true,
           isAbnormal: false,
+          isInternalControl: false,
           category: '臨時會議決議',
           description: `${savedDraft.subject}：${savedDraft.reason}`,
           status: savedDraft.resolution,
@@ -200,7 +203,12 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
           createdAt: at,
           updatedAt: at,
           statusLogs: [{ id: uid('log'), at, by: currentUser.name, text: savedDraft.resolution }],
-        }));
+        };
+        draftData.tasks.unshift(task);
+        const vessel = draftData.vessels.find(item => item.id === vesselId);
+        if (vessel) draftData.notifications.unshift(...buildTaskNotifications(draftData.users, vessel, currentUser.id, task, 'task_created', currentUser.name));
+      });
+      draftData.notifications = draftData.notifications.slice(0, 1000);
     }, creating ? '新增臨時會議' : '更新臨時會議', 'meeting', id, `${draft.subject.trim()}｜${scopeModeLabel(draft.vesselScopeMode)}`);
     setDraft(savedDraft);
     setCreating(false);

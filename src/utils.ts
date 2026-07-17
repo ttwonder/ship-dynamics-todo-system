@@ -40,6 +40,7 @@ export function roleLabel(role?: UserRole | 'system') {
   if (role === 'owner') return 'Owner';
   if (role === 'admin') return '管理員';
   if (role === 'operator') return '操作員';
+  if (role === 'vessel') return '船舶帳戶';
   return '系統';
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AppData, LoadStatus, NavigationStatus, ShipStatus, TaskItem, TaskPriority, UserAccount, Vessel, VesselCargoItem } from './types';
 import { canManage, nowIso, todayDate, uid } from './utils';
+import { FLOW_INTERNAL_CONTROL_REMINDER } from './taskWorkflow';
 
 type Commit = (updater: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => void;
 type MultiChoice = { value: string; label: string; detail?: string };
@@ -38,10 +39,11 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
     target.updatedAt = nowIso();
   }, '快速更新船舶', 'vessel', vessel.id, detail);
   const openTasks = data.tasks.filter(task => task.vesselId === vessel.id && !task.isClosed);
-  const users = data.users.filter(user => user.isActive);
+  const users = data.users.filter(user => user.isActive && user.role !== 'vessel');
   const updateAssignments = (values: string[]) => update((target, draft) => {
-    target.assignedUserIds = values;
-    draft.users.forEach(user => {
+    const assignableUserIds = new Set(draft.users.filter(user => user.role !== 'vessel').map(user => user.id));
+    target.assignedUserIds = values.filter(id => assignableUserIds.has(id));
+    draft.users.filter(user => user.role !== 'vessel').forEach(user => {
       const has = user.managedVesselIds.includes(target.id);
       const shouldHave = values.includes(user.id);
       if (shouldHave && !has) user.managedVesselIds.push(target.id);
@@ -72,7 +74,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
   </div></div>;
 }
 
-export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, close, commit }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; close: () => void; commit: Commit }) {
+export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, readOnly = false, close, onSave, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; readOnly?: boolean; close: () => void; onSave: (task: TaskItem, creating: boolean) => boolean; onDelete: () => void }) {
   useEscapeClose(close);
   const [draft, setDraft] = useState<TaskItem | null>(() => task ? clone(task) : null);
   const [quickStatus, setQuickStatus] = useState('');
@@ -83,11 +85,11 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const save = () => {
     if (!draft.description.trim()) return alert('請填寫事項內容');
     const saved=clone(draft);
-    commit(appData=>{ if(creating) appData.tasks.unshift(saved); else { const index=appData.tasks.findIndex(item=>item.id===saved.id); if(index>=0) appData.tasks[index]=saved; } }, creating?'新增事項':'更新事項','task',saved.id,creating?'建立跟進事項':'保存事項變更');
-    close();
+    if (onSave(saved, creating)) close();
   };
   const users=data.users.filter(user=>user.isActive);
-  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{creating?'新增要事':'更新要事'}</h2><small>{draft.isClosed?'已結案':'未結'}｜按保存才會寫入資料</small></div><div className="heading-actions">{canClose && <button className={`btn ${draft.isClosed?'green':'red'}`} onClick={toggleClosed}>{draft.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" onClick={close}>取消</button><button className="btn primary" onClick={save}>{creating?'建立要事':'保存變更'}</button></div></div>
+  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{creating?'新增要事':readOnly?'查看要事':'更新要事'}</h2><small>{draft.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&canDelete&&<button className="btn red" onClick={onDelete}>刪除待辦</button>}{!readOnly&&canClose && <button className={`btn ${draft.isClosed?'green':'red'}`} onClick={toggleClosed}>{draft.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" onClick={close}>{readOnly?'關閉':'取消'}</button>{!readOnly&&<button className="btn primary" onClick={save}>{creating?'建立要事':'保存變更'}</button>}</div></div>
+    <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
     <div className="grid cols-3">
       <div className="field"><label>船舶</label><select value={draft.vesselId} onChange={event=>{const value=event.target.value;change(target=>{target.vesselId=value;});}}>{visibleVessels.map(vessel=><option key={vessel.id} value={vessel.id}>{vessel.shortName||vessel.name}｜{vessel.fullName}</option>)}</select></div>
       <div className="field"><label>關注程度</label><select value={draft.priority} onChange={event=>{const value=event.target.value as TaskPriority;change(target=>{target.priority=value;});}}>{data.settings.priorities.map(priority=><option key={priority}>{priority}</option>)}</select></div>
@@ -97,10 +99,16 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
       <div className="field"><label>預計完成日期</label><input type="date" value={draft.expectedDate} onChange={event=>{const value=event.target.value;change(target=>{target.expectedDate=value;});}}/></div>
       <label className="aware-toggle"><input type="checkbox" checked={draft.isAware} onChange={event=>{const value=event.target.checked;change(target=>{target.isAware=value;});}}/><span>標記為知曉事項</span></label>
       <label className="aware-toggle abnormal-toggle"><input type="checkbox" checked={draft.isAbnormal} onChange={event=>{const value=event.target.checked;change(target=>{target.isAbnormal=value;});}}/><span>異常（看板顯示「異常存在」）</span></label>
+      <label className="aware-toggle internal-control-toggle"><input type="checkbox" checked={draft.isInternalControl} disabled={!creating&&Boolean(task?.isInternalControl)&&!canCancelInternalControl} onChange={event=>{const value=event.target.checked;if(draft.isInternalControl&&!value)alert(FLOW_INTERNAL_CONTROL_REMINDER);change(target=>{target.isInternalControl=value;if(value)target.isAbnormal=true;});}}/><span>內部管控（台面下異常管控）</span></label>
     </div>
     <CheckboxMultiPicker label="涉及部門" values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
-    <CheckboxMultiPicker label="經管／負責人" values={draft.ownerUserIds} choices={users.map(user=>({value:user.id,label:user.name,detail:user.department}))} onChange={values=>change(target=>{target.ownerUserIds=values;})}/>
+    {currentUser.role!=='vessel'&&<CheckboxMultiPicker
+      label="經管／負責人"
+      values={draft.ownerUserIds}
+      choices={users.filter(user=>user.role!=='vessel').map(user=>({value:user.id,label:user.name,detail:user.department}))}
+      onChange={values=>change(target=>{target.ownerUserIds=values;})}
+    />}
     <div className="quick-status-bar"><input value={quickStatus} onChange={event=>setQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter')addStatus();}} placeholder="現場快速更新狀態…"/><button className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>
-    <section className="status-history"><h3>狀態歷程</h3>{draft.statusLogs.length?draft.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{new Date(log.at).toLocaleString('zh-TW')}｜{log.by}</small></article>):<p className="muted">尚無狀態紀錄</p>}</section>
+    <section className="status-history"><h3>狀態歷程</h3>{draft.statusLogs.length?draft.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{new Date(log.at).toLocaleString('zh-TW')}｜{log.by}</small></article>):<p className="muted">尚無狀態紀錄</p>}</section></div>
   </div></div>;
 }
