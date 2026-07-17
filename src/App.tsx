@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createInitialData, DEFAULT_SITE_PASSWORD, DEFAULT_USER_PASSWORD, TASK_CATEGORIES, VESSEL_STATUSES } from './data/seed';
-import type { AppData, FilterState, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, UserRole, Vessel } from './types';
-import { CURRENT_USER_KEY, SESSION_SITE_UNLOCK, canManage, daysDiff, isOwner, loadLocal, nowIso, roleLabel, saveLocal, sha256, todayDate, uid, withAudit, yesterdayDate } from './utils';
-import { fetchCloudData, getSupabaseConfig, saveCloudData, saveSupabaseConfig, type SupabaseConfig } from './cloud';
+import { createInitialData } from './data/seed';
+import type { AppData, FilterState, TaskItem, UserAccount, Vessel } from './types';
+import { CLOUD_CACHE_IDENTITY_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, canManage, daysDiff, loadLocal, nowIso, roleLabel, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
+import { CloudConflictError, fetchCloudData, getSupabaseConfig, saveCloudData } from './cloud';
 import ManagementView from './Management';
 import MorningWorkspaceView from './MorningWorkspace';
 import TemporaryMeetingsPage from './TemporaryMeetings';
 import { TaskEditModal, VesselEditModal } from './EditModals';
+import { normalizeAppData } from './normalize';
 
-type Tab = 'dashboard' | 'morning' | 'total' | 'reports' | 'stats' | 'management' | 'yesterday' | 'meeting' | 'agenda' | 'closed';
+type Tab = 'dashboard' | 'morning' | 'total' | 'reports' | 'stats' | 'management' | 'meeting' | 'closed';
 const SYSTEM_TITLE = '船舶動態與會議管理系統';
 const SYSTEM_SUBTITLE = 'Fleet Activities & Office Meeting Manage System';
 const emptyFilters: FilterState = { keyword:'', departments:[], vesselIds:[], fleetTags:[], priorities:[], categories:[], ownerMode:'all', fromDate:'', toDate:'', closedMode:'open', overdueOnly:false };
@@ -17,51 +18,154 @@ function clone<T>(v:T):T { return JSON.parse(JSON.stringify(v)); }
 function priorityClass(p?: string) { return p === '高' ? 'badge high' : p === '中' ? 'badge mid' : 'badge low'; }
 function fmt(dt?: string) { return dt ? dt.replace('T',' ').slice(0,16) : '-'; }
 function savedStatus(label:string, at?:string) { const d=at?new Date(at):new Date(); return `${label}｜最新保存 ${d.toLocaleString('zh-TW',{hour12:false})}`; }
+function cloudIdentity(cfg: { supabaseUrl:string; tableName:string; workspaceKey:string }) { return `${cfg.supabaseUrl}|${cfg.tableName}|${cfg.workspaceKey}`; }
 function displayVessel(v?: Vessel) { return v ? `${v.shortName || v.name}｜${v.fullName}` : '-'; }
-function vesselMatchesUser(v: Vessel, user: UserAccount | null) { return !user || user.role !== 'operator' || v.assignedUserIds.length === 0 || v.assignedUserIds.includes(user.id); }
+function vesselMatchesUser(v: Vessel, user: UserAccount | null) { return !user || user.role !== 'operator' || v.assignedUserIds.includes(user.id); }
+function taskMatchesFilters(t: TaskItem, filters: FilterState, vesselMap: Record<string,Vessel>, currentUser: UserAccount | null, applyClosedMode: boolean) {
+  const v = vesselMap[t.vesselId]; if (!v || !v.isActive || !vesselMatchesUser(v,currentUser)) return false;
+  if (applyClosedMode && filters.closedMode === 'open' && t.isClosed) return false;
+  if (applyClosedMode && filters.closedMode === 'closed' && !t.isClosed) return false;
+  if (filters.overdueOnly && (t.isClosed || (daysDiff(t.expectedDate) ?? 0) >= 0)) return false;
+  const kw=filters.keyword.trim().toLowerCase();
+  if(kw&&![t.description,t.status,t.category,v.name,v.shortName,v.fullName,v.shipType,...t.departments].join(' ').toLowerCase().includes(kw))return false;
+  if(filters.departments.length&&!t.departments.some(d=>filters.departments.includes(d)))return false;
+  if(filters.vesselIds.length&&!filters.vesselIds.includes(t.vesselId))return false;
+  if(filters.fleetTags.length&&!v.fleetTags.some(f=>filters.fleetTags.includes(f)))return false;
+  if(filters.priorities.length&&!filters.priorities.includes(t.priority))return false;
+  if(filters.categories.length&&!filters.categories.includes(t.category))return false;
+  if(filters.ownerMode==='mine'&&currentUser&&!t.ownerUserIds.includes(currentUser.id)&&!v.assignedUserIds.includes(currentUser.id))return false;
+  const date=(t.updatedAt||t.createdAt).slice(0,10);
+  return !(filters.fromDate&&date<filters.fromDate)&&!(filters.toDate&&date>filters.toDate);
+}
 
 export default function App() {
-  const [data, setData] = useState<AppData>(() => loadLocal() || createInitialData());
+  const [data, setData] = useState<AppData>(() => normalizeAppData(loadLocal()) || createInitialData());
   const [siteUnlocked, setSiteUnlocked] = useState(() => sessionStorage.getItem(SESSION_SITE_UNLOCK) === '1');
   const [currentUserId, setCurrentUserId] = useState(() => localStorage.getItem(CURRENT_USER_KEY) || '');
   const [tab, setTab] = useState<Tab>('dashboard');
   const [filters, setFilters] = useState<FilterState>(emptyFilters);
   const [editingVesselId, setEditingVesselId] = useState<string>('');
   const [editingTaskId, setEditingTaskId] = useState<string>('');
+  const [creatingTask, setCreatingTask] = useState<TaskItem | null>(null);
   const [cloudStatus, setCloudStatus] = useState('本機模式');
   const [agendaSelection, setAgendaSelection] = useState<string[]>([]);
   const [printTitle, setPrintTitle] = useState('');
   const [reportPreviewOpen, setReportPreviewOpen] = useState(false);
   const [cloudBootstrapped, setCloudBootstrapped] = useState(false);
+  const [cloudWriteBlocked, setCloudWriteBlocked] = useState(false);
+  const [cloudSyncing, setCloudSyncing] = useState(false);
   const saveTimer = useRef<number | null>(null);
   const lastCloudRevision = useRef<number>(-1);
-  const currentUser = data.users.find(u => u.id === currentUserId && u.isActive) || null;
+  const activeCloudIdentity = useRef('');
+  const pendingCloudData = useRef<AppData | null>(null);
+  const cloudSaveInFlight = useRef<Promise<void> | null>(null);
+  const cloudSyncInFlight = useRef(false);
+  const currentUser=data.users.find(u=>u.id===currentUserId && u.isActive) || null;
   const ownerExists = data.users.some(u => u.role === 'owner' && u.isActive);
 
   useEffect(() => { saveLocal(data); }, [data]);
   useEffect(() => { currentUserId ? localStorage.setItem(CURRENT_USER_KEY, currentUserId) : localStorage.removeItem(CURRENT_USER_KEY); }, [currentUserId]);
+
+  const rememberCloudIdentity = () => {
+    if (activeCloudIdentity.current) localStorage.setItem(CLOUD_CACHE_IDENTITY_KEY, activeCloudIdentity.current);
+  };
+  const hasCurrentCloudIdentity = () => {
+    const currentConfig = getSupabaseConfig();
+    const currentIdentity = currentConfig ? cloudIdentity(currentConfig) : '';
+    if (!currentIdentity || currentIdentity !== activeCloudIdentity.current) {
+      setCloudWriteBlocked(true);
+      setCloudStatus('雲端設定已在其他分頁變更，已禁止沿用舊 revision；請先同步最新資料');
+      return false;
+    }
+    return true;
+  };
+  const enqueueCloudSave = (snapshot: AppData): Promise<void> => {
+    if (!hasCurrentCloudIdentity()) return Promise.reject(new Error('雲端工作區 identity 已變更'));
+    pendingCloudData.current = snapshot;
+    if (cloudSaveInFlight.current) return cloudSaveInFlight.current;
+    const task = (async () => {
+      try {
+        while (pendingCloudData.current) {
+          const next = pendingCloudData.current;
+          pendingCloudData.current = null;
+          if (next.revision <= lastCloudRevision.current) continue;
+          if (!hasCurrentCloudIdentity()) throw new Error('雲端工作區 identity 已變更');
+          await saveCloudData(next, lastCloudRevision.current);
+          lastCloudRevision.current = next.revision;
+          rememberCloudIdentity();
+          setCloudWriteBlocked(false);
+          setCloudStatus(savedStatus('已保存雲端'));
+        }
+      } catch (error) {
+        pendingCloudData.current = null;
+        if (error instanceof CloudConflictError) setCloudWriteBlocked(true);
+        throw error;
+      } finally {
+        cloudSaveInFlight.current = null;
+      }
+    })();
+    cloudSaveInFlight.current = task;
+    return task;
+  };
+
   useEffect(() => {
     const cfg = getSupabaseConfig();
     if (!cfg) { setCloudStatus('本機模式：尚未配置 Supabase，資料保存於本機瀏覽器'); setCloudBootstrapped(true); return; }
+    const identity = cloudIdentity(cfg);
+    activeCloudIdentity.current = identity;
+    const cachedIdentity = localStorage.getItem(CLOUD_CACHE_IDENTITY_KEY) || '';
+    const identityChanged = Boolean(cachedIdentity && cachedIdentity !== identity);
+    const unknownDirtyCache = !cachedIdentity && localStorage.getItem(STORAGE_KEY) !== null;
     let cancelled=false;
     setCloudStatus('正在載入雲端主資料...');
     fetchCloudData().then(remote => {
       if(cancelled)return;
-      if (remote) { lastCloudRevision.current=remote.revision||0; setData(remote); setCloudStatus(savedStatus('已載入雲端主資料',remote.updatedAt)); }
-      else setCloudStatus('雲端已連線，目前尚無主資料');
+      const latestConfig = getSupabaseConfig();
+      if (!latestConfig || cloudIdentity(latestConfig) !== identity) {
+        setCloudWriteBlocked(true);
+        setCloudStatus('雲端設定在載入期間變更，已禁止寫入；請重新載入或同步最新資料');
+        setCloudBootstrapped(true);
+        return;
+      }
+      if (remote) {
+        lastCloudRevision.current=remote.revision||0;
+        if (identityChanged) {
+          setCloudWriteBlocked(true);
+          setCloudStatus('偵測到不同雲端工作區的本機快取，已禁止寫入；請先同步最新資料');
+        } else if (data.revision > remote.revision) {
+          setCloudWriteBlocked(true);
+          setCloudStatus(`同步衝突：本機版本 ${data.revision} 高於雲端版本 ${remote.revision}，已禁止覆寫；請先同步最新資料`);
+        } else {
+          setData(remote);
+          setCloudWriteBlocked(false);
+          rememberCloudIdentity();
+          setCloudStatus(savedStatus('已載入雲端主資料',remote.updatedAt));
+        }
+      }
+      else {
+        lastCloudRevision.current=-1;
+        if (identityChanged || unknownDirtyCache) {
+          setCloudWriteBlocked(true);
+          setCloudStatus('目標工作區尚無資料；為避免跨工作區複製，已禁止自動初始化。請按「同步最新」明確確認');
+        } else {
+          setCloudWriteBlocked(false);
+          rememberCloudIdentity();
+          setCloudStatus('雲端已連線，目前尚無主資料');
+        }
+      }
       setCloudBootstrapped(true);
-    }).catch(e => { if(!cancelled){setCloudStatus(`雲端載入失敗：${e.message || e}`);setCloudBootstrapped(true);} });
+    }).catch(e => { if(!cancelled){setCloudWriteBlocked(true);setCloudStatus(`雲端載入失敗，已禁止寫入：${e.message || e}`);setCloudBootstrapped(true);} });
     return()=>{cancelled=true;};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    if (!cloudBootstrapped || !currentUser || !getSupabaseConfig() || data.revision===lastCloudRevision.current) return;
+    if (!cloudBootstrapped || cloudWriteBlocked || cloudSyncing || cloudSyncInFlight.current || !currentUser || !getSupabaseConfig() || data.revision<=lastCloudRevision.current) return;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
-      saveCloudData(data).then(() => {lastCloudRevision.current=data.revision;setCloudStatus(savedStatus('已保存雲端'));}).catch(e => setCloudStatus(`雲端保存失敗：${e.message || e}`));
+      enqueueCloudSave(data).catch(e => setCloudStatus(`雲端保存失敗：${e.message || e}`));
     }, 900);
     return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
-  }, [data, currentUser, cloudBootstrapped]);
+  }, [data, currentUser, cloudBootstrapped, cloudWriteBlocked, cloudSyncing]);
 
   const commit = (updater: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => {
     setData(prev => { const d = clone(prev); updater(d); return withAudit(d, currentUser, action, entityType, entityId, detail); });
@@ -75,37 +179,50 @@ export default function App() {
   const userMap = useMemo(() => Object.fromEntries(data.users.map(u => [u.id, u])), [data.users]);
   const fleetTags = useMemo(() => Array.from(new Set(data.vessels.flatMap(v => v.fleetTags))).filter(Boolean), [data.vessels]);
 
-  const filteredTasks = useMemo(() => data.tasks.filter(t => {
-    const v = vesselMap[t.vesselId]; if (!v || !v.isActive) return false;
-    if (!vesselMatchesUser(v, currentUser)) return false;
-    if (filters.closedMode === 'open' && t.isClosed) return false;
-    if (filters.closedMode === 'closed' && !t.isClosed) return false;
-    if (filters.overdueOnly && (t.isClosed || (daysDiff(t.expectedDate) ?? 0) >= 0)) return false;
-    const kw = filters.keyword.trim().toLowerCase();
-    if (kw && ![t.description,t.status,t.category,v.name,v.shortName,v.fullName,v.shipType,...t.departments].join(' ').toLowerCase().includes(kw)) return false;
-    if (filters.departments.length && !t.departments.some(d => filters.departments.includes(d))) return false;
-    if (filters.vesselIds.length && !filters.vesselIds.includes(t.vesselId)) return false;
-    if (filters.fleetTags.length && !v.fleetTags.some(f => filters.fleetTags.includes(f))) return false;
-    if (filters.priorities.length && !filters.priorities.includes(t.priority)) return false;
-    if (filters.categories.length && !filters.categories.includes(t.category)) return false;
-    if (filters.ownerMode === 'mine' && currentUser && !t.ownerUserIds.includes(currentUser.id) && !v.assignedUserIds.includes(currentUser.id)) return false;
-    const date = (t.updatedAt || t.createdAt).slice(0,10);
-    if (filters.fromDate && date < filters.fromDate) return false;
-    if (filters.toDate && date > filters.toDate) return false;
-    return true;
-  }).sort((a,b) => Number(a.isClosed)-Number(b.isClosed) || (daysDiff(a.expectedDate) ?? 9999) - (daysDiff(b.expectedDate) ?? 9999)), [data.tasks, vesselMap, currentUser, filters]);
+  const filteredTasks = useMemo(() => data.tasks.filter(t=>taskMatchesFilters(t,filters,vesselMap,currentUser,true)).sort((a,b)=>Number(a.isClosed)-Number(b.isClosed)||(daysDiff(a.expectedDate)??9999)-(daysDiff(b.expectedDate)??9999)),[data.tasks,vesselMap,currentUser,filters]);
+  const statsTasks = useMemo(() => data.tasks.filter(t=>taskMatchesFilters(t,filters,vesselMap,currentUser,false)),[data.tasks,vesselMap,currentUser,filters]);
 
   if (!cloudBootstrapped) return <div className="login-page"><div className="login-card loading-card"><h2>正在載入雲端主資料</h2><p className="muted">請稍候，完成前不會寫入或覆蓋資料。</p></div></div>;
   if (!siteUnlocked) return <SiteGate data={data} onUnlock={() => { sessionStorage.setItem(SESSION_SITE_UNLOCK,'1'); setSiteUnlocked(true); }} />;
-  if (!ownerExists) return <OwnerSetup data={data} setData={setData} setCurrentUserId={setCurrentUserId} />;
+  if (!ownerExists && !currentUser) return <Login data={data} setCurrentUserId={setCurrentUserId} />;
+  if (!ownerExists && currentUser) return <OwnerSetup currentUser={currentUser} setData={setData} setCurrentUserId={setCurrentUserId} />;
   if (!currentUser) return <Login data={data} setCurrentUserId={setCurrentUserId} />;
 
   const openTask = (task: TaskItem) => setEditingTaskId(task.id);
   const addTaskForVessel = (vesselId: string) => {
     if (!requireLogin()) return;
     const id = uid('task');
-    commit(d => { d.tasks.unshift({ id, vesselId, priority:'中', isAware:false, category:d.settings.taskCategories[0] || '人員', description:'', status:'', expectedDate:todayDate(), departments:[], ownerUserIds: currentUser ? [currentUser.id] : [], isClosed:false, createdBy:currentUser?.id || 'system', updatedBy:currentUser?.id || 'system', createdAt:nowIso(), updatedAt:nowIso(), statusLogs:[] }); }, '新增事項', 'task', id, '從船舶視窗新增跟進事項');
-    setEditingTaskId(id);
+    setCreatingTask({ id, vesselId, priority:'中', isAware:false, category:data.settings.taskCategories[0] || '人員', description:'', status:'', expectedDate:todayDate(), departments:[], ownerUserIds: currentUser ? [currentUser.id] : [], isClosed:false, createdBy:currentUser?.id || 'system', updatedBy:currentUser?.id || 'system', createdAt:nowIso(), updatedAt:nowIso(), statusLogs:[] });
+  };
+  const openReportPreview = () => {
+    if (!agendaSelection.some(id => activeVessels.some(v => v.id === id))) return alert('請至少選擇一艘船舶再預覽報告');
+    setReportPreviewOpen(true);
+  };
+  const syncLatest = async () => {
+    const syncConfig = getSupabaseConfig();
+    if (!syncConfig) return setCloudStatus('本機模式：尚未配置 Supabase，無法同步雲端');
+    if (!confirm('同步最新會以雲端資料取代目前本機畫面，確定繼續？')) return;
+    if (cloudSyncInFlight.current) return setCloudStatus('正在同步雲端，請稍候');
+    cloudSyncInFlight.current = true;
+    setCloudSyncing(true);
+    setCloudWriteBlocked(true);
+    const syncIdentity = cloudIdentity(syncConfig);
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    pendingCloudData.current = null;
+    if (cloudSaveInFlight.current) await cloudSaveInFlight.current.catch(() => undefined);
+    activeCloudIdentity.current = syncIdentity;
+    try { const remote=await fetchCloudData(); const latestConfig=getSupabaseConfig(); if(!latestConfig || cloudIdentity(latestConfig)!==syncIdentity) throw new Error('同步期間雲端工作區 identity 已變更，請重試'); if(remote){lastCloudRevision.current=remote.revision;setData(remote);setCloudWriteBlocked(false);rememberCloudIdentity();setCloudStatus(savedStatus('已同步雲端',remote.updatedAt));}else {lastCloudRevision.current=-1;setCloudWriteBlocked(false);rememberCloudIdentity();setCloudStatus('雲端尚無資料；已允許以目前本機資料初始化');} }
+    catch(e:any){setCloudWriteBlocked(true);setCloudStatus(`同步失敗：${e.message||e}`);}
+    finally { cloudSyncInFlight.current=false; setCloudSyncing(false); }
+  };
+  const saveChanges = async () => {
+    if (!getSupabaseConfig()) { setCloudStatus(saveLocal(data) ? savedStatus('已保存於本機瀏覽器') : '本機保存失敗：瀏覽器儲存空間不足或不可用'); return; }
+    if (cloudSyncInFlight.current) { setCloudStatus('正在同步雲端，請稍候'); return; }
+    if (cloudWriteBlocked) { setCloudStatus('雲端寫入已阻擋：請先同步最新資料，確認採用雲端版本後再修改'); return; }
+    if (data.revision<=lastCloudRevision.current) { setCloudStatus(savedStatus('雲端已是最新版本')); return; }
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    try { await enqueueCloudSave(data); }
+    catch(e:any){setCloudStatus(`保存失敗：${e.message||e}`);}
   };
   const print = (title: string) => { setPrintTitle(title); setTimeout(() => window.print(), 80); };
   const printReport = () => { document.body.classList.add('printing-report'); window.addEventListener('afterprint', () => document.body.classList.remove('printing-report'), { once:true }); setTimeout(() => window.print(), 80); };
@@ -118,45 +235,45 @@ export default function App() {
     <header className="topbar no-print"><div className="topbar-inner">
       <div className="brand"><span className="brand-icon">🚢</span><span><b>{SYSTEM_TITLE}</b><small>{SYSTEM_SUBTITLE}</small></span></div>
       <nav className="nav">
-        {([['dashboard','船隊看板'],['morning','早會工作台'],['meeting','臨時會議'],['total','待辦總表'],['reports','報告中心'],['stats','統計'],['management','管理']] as [Tab,string][]).filter(([k])=>k!=='management'||canManage(currentUser)).map(([k,label]) => <button key={k} className={tab===k?'active':''} onClick={() => { if (k==='management' && !requireManage()) return; setTab(k); }}>{label}</button>)}
+        {([['dashboard','船隊看板'],['morning','早會工作台'],['meeting','臨時會議'],['total','待辦總表'],['closed','已結案'],['reports','報告中心'],['stats','統計'],['management','管理']] as [Tab,string][]).filter(([k])=>k!=='management'||canManage(currentUser)).map(([k,label]) => <button key={k} className={tab===k?'active':''} onClick={() => { if (k==='management' && !requireManage()) return; setTab(k); }}>{label}</button>)}
       </nav>
       <div className="user-chip"><span className="cloud-dot"/><span>{currentUser.name}｜{roleLabel(currentUser.role)}</span><button className="btn small ghost" onClick={() => setCurrentUserId('')}>切換/退出</button></div>
     </div></header>
     <main className="container">
-      <div className="cloud-strip no-print"><span className={getSupabaseConfig()?'ok-note':'danger-note'}>{cloudStatus}</span><span className="spacer"/><button className="btn ghost small" onClick={() => fetchCloudData().then(r => r ? (setData(r), setCloudStatus(savedStatus('已同步雲端',r.updatedAt))) : setCloudStatus('雲端尚無資料')).catch(e => setCloudStatus(`同步失敗：${e.message}`))}>同步最新</button><button className="btn green small" onClick={() => saveCloudData(data).then(()=>setCloudStatus(savedStatus('已保存雲端'))).catch(e=>setCloudStatus(`保存失敗：${e.message}`))}>保存修改</button></div>
+      <div className="cloud-strip no-print"><span className={getSupabaseConfig()?'ok-note':'danger-note'}>{cloudStatus}</span><span className="spacer"/><button className="btn ghost small" onClick={syncLatest}>同步最新</button><button className="btn green small" onClick={saveChanges}>保存修改</button></div>
       <div className="print-only"><h2>{printTitle || data.settings.systemTitle}</h2><p>列印時間：{new Date().toLocaleString()}｜列印人：{currentUser.name}</p></div>
-      {tab==='dashboard' && <Dashboard user={currentUser} vessels={activeVessels} tasks={data.tasks} selected={agendaSelection} setSelected={setAgendaSelection} onEdit={setEditingVesselId} onAddTask={addTaskForVessel} onStartMeeting={() => { if (!agendaSelection.length) { const high = activeVessels.filter(v => data.tasks.some(t => t.vesselId===v.id && !t.isClosed && t.priority==='高')).slice(0,4).map(v=>v.id); setAgendaSelection(high.length ? high : activeVessels.slice(0,4).map(v=>v.id)); } setTab('morning'); }} onOpenReport={()=>setReportPreviewOpen(true)} onTaskMetric={jumpToTaskList} />}
-      {tab==='morning' && <MorningWorkspaceView data={data} user={currentUser} visibleVessels={activeVessels} selected={agendaSelection} setSelected={setAgendaSelection} onEditTask={openTask} onOpenVessel={setEditingVesselId} onOpenTemporaryMeeting={()=>setTab('meeting')} onOpenReport={()=>setReportPreviewOpen(true)} commit={commit} />}
-      {tab==='yesterday' && <ListPanel title="昨日未結清單" tasks={filteredTasks.filter(t => !t.isClosed && (t.updatedAt.slice(0,10) <= yesterdayDate() || t.createdAt.slice(0,10) <= yesterdayDate()))} data={data} filters={filters} setFilters={setFilters} fleetTags={fleetTags} userMap={userMap} onEdit={openTask} onPrint={() => print('昨日未結清單')} />}
+      {tab==='dashboard' && <Dashboard user={currentUser} vessels={activeVessels} tasks={data.tasks} selected={agendaSelection} setSelected={setAgendaSelection} onEdit={setEditingVesselId} onAddTask={addTaskForVessel} onStartMeeting={() => { if (!agendaSelection.length) { const high = activeVessels.filter(v => data.tasks.some(t => t.vesselId===v.id && !t.isClosed && t.priority==='高')).slice(0,4).map(v=>v.id); setAgendaSelection(high.length ? high : activeVessels.slice(0,4).map(v=>v.id)); } setTab('morning'); }} onOpenReport={openReportPreview} onTaskMetric={jumpToTaskList} />}
+      {tab==='morning' && <MorningWorkspaceView data={data} user={currentUser} visibleVessels={activeVessels} selected={agendaSelection} setSelected={setAgendaSelection} onEditTask={openTask} onOpenVessel={setEditingVesselId} onOpenTemporaryMeeting={()=>setTab('meeting')} onOpenReport={openReportPreview} commit={commit} />}
+
       {tab==='total' && <ListPanel title="總清單" tasks={filteredTasks} data={data} filters={filters} setFilters={setFilters} fleetTags={fleetTags} userMap={userMap} onEdit={openTask} onPrint={() => print('船舶記事總清單')} />}
-      {tab==='closed' && <ListPanel title="已結案清單" tasks={filteredTasks.filter(t=>t.isClosed)} data={data} filters={{...filters,closedMode:'closed'}} setFilters={setFilters} fleetTags={fleetTags} userMap={userMap} onEdit={openTask} onPrint={() => print('已結案清單')} />}
-      {tab==='stats' && <Stats tasks={filteredTasks} data={data} filters={filters} setFilters={setFilters} fleetTags={fleetTags} />}
+      {tab==='closed' && <ListPanel title="已結案清單" tasks={statsTasks.filter(t=>t.isClosed)} data={data} filters={{...filters,closedMode:'closed'}} setFilters={setFilters} fleetTags={fleetTags} userMap={userMap} onEdit={openTask} onPrint={() => print('已結案清單')} />}
+      {tab==='stats' && <Stats tasks={statsTasks} data={data} filters={filters} setFilters={setFilters} fleetTags={fleetTags} />}
       {tab==='meeting' && <TemporaryMeetingsPage data={data} visibleVessels={activeVessels} currentUser={currentUser} commit={commit} />}
-      {tab==='agenda' && <AgendaPanel data={data} visibleVessels={activeVessels} user={currentUser} selected={agendaSelection} setSelected={setAgendaSelection} commit={commit} onPrint={() => print('早會船舶動態與議程清單')} />}
-      {tab==='reports' && <ReportCenter data={data} visibleVessels={activeVessels} user={currentUser} selected={agendaSelection} setSelected={setAgendaSelection} commit={commit} onOpenPreview={()=>setReportPreviewOpen(true)} onPrint={() => print('早會船舶動態與議程清單')} />}
-      {tab==='management' && <ManagementView data={data} currentUser={currentUser} setData={setData} commit={commit} />}
+
+      {tab==='reports' && <ReportCenter data={data} visibleVessels={activeVessels} user={currentUser} selected={agendaSelection} setSelected={setAgendaSelection} commit={commit} onOpenPreview={openReportPreview} onPrint={() => print('早會船舶動態與議程清單')} />}
+      {tab==='management' && canManage(currentUser) && <ManagementView data={data} currentUser={currentUser} commit={commit} />}
     </main>
     {editingVesselId && <VesselEditModal vessel={data.vessels.find(v=>v.id===editingVesselId)} data={data} currentUser={currentUser} close={()=>setEditingVesselId('')} commit={commit} addTask={id=>{setEditingVesselId('');addTaskForVessel(id);}} editTask={id=>{setEditingVesselId('');setEditingTaskId(id);}} />}
-    {editingTaskId && <TaskEditModal task={data.tasks.find(t=>t.id===editingTaskId)} data={data} visibleVessels={activeVessels} currentUser={currentUser} close={()=>setEditingTaskId('')} commit={commit} />}
+    {(editingTaskId || creatingTask) && <TaskEditModal task={creatingTask || data.tasks.find(t=>t.id===editingTaskId)} creating={Boolean(creatingTask)} data={data} visibleVessels={activeVessels} currentUser={currentUser} close={()=>{setEditingTaskId('');setCreatingTask(null);}} commit={commit} />}
     {reportPreviewOpen && <ReportPreviewModal data={data} visibleVessels={activeVessels} user={currentUser} selected={agendaSelection} close={()=>setReportPreviewOpen(false)} onPrint={printReport} />}
-    <div className="selection-dock no-print">涉會船舶 <b className="selected-vessel-count">{agendaSelection.length}</b> 艘 <button className="btn pink small" onClick={()=>setTab('morning')}>進入早會</button><button className="btn primary small" onClick={()=>setReportPreviewOpen(true)}>預覽報告</button></div>
+    {(['dashboard','morning','reports'] as Tab[]).includes(tab) && <div className="selection-dock no-print">涉會船舶 <b className="selected-vessel-count">{agendaSelection.length}</b> 艘 <button className="btn pink small" onClick={()=>setTab('morning')}>進入早會</button><button className="btn primary small" onClick={openReportPreview}>預覽報告</button></div>}
   </div>;
 }
 
 function SiteGate({ data, onUnlock }: { data: AppData; onUnlock:()=>void }) {
   const [pw,setPw]=useState(''); const [err,setErr]=useState('');
   const unlock=async()=>{ if(await sha256(pw)===data.settings.sitePasswordHash){onUnlock();} else setErr('進站密碼錯誤'); };
-  return <div className="login-page"><div className="login-card"><h2>船舶動態系統進站</h2><p className="muted">預設進站密碼已寫入系統，Owner 可於管理頁修改。</p><div className="field"><label>進站密碼</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') unlock();}} /></div>{err&&<p className="warn">{err}</p>}<button className="btn primary" onClick={unlock}>進入系統</button><p className="muted">初始測試密碼：{DEFAULT_SITE_PASSWORD}</p></div></div>;
+  return <div className="login-page"><div className="login-card"><h2>船舶動態系統進站</h2><p className="muted">請輸入管理者設定的進站密碼。</p><div className="field"><label>進站密碼</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') unlock();}} /></div>{err&&<p className="warn">{err}</p>}<button className="btn primary" onClick={unlock}>進入系統</button></div></div>;
 }
-function OwnerSetup({ data, setData, setCurrentUserId }: { data: AppData; setData:React.Dispatch<React.SetStateAction<AppData>>; setCurrentUserId:(id:string)=>void }) {
-  const [id,setId]=useState(data.users[0]?.id||''); const [username,setUsername]=useState(''); const [pw,setPw]=useState('');
-  const create=async()=>{ if(!id||!username||!pw) return alert('請選擇人員並輸入 Owner 用戶名與密碼'); const hash=await sha256(pw); setData(prev=>withAudit({...prev, users:prev.users.map(u=>u.id===id?{...u,role:'owner',username,passwordHash:hash,updatedAt:nowIso()}:u)}, null, '建立Owner', 'user', id, '首次初始化 Owner')); setCurrentUserId(id); };
-  return <div className="login-page"><div className="login-card"><h2>首次初始化 Owner</h2><p className="muted">已讀取辦公室人員清單。請從清單中選擇第一位 Owner，不建立 placeholder Owner 帳戶。</p><div className="field"><label>Owner 人員</label><select value={id} onChange={e=>setId(e.target.value)}>{data.users.map(u=><option key={u.id} value={u.id}>{u.department}｜{u.name}</option>)}</select></div><div className="field"><label>Owner 用戶名</label><input value={username} onChange={e=>setUsername(e.target.value)} placeholder="例如姓名或工號" /></div><div className="field"><label>Owner 密碼</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} /></div><button className="btn primary" onClick={create}>建立 Owner 並登入</button></div></div>;
+function OwnerSetup({ currentUser, setData, setCurrentUserId }: { currentUser:UserAccount; setData:React.Dispatch<React.SetStateAction<AppData>>; setCurrentUserId:(id:string)=>void }) {
+  const [username,setUsername]=useState(currentUser.username); const [pw,setPw]=useState('');
+  const create=async()=>{ if(!username.trim()||!pw) return alert('請輸入 Owner 用戶名與新密碼'); const hash=await sha256(pw); setData(prev=>withAudit({...prev, users:prev.users.map(u=>u.id===currentUser.id?{...u,role:'owner',username:username.trim(),passwordHash:hash,updatedAt:nowIso()}:u)}, currentUser, '建立Owner', 'user', currentUser.id, '已驗證使用者初始化為 Owner')); setCurrentUserId(currentUser.id); };
+  return <div className="login-page"><div className="login-card"><h2>首次初始化 Owner</h2><p className="muted">已驗證身分：{currentUser.department}｜{currentUser.name}。只能將目前登入者初始化為第一位 Owner。</p><div className="field"><label>Owner 用戶名</label><input value={username} onChange={e=>setUsername(e.target.value)} /></div><div className="field"><label>Owner 新密碼</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} /></div><button className="btn primary" onClick={create}>將目前帳號設為 Owner</button></div></div>;
 }
 function Login({ data, setCurrentUserId }: { data: AppData; setCurrentUserId:(id:string)=>void }) {
   const [username,setUsername]=useState(''); const [pw,setPw]=useState(''); const [err,setErr]=useState('');
   const login=async()=>{ const user=data.users.find(u=>u.isActive && (u.username===username || u.name===username)); if(!user) return setErr('找不到用戶'); if(await sha256(pw)!==user.passwordHash) return setErr('密碼錯誤'); setCurrentUserId(user.id); };
-  return <div className="login-page"><div className="login-card"><h2>用戶登入 / 切換</h2><p className="muted">操作員初始密碼：{DEFAULT_USER_PASSWORD}。登入狀態會記住在本機瀏覽器。</p><div className="field"><label>用戶名或姓名</label><input value={username} onChange={e=>setUsername(e.target.value)} /></div><div className="field"><label>密碼</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') login();}} /></div>{err&&<p className="warn">{err}</p>}<button className="btn primary" onClick={login}>登入</button></div></div>;
+  return <div className="login-page"><div className="login-card"><h2>用戶登入 / 切換</h2><p className="muted">請使用個人帳號密碼登入；登入狀態只記錄在此瀏覽器。</p><div className="field"><label>用戶名或姓名</label><input value={username} onChange={e=>setUsername(e.target.value)} /></div><div className="field"><label>密碼</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') login();}} /></div>{err&&<p className="warn">{err}</p>}<button className="btn primary" onClick={login}>登入</button></div></div>;
 }
 
 function Dashboard({ user, vessels, tasks, selected, setSelected, onEdit, onAddTask, onStartMeeting, onOpenReport, onTaskMetric }: { user:UserAccount; vessels:Vessel[]; tasks:TaskItem[]; selected:string[]; setSelected:(ids:string[])=>void; onEdit:(id:string)=>void; onAddTask:(id:string)=>void; onStartMeeting:()=>void; onOpenReport:()=>void; onTaskMetric:(mode:'open'|'high'|'overdue')=>void }) {
@@ -177,29 +294,9 @@ function Dashboard({ user, vessels, tasks, selected, setSelected, onEdit, onAddT
   const updatedToday=vessels.filter(v=>(v.updatedAt||v.position.updatedAt).slice(0,10)===todayDate()).length;
   const toggle=(id:string)=>setSelected(selected.includes(id)?selected.filter(x=>x!==id):[...selected,id]);
   return <section className="dashboard-view"><div className="page-heading"><div><h1>船隊即時看板</h1><p>以卡片快速掃描動態、航線、貨況與未結事項；選取後直接帶入早會。</p></div><div className="heading-actions no-print"><button className="btn pink" onClick={onStartMeeting}>開始今日早會</button><button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button></div></div>
-    <div className="metric-grid"><div className="metric-card blue"><small>今日船舶</small><b>{vessels.length}</b><span>艘</span></div><button type="button" className="metric-card metric-link pink" onClick={()=>onTaskMetric('open')} aria-label="查看未結事項清單"><small>未結事項</small><b>{open.length}</b><span>件</span></button><button type="button" className="metric-card metric-link purple" onClick={()=>onTaskMetric('high')} aria-label="查看高關註度事件清單"><small>高關註度</small><b>{high}</b><span>件</span></button><button type="button" className="metric-card metric-link yellow" onClick={()=>onTaskMetric('overdue')} aria-label="查看已逾期事件清單"><small>已逾期</small><b>{overdue}</b><span>件</span></button><div className="metric-card mint"><small>今日已更新</small><b>{updatedToday}</b><span>艘</span></div><div className="metric-card"><small>涉會船舶</small><b>{selected.length}</b><span>艘</span></div></div>
+    <div className="metric-grid"><div className="metric-card blue"><small>今日船舶</small><b>{vessels.length}</b><span>艘</span></div><button type="button" className="metric-card metric-link pink" onClick={()=>onTaskMetric('open')} aria-label="查看未結事項清單"><small>未結事項</small><b>{open.length}</b><span>件</span></button><button type="button" className="metric-card metric-link purple" onClick={()=>onTaskMetric('high')} aria-label="查看高關注度事件清單"><small>高關注度</small><b>{high}</b><span>件</span></button><button type="button" className="metric-card metric-link yellow" onClick={()=>onTaskMetric('overdue')} aria-label="查看已逾期事件清單"><small>已逾期</small><b>{overdue}</b><span>件</span></button><div className="metric-card mint"><small>今日已更新</small><b>{updatedToday}</b><span>艘</span></div><div className="metric-card"><small>涉會船舶</small><b>{selected.length}</b><span>艘</span></div></div>
     <div className="dashboard-toolbar no-print"><input value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="搜尋船名、港口、貨物、動態..."/><button className={`filter-pill ${fleetFilter==='all'?'active':''}`} onClick={()=>setFleetFilter('all')}>全部</button><button className={`filter-pill ${fleetFilter==='mine'?'active':''}`} onClick={()=>setFleetFilter('mine')}>自管船舶</button><button className={`filter-pill ${fleetFilter==='tanker'?'active':''}`} onClick={()=>setFleetFilter('tanker')}>油輪</button><button className={`filter-pill ${fleetFilter==='bulk'?'active':''}`} onClick={()=>setFleetFilter('bulk')}>散貨</button><button className={`filter-pill ${fleetFilter==='high'?'active':''}`} onClick={()=>setFleetFilter('high')}>高關注</button><button className={`filter-pill ${fleetFilter==='selected'?'active':''}`} onClick={()=>setFleetFilter('selected')}>涉會船舶</button></div>
     <div className="fleet-card-grid">{visible.map(v=>{const vt=tasks.filter(t=>t.vesselId===v.id&&!t.isClosed);const hi=vt.filter(t=>t.priority==='高').length,mid=vt.filter(t=>t.priority==='中').length,low=vt.filter(t=>t.priority==='低').length;const level=hi?'high':mid?'mid':'low';return <article key={v.id} className={`ship-card ${selected.includes(v.id)?'selected':''} level-${level}`}><div className="ship-card-head"><div><h3>{v.shortName||v.name}</h3><small>{v.fullName} · {v.shipType}</small></div><span className={`priority-pill ${level}`}>{hi?`高關注 ${hi}`:mid?`中關注 ${mid}`:`低關注 ${low}`}</span></div><div className="ship-route"><b>{v.position.lastPort||v.position.location||'未設定'}</b><span>→</span><b>{v.position.nextPort||'未設定'}</b></div><div className="ship-facts"><span>{v.position.speedKnots||0} kn</span><span>{v.cargo.name||'未填貨名'} {v.cargo.quantity}</span>{v.note.statusList.map(s=><span key={s}>{s}</span>)}</div><div className="ship-latest"><b>近期動態：</b>{v.note.recentDynamics||v.position.manualRemark||'尚未輸入近期動態'}</div><div className="ship-card-foot"><span className="task-mini"><i className="high">高 {hi}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print"><button className="btn small" onClick={()=>onEdit(v.id)}>快速更新</button><button className="btn small ghost" onClick={()=>onAddTask(v.id)}>新增事項</button><button className={`btn small ${selected.includes(v.id)?'pink':'ghost'}`} onClick={()=>toggle(v.id)}>{selected.includes(v.id)?'涉會船舶':'加入早會'}</button></div></div></article>})}</div>{!visible.length&&<div className="empty-state">沒有符合條件的船舶</div>}
-  </section>;
-}
-
-function MorningWorkspace({ data, user, selected, setSelected, onEditTask, onOpenVessel, onOpenTemporaryMeeting, onOpenReport, commit }: { data:AppData; user:UserAccount; selected:string[]; setSelected:(ids:string[])=>void; onEditTask:(task:TaskItem)=>void; onOpenVessel:(id:string)=>void; onOpenTemporaryMeeting:()=>void; onOpenReport:()=>void; commit:any }) {
-  const activeVessels=data.vessels.filter(v=>v.isActive&&selected.includes(v.id));
-  const [activeId,setActiveId]=useState(selected[0]||'');
-  useEffect(()=>{if(!selected.includes(activeId))setActiveId(selected[0]||'');},[selected,activeId]);
-  const vessel=activeVessels.find(v=>v.id===activeId)||activeVessels[0];
-  const vesselTasks=data.tasks.filter(t=>vessel&&t.vesselId===vessel.id&&!t.isClosed).sort((a,b)=>({高:0,中:1,低:2}[a.priority]-{高:0,中:1,低:2}[b.priority])||(daysDiff(a.expectedDate)??999)-(daysDiff(b.expectedDate)??999));
-  const selectedTasks=data.tasks.filter(t=>selected.includes(t.vesselId)&&!t.isClosed);
-  const yesterdayOpen=selectedTasks.filter(t=>(t.updatedAt||t.createdAt).slice(0,10)<=yesterdayDate()).length;
-  const high=selectedTasks.filter(t=>t.priority==='高').length;
-  const completionBase=data.tasks.filter(t=>selected.includes(t.vesselId));
-  const completed=completionBase.filter(t=>t.isClosed).length;
-  const completion=completionBase.length?Math.round(completed/completionBase.length*100):0;
-  const saveAgenda=()=>{if(!selected.length)return alert('請先從船隊看板選擇船舶');const id=uid('agenda');commit((d:AppData)=>{d.agendaReports.unshift({id,title:'船舶早會動態暨待辦報告',vesselIds:selected,createdBy:user.id,createdAt:nowIso(),taskCount:selectedTasks.length});},'保存早會報告紀錄','agenda',id,`${selected.length} 艘船、${selectedTasks.length} 件事項`);alert('早會報告紀錄已保存；日後檢視會使用當時選船範圍與目前最新資料。');};
-  return <section><div className="page-heading"><div><h1>今日早會工作台</h1><p>左側選船、中間逐項討論與更新、右側即時形成會議摘要。</p></div><div className="heading-actions no-print"><button className="btn ghost" onClick={onOpenTemporaryMeeting}>＋ 臨時會議</button><button className="btn green" onClick={saveAgenda}>保存早會</button><button className="btn primary" onClick={onOpenReport}>預覽 PDF</button></div></div>
-    {!selected.length?<div className="empty-state"><h3>尚未選擇早會船舶</h3><p>請回到船隊看板，點擊船舶卡片上的「加入早會」。</p></div>:<div className="morning-workspace"><aside className="meeting-column vessel-rail"><div className="column-title"><h2>今日討論船舶</h2><span>{activeVessels.length} 艘</span></div><div className="column-scroll">{activeVessels.map(v=>{const vt=data.tasks.filter(t=>t.vesselId===v.id&&!t.isClosed);const hi=vt.filter(t=>t.priority==='高').length;return <button key={v.id} className={`mini-ship-card ${v.id===vessel?.id?'active':''}`} onClick={()=>setActiveId(v.id)}><span className="mini-ship-head"><b>{v.shortName||v.name}</b>{hi>0&&<i>高 {hi}</i>}</span><span>{v.position.lastPort||v.position.location} → {v.position.nextPort||'未設定'}</span><small>{v.position.speedKnots||0} kn｜{v.cargo.name||'未填貨名'}</small></button>})}<button className="btn ghost full" onClick={()=>onOpenVessel(vessel?.id||activeVessels[0].id)}>更新目前船舶動態</button><button className="btn pink full" onClick={()=>setSelected([])}>清空今日選擇</button></div></aside>
-      <section className="meeting-column agenda-column"><div className="column-title"><h2>逐項討論與決議</h2><button className="btn small pink" onClick={()=>vessel&&onOpenVessel(vessel.id)}>更新船舶</button></div><div className="column-scroll">{vessel&&<div className="meeting-vessel-summary"><div><h2>{vessel.shortName||vessel.name}</h2><p>{vessel.position.lastPort||vessel.position.location} → {vessel.position.nextPort||'未設定'}｜{vessel.cargo.name||'未填貨名'} {vessel.cargo.quantity}｜{vessel.position.speedKnots||0} kn</p></div><span>早會進行中</span></div>}{vesselTasks.length?vesselTasks.map((t,index)=><article className={`meeting-agenda-card priority-${t.priority}`} key={t.id}><div className="agenda-number">{String(index+1).padStart(2,'0')}</div><div className="agenda-content"><h3>{t.description||'尚未輸入事項內容'}</h3><p>{t.priority}關注｜{t.category}｜{t.departments.join('、')||'未指定部門'}｜期限 {t.expectedDate||'未設定'}</p><div className="agenda-status"><b>目前狀態：</b>{t.status||'尚未更新狀態'}</div><div className="agenda-actions no-print"><button className="btn small primary" onClick={()=>onEditTask(t)}>更新狀態／決議</button><button className="btn small ghost" onClick={()=>onEditTask(t)}>調整期限與部門</button></div></div></article>):<div className="empty-state compact">這艘船目前沒有未結事項</div>}</div></section>
-      <aside className="meeting-column summary-column"><div className="column-title"><h2>早會即時摘要</h2></div><div className="column-scroll"><div className="summary-card pink"><h3>昨日未結</h3><b>{yesterdayOpen}</b><span> 件</span><small>高關注 {high} 件</small></div><div className="summary-card blue"><h3>本次早會</h3><div className="summary-line"><span>討論船舶</span><b>{selected.length}</b></div><div className="summary-line"><span>未結議題</span><b>{selectedTasks.length}</b></div><div className="summary-line"><span>高關注</span><b>{high}</b></div></div><div className="summary-card mint"><h3>選定船舶完成率</h3><b>{completion}%</b><div className="progress"><span style={{width:`${completion}%`}}/></div></div><div className="summary-card"><h3>報告內容</h3>{activeVessels.map(v=><div className="summary-line" key={v.id}><span>{v.shortName}</span><b>{data.tasks.filter(t=>t.vesselId===v.id&&!t.isClosed).length} 項</b></div>)}<button className="btn primary full" onClick={onOpenReport}>預覽美觀 PDF</button></div></div></aside></div>}
   </section>;
 }
 
@@ -224,7 +321,7 @@ function FilterBar({ data, filters, setFilters, fleetTags }: { data:AppData; fil
   return <div className="panel no-print"><div className="grid cols-4"><div className="field"><label>關鍵字</label><input value={filters.keyword} onChange={e=>setFilters({...filters,keyword:e.target.value})} placeholder="船名、事項、狀態..." /></div><div className="field"><label>日期起</label><input type="date" value={filters.fromDate} onChange={e=>setFilters({...filters,fromDate:e.target.value})}/></div><div className="field"><label>日期迄</label><input type="date" value={filters.toDate} onChange={e=>setFilters({...filters,toDate:e.target.value})}/></div><div className="field"><label>經管船舶</label><select value={filters.ownerMode} onChange={e=>setFilters({...filters,ownerMode:e.target.value as any})}><option value="all">全部</option><option value="mine">只看我的經管船舶/事項</option></select></div></div><div className="filters"><b>部門</b>{data.settings.departments.map(d=><button key={d} className={`chip ${filters.departments.includes(d)?'on':''}`} onClick={()=>toggle('departments',d)}>{d}</button>)}</div><div className="filters"><b>船種/船隊</b>{fleetTags.map(f=><button key={f} className={`chip ${filters.fleetTags.includes(f)?'on':''}`} onClick={()=>toggle('fleetTags',f)}>{f}</button>)}</div><div className="filters"><b>關注/分類</b>{data.settings.priorities.map(p=><button key={p} className={`chip ${filters.priorities.includes(p)?'on':''}`} onClick={()=>toggle('priorities',p)}>{p}</button>)}{data.settings.taskCategories.map(c=><button key={c} className={`chip ${filters.categories.includes(c)?'on':''}`} onClick={()=>toggle('categories',c)}>{c}</button>)}{filters.overdueOnly&&<button className="chip on" onClick={()=>setFilters({...filters,overdueOnly:false})}>只看逾期 ×</button>}<button className="btn small ghost" onClick={()=>setFilters(emptyFilters)}>清除篩選</button></div></div>;
 }
 function ListPanel({ title, tasks, data, filters, setFilters, fleetTags, userMap, onEdit, onPrint }: { title:string; tasks:TaskItem[]; data:AppData; filters:FilterState; setFilters:(f:FilterState)=>void; fleetTags:string[]; userMap:Record<string,UserAccount>; onEdit:(t:TaskItem)=>void; onPrint:()=>void }) {
-  return <><FilterBar data={data} filters={filters} setFilters={setFilters} fleetTags={fleetTags}/><section className="panel"><div className="panel-title"><h2>{title} <span className="muted">({tasks.length})</span></h2><button className="btn primary no-print" onClick={onPrint}>導出 PDF</button></div><div className="table-wrap"><table className="compact"><thead><tr><th>船舶</th><th>船種</th><th>關注</th><th>分類/事項</th><th>部門</th><th>經管人</th><th>期限</th><th>狀態</th><th className="no-print">操作</th></tr></thead><tbody>{tasks.map(t=>{ const v=data.vessels.find(x=>x.id===t.vesselId); const diff=daysDiff(t.expectedDate); return <tr key={t.id}><td>{displayVessel(v)}</td><td>{v?.shipType}<br/><span className="muted">{v?.fleetCategory}</span></td><td><span className={priorityClass(t.priority)}>{t.priority}</span>{t.isAware&&<span className="badge aware">知曉</span>}</td><td><span className="chip">{t.category}</span><br/>{t.description||'-'}</td><td>{t.departments.map(d=><span className="chip" key={d}>{d}</span>)}</td><td>{[...new Set([...t.ownerUserIds, ...(v?.assignedUserIds||[])])].map(id=>userMap[id]?.name).filter(Boolean).join('、') || '-'}</td><td>{t.expectedDate||'-'}<br/>{!t.isClosed&&diff!==null&&diff<0&&<span className="warn">逾期 {Math.abs(diff)} 天</span>}</td><td>{t.isClosed?<span className="badge closed">已結案 {t.closedDate}</span>:t.status||'-'}<br/><span className="muted">更新：{fmt(t.updatedAt)}</span></td><td className="no-print"><button className="btn small primary" onClick={()=>onEdit(t)}>更新</button></td></tr>;})}</tbody></table></div></section></>;
+  return <><FilterBar data={data} filters={filters} setFilters={setFilters} fleetTags={fleetTags}/><section className="panel"><div className="panel-title"><h2>{title} <span className="muted">({tasks.length})</span></h2><button className="btn primary no-print" onClick={onPrint}>導出 PDF</button></div>{tasks.length?<div className="table-wrap"><table className="compact"><thead><tr><th>船舶</th><th>船種</th><th>關注</th><th>分類/事項</th><th>部門</th><th>經管人</th><th>期限</th><th>狀態</th><th className="no-print">操作</th></tr></thead><tbody>{tasks.map(t=>{ const v=data.vessels.find(x=>x.id===t.vesselId); const diff=daysDiff(t.expectedDate); return <tr key={t.id}><td>{displayVessel(v)}</td><td>{v?.shipType}<br/><span className="muted">{v?.fleetCategory}</span></td><td><span className={priorityClass(t.priority)}>{t.priority}</span>{t.isAware&&<span className="badge aware">知曉</span>}</td><td><span className="chip">{t.category}</span><br/>{t.description||'-'}</td><td>{t.departments.map(d=><span className="chip" key={d}>{d}</span>)}</td><td>{[...new Set([...t.ownerUserIds, ...(v?.assignedUserIds||[])])].map(id=>userMap[id]?.name).filter(Boolean).join('、') || '-'}</td><td>{t.expectedDate||'-'}<br/>{!t.isClosed&&diff!==null&&diff<0&&<span className="warn">逾期 {Math.abs(diff)} 天</span>}</td><td>{t.isClosed?<span className="badge closed">已結案 {t.closedDate}</span>:t.status||'-'}<br/><span className="muted">更新：{fmt(t.updatedAt)}</span></td><td className="no-print"><button className="btn small primary" onClick={()=>onEdit(t)}>更新</button></td></tr>;})}</tbody></table></div>:<div className="empty-state">目前沒有符合條件的事項</div>}</section></>;
 }
 function Stats({ tasks, data, filters, setFilters, fleetTags }: { tasks:TaskItem[]; data:AppData; filters:FilterState; setFilters:(f:FilterState)=>void; fleetTags:string[] }) {
   const total=tasks.length, closed=tasks.filter(t=>t.isClosed).length, open=total-closed, overdue=tasks.filter(t=>!t.isClosed&&(daysDiff(t.expectedDate)??0)<0).length;
@@ -233,33 +330,3 @@ function Stats({ tasks, data, filters, setFilters, fleetTags }: { tasks:TaskItem
   const Block=({title,obj}:{title:string;obj:Record<string,number>})=><div className="panel"><h3>{title}</h3>{Object.entries(obj).sort((a,b)=>b[1]-a[1]).map(([k,v])=><div key={k}><div className="toolbar"><span style={{width:120}}>{k}</span><b>{v}</b></div><div className="bar"><span style={{width:`${Math.max(4,v/Math.max(1,total)*100)}%`}} /></div></div>)}</div>;
   return <><FilterBar data={data} filters={filters} setFilters={setFilters} fleetTags={fleetTags}/><div className="cards"><div className="stat-card"><span>總事項</span><br/><b>{total}</b></div><div className="stat-card"><span>未結</span><br/><b>{open}</b></div><div className="stat-card"><span>已結案</span><br/><b>{closed}</b></div><div className="stat-card"><span>完成率</span><br/><b>{total?Math.round(closed/total*100):0}%</b></div><div className="stat-card"><span>逾期</span><br/><b>{overdue}</b></div></div><div className="grid cols-3"><Block title="分類比例" obj={cat}/><Block title="關注程度" obj={pri}/><Block title="部門歸屬" obj={dep}/></div></>;
 }
-function VesselModal({ vessel, data, currentUser, close, commit, addTask, editTask }: { vessel:Vessel; data:AppData; currentUser:UserAccount; close:()=>void; commit:any; addTask:(id:string)=>void; editTask:(id:string)=>void }) {
-  const tasks=data.tasks.filter(t=>t.vesselId===vessel.id&&!t.isClosed);
-  const update=(fn:(v:Vessel)=>void, detail:string)=>commit((d:AppData)=>{const v=d.vessels.find(x=>x.id===vessel.id)!; fn(v); v.updatedAt=nowIso();},'更新船舶動態','vessel',vessel.id,detail);
-  return <div className="modal-backdrop"><div className="modal"><div className="modal-header"><h2>{displayVessel(vessel)} 動態更新</h2><button className="btn ghost" onClick={close}>關閉</button></div><div className="grid cols-3"><div className="field"><label>位置</label><input value={vessel.position.location} onChange={e=>update(v=>{v.position.location=e.target.value;v.position.source='manual';},'手動修改位置')} /></div><div className="field"><label>速度 kn</label><input type="number" value={vessel.position.speedKnots} onChange={e=>update(v=>{v.position.speedKnots=Number(e.target.value);},'修改速度')} /></div><div className="field"><label>人工位置備註</label><input value={vessel.position.manualRemark} onChange={e=>update(v=>{v.position.manualRemark=e.target.value;},'修改位置備註')} /></div><div className="field"><label>載貨貨名</label><input value={vessel.cargo.name} onChange={e=>update(v=>{v.cargo.name=e.target.value;v.cargo.updatedAt=nowIso();},'修改載貨貨名')} /></div><div className="field"><label>載貨數量</label><input value={vessel.cargo.quantity} onChange={e=>update(v=>{v.cargo.quantity=e.target.value;v.cargo.updatedAt=nowIso();},'修改載貨數量')} /></div><div className="field"><label>船舶狀態</label><select multiple className="multi" value={vessel.note.statusList} onChange={e=>update(v=>{v.note.statusList=Array.from(e.currentTarget.selectedOptions).map(o=>o.value) as any;},'修改船舶狀態')}>{VESSEL_STATUSES.map(s=><option key={s}>{s}</option>)}</select></div><div className="field"><label>近期動態</label><textarea value={vessel.note.recentDynamics} onChange={e=>update(v=>{v.note.recentDynamics=e.target.value;v.note.updatedAt=nowIso();},'修改近期動態')} /></div><div className="field"><label>後續補充</label><textarea value={vessel.note.subsequentDynamics} onChange={e=>update(v=>{v.note.subsequentDynamics=e.target.value;v.note.updatedAt=nowIso();},'修改後續動態')} /></div></div><div className="panel-title"><h3>未結事項</h3><button className="btn primary small" onClick={()=>addTask(vessel.id)}>新增事項</button></div><div className="table-wrap"><table className="compact"><tbody>{tasks.map(t=><tr key={t.id}><td><span className={priorityClass(t.priority)}>{t.priority}</span></td><td>{t.category}</td><td>{t.description||'-'}</td><td>{t.status}</td><td><button className="btn small ghost" onClick={()=>editTask(t.id)}>更新</button></td></tr>)}</tbody></table></div></div></div>;
-}
-function TaskModal({ task, data, visibleVessels, currentUser, close, commit }: { task?:TaskItem; data:AppData; visibleVessels:Vessel[]; currentUser:UserAccount; close:()=>void; commit:any }) {
-  if(!task || !visibleVessels.some(v=>v.id===task.vesselId)) return null;
-  const update=(fn:(t:TaskItem)=>void,detail:string)=>commit((d:AppData)=>{const t=d.tasks.find(x=>x.id===task.id)!; fn(t); t.updatedAt=nowIso(); t.updatedBy=currentUser.id;},'更新事項','task',task.id,detail);
-  const addStatus=(text:string)=>update(t=>{t.status=text;t.statusLogs.unshift({id:uid('log'),at:nowIso(),by:currentUser.name,text});},'新增狀態紀錄');
-  return <div className="modal-backdrop"><div className="modal"><div className="modal-header"><h2>更新事項</h2><button className="btn ghost" onClick={close}>關閉</button></div><div className="grid cols-3"><div className="field"><label>船舶</label><select value={task.vesselId} onChange={e=>update(t=>{t.vesselId=e.target.value;},'修改船舶')}>{visibleVessels.map(v=><option key={v.id} value={v.id}>{displayVessel(v)}</option>)}</select></div><div className="field"><label>關注程度</label><select value={task.priority} onChange={e=>update(t=>{t.priority=e.target.value as TaskPriority;},'修改關注程度')}>{data.settings.priorities.map(p=><option key={p}>{p}</option>)}</select></div><div className="field"><label>分類</label><select value={task.category} onChange={e=>update(t=>{t.category=e.target.value;},'修改分類')}>{data.settings.taskCategories.map(c=><option key={c}>{c}</option>)}</select></div><div className="field"><label>事項內容</label><textarea value={task.description} onChange={e=>update(t=>{t.description=e.target.value;},'修改事項內容')} /></div><div className="field"><label>目前狀態</label><textarea value={task.status} onChange={e=>update(t=>{t.status=e.target.value;},'修改狀態')} /></div><div className="field"><label>預計完成日期</label><input type="date" value={task.expectedDate} onChange={e=>update(t=>{t.expectedDate=e.target.value;},'修改預計完成日期')} /></div><div className="field"><label>涉及部門</label><select multiple className="multi" value={task.departments} onChange={e=>update(t=>{t.departments=Array.from(e.currentTarget.selectedOptions).map(o=>o.value);},'修改涉及部門')}>{data.settings.departments.map(d=><option key={d}>{d}</option>)}</select></div><div className="field"><label>經管/負責人</label><select multiple className="multi" value={task.ownerUserIds} onChange={e=>update(t=>{t.ownerUserIds=Array.from(e.currentTarget.selectedOptions).map(o=>o.value);},'修改負責人')}>{data.users.filter(u=>u.isActive).map(u=><option key={u.id} value={u.id}>{u.department}｜{u.name}</option>)}</select></div><div className="field"><label>結案</label><button className={task.isClosed?'btn ghost':'btn green'} onClick={()=>update(t=>{t.isClosed=!t.isClosed;t.closedDate=t.isClosed?todayDate():'';t.closedBy=t.isClosed?currentUser.id:'';}, task.isClosed?'重開事項':'結案事項')}>{task.isClosed?'重開':'標記結案'}</button><label><input type="checkbox" checked={task.isAware} onChange={e=>update(t=>{t.isAware=e.target.checked;},'修改知曉標記')} /> 需知曉</label></div></div><QuickStatus onSave={addStatus}/><h3>狀態紀錄</h3><div className="table-wrap"><table className="compact"><tbody>{task.statusLogs.map(l=><tr key={l.id}><td>{fmt(l.at)}</td><td>{l.by}</td><td>{l.text}</td></tr>)}</tbody></table></div></div></div>;
-}
-function QuickStatus({onSave}:{onSave:(s:string)=>void}){const [s,setS]=useState('');return <div className="toolbar no-print"><input style={{flex:1}} placeholder="現場快速更新狀態..." value={s} onChange={e=>setS(e.target.value)}/><button className="btn primary" onClick={()=>{if(s.trim()){onSave(s);setS('');}}}>加入狀態紀錄</button></div>}
-function MeetingPanel({ data, visibleVessels, currentUser, commit }: { data:AppData; visibleVessels:Vessel[]; currentUser:UserAccount; commit:any }) {
-  const [m,setM]=useState({subject:'臨時會議',meetingDate:todayDate(),vessels:[] as string[],reason:'',departments:[] as string[],resolution:'',expectedDate:todayDate(),priority:'中' as TaskPriority});
-  const save=()=>{ if(!m.reason||!m.resolution) return alert('請填寫召開緣由與決議'); const id=uid('meet'); commit((d:AppData)=>{ const meeting:TemporaryMeeting={id,...m,createdBy:currentUser.id,createdAt:nowIso()}; d.meetings.unshift(meeting); m.vessels.forEach(vesselId=>d.tasks.unshift({id:uid('task'),vesselId,priority:m.priority,isAware:true,category:'臨時會議決議',description:`${m.subject}：${m.reason}`,status:m.resolution,expectedDate:m.expectedDate,departments:m.departments,ownerUserIds:[],isClosed:false,createdBy:currentUser.id,updatedBy:currentUser.id,createdAt:nowIso(),updatedAt:nowIso(),statusLogs:[{id:uid('log'),at:nowIso(),by:currentUser.name,text:m.resolution}]})); },'保存臨時會議','meeting',id,m.subject); alert('臨時會議已保存並轉入跟進事項'); };
-  return <section className="panel"><h2>臨時會議入口</h2><div className="grid cols-3"><div className="field"><label>會議主題</label><input value={m.subject} onChange={e=>setM({...m,subject:e.target.value})}/></div><div className="field"><label>召開日期</label><input type="date" value={m.meetingDate} onChange={e=>setM({...m,meetingDate:e.target.value})}/></div><div className="field"><label>預計完成日期</label><input type="date" value={m.expectedDate} onChange={e=>setM({...m,expectedDate:e.target.value})}/></div><div className="field"><label>涉及船舶</label><select multiple className="multi" value={m.vessels} onChange={e=>setM({...m,vessels:Array.from(e.currentTarget.selectedOptions).map(o=>o.value)})}>{visibleVessels.map(v=><option key={v.id} value={v.id}>{displayVessel(v)}</option>)}</select></div><div className="field"><label>涉及部門</label><select multiple className="multi" value={m.departments} onChange={e=>setM({...m,departments:Array.from(e.currentTarget.selectedOptions).map(o=>o.value)})}>{data.settings.departments.map(d=><option key={d}>{d}</option>)}</select></div><div className="field"><label>關注程度</label><select value={m.priority} onChange={e=>setM({...m,priority:e.target.value as TaskPriority})}>{data.settings.priorities.map(p=><option key={p}>{p}</option>)}</select></div><div className="field"><label>會議召開緣由</label><textarea value={m.reason} onChange={e=>setM({...m,reason:e.target.value})}/></div><div className="field"><label>決議及追蹤要求</label><textarea value={m.resolution} onChange={e=>setM({...m,resolution:e.target.value})}/></div></div><button className="btn primary" onClick={save}>保存臨時會議並生成跟進事項</button></section>;
-}
-function AgendaPanel({ data, visibleVessels, user, selected, setSelected, commit, onPrint }: { data:AppData; visibleVessels:Vessel[]; user:UserAccount; selected:string[]; setSelected:(v:string[])=>void; commit:any; onPrint:()=>void }) {
-  const vessels=visibleVessels.filter(v=>selected.includes(v.id)); const toggle=(id:string)=>setSelected(selected.includes(id)?selected.filter(x=>x!==id):[...selected,id]);
-  const save=()=>{ const vesselIds=selected.filter(id=>visibleVessels.some(v=>v.id===id)); const id=uid('agenda'); commit((d:AppData)=>{d.agendaReports.unshift({id,title:'早會船舶動態與議程清單',vesselIds,createdBy:user.id,createdAt:nowIso(),taskCount:d.tasks.filter(t=>vesselIds.includes(t.vesselId)).length});},'保存會議議程紀錄','agenda',id,`${vesselIds.length} 艘船`); alert('已保存會議議程紀錄；日後檢視會使用目前最新資料。'); };
-  return <section className="panel"><div className="panel-title no-print"><h2>保存會議議程 / PDF</h2><div><button className="btn ghost small" onClick={()=>setSelected(visibleVessels.map(v=>v.id))}>全選船舶</button> <button className="btn ghost small" onClick={()=>setSelected([])}>清空</button> <button className="btn green" onClick={save}>保存會議議程</button> <button className="btn primary" onClick={onPrint}>導出 PDF</button></div></div><div className="filters no-print">{visibleVessels.map(v=><button key={v.id} className={`chip ${selected.includes(v.id)?'on':''}`} onClick={()=>toggle(v.id)}>{v.shortName}</button>)}</div><h2>早會船舶動態與議程清單</h2><p>船舶數：{vessels.length}｜事項數：{data.tasks.filter(t=>selected.includes(t.vesselId)).length}｜製表：{user.name}</p><div className="table-wrap"><table className="compact"><thead><tr><th>船舶</th><th>位置/速度</th><th>港口/貨物</th><th>動態與備註</th><th>未結事項</th></tr></thead><tbody>{vessels.map(v=><tr key={v.id}><td>{displayVessel(v)}<br/>{v.shipType}</td><td>{v.position.location}<br/>{v.position.speedKnots} kn</td><td>{v.position.lastPort} → {v.position.nextPort}<br/>{v.cargo.name}｜{v.cargo.quantity}</td><td>{v.note.recentDynamics || '-'}<br/><span className="muted">{v.position.manualRemark}</span></td><td>{data.tasks.filter(t=>t.vesselId===v.id&&!t.isClosed).map(t=><div key={t.id}><span className={priorityClass(t.priority)}>{t.priority}</span> {t.description}｜{t.status}</div>)}</td></tr>)}</tbody></table></div></section>;
-}
-function Management({ data, currentUser, setData, commit }: { data:AppData; currentUser:UserAccount; setData:React.Dispatch<React.SetStateAction<AppData>>; commit:any }) {
-  const [newPerson,setNewPerson]=useState({department:data.settings.departments[0]||'',name:'',username:'',role:'operator' as UserRole,password:'123456'}); const [newV,setNewV]=useState({name:'',shortName:'',fullName:'',shipType:'',fleetCategory:'tanker fleet'}); const [sitePw,setSitePw]=useState(''); const [cfg,setCfg]=useState<SupabaseConfig>({supabaseUrl:'',supabaseAnonKey:'',workspaceKey:'ship-dynamics-main',tableName:'ship_dynamics_app_state'});
-  const owner=isOwner(currentUser); const updateUser=(id:string,fn:(u:UserAccount)=>void,detail:string)=>commit((d:AppData)=>{const u=d.users.find(x=>x.id===id)!; fn(u); u.updatedAt=nowIso();},'更新人員','user',id,detail);
-  const resetPw=async(id:string,pw:string)=>{ if(!pw) return; const hash=await sha256(pw); updateUser(id,u=>{u.passwordHash=hash;},'重設密碼'); };
-  return <div><section className="panel"><h2>管理中心</h2><p className="muted">Owner 可管理人員、管理員密碼、進站密碼和 Supabase；Owner/管理員可增減船舶與設定經管船舶。操作員不得進入此頁。</p></section><section className="panel"><h3>人員與權限</h3>{owner?<><div className="grid cols-5"><input placeholder="部門" value={newPerson.department} onChange={e=>setNewPerson({...newPerson,department:e.target.value})}/><input placeholder="姓名" value={newPerson.name} onChange={e=>setNewPerson({...newPerson,name:e.target.value})}/><input placeholder="用戶名" value={newPerson.username} onChange={e=>setNewPerson({...newPerson,username:e.target.value})}/><select value={newPerson.role} onChange={e=>setNewPerson({...newPerson,role:e.target.value as UserRole})}><option value="operator">操作員</option><option value="admin">管理員</option><option value="owner">Owner</option></select><button className="btn primary" onClick={async()=>{if(!newPerson.name)return;const hash=await sha256(newPerson.password||'123456');const id=uid('user');commit((d:AppData)=>{d.users.push({id,department:newPerson.department,name:newPerson.name,username:newPerson.username||newPerson.name,role:newPerson.role,passwordHash:hash,isActive:true,managedVesselIds:[],createdAt:nowIso(),updatedAt:nowIso()}); if(!d.settings.departments.includes(newPerson.department)) d.settings.departments.push(newPerson.department);},'新增人員','user',id,newPerson.name);}}>新增人員</button></div><div className="table-wrap"><table className="compact"><thead><tr><th>部門</th><th>姓名</th><th>用戶名</th><th>等級</th><th>經管船舶</th><th>密碼</th><th>狀態</th></tr></thead><tbody>{data.users.filter(u=>u.isActive).map(u=><tr key={u.id}><td><input value={u.department} onChange={e=>updateUser(u.id,x=>x.department=e.target.value,'修改部門')}/></td><td><input value={u.name} onChange={e=>updateUser(u.id,x=>x.name=e.target.value,'修改姓名')}/></td><td><input value={u.username} onChange={e=>updateUser(u.id,x=>x.username=e.target.value,'修改用戶名')}/></td><td><select value={u.role} disabled={u.id===currentUser.id} onChange={e=>updateUser(u.id,x=>x.role=e.target.value as UserRole,'修改用戶等級')}><option value="operator">操作員</option><option value="admin">管理員</option><option value="owner">Owner</option></select></td><td><select multiple className="multi" value={u.managedVesselIds} onChange={e=>{const vesselIds=Array.from(e.currentTarget.selectedOptions).map(o=>o.value);updateUser(u.id,x=>x.managedVesselIds=vesselIds,'修改經管船舶')}}>{data.vessels.filter(v=>v.isActive).map(v=><option value={v.id} key={v.id}>{v.shortName}</option>)}</select></td><td><PasswordReset onSave={pw=>resetPw(u.id,pw)} /></td><td>{u.id===currentUser.id?<span className="muted">不可刪除自己</span>:<button className="btn red small" onClick={()=>updateUser(u.id,x=>x.isActive=false,'停用人員')}>停用</button>}</td></tr>)}</tbody></table></div></>:<AdminProfile currentUser={currentUser} updateUser={updateUser} resetPw={resetPw}/>}</section><section className="panel"><h3>船舶管理</h3><div className="grid cols-5"><input placeholder="中文名" value={newV.name} onChange={e=>setNewV({...newV,name:e.target.value})}/><input placeholder="簡寫" value={newV.shortName} onChange={e=>setNewV({...newV,shortName:e.target.value})}/><input placeholder="全稱" value={newV.fullName} onChange={e=>setNewV({...newV,fullName:e.target.value})}/><input placeholder="船種" value={newV.shipType} onChange={e=>setNewV({...newV,shipType:e.target.value})}/><button className="btn primary" onClick={()=>{if(!newV.fullName)return;const id=uid('vessel');commit((d:AppData)=>d.vessels.push({id,...newV,fleetTags:[newV.fleetCategory,newV.shipType],assignedUserIds:[],isActive:true,position:{source:'mock-smart-ship-api',location:'待接入',speedKnots:0,lastPort:'-',nextPort:'-',eta:'',updatedAt:nowIso(),manualRemark:''},cargo:{name:'',quantity:'',updatedAt:nowIso()},note:{statusList:[],recentDynamics:'',subsequentDynamics:'',updatedAt:nowIso()},createdAt:nowIso(),updatedAt:nowIso()} as Vessel),'新增船舶','vessel',id,newV.fullName)}}>新增船舶</button></div><div className="table-wrap"><table className="compact"><thead><tr><th>簡寫</th><th>船名</th><th>船種</th><th>指派經管人</th><th>操作</th></tr></thead><tbody>{data.vessels.filter(v=>v.isActive).map(v=><tr key={v.id}><td><input value={v.shortName} onChange={e=>commit((d:AppData)=>{d.vessels.find(x=>x.id===v.id)!.shortName=e.target.value},'修改船舶','vessel',v.id,'簡寫')}/></td><td><input value={v.fullName} onChange={e=>commit((d:AppData)=>{d.vessels.find(x=>x.id===v.id)!.fullName=e.target.value},'修改船舶','vessel',v.id,'全稱')}/></td><td><input value={v.shipType} onChange={e=>commit((d:AppData)=>{d.vessels.find(x=>x.id===v.id)!.shipType=e.target.value},'修改船種','vessel',v.id,'船種')}/></td><td><select multiple className="multi" value={v.assignedUserIds} onChange={e=>{const userIds=Array.from(e.currentTarget.selectedOptions).map(o=>o.value);commit((d:AppData)=>{d.vessels.find(x=>x.id===v.id)!.assignedUserIds=userIds},'指派經管船舶','vessel',v.id,'指派人員')}}>{data.users.filter(u=>u.isActive).map(u=><option value={u.id} key={u.id}>{u.name}</option>)}</select></td><td><button className="btn red small" onClick={()=>commit((d:AppData)=>{d.vessels.find(x=>x.id===v.id)!.isActive=false},'停用船舶','vessel',v.id,v.fullName)}>停用</button></td></tr>)}</tbody></table></div></section>{owner&&<section className="panel"><h3>Owner 設定</h3><div className="grid cols-3"><div className="field"><label>修改進站密碼</label><input type="password" value={sitePw} onChange={e=>setSitePw(e.target.value)}/><button className="btn primary" onClick={async()=>{const h=await sha256(sitePw);commit((d:AppData)=>{d.settings.sitePasswordHash=h},'修改進站密碼','setting','sitePassword','Owner 修改進站密碼');setSitePw('');}}>保存進站密碼</button></div><div className="field"><label>Supabase URL</label><input value={cfg.supabaseUrl} onChange={e=>setCfg({...cfg,supabaseUrl:e.target.value})}/><label>Anon public key</label><input value={cfg.supabaseAnonKey} onChange={e=>setCfg({...cfg,supabaseAnonKey:e.target.value})}/></div><div className="field"><label>Workspace / Table</label><input value={cfg.workspaceKey} onChange={e=>setCfg({...cfg,workspaceKey:e.target.value})}/><input value={cfg.tableName} onChange={e=>setCfg({...cfg,tableName:e.target.value})}/><button className="btn primary" onClick={()=>{saveSupabaseConfig(cfg);alert('Supabase 設定已保存於本機；正式部署請更新 public/supabase-config.js 或 GitHub Secret。')}}>保存 Supabase 設定</button></div></div></section>}<section className="panel"><h3>操作紀錄</h3><div className="table-wrap"><table className="compact"><tbody>{data.auditLogs.slice(0,80).map(a=><tr key={a.id}><td>{fmt(a.at)}</td><td>{a.actorName}｜{roleLabel(a.actorRole)}</td><td>{a.action}</td><td>{a.entityType}</td><td>{a.detail}</td></tr>)}</tbody></table></div></section></div>;
-}
-function PasswordReset({onSave}:{onSave:(pw:string)=>void}){const [pw,setPw]=useState('');return <div className="toolbar"><span className="muted">已設定｜不可查看明文</span><input type="password" placeholder="新密碼" value={pw} onChange={e=>setPw(e.target.value)} style={{width:100}}/><button className="btn small ghost" onClick={()=>{onSave(pw);setPw('')}}>重設</button></div>}
-function AdminProfile({currentUser,updateUser,resetPw}:{currentUser:UserAccount;updateUser:any;resetPw:any}){return <div className="grid cols-3"><div className="field"><label>姓名</label><input value={currentUser.name} onChange={e=>updateUser(currentUser.id,(u:UserAccount)=>u.name=e.target.value,'管理員修改自己姓名')}/></div><div className="field"><label>用戶名</label><input value={currentUser.username} onChange={e=>updateUser(currentUser.id,(u:UserAccount)=>u.username=e.target.value,'管理員修改自己用戶名')}/></div><div className="field"><label>自己的密碼</label><PasswordReset onSave={pw=>resetPw(currentUser.id,pw)}/></div></div>}

@@ -1,6 +1,6 @@
-import React from 'react';
+
 import type { AppData, TaskItem, UserAccount, Vessel } from './types';
-import { daysDiff, nowIso, todayDate, uid, yesterdayDate } from './utils';
+import { daysDiff, nowIso, uid, yesterdayDate } from './utils';
 
 type Props = {
   data: AppData;

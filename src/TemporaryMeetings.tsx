@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppData,
   MeetingVesselScopeMode,
@@ -8,7 +8,7 @@ import type {
   UserAccount,
   Vessel,
 } from './types';
-import { nowIso, roleLabel, todayDate, uid } from './utils';
+import { canManage, nowIso, roleLabel, todayDate, uid } from './utils';
 
 type Props = {
   data: AppData;
@@ -68,14 +68,19 @@ const draftFrom = (meeting?: TemporaryMeeting): MeetingDraft => meeting ? {
 } : blankDraft();
 
 export default function TemporaryMeetingsPage({ data, visibleVessels, currentUser, commit }: Props) {
-  const [selectedId, setSelectedId] = useState(data.meetings[0]?.id || '');
-  const [creating, setCreating] = useState(!data.meetings.length);
-  const [draft, setDraft] = useState<MeetingDraft>(() => draftFrom(data.meetings[0]));
+  const editable = canManage(currentUser);
+  const visibleIds = new Set(visibleVessels.map(vessel => vessel.id));
+  const appliesToUser = (meeting: TemporaryMeeting) => editable || scopeModeOf(meeting)==='all' || (scopeModeOf(meeting)==='types' ? visibleVessels.some(vessel=>(meeting.vesselTypeScopes||[]).includes(vessel.shipType)) : meeting.vessels.some(id=>visibleIds.has(id)));
+  const initialMeeting = data.meetings.find(appliesToUser);
+  const [selectedId, setSelectedId] = useState(initialMeeting?.id || '');
+  const [creating, setCreating] = useState(editable && !initialMeeting);
+  const [draft, setDraft] = useState<MeetingDraft>(() => draftFrom(initialMeeting));
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'全部' | TemporaryMeetingStatus>('全部');
   const [scopeFilter, setScopeFilter] = useState<ScopeFilter>('any');
   const [typeFilter, setTypeFilter] = useState('all');
   const [notice, setNotice] = useState('');
+  const savingRef = useRef(false);
 
   const selected = data.meetings.find(meeting => meeting.id === selectedId);
   const users = useMemo(() => Object.fromEntries(data.users.map(user => [user.id, user])), [data.users]);
@@ -91,7 +96,8 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     return Array.from(new Set(meeting.vessels.map(id => vesselById[id]?.shipType).filter((value): value is string => Boolean(value))));
   };
 
-  const filtered = data.meetings.filter(meeting => {
+  const accessibleMeetings = data.meetings.filter(appliesToUser);
+  const filtered = accessibleMeetings.filter(meeting => {
     const q = query.trim().toLowerCase();
     if (statusFilter !== '全部' && statusOf(meeting) !== statusFilter) return false;
     if (scopeFilter !== 'any' && scopeModeOf(meeting) !== scopeFilter) return false;
@@ -126,6 +132,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     setDraft(draftFrom(meeting));
   };
   const startNew = () => {
+    if (!editable) return alert('操作員僅可檢視適用於指派船舶的臨時會議');
     setCreating(true);
     setSelectedId('');
     setDraft(blankDraft());
@@ -148,9 +155,13 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   }));
 
   const save = () => {
+    if (!editable) return alert('您無權修改臨時會議');
+    if (savingRef.current) return;
     if (!draft.subject.trim()) return alert('請填寫會議主題');
     if (!draft.reason.trim()) return alert('請填寫召開緣由');
     if (draft.vesselScopeMode === 'types' && !draft.vesselTypeScopes.length) return alert('請至少選擇一個船舶類型');
+    if (!resolvedVesselIds.length) return alert('請至少選擇一艘船舶');
+    savingRef.current = true;
     const id = creating ? uid('meet') : selectedId;
     const at = nowIso();
     const savedDraft: MeetingDraft = {
@@ -160,11 +171,18 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     };
     commit(draftData => {
       let meeting = draftData.meetings.find(item => item.id === id);
+      const wasNew = !meeting;
+      const mayGenerate = wasNew || !meeting?.resolution.trim() || draftData.tasks.some(task => task.sourceMeetingId === id);
+      const linkedVesselIds = new Set(draftData.tasks.filter(task => task.sourceMeetingId === id).map(task => task.vesselId));
       if (!meeting) {
         meeting = { id, ...savedDraft, createdBy: currentUser.id, createdAt: at, updatedAt: at };
         draftData.meetings.unshift(meeting);
-        if (savedDraft.resolution.trim()) savedDraft.vessels.forEach(vesselId => draftData.tasks.unshift({
+      } else {
+        Object.assign(meeting, { ...savedDraft, updatedAt: at });
+      }
+      if (savedDraft.resolution.trim() && mayGenerate) savedDraft.vessels.filter(vesselId=>!linkedVesselIds.has(vesselId)).forEach(vesselId => draftData.tasks.unshift({
           id: uid('task'),
+          sourceMeetingId: id,
           vesselId,
           priority: savedDraft.priority,
           isAware: true,
@@ -181,27 +199,25 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
           updatedAt: at,
           statusLogs: [{ id: uid('log'), at, by: currentUser.name, text: savedDraft.resolution }],
         }));
-      } else {
-        Object.assign(meeting, { ...savedDraft, updatedAt: at });
-      }
     }, creating ? '新增臨時會議' : '更新臨時會議', 'meeting', id, `${draft.subject.trim()}｜${scopeModeLabel(draft.vesselScopeMode)}`);
     setDraft(savedDraft);
     setCreating(false);
     setSelectedId(id);
     setNotice(`✓ ${creating ? '臨時會議已建立' : '臨時會議已保存'}`);
+    window.setTimeout(()=>{ savingRef.current=false; },0);
   };
 
-  const counts = Object.fromEntries(statuses.map(status => [status, data.meetings.filter(meeting => statusOf(meeting) === status).length])) as Record<TemporaryMeetingStatus, number>;
+  const counts = Object.fromEntries(statuses.map(status => [status, accessibleMeetings.filter(meeting => statusOf(meeting) === status).length])) as Record<TemporaryMeetingStatus, number>;
   const creator = selected ? users[selected.createdBy] : undefined;
 
   return <section className="temporary-meeting-page">
     <div className="page-heading">
       <div><h1>臨時會議</h1><p>建立突發議題會議，可按全部船舶、船舶類型或逐船設定範圍。</p></div>
-      <div className="heading-actions no-print"><button className="btn primary" onClick={startNew}>＋ 新增臨時會議</button></div>
+      <div className="heading-actions no-print">{editable?<button className="btn primary" onClick={startNew}>＋ 新增臨時會議</button>:<span className="badge">操作員唯讀</span>}</div>
     </div>
     <div className="temporary-meeting-workspace">
       <aside className="meeting-column temporary-list-column">
-        <div className="column-title"><div><h2>基本資訊清單</h2><span>{filtered.length} 筆</span></div><button className="btn small primary" onClick={startNew}>新增</button></div>
+        <div className="column-title"><div><h2>基本資訊清單</h2><span>{filtered.length} 筆</span></div>{editable&&<button className="btn small primary" onClick={startNew}>新增</button>}</div>
         <div className="temporary-list-tools">
           <input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜尋主題、緣由、船型…" />
           <select aria-label="會議狀態篩選" value={statusFilter} onChange={event => setStatusFilter(event.target.value as typeof statusFilter)}><option>全部</option>{statuses.map(status => <option key={status}>{status}</option>)}</select>
@@ -218,8 +234,8 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       </aside>
 
       <section className="meeting-column temporary-editor-column">
-        <div className="column-title"><div><h2>{creating ? '新增臨時會議' : draft.subject || '會議資料'}</h2><span>{creating ? '建立基本資訊與會議範圍' : '修改後請按保存變更'}</span></div><button className="btn green" onClick={save}>{creating ? '建立會議' : '保存變更'}</button></div>
-        <div className="column-scroll temporary-form">
+        <div className="column-title"><div><h2>{creating ? '新增臨時會議' : draft.subject || '會議資料'}</h2><span>{editable?(creating ? '建立基本資訊與會議範圍' : '修改後請按保存變更'):'唯讀檢視'}</span></div>{editable&&<button className="btn green" onClick={save}>{creating ? '建立會議' : '保存變更'}</button>}</div>
+        <fieldset disabled={!editable} className={`column-scroll temporary-form ${!editable?'readonly-form':''}`} aria-readonly={!editable}>
           <div className="grid cols-3">
             <div className="field span-2"><label>會議主題</label><input value={draft.subject} onChange={event => setDraft({ ...draft, subject: event.target.value })} placeholder="例如：颱風避風臨時協調會" /></div>
             <div className="field"><label>狀態</label><select value={draft.status} onChange={event => setDraft({ ...draft, status: event.target.value as TemporaryMeetingStatus })}>{statuses.map(status => <option key={status}>{status}</option>)}</select></div>
@@ -248,7 +264,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
           </div>
 
           <div className="temporary-picker"><div className="temporary-picker-title"><b>涉及部門</b><span>{draft.departments.length} 個</span></div><div className="temporary-chip-grid departments">{data.settings.departments.map(department => <button type="button" key={department} className={`chip ${draft.departments.includes(department) ? 'on' : ''}`} onClick={() => toggleDepartment(department)}>{department}</button>)}</div></div>
-        </div>
+        </fieldset>
       </section>
 
       <aside className="meeting-column temporary-summary-column">

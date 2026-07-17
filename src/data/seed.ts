@@ -1,4 +1,5 @@
 import type { AppData, UserRole, ShipStatus, TaskPriority } from '../types';
+import { localDate } from '../utils';
 
 export const DEFAULT_USER_PASSWORD='123456';
 export const DEFAULT_SITE_PASSWORD='ship2026';
@@ -725,7 +726,7 @@ const ports = ['高雄', '麥寮', '新加坡', '仁川', '東京', '上海', '�
 export function createInitialData(): AppData {
   const now = new Date();
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0,10);
+  const nextWeek = localDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
   const users = rawPersonnel.map((p, index) => ({
     id: `u${String(index + 1).padStart(3, '0')}`,
     department: p.department,
@@ -754,7 +755,7 @@ export function createInitialData(): AppData {
       speedKnots: Number((10 + (index % 8) + 0.4).toFixed(1)),
       lastPort: ports[(index + 2) % ports.length],
       nextPort: ports[(index + 4) % ports.length],
-      eta: new Date(Date.now() + (index % 14 + 1) * 24 * 60 * 60 * 1000).toISOString().slice(0,10),
+      eta: localDate(new Date(Date.now() + (index % 14 + 1) * 24 * 60 * 60 * 1000)),
       updatedAt: now.toISOString(),
       manualRemark: '',
     },

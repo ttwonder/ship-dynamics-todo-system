@@ -79,6 +79,7 @@ export interface TaskItem {
   isClosed: boolean;
   closedDate?: string;
   closedBy?: string;
+  sourceMeetingId?: string;
   createdBy: string;
   updatedBy: string;
   createdAt: string;

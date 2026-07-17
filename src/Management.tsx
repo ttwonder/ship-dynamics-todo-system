@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { AppData, UserAccount, UserRole, Vessel } from './types';
-import { fetchCloudData, getSupabaseConfig, saveCloudData, saveSupabaseConfig, type SupabaseConfig } from './cloud';
+import { getSupabaseConfig, saveSupabaseConfig, type SupabaseConfig } from './cloud';
 import { isOwner, nowIso, roleLabel, sha256, uid } from './utils';
 
 type Section = 'directory' | 'people' | 'vessels' | 'roles' | 'owner' | 'audit';
@@ -11,7 +11,6 @@ type VesselDraft = Pick<Vessel, 'name' | 'shortName' | 'fullName' | 'shipType' |
 type Props = {
   data: AppData;
   currentUser: UserAccount;
-  setData: React.Dispatch<React.SetStateAction<AppData>>;
   commit: (mutate: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => void;
 };
 
@@ -24,7 +23,7 @@ const userDraft = (u?: UserAccount, department = ''): UserDraft => u ? {
   isActive: u.isActive,
   managedVesselIds: [...(u.managedVesselIds || [])],
   password: '',
-} : { department, name: '', username: '', role: 'operator', isActive: true, managedVesselIds: [], password: '123456' };
+} : { department, name: '', username: '', role: 'operator', isActive: true, managedVesselIds: [], password: '' };
 const vesselDraft = (v?: Vessel): VesselDraft => v ? {
   name: v.name,
   shortName: v.shortName,
@@ -35,7 +34,7 @@ const vesselDraft = (v?: Vessel): VesselDraft => v ? {
   assignedUserIds: [...(v.assignedUserIds || [])],
 } : { name: '', shortName: '', fullName: '', shipType: '', fleetCategory: 'tanker fleet', isActive: true, assignedUserIds: [] };
 
-export default function ManagementView({ data, currentUser, setData, commit }: Props) {
+export default function ManagementView({ data, currentUser, commit }: Props) {
   const owner = isOwner(currentUser);
   const activeUsers = useMemo(() => data.users.filter(u => u.isActive), [data.users]);
   const activeVessels = useMemo(() => data.vessels.filter(v => v.isActive), [data.vessels]);
@@ -108,6 +107,7 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
 
   const savePerson = async () => {
     if (!personDraft.name.trim() || !personDraft.username.trim()) return alert('請填寫姓名與用戶名');
+    if (creatingUser && !personDraft.password.trim()) return alert('請為新帳號設定密碼');
     const duplicate = data.users.some(u => u.id !== selectedUserId && u.username.trim().toLowerCase() === personDraft.username.trim().toLowerCase());
     if (duplicate) return alert('用戶名已存在');
     if (!owner) {
@@ -126,7 +126,7 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
     const selected = data.users.find(u => u.id === selectedUserId);
     if (!creatingUser && !selected) return;
     if (selected?.id === currentUser.id && personDraft.role !== 'owner') return alert('目前登入的 Owner 不可降級自己');
-    const passwordHash = personDraft.password ? await sha256(personDraft.password) : selected?.passwordHash || await sha256('123456');
+    const passwordHash = personDraft.password ? await sha256(personDraft.password) : selected!.passwordHash;
     const managedIds = activeVessels.filter(v => personDraft.managedVesselIds.includes(v.id)).map(v => v.id);
     commit(d => {
       let user = d.users.find(u => u.id === id);
@@ -163,7 +163,6 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
   const saveVessel = () => {
     if (!shipDraft.shortName.trim() && !shipDraft.name.trim()) return alert('請填寫船名或簡稱');
     const id = creatingVessel ? uid('vessel') : selectedVesselId;
-    const selected = data.vessels.find(v => v.id === selectedVesselId);
     const assignedIds = activeUsers.filter(u => shipDraft.assignedUserIds.includes(u.id)).map(u => u.id);
     commit(d => {
       let vessel = d.vessels.find(v => v.id === id);
@@ -244,7 +243,7 @@ export default function ManagementView({ data, currentUser, setData, commit }: P
 
       {section === 'roles' && <><div className="management-master"><div className="management-master-heading"><div><h2>角色權限</h2><small>固定權限層級</small></div></div>{(['owner','admin','operator'] as UserRole[]).map(role => <button key={role} className="management-list-item" onClick={() => setDirectorySelection(role)}><span className="management-avatar">{roleLabel(role).slice(0,1)}</span><span><b>{roleLabel(role)}</b><small>{activeUsers.filter(u => u.role === role).length} 人</small></span></button>)}</div><div className="management-detail"><RoleOverview/></div></>}
 
-      {section === 'owner' && owner && <><div className="management-master"><div className="management-master-heading"><div><h2>Owner 與雲端</h2><small>敏感設定集中管理</small></div></div><div className="management-list"><button className={`management-list-item ${ownerPanel === 'gate' ? 'active' : ''}`} onClick={() => setOwnerPanel('gate')}><span className="management-avatar">🔐</span><span><b>進站密碼</b><small>網站第一道存取門</small></span></button><button className={`management-list-item ${ownerPanel === 'supabase' ? 'active' : ''}`} onClick={() => setOwnerPanel('supabase')}><span className="management-avatar">☁</span><span><b>Supabase 設定</b><small>工作區與資料表</small></span></button><button className={`management-list-item ${ownerPanel === 'cloud' ? 'active' : ''}`} onClick={() => setOwnerPanel('cloud')}><span className="management-avatar">↕</span><span><b>雲端資料</b><small>載入或保存主資料</small></span></button></div></div><div className="management-detail"><OwnerSettings panel={ownerPanel} sitePassword={sitePassword} setSitePassword={setSitePassword} config={config} setConfig={setConfig} data={data} setData={setData} commit={commit}/></div></>}
+      {section === 'owner' && owner && <><div className="management-master"><div className="management-master-heading"><div><h2>Owner 與雲端</h2><small>敏感設定集中管理</small></div></div><div className="management-list"><button className={`management-list-item ${ownerPanel === 'gate' ? 'active' : ''}`} onClick={() => setOwnerPanel('gate')}><span className="management-avatar">🔐</span><span><b>進站密碼</b><small>網站第一道存取門</small></span></button><button className={`management-list-item ${ownerPanel === 'supabase' ? 'active' : ''}`} onClick={() => setOwnerPanel('supabase')}><span className="management-avatar">☁</span><span><b>Supabase 設定</b><small>工作區與資料表</small></span></button><button className={`management-list-item ${ownerPanel === 'cloud' ? 'active' : ''}`} onClick={() => setOwnerPanel('cloud')}><span className="management-avatar">↕</span><span><b>雲端資料</b><small>載入或保存主資料</small></span></button></div></div><div className="management-detail"><OwnerSettings panel={ownerPanel} sitePassword={sitePassword} setSitePassword={setSitePassword} config={config} setConfig={setConfig} data={data} commit={commit}/></div></>}
 
       {section === 'audit' && <><div className="management-master"><MasterHeader title="操作紀錄" count={data.auditLogs.length} query={query} setQuery={setQuery}/><div className="management-list">{data.auditLogs.filter(log => !query.trim() || `${log.actorName} ${log.action} ${log.detail}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0,100).map(log => <button key={log.id} className={`management-list-item ${selectedAudit?.id === log.id ? 'active' : ''}`} onClick={() => setAuditId(log.id)}><span className="management-avatar audit">▤</span><span><b>{log.action}</b><small>{log.actorName}｜{new Date(log.at).toLocaleString()}</small></span></button>)}</div></div><div className="management-detail">{selectedAudit ? <div className="management-editor"><EditorHeading title={selectedAudit.action} subtitle="操作紀錄詳細資料"/><div className="management-summary-grid"><Summary label="操作者" value={selectedAudit.actorName}/><Summary label="角色" value={roleLabel(selectedAudit.actorRole)}/><Summary label="時間" value={new Date(selectedAudit.at).toLocaleString()}/></div><EditorSection title="內容"><p>{selectedAudit.detail || '無補充內容'}</p><p className="muted">{selectedAudit.entityType}｜{selectedAudit.entityId}</p></EditorSection></div>:<EmptyDetail text="目前沒有操作紀錄"/>}</div></>}
     </div>
@@ -289,9 +288,9 @@ function AssignmentPicker({ query, setQuery, count, onAll, onClear, children }: 
 }
 function RoleOverview() { return <div className="management-editor"><EditorHeading title="角色權限" subtitle="固定三層權限，避免逐欄設定造成混亂"/><div className="management-role-cards"><article><b>Owner</b><p>管理所有人員、Owner 帳號、角色、船舶、進站密碼與 Supabase。</p></article><article><b>管理員</b><p>管理船舶與經管人員，可修改自己的帳號與密碼；不可管理 Owner。</p></article><article><b>操作員</b><p>只使用業務頁面；依船舶指派範圍查看與更新，不可進入管理中心。</p></article></div></div>; }
 
-function OwnerSettings({ panel, sitePassword, setSitePassword, config, setConfig, data, setData, commit }: { panel:'gate'|'supabase'|'cloud'; sitePassword:string; setSitePassword:(v:string)=>void; config:SupabaseConfig; setConfig:React.Dispatch<React.SetStateAction<SupabaseConfig>>; data:AppData; setData:React.Dispatch<React.SetStateAction<AppData>>; commit:Props['commit'] }) {
+function OwnerSettings({ panel, sitePassword, setSitePassword, config, setConfig, data, commit }: { panel:'gate'|'supabase'|'cloud'; sitePassword:string; setSitePassword:(v:string)=>void; config:SupabaseConfig; setConfig:React.Dispatch<React.SetStateAction<SupabaseConfig>>; data:AppData; commit:Props['commit'] }) {
   const saveGate = async () => { if (!sitePassword) return alert('請輸入新進站密碼'); const hash = await sha256(sitePassword); commit(d => { d.settings.sitePasswordHash = hash; }, '修改進站密碼', 'settings', 'site-password', 'Owner 更新進站密碼'); setSitePassword(''); alert('進站密碼已更新'); };
   if (panel === 'gate') return <div className="management-editor"><EditorHeading title="進站密碼" subtitle="網站載入後的第一道存取門"/><EditorSection title="更新密碼"><div className="management-password"><div><b>新進站密碼</b><small>只保存 SHA-256 雜湊，不保存明文。</small></div><input type="password" value={sitePassword} onChange={e => setSitePassword(e.target.value)} placeholder="輸入新密碼"/><button className="btn primary" onClick={saveGate}>保存</button></div></EditorSection></div>;
-  if (panel === 'supabase') return <div className="management-editor"><EditorHeading title="Supabase 設定" subtitle="設定保存於目前瀏覽器；部署版 public 設定仍具有優先權" actions={<button className="btn primary" onClick={() => { saveSupabaseConfig(config); alert('Supabase 瀏覽器設定已保存'); }}>保存設定</button>}/><EditorSection title="連線資訊"><div className="management-form one"><label>Project URL<input value={config.supabaseUrl} onChange={e => setConfig(prev => ({...prev,supabaseUrl:e.target.value}))}/></label><label>Anon key<input type="password" value={config.supabaseAnonKey} onChange={e => setConfig(prev => ({...prev,supabaseAnonKey:e.target.value}))}/></label><label>工作區<input value={config.workspaceKey} onChange={e => setConfig(prev => ({...prev,workspaceKey:e.target.value}))}/></label><label>資料表<input value={config.tableName || ''} onChange={e => setConfig(prev => ({...prev,tableName:e.target.value}))}/></label></div></EditorSection></div>;
-  return <div className="management-editor"><EditorHeading title="雲端資料" subtitle={`目前本機 revision ${data.revision}`}/><div className="management-cloud-actions"><article><b>載入雲端主資料</b><p>以 Supabase 現有資料替換目前瀏覽器資料。</p><button className="btn ghost" onClick={async () => { if (!confirm('確定載入雲端資料並替換目前瀏覽器內容？')) return; const cloud = await fetchCloudData(); if (!cloud) return alert('雲端沒有資料'); setData(cloud); alert(`已載入雲端 rev.${cloud.revision}`); }}>載入雲端</button></article><article><b>保存目前資料到雲端</b><p>將目前 revision {data.revision} 寫入 Supabase 主資料。</p><button className="btn primary" onClick={async () => { if (!confirm('確定以目前資料更新雲端主資料？')) return; await saveCloudData(data); alert('雲端資料已保存'); }}>保存雲端</button></article></div></div>;
+  if (panel === 'supabase') return <div className="management-editor"><EditorHeading title="Supabase 設定" subtitle="設定保存於目前瀏覽器；部署版 public 設定仍具有優先權" actions={<button className="btn primary" onClick={() => { saveSupabaseConfig(config); window.location.reload(); }}>保存設定並重新載入</button>}/><EditorSection title="連線資訊"><div className="management-form one"><label>Project URL<input value={config.supabaseUrl} onChange={e => setConfig(prev => ({...prev,supabaseUrl:e.target.value}))}/></label><label>Anon key<input type="password" value={config.supabaseAnonKey} onChange={e => setConfig(prev => ({...prev,supabaseAnonKey:e.target.value}))}/></label><label>工作區<input value={config.workspaceKey} onChange={e => setConfig(prev => ({...prev,workspaceKey:e.target.value}))}/></label><label>資料表<input value={config.tableName || ''} onChange={e => setConfig(prev => ({...prev,tableName:e.target.value}))}/></label></div></EditorSection></div>;
+  return <div className="management-editor"><EditorHeading title="雲端資料" subtitle={`目前本機 revision ${data.revision}`}/><div className="management-cloud-actions"><article><b>同步與保存統一由頁首執行</b><p>請使用頁首「同步最新」或「保存修改」。系統會先檢查啟動版本與雲端 revision；偵測分歧時會阻止覆寫。</p></article></div></div>;
 }

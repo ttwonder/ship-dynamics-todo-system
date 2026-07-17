@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const morning = readFileSync(new URL('../src/MorningWorkspace.tsx', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 
 const requiredAppContracts = [
@@ -9,7 +10,7 @@ const requiredAppContracts = [
   ['待辦總表 navigation', '待辦總表'],
   ['報告中心 navigation', '報告中心'],
   ['fleet card grid', 'fleet-card-grid'],
-  ['morning meeting workspace', 'morning-workspace'],
+
   ['report preview modal', 'report-preview-modal'],
   ['selected vessel count', 'selected-vessel-count'],
 ];
@@ -24,6 +25,7 @@ const requiredCssContracts = [
 for (const [label, needle] of requiredAppContracts) {
   assert.ok(app.includes(needle), `Missing accepted hybrid UI contract: ${label}`);
 }
+assert.ok(morning.includes('morning-workspace'), 'Missing accepted hybrid UI contract: morning meeting workspace');
 for (const [label, needle] of requiredCssContracts) {
   assert.ok(css.includes(needle), `Missing accepted hybrid style contract: ${label}`);
 }
