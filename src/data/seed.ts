@@ -1,5 +1,6 @@
 import type { AppData, UserRole, ShipStatus, TaskPriority } from '../types';
 import { localDate } from '../utils';
+import { DEFAULT_ROLE_PERMISSIONS } from '../permissions';
 
 export const DEFAULT_USER_PASSWORD='123456';
 export const DEFAULT_SITE_PASSWORD='ship2026';
@@ -719,7 +720,7 @@ const rawVessels = [
 export const DEPARTMENTS = Array.from(new Set(rawPersonnel.map(p => p.department)));
 export const TASK_CATEGORIES = ['人員', '物料', '證書', '檢驗', '內外部檢查', '缺失驗證', 'vetting', '貨品', '港口安排', '臨時會議決議'];
 export const VESSEL_STATUSES: ShipStatus[] = ['裝載', '空載', '去卸貨', '去裝貨', '等待order'];
-export const PRIORITIES: TaskPriority[] = ['高', '中', '低'];
+export const PRIORITIES: TaskPriority[] = ['急', '高', '中', '低'];
 
 const ports = ['高雄', '麥寮', '新加坡', '仁川', '東京', '上海', '香港', '馬尼拉', '釜山', '杜拜'];
 
@@ -753,14 +754,25 @@ export function createInitialData(): AppData {
       source: 'mock-smart-ship-api' as const,
       location: ports[index % ports.length],
       speedKnots: Number((10 + (index % 8) + 0.4).toFixed(1)),
+      navigationStatus: '航行' as const,
       lastPort: ports[(index + 2) % ports.length],
       nextPort: ports[(index + 4) % ports.length],
       eta: localDate(new Date(Date.now() + (index % 14 + 1) * 24 * 60 * 60 * 1000)),
+      etb: '',
+      etd: '',
       updatedAt: now.toISOString(),
       manualRemark: '',
     },
-    cargo: { name: index % 2 === 0 ? '待確認' : '空載', quantity: index % 2 === 0 ? 'TBA' : '-', updatedAt: now.toISOString() },
+    cargo: {
+      source: 'mock-smart-ship-api' as const,
+      loadStatus: index % 3 === 0 ? '滿載' as const : index % 2 === 0 ? '非空載' as const : '空載' as const,
+      name: index % 2 === 0 ? '待確認' : '',
+      quantity: index % 2 === 0 ? 'TBA' : '',
+      items: index % 2 === 0 ? [{ name: '待確認', quantity: 'TBA' }] : [],
+      updatedAt: now.toISOString(),
+    },
     note: { statusList: [], recentDynamics: '', subsequentDynamics: '', updatedAt: now.toISOString() },
+    weeklyAttention: [],
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   }));
@@ -769,6 +781,7 @@ export function createInitialData(): AppData {
     vesselId: v.id,
     priority: (index % 3 === 0 ? '高' : index % 3 === 1 ? '中' : '低') as TaskPriority,
     isAware: index % 2 === 0,
+    isAbnormal: index === 0,
     category: TASK_CATEGORIES[index % TASK_CATEGORIES.length],
     description: `${v.fullName} 早會跟進事項 ${index + 1}`,
     status: '昨日已更新，早會追蹤中',
@@ -791,6 +804,7 @@ export function createInitialData(): AppData {
       taskCategories: [...TASK_CATEGORIES],
       vesselStatuses: [...VESSEL_STATUSES],
       priorities: [...PRIORITIES],
+      rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),
       lastCloudSyncAt: '',
     },
     users,

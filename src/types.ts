@@ -1,6 +1,12 @@
 export type UserRole = 'owner' | 'admin' | 'operator';
-export type TaskPriority = '高' | '中' | '低';
+export type PermissionKey = 'viewAllVessels' | 'editBusinessContent' | 'createTasks' | 'closeTasks' | 'manageMeetings' | 'exportReports' | 'enterManagement' | 'manageUsers' | 'manageVessels' | 'viewAuditLogs' | 'manageRolePermissions' | 'manageSystemSettings';
+export type RolePermissions = Record<UserRole, Record<PermissionKey, boolean>>;
+export type TaskPriority = '急' | '高' | '中' | '低';
 export type ShipStatus = '裝載' | '空載' | '去卸貨' | '去裝貨' | '等待order';
+export type NavigationStatus = '航行' | '拋錨' | '停泊';
+export type LoadStatus = '空載' | '非空載' | '滿載';
+export type ScheduleKind = 'ETA' | 'ETB' | 'ETD';
+export type WeeklyAttentionKey = 'crew-operation' | 'bunkering-water' | 'materials-parts' | 'maintenance' | 'survey' | 'audit-inspection' | 'psc-window';
 export type TemporaryMeetingStatus = '待開會' | '進行中' | '追蹤中' | '已完成';
 export type MeetingVesselScopeMode = 'all' | 'types' | 'vessels';
 
@@ -21,16 +27,27 @@ export interface VesselPosition {
   source: 'mock-smart-ship-api' | 'manual' | 'smart-ship-api';
   location: string;
   speedKnots: number;
+  navigationStatus: NavigationStatus;
   lastPort: string;
   nextPort: string;
   eta: string;
+  etb: string;
+  etd: string;
   updatedAt: string;
   manualRemark: string;
 }
 
-export interface VesselCargo {
+export interface VesselCargoItem {
   name: string;
   quantity: string;
+}
+
+export interface VesselCargo {
+  source: 'mock-smart-ship-api' | 'manual' | 'smart-ship-api';
+  loadStatus: LoadStatus;
+  name: string;
+  quantity: string;
+  items: VesselCargoItem[];
   updatedAt: string;
 }
 
@@ -54,6 +71,7 @@ export interface Vessel {
   position: VesselPosition;
   cargo: VesselCargo;
   note: VesselNote;
+  weeklyAttention: WeeklyAttentionKey[];
   createdAt: string;
   updatedAt: string;
 }
@@ -70,6 +88,7 @@ export interface TaskItem {
   vesselId: string;
   priority: TaskPriority;
   isAware: boolean;
+  isAbnormal: boolean;
   category: string;
   description: string;
   status: string;
@@ -133,6 +152,7 @@ export interface AppSettings {
   taskCategories: string[];
   vesselStatuses: ShipStatus[];
   priorities: TaskPriority[];
+  rolePermissions: RolePermissions;
   lastCloudSyncAt: string;
 }
 

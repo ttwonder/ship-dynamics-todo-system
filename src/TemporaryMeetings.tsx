@@ -8,7 +8,8 @@ import type {
   UserAccount,
   Vessel,
 } from './types';
-import { canManage, nowIso, roleLabel, todayDate, uid } from './utils';
+import { nowIso, roleLabel, todayDate, uid } from './utils';
+import { hasPermission } from './permissions';
 
 type Props = {
   data: AppData;
@@ -68,7 +69,7 @@ const draftFrom = (meeting?: TemporaryMeeting): MeetingDraft => meeting ? {
 } : blankDraft();
 
 export default function TemporaryMeetingsPage({ data, visibleVessels, currentUser, commit }: Props) {
-  const editable = canManage(currentUser);
+  const editable = hasPermission(data.settings.rolePermissions, currentUser, 'manageMeetings');
   const visibleIds = new Set(visibleVessels.map(vessel => vessel.id));
   const appliesToUser = (meeting: TemporaryMeeting) => editable || scopeModeOf(meeting)==='all' || (scopeModeOf(meeting)==='types' ? visibleVessels.some(vessel=>(meeting.vesselTypeScopes||[]).includes(vessel.shipType)) : meeting.vessels.some(id=>visibleIds.has(id)));
   const initialMeeting = data.meetings.find(appliesToUser);
@@ -186,6 +187,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
           vesselId,
           priority: savedDraft.priority,
           isAware: true,
+          isAbnormal: false,
           category: '臨時會議決議',
           description: `${savedDraft.subject}：${savedDraft.reason}`,
           status: savedDraft.resolution,

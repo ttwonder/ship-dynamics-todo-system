@@ -2,7 +2,9 @@ import type {
   AgendaReport,
   AppData,
   AuditLog,
+  LoadStatus,
   MeetingVesselScopeMode,
+  NavigationStatus,
   ShipStatus,
   StatusLog,
   TaskPriority,
@@ -10,13 +12,18 @@ import type {
   TemporaryMeetingStatus,
   UserRole,
   VesselPosition,
+  WeeklyAttentionKey,
 } from './types';
 import { nowIso } from './utils';
+import { normalizeRolePermissions } from './permissions';
 
 const roles: UserRole[] = ['owner', 'admin', 'operator'];
 const auditRoles: Array<UserRole | 'system'> = [...roles, 'system'];
-const priorities: TaskPriority[] = ['高', '中', '低'];
+const priorities: TaskPriority[] = ['急', '高', '中', '低'];
 const shipStatuses: ShipStatus[] = ['裝載', '空載', '去卸貨', '去裝貨', '等待order'];
+const navigationStatuses: NavigationStatus[] = ['航行', '拋錨', '停泊'];
+const loadStatuses: LoadStatus[] = ['空載', '非空載', '滿載'];
+const weeklyAttentionKeys: WeeklyAttentionKey[] = ['crew-operation', 'bunkering-water', 'materials-parts', 'maintenance', 'survey', 'audit-inspection', 'psc-window'];
 const meetingStatuses: TemporaryMeetingStatus[] = ['待開會', '進行中', '追蹤中', '已完成'];
 const scopeModes: MeetingVesselScopeMode[] = ['all', 'types', 'vessels'];
 const positionSources: VesselPosition['source'][] = ['mock-smart-ship-api', 'manual', 'smart-ship-api'];
@@ -101,7 +108,8 @@ export function normalizeAppData(value: unknown): AppData | null {
       departments: strings(settings.departments),
       taskCategories: strings(settings.taskCategories),
       vesselStatuses: strings(settings.vesselStatuses).filter((item): item is ShipStatus => shipStatuses.includes(item as ShipStatus)),
-      priorities: strings(settings.priorities).filter((item): item is TaskPriority => priorities.includes(item as TaskPriority)),
+      priorities: [...priorities],
+      rolePermissions: normalizeRolePermissions(settings.rolePermissions),
       lastCloudSyncAt: text(settings.lastCloudSyncAt),
     },
     users: objects(raw.users).map(item => ({
@@ -120,6 +128,13 @@ export function normalizeAppData(value: unknown): AppData | null {
       const position = object(item.position) || {};
       const cargo = object(item.cargo) || {};
       const note = object(item.note) || {};
+      const cargoItems = objects(cargo.items).map(entry => ({
+        name: text(entry.name),
+        quantity: text(entry.quantity),
+      })).filter(entry => entry.name || entry.quantity);
+      const legacyCargoName = text(cargo.name);
+      const legacyCargoQuantity = text(cargo.quantity);
+      if (!cargoItems.length && (legacyCargoName || legacyCargoQuantity)) cargoItems.push({ name: legacyCargoName, quantity: legacyCargoQuantity });
       return {
         id: text(item.id),
         name: text(item.name),
@@ -134,15 +149,21 @@ export function normalizeAppData(value: unknown): AppData | null {
           source: oneOf(position.source, positionSources, 'manual'),
           location: text(position.location),
           speedKnots: finite(position.speedKnots),
+          navigationStatus: oneOf(position.navigationStatus, navigationStatuses, '航行'),
           lastPort: text(position.lastPort),
           nextPort: text(position.nextPort),
           eta: text(position.eta),
+          etb: text(position.etb),
+          etd: text(position.etd),
           updatedAt: text(position.updatedAt, timestamp),
           manualRemark: text(position.manualRemark),
         },
         cargo: {
-          name: text(cargo.name),
-          quantity: text(cargo.quantity),
+          source: oneOf(cargo.source, positionSources, 'manual'),
+          loadStatus: oneOf(cargo.loadStatus, loadStatuses, legacyCargoName === '空載' ? '空載' : '非空載'),
+          name: legacyCargoName || cargoItems[0]?.name || '',
+          quantity: legacyCargoQuantity || cargoItems[0]?.quantity || '',
+          items: cargoItems,
           updatedAt: text(cargo.updatedAt, timestamp),
         },
         note: {
@@ -151,6 +172,7 @@ export function normalizeAppData(value: unknown): AppData | null {
           subsequentDynamics: text(note.subsequentDynamics),
           updatedAt: text(note.updatedAt, timestamp),
         },
+        weeklyAttention: strings(item.weeklyAttention).filter((entry): entry is WeeklyAttentionKey => weeklyAttentionKeys.includes(entry as WeeklyAttentionKey)),
         createdAt: text(item.createdAt, timestamp),
         updatedAt: text(item.updatedAt, timestamp),
       };
@@ -160,6 +182,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       vesselId: text(item.vesselId),
       priority: oneOf(item.priority, priorities, '中'),
       isAware: bool(item.isAware),
+      isAbnormal: bool(item.isAbnormal),
       category: text(item.category),
       description: text(item.description),
       status: text(item.status),

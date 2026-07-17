@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 
 const app = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const dashboard = fs.readFileSync(new URL('../src/Dashboard.tsx', import.meta.url), 'utf8');
 const management = fs.readFileSync(new URL('../src/Management.tsx', import.meta.url), 'utf8');
-const source = `${app}\n${management}`;
+const source = `${app}\n${dashboard}\n${management}`;
 
 const unsafeDeferredSelections = [
   /onChange=\{e=>updateUser\([^}]*e\.currentTarget\.selectedOptions/g,

@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from 'node:fs';
 
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 const app = read('../src/App.tsx');
+const dashboard = read('../src/Dashboard.tsx');
+const dashboardRuntime = `${app}\n${dashboard}`;
 const management = read('../src/Management.tsx');
 const types = read('../src/types.ts');
 const seed = read('../src/data/seed.ts');
@@ -18,8 +20,8 @@ assert.ok(!app.includes('已選早會'), '正式 App 不可再顯示「已選早
 assert.ok(app.includes('涉會船舶'), '看板、篩選與底部狀態必須使用「涉會船舶」');
 
 assert.ok(app.includes('jumpToTaskList'), '看板指標卡必須共用跳轉到待辦總表的處理器');
-assert.ok(app.includes("onTaskMetric('open')") && app.includes("onTaskMetric('high')") && app.includes("onTaskMetric('overdue')"), '未結、高關註度、已逾期三卡都必須有跳轉入口');
-assert.ok(app.includes("priorities: mode === 'high' ? ['高'] : []") && app.includes("overdueOnly: mode === 'overdue'"), '三卡跳轉必須套用正確的待辦篩選');
+assert.ok(dashboardRuntime.includes("onTaskMetric('open')") && dashboardRuntime.includes("onTaskMetric('high')") && dashboardRuntime.includes("onTaskMetric('overdue')"), '未結、急／高關注、已逾期三卡都必須有跳轉入口');
+assert.ok(app.includes("priorities: mode === 'high' ? ['急','高'] : []") && app.includes("overdueOnly: mode === 'overdue'"), '三卡跳轉必須套用正確的待辦篩選');
 assert.ok(types.includes('overdueOnly: boolean'), '待辦篩選模型必須支援只看逾期');
 
 assert.ok(app.includes('<VesselEditModal') && app.includes('<TaskEditModal'), '正式快速更新與事項編輯必須切到安全的新元件');
