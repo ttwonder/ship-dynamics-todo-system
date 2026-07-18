@@ -3,8 +3,11 @@ import type { AppData, PermissionKey, RolePermissions, UserAccount, UserRole, Ve
 import { getSupabaseConfig, saveSupabaseConfig, type SupabaseConfig } from './cloud';
 import { isOwner, nowIso, roleLabel, sha256, uid } from './utils';
 import { hasPermission, normalizeRolePermissions, PERMISSION_KEYS, PERMISSION_LABELS } from './permissions';
+import { departmentAfterRoleChange } from './personWorkflow';
+import { vesselDisplayName } from './vesselDisplay';
+import { WEEKLY_ATTENTION_CATEGORY_MAP, taskCategoriesOf } from './taskCategories';
 
-type Section = 'directory' | 'people' | 'vessels' | 'roles' | 'owner' | 'audit';
+type Section = 'directory' | 'people' | 'vessels' | 'categories' | 'roles' | 'owner' | 'audit';
 type DirectoryKind = 'all' | 'user' | 'vessel';
 type UserDraft = Pick<UserAccount, 'department' | 'name' | 'username' | 'role' | 'isActive' | 'managedVesselIds'> & { password: string };
 type VesselDraft = Pick<Vessel, 'name' | 'shortName' | 'fullName' | 'shipType' | 'fleetCategory' | 'isActive' | 'assignedUserIds'>;
@@ -79,6 +82,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
 
   const go = (next: Section) => {
     if (next === 'vessels' && !canManageVessels) return alert('目前角色未獲授權管理船舶');
+    if (next === 'categories' && !canManageSystem) return alert('只有 Owner 可以維護要事分類');
     if (next === 'audit' && !canViewAudit) return alert('目前角色未獲授權查看操作紀錄');
     if (next === 'owner' && !canManageSystem) return alert('只有 Owner 可以進入敏感設定');
     setSection(next);
@@ -105,7 +109,8 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
     if (!canManageUsers) return alert('目前角色未獲授權新增人員');
     setCreatingUser(true);
     setSelectedUserId('');
-    setPersonDraft(userDraft(undefined, data.settings.departments[0] || ''));
+    const firstPersonnelDepartment = data.settings.departments.map(department => department.trim()).find(department => department && department !== '船舶帳戶') || '';
+    setPersonDraft(userDraft(undefined, firstPersonnelDepartment));
   };
   const startNewVessel = () => {
     if (!canManageVessels) return alert('目前角色未獲授權新增船舶');
@@ -119,6 +124,9 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
     if (!owner && (targetUser?.role === 'owner' || personDraft.role === 'owner')) return alert('管理員不可建立或修改 Owner 帳號');
     if (!personDraft.name.trim() || !personDraft.username.trim()) return alert('請填寫姓名與用戶名');
     if (personDraft.role === 'vessel' && personDraft.managedVesselIds.length !== 1) return alert('船舶帳戶必須且只能綁定一艘船舶');
+    const personnelDepartments = data.settings.departments.map(department => department.trim()).filter(department => department && department !== '船舶帳戶');
+    const normalizedDepartment = personDraft.role === 'vessel' ? '船舶帳戶' : personDraft.department.trim();
+    if (personDraft.role !== 'vessel' && (!normalizedDepartment || normalizedDepartment === '船舶帳戶' || !personnelDepartments.includes(normalizedDepartment))) return alert('請為人員角色選擇有效部門');
     if (creatingUser && !personDraft.password.trim()) return alert('請為新帳號設定密碼');
     const duplicate = data.users.some(u => u.id !== selectedUserId && u.username.trim().toLowerCase() === personDraft.username.trim().toLowerCase());
     if (duplicate) return alert('用戶名已存在');
@@ -146,8 +154,8 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
         user = { id, createdAt: nowIso(), updatedAt: nowIso(), passwordHash, department: '', name: '', username: '', role: 'operator', isActive: true, managedVesselIds: [] };
         d.users.push(user);
       }
-      Object.assign(user, { department: personDraft.role === 'vessel' ? '船舶帳戶' : personDraft.department.trim(), name: personDraft.name.trim(), username: personDraft.username.trim(), role: personDraft.role, isActive: personDraft.isActive, managedVesselIds: managedIds, passwordHash, updatedAt: nowIso() });
-      if (!d.settings.departments.includes(user.department)) d.settings.departments.push(user.department);
+      Object.assign(user, { department: normalizedDepartment, name: personDraft.name.trim(), username: personDraft.username.trim(), role: personDraft.role, isActive: personDraft.isActive, managedVesselIds: managedIds, passwordHash, updatedAt: nowIso() });
+      if (user.department && !d.settings.departments.includes(user.department)) d.settings.departments.push(user.department);
       d.vessels.forEach(v => {
         const assigned = personDraft.role !== 'vessel' && managedIds.includes(v.id);
         v.assignedUserIds = assigned ? Array.from(new Set([...v.assignedUserIds, id])) : v.assignedUserIds.filter(userId => userId !== id);
@@ -196,7 +204,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
         const assigned = assignedIds.includes(u.id);
         u.managedVesselIds = assigned ? Array.from(new Set([...(u.managedVesselIds || []), id])) : (u.managedVesselIds || []).filter(vesselId => vesselId !== id);
       });
-    }, creatingVessel ? '新增船舶' : '更新船舶', 'vessel', id, shipDraft.shortName || shipDraft.name);
+    }, creatingVessel ? '新增船舶' : '更新船舶', 'vessel', id, vesselDisplayName(shipDraft));
     setCreatingVessel(false);
     setSelectedVesselId(id);
     setSaveNotice(`✓ ${creatingVessel ? '船舶已建立' : '船舶資料已保存'}`);
@@ -206,7 +214,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
     if (!canManageVessels) return alert('目前角色未獲授權停用船舶');
     if (!selectedVesselId) return;
     const target = data.vessels.find(v => v.id === selectedVesselId);
-    if (!target || !confirm(`確定停用「${target.shortName || target.name}」？`)) return;
+    if (!target || !confirm(`確定停用「${vesselDisplayName(target)}」？`)) return;
     commit(d => {
       const vessel = d.vessels.find(v => v.id === selectedVesselId);
       if (vessel) { vessel.isActive = false; vessel.updatedAt = nowIso(); }
@@ -215,7 +223,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
         u.managedVesselIds = (u.managedVesselIds || []).filter(id => id !== selectedVesselId);
         if (wasBound && u.role === 'vessel') u.isActive = false;
       });
-    }, '停用船舶', 'vessel', selectedVesselId, target.shortName || target.name);
+    }, '停用船舶', 'vessel', selectedVesselId, vesselDisplayName(target));
     const next = activeVessels.find(v => v.id !== selectedVesselId);
     if (next) selectVessel(next.id);
   };
@@ -223,7 +231,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
   const directoryItems = useMemo(() => {
     const q = query.trim().toLowerCase();
     const users = activeUsers.map(u => ({ key: `user:${u.id}`, kind: 'user' as const, title: u.name, subtitle: `${u.department}｜${roleLabel(u.role)}`, meta: `${(u.managedVesselIds || []).length} 艘船` }));
-    const vessels = activeVessels.map(v => ({ key: `vessel:${v.id}`, kind: 'vessel' as const, title: v.shortName || v.name, subtitle: `${v.fullName || '未填全名'}｜${v.shipType || '未填船型'}`, meta: `${v.assignedUserIds.length} 人` }));
+    const vessels = activeVessels.map(v => ({ key: `vessel:${v.id}`, kind: 'vessel' as const, title: vesselDisplayName(v), subtitle: v.shipType || '未填船型', meta: `${v.assignedUserIds.length} 人` }));
     return [...users, ...vessels].filter(item => (directoryKind === 'all' || item.kind === directoryKind) && (!q || `${item.title} ${item.subtitle} ${item.meta}`.toLowerCase().includes(q)));
   }, [activeUsers, activeVessels, directoryKind, query]);
   const personDepartments = Array.from(new Set(activeUsers.map(user => user.department).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'zh-TW'));
@@ -236,6 +244,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
     { id: 'directory' as const, icon: '▦', label: '總清單' },
     ...(canManageUsers ? [{ id: 'people' as const, icon: '♟', label: '人員' }] : [{ id: 'people' as const, icon: '♟', label: '我的帳號' }]),
     ...(canManageVessels ? [{ id: 'vessels' as const, icon: '🚢', label: '船舶' }] : []),
+    ...(canManageSystem ? [{ id: 'categories' as const, icon: '≡', label: '要事分類' }] : []),
     { id: 'roles' as const, icon: '◆', label: '角色權限' },
     ...(canManageSystem ? [{ id: 'owner' as const, icon: '🔐', label: 'Owner 與雲端' }] : []),
     ...(canViewAudit ? [{ id: 'audit' as const, icon: '▤', label: '操作紀錄' }] : []),
@@ -257,8 +266,13 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
       </>}
 
       {section === 'vessels' && <>
-        <div className="management-master"><MasterHeader title="船舶" count={filteredVessels.length} query={query} setQuery={setQuery} action={{ label: '＋ 新增', onClick: startNewVessel }}/><div className="management-list">{filteredVessels.map(v => <button key={v.id} className={`management-list-item ${!creatingVessel && selectedVesselId === v.id ? 'active' : ''}`} onClick={() => selectVessel(v.id)}><span className="management-avatar vessel">🚢</span><span><b>{v.shortName || v.name}</b><small>{v.shipType || '未填船型'}｜{v.fleetCategory}</small></span><em>{v.assignedUserIds.length} 人</em></button>)}</div></div>
+        <div className="management-master"><MasterHeader title="船舶" count={filteredVessels.length} query={query} setQuery={setQuery} action={{ label: '＋ 新增', onClick: startNewVessel }}/><div className="management-list">{filteredVessels.map(v => <button key={v.id} className={`management-list-item ${!creatingVessel && selectedVesselId === v.id ? 'active' : ''}`} onClick={() => selectVessel(v.id)}><span className="management-avatar vessel">🚢</span><span><b>{vesselDisplayName(v)}</b><small>{v.shipType || '未填船型'}｜{v.fleetCategory}</small></span><em>{v.assignedUserIds.length} 人</em></button>)}</div></div>
         <div className="management-detail"><VesselEditor draft={shipDraft} setDraft={setShipDraft} creating={creatingVessel} users={activeUsers.filter(user => user.role !== 'vessel')} assignmentQuery={assignmentQuery} setAssignmentQuery={setAssignmentQuery} onSave={saveVessel} onDisable={disableVessel}/></div>
+      </>}
+
+      {section === 'categories' && canManageSystem && <>
+        <div className="management-master"><div className="management-master-heading"><div><h2>要事分類 <small>{data.settings.taskCategories.length}</small></h2><small>新增要事與待辦總表共用</small></div></div><div className="management-list">{data.settings.taskCategories.map((category, index) => <div key={`${category}-${index}`} className="management-list-item category-summary"><span className="management-avatar category">≡</span><span><b>{category}</b><small>{WEEKLY_ATTENTION_CATEGORY_MAP[category] ? '自動點亮看板狀態' : '一般分類'}</small></span><em>{data.tasks.filter(task => taskCategoriesOf(task).includes(category)).length} 件</em></div>)}</div></div>
+        <div className="management-detail"><TaskCategoryManager key={data.revision} categories={data.settings.taskCategories} tasks={data.tasks} onSave={categories => { commit(d => { d.settings.taskCategories = categories; d.settings.taskCategorySchemaVersion = 2; }, '更新要事分類', 'settings', 'task-categories', categories.join('、')); setSaveNotice('要事分類已保存'); }}/></div>
       </>}
 
       {section === 'roles' && <><div className="management-master"><div className="management-master-heading"><div><h2>角色權限</h2><small>精細權限矩陣</small></div></div>{(['owner','admin','operator','vessel'] as UserRole[]).map(role => <div key={role} className="management-list-item"><span className="management-avatar">{roleLabel(role).slice(0,1)}</span><span><b>{roleLabel(role)}</b><small>{activeUsers.filter(u => u.role === role).length} 人</small></span></div>)}</div><div className="management-detail"><RolePermissionMatrix matrix={data.settings.rolePermissions} editable={owner} onChange={(role,key,value)=>commit(d=>{const next=structuredClone(d.settings.rolePermissions);next[role][key]=value;d.settings.rolePermissions=normalizeRolePermissions(next);},'更新角色權限','settings','role-permissions',`${roleLabel(role)}｜${PERMISSION_LABELS[key].label}｜${value?'開啟':'關閉'}`)}/></div></>}
@@ -284,28 +298,63 @@ function DirectoryDetail({ item, data, onEdit }: { item:{key:string;kind:'user'|
   if (item.kind === 'user') {
     const user = data.users.find(u => u.id === id)!;
     const ships = data.vessels.filter(v => v.isActive && (v.assignedUserIds.includes(id) || (user.managedVesselIds || []).includes(v.id)));
-    return <div className="management-editor"><EditorHeading title={user.name} subtitle={`${user.department}｜${roleLabel(user.role)}`} actions={<button className="btn primary" onClick={onEdit}>開啟人員設定</button>}/><div className="management-summary-grid"><Summary label="角色" value={roleLabel(user.role)}/><Summary label="經管船舶" value={`${ships.length} 艘`}/><Summary label="狀態" value={user.isActive ? '啟用' : '停用'}/></div><EditorSection title="經管船舶"><div className="management-tags">{ships.length ? ships.map(v => <span key={v.id}>{v.shortName || v.name}</span>) : <em>尚未指派</em>}</div></EditorSection></div>;
+    return <div className="management-editor"><EditorHeading title={user.name} subtitle={`${user.department}｜${roleLabel(user.role)}`} actions={<button className="btn primary" onClick={onEdit}>開啟人員設定</button>}/><div className="management-summary-grid"><Summary label="角色" value={roleLabel(user.role)}/><Summary label="經管船舶" value={`${ships.length} 艘`}/><Summary label="狀態" value={user.isActive ? '啟用' : '停用'}/></div><EditorSection title="經管船舶"><div className="management-tags">{ships.length ? ships.map(v => <span key={v.id}>{vesselDisplayName(v)}</span>) : <em>尚未指派</em>}</div></EditorSection></div>;
   }
   const vessel = data.vessels.find(v => v.id === id)!;
   const people = data.users.filter(u => u.isActive && vessel.assignedUserIds.includes(u.id));
-  return <div className="management-editor"><EditorHeading title={vessel.shortName || vessel.name} subtitle={`${vessel.fullName || '未填全名'}｜${vessel.shipType || '未填船型'}`} actions={<button className="btn primary" onClick={onEdit}>開啟船舶設定</button>}/><div className="management-summary-grid"><Summary label="船隊" value={vessel.fleetCategory}/><Summary label="經管人員" value={`${people.length} 人`}/><Summary label="狀態" value={vessel.isActive ? '啟用' : '停用'}/></div><EditorSection title="經管人員"><div className="management-tags">{people.length ? people.map(u => <span key={u.id}>{u.name}</span>) : <em>尚未指派</em>}</div></EditorSection></div>;
+  return <div className="management-editor"><EditorHeading title={vesselDisplayName(vessel)} subtitle={vessel.shipType || '未填船型'} actions={<button className="btn primary" onClick={onEdit}>開啟船舶設定</button>}/><div className="management-summary-grid"><Summary label="船隊" value={vessel.fleetCategory}/><Summary label="經管人員" value={`${people.length} 人`}/><Summary label="狀態" value={vessel.isActive ? '啟用' : '停用'}/></div><EditorSection title="經管人員"><div className="management-tags">{people.length ? people.map(u => <span key={u.id}>{u.name}</span>) : <em>尚未指派</em>}</div></EditorSection></div>;
 }
 
 function PersonEditor({ draft, setDraft, creating, owner, manager, currentUser, selectedUserId, departments, vessels, assignmentQuery, setAssignmentQuery, onSave, onDisable }: { draft:UserDraft; setDraft:React.Dispatch<React.SetStateAction<UserDraft>>; creating:boolean; owner:boolean; manager:boolean; currentUser:UserAccount; selectedUserId:string; departments:string[]; vessels:Vessel[]; assignmentQuery:string; setAssignmentQuery:(v:string)=>void; onSave:()=>void; onDisable:()=>void }) {
   const visibleAssignments = vessels.filter(v => !assignmentQuery.trim() || `${v.shortName} ${v.fullName} ${v.name}`.toLowerCase().includes(assignmentQuery.trim().toLowerCase()));
+  const departmentChoices = Array.from(new Set([draft.department, ...departments])).filter(department => department && department !== '船舶帳戶');
   const toggle = (id:string) => setDraft(prev => ({ ...prev, managedVesselIds: prev.role === 'vessel' ? (prev.managedVesselIds.includes(id) ? [] : [id]) : prev.managedVesselIds.includes(id) ? prev.managedVesselIds.filter(x => x !== id) : [...prev.managedVesselIds, id] }));
-  return <div className="management-editor"><EditorHeading title={creating ? '新增人員' : draft.name || '人員設定'} subtitle={creating ? '建立帳號、角色與經管船舶' : `${draft.department}｜${roleLabel(draft.role)}`} actions={<>{!creating && manager && selectedUserId !== currentUser.id && <button className="btn danger" onClick={onDisable}>停用</button>}<button className="btn primary" onClick={onSave}>{creating ? '建立人員' : '保存變更'}</button></>}/><div className="management-summary-grid"><Summary label="角色" value={roleLabel(draft.role)}/><Summary label="經管船舶" value={`${draft.managedVesselIds.length} 艘`}/><Summary label="帳號狀態" value={draft.isActive ? '啟用' : '停用'}/></div><EditorSection title="基本資料與角色"><div className="management-form"><label>姓名<input disabled={!manager && selectedUserId !== currentUser.id} value={draft.name} onChange={e => setDraft(prev => ({...prev,name:e.target.value}))}/></label><label>用戶名<input disabled={!manager && selectedUserId !== currentUser.id} value={draft.username} onChange={e => setDraft(prev => ({...prev,username:e.target.value}))}/></label><label>部門<input disabled={!manager} list="management-departments" value={draft.department} onChange={e => setDraft(prev => ({...prev,department:e.target.value}))}/><datalist id="management-departments">{departments.map(d => <option key={d} value={d}/>)}</datalist></label><label>角色<select disabled={!manager || selectedUserId === currentUser.id} value={draft.role} onChange={e => setDraft(prev => ({...prev,role:e.target.value as UserRole,managedVesselIds:e.target.value==='vessel'?prev.managedVesselIds.slice(0,1):prev.managedVesselIds}))}><option value="operator">操作員</option><option value="vessel">船舶帳戶</option>{(owner||draft.role==='admin')&&<option value="admin">管理員</option>}{owner&&<option value="owner">Owner</option>}</select></label></div></EditorSection>{manager && <EditorSection title="經管船舶"><AssignmentPicker query={assignmentQuery} setQuery={setAssignmentQuery} count={draft.managedVesselIds.length} onAll={() => setDraft(prev => ({...prev,managedVesselIds:prev.role==='vessel'?vessels.slice(0,1).map(v=>v.id):vessels.map(v=>v.id)}))} onClear={() => setDraft(prev => ({...prev,managedVesselIds:[]}))}>{visibleAssignments.map(v => <label key={v.id} className={draft.managedVesselIds.includes(v.id) ? 'selected' : ''}><input type="checkbox" checked={draft.managedVesselIds.includes(v.id)} onChange={() => toggle(v.id)}/><span>{v.shortName || v.name}</span><small>{v.fullName}</small></label>)}</AssignmentPicker></EditorSection>}<EditorSection title="密碼"><div className="management-password"><div><b>{creating ? '初始密碼' : '重設密碼'}</b><small>密碼只保存雜湊，無法查看原明文。</small></div><input disabled={!manager && selectedUserId !== currentUser.id} type="password" value={draft.password} placeholder={creating ? '預設 123456' : '留空表示不變更'} onChange={e => setDraft(prev => ({...prev,password:e.target.value}))}/></div></EditorSection></div>;
+  return <div className="management-editor"><EditorHeading title={creating ? '新增人員' : draft.name || '人員設定'} subtitle={creating ? '建立帳號、角色與經管船舶' : `${draft.department}｜${roleLabel(draft.role)}`} actions={<>{!creating && manager && selectedUserId !== currentUser.id && <button className="btn danger" onClick={onDisable}>停用</button>}<button className="btn primary" onClick={onSave}>{creating ? '建立人員' : '保存變更'}</button></>}/><div className="management-summary-grid"><Summary label="角色" value={roleLabel(draft.role)}/><Summary label="經管船舶" value={`${draft.managedVesselIds.length} 艘`}/><Summary label="帳號狀態" value={draft.isActive ? '啟用' : '停用'}/></div><EditorSection title="基本資料與角色"><div className="management-form"><label>姓名<input disabled={!manager && selectedUserId !== currentUser.id} value={draft.name} onChange={e => setDraft(prev => ({...prev,name:e.target.value}))}/></label><label>用戶名<input disabled={!manager && selectedUserId !== currentUser.id} value={draft.username} onChange={e => setDraft(prev => ({...prev,username:e.target.value}))}/></label><label>部門<select aria-label="人員部門" disabled={!manager || draft.role === 'vessel'} value={draft.role === 'vessel' ? '船舶帳戶' : draft.department} onChange={e => setDraft(prev => ({...prev,department:e.target.value}))}>{draft.role === 'vessel' ? <option value="船舶帳戶">船舶帳戶</option> : departmentChoices.map(department => <option key={department} value={department}>{department}</option>)}</select></label><label>角色<select disabled={!manager || selectedUserId === currentUser.id} value={draft.role} onChange={e => setDraft(prev => { const role = e.target.value as UserRole; return {...prev,role,department:departmentAfterRoleChange(prev.department,role,departments),managedVesselIds:role==='vessel'?prev.managedVesselIds.slice(0,1):prev.managedVesselIds}; })}><option value="operator">操作員</option><option value="vessel">船舶帳戶</option>{(owner||draft.role==='admin')&&<option value="admin">管理員</option>}{owner&&<option value="owner">Owner</option>}</select></label></div></EditorSection>{manager && <EditorSection title="經管船舶"><AssignmentPicker query={assignmentQuery} setQuery={setAssignmentQuery} count={draft.managedVesselIds.length} onAll={() => setDraft(prev => ({...prev,managedVesselIds:prev.role==='vessel'?vessels.slice(0,1).map(v=>v.id):vessels.map(v=>v.id)}))} onClear={() => setDraft(prev => ({...prev,managedVesselIds:[]}))}>{visibleAssignments.map(v => <label key={v.id} className={draft.managedVesselIds.includes(v.id) ? 'selected' : ''}><input type="checkbox" checked={draft.managedVesselIds.includes(v.id)} onChange={() => toggle(v.id)}/><span>{vesselDisplayName(v)}</span><small>{v.shipType || '未填船型'}</small></label>)}</AssignmentPicker></EditorSection>}<EditorSection title="密碼"><div className="management-password"><div><b>{creating ? '初始密碼' : '重設密碼'}</b><small>密碼只保存雜湊，無法查看原明文。</small></div><input disabled={!manager && selectedUserId !== currentUser.id} type="password" value={draft.password} placeholder={creating ? '預設 123456' : '留空表示不變更'} onChange={e => setDraft(prev => ({...prev,password:e.target.value}))}/></div></EditorSection></div>;
 }
 
 function VesselEditor({ draft, setDraft, creating, users, assignmentQuery, setAssignmentQuery, onSave, onDisable }: { draft:VesselDraft; setDraft:React.Dispatch<React.SetStateAction<VesselDraft>>; creating:boolean; users:UserAccount[]; assignmentQuery:string; setAssignmentQuery:(v:string)=>void; onSave:()=>void; onDisable:()=>void }) {
   const visibleAssignments = users.filter(u => !assignmentQuery.trim() || `${u.name} ${u.department} ${u.username}`.toLowerCase().includes(assignmentQuery.trim().toLowerCase()));
   const toggle = (id:string) => setDraft(prev => ({ ...prev, assignedUserIds: prev.assignedUserIds.includes(id) ? prev.assignedUserIds.filter(x => x !== id) : [...prev.assignedUserIds, id] }));
-  return <div className="management-editor"><EditorHeading title={creating ? '新增船舶' : draft.shortName || draft.name || '船舶設定'} subtitle={creating ? '建立船舶基本資料與經管人員' : `${draft.fullName || '未填全名'}｜${draft.shipType || '未填船型'}`} actions={<>{!creating && <button className="btn danger" onClick={onDisable}>停用</button>}<button className="btn primary" onClick={onSave}>{creating ? '建立船舶' : '保存變更'}</button></>}/><div className="management-summary-grid"><Summary label="船隊" value={draft.fleetCategory}/><Summary label="經管人員" value={`${draft.assignedUserIds.length} 人`}/><Summary label="狀態" value={draft.isActive ? '啟用' : '停用'}/></div><EditorSection title="船舶資料"><div className="management-form"><label>系統名稱<input value={draft.name} onChange={e => setDraft(prev => ({...prev,name:e.target.value}))}/></label><label>簡稱<input value={draft.shortName} onChange={e => setDraft(prev => ({...prev,shortName:e.target.value}))}/></label><label className="span-2">完整船名<input value={draft.fullName} onChange={e => setDraft(prev => ({...prev,fullName:e.target.value}))}/></label><label>船型<input value={draft.shipType} onChange={e => setDraft(prev => ({...prev,shipType:e.target.value}))}/></label><label>船隊<select value={draft.fleetCategory} onChange={e => setDraft(prev => ({...prev,fleetCategory:e.target.value}))}><option value="tanker fleet">油輪船隊</option><option value="bulk fleet">散貨船隊</option></select></label></div></EditorSection><EditorSection title="經管人員"><AssignmentPicker query={assignmentQuery} setQuery={setAssignmentQuery} count={draft.assignedUserIds.length} onAll={() => setDraft(prev => ({...prev,assignedUserIds:users.map(u=>u.id)}))} onClear={() => setDraft(prev => ({...prev,assignedUserIds:[]}))}>{visibleAssignments.map(u => <label key={u.id} className={draft.assignedUserIds.includes(u.id) ? 'selected' : ''}><input type="checkbox" checked={draft.assignedUserIds.includes(u.id)} onChange={() => toggle(u.id)}/><span>{u.name}</span><small>{u.department}｜{roleLabel(u.role)}</small></label>)}</AssignmentPicker></EditorSection></div>;
+  return <div className="management-editor"><EditorHeading title={creating ? '新增船舶' : vesselDisplayName(draft)} subtitle={creating ? '建立船舶基本資料與經管人員' : draft.shipType || '未填船型'} actions={<>{!creating && <button className="btn danger" onClick={onDisable}>停用</button>}<button className="btn primary" onClick={onSave}>{creating ? '建立船舶' : '保存變更'}</button></>}/><div className="management-summary-grid"><Summary label="船隊" value={draft.fleetCategory}/><Summary label="經管人員" value={`${draft.assignedUserIds.length} 人`}/><Summary label="狀態" value={draft.isActive ? '啟用' : '停用'}/></div><EditorSection title="船舶資料"><div className="management-form"><label>系統名稱<input value={draft.name} onChange={e => setDraft(prev => ({...prev,name:e.target.value}))}/></label><label>簡稱<input value={draft.shortName} onChange={e => setDraft(prev => ({...prev,shortName:e.target.value}))}/></label><label className="span-2">完整船名<input value={draft.fullName} onChange={e => setDraft(prev => ({...prev,fullName:e.target.value}))}/></label><label>船型<input value={draft.shipType} onChange={e => setDraft(prev => ({...prev,shipType:e.target.value}))}/></label><label>船隊<select value={draft.fleetCategory} onChange={e => setDraft(prev => ({...prev,fleetCategory:e.target.value}))}><option value="tanker fleet">油輪船隊</option><option value="bulk fleet">散貨船隊</option></select></label></div></EditorSection><EditorSection title="經管人員"><AssignmentPicker query={assignmentQuery} setQuery={setAssignmentQuery} count={draft.assignedUserIds.length} onAll={() => setDraft(prev => ({...prev,assignedUserIds:users.map(u=>u.id)}))} onClear={() => setDraft(prev => ({...prev,assignedUserIds:[]}))}>{visibleAssignments.map(u => <label key={u.id} className={draft.assignedUserIds.includes(u.id) ? 'selected' : ''}><input type="checkbox" checked={draft.assignedUserIds.includes(u.id)} onChange={() => toggle(u.id)}/><span>{u.name}</span><small>{u.department}｜{roleLabel(u.role)}</small></label>)}</AssignmentPicker></EditorSection></div>;
 }
 
 function AssignmentPicker({ query, setQuery, count, onAll, onClear, children }: { query:string; setQuery:(v:string)=>void; count:number; onAll:()=>void; onClear:()=>void; children:React.ReactNode }) {
   return <div className="management-assignment"><div className="management-assignment-tools"><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋後勾選…"/><span>已選 {count}</span><button className="btn small ghost" onClick={onAll}>全選</button><button className="btn small ghost" onClick={onClear}>清空</button></div><div className="management-assignment-grid">{children}</div></div>;
 }
+function TaskCategoryManager({ categories, tasks, onSave }: { categories:string[]; tasks:AppData['tasks']; onSave:(categories:string[])=>void }) {
+  const [draft, setDraft] = useState(() => [...categories]);
+  const [newCategory, setNewCategory] = useState('');
+  const usage = (category:string) => tasks.filter(task => taskCategoriesOf(task).includes(category)).length;
+  const add = () => {
+    const value = newCategory.trim();
+    if (!value) return alert('請輸入分類名稱');
+    if (draft.some(category => category.toLocaleLowerCase() === value.toLocaleLowerCase())) return alert('分類名稱不可重複');
+    setDraft(prev => [...prev, value]);
+    setNewCategory('');
+  };
+  const move = (index:number, direction:-1|1) => setDraft(prev => {
+    const target = index + direction;
+    if (target < 0 || target >= prev.length) return prev;
+    const next = [...prev];
+    [next[index], next[target]] = [next[target], next[index]];
+    return next;
+  });
+  const remove = (index:number) => {
+    if (draft.length <= 1) return alert('至少要保留一個分類');
+    const category = draft[index];
+    const count = usage(category);
+    if (count && !window.confirm(`「${category}」已用於 ${count} 件歷史要事。刪除後只會從新要事選單移除，歷史資料仍會保留。是否繼續？`)) return;
+    setDraft(prev => prev.filter((_, itemIndex) => itemIndex !== index));
+  };
+  const save = () => {
+    const clean = draft.map(category => category.trim());
+    if (clean.some(category => !category)) return alert('分類名稱不可留空');
+    if (new Set(clean.map(category => category.toLocaleLowerCase())).size !== clean.length) return alert('分類名稱不可重複');
+    onSave(clean);
+  };
+  return <div className="management-editor task-category-editor"><EditorHeading title="要事分類" subtitle="調整後會套用到新增要事、篩選與統計；歷史要事分類不會被改寫。" actions={<button className="btn primary" onClick={save}>保存分類設定</button>}/><EditorSection title="分類順序與名稱"><div className="task-category-list">{draft.map((category, index) => <div className="task-category-row" key={`${index}-${category}`}><span className="task-category-order">{index + 1}</span><input aria-label={`分類 ${index + 1}`} value={category} onChange={event => setDraft(prev => prev.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}/><span className={`task-category-link ${WEEKLY_ATTENTION_CATEGORY_MAP[category] ? 'linked' : ''}`}>{WEEKLY_ATTENTION_CATEGORY_MAP[category] ? '自動點亮' : `${usage(category)} 件`}</span><button className="btn small ghost" title="上移" disabled={index === 0} onClick={() => move(index, -1)}>↑ 上移</button><button className="btn small ghost" title="下移" disabled={index === draft.length - 1} onClick={() => move(index, 1)}>↓ 下移</button><button className="btn small danger" onClick={() => remove(index)}>刪除</button></div>)}</div></EditorSection><EditorSection title="新增分類"><div className="task-category-add"><input aria-label="新分類名稱" value={newCategory} onChange={event => setNewCategory(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') add(); }} placeholder="輸入新的分類名稱"/><button className="btn primary" onClick={add}>新增分類</button></div><p className="muted">名稱若與看板狀態提示完全相同（換員操作、加油加水、物料配件、維修、Survey、稽核檢查、PSC窗口），建立要事時會自動點亮對應狀態；仍可在看板手動調整。</p></EditorSection></div>;
+}
+
 function RolePermissionMatrix({ matrix, editable, onChange }: { matrix:RolePermissions; editable:boolean; onChange:(role:UserRole,key:PermissionKey,value:boolean)=>void }) {
   const roles: UserRole[] = ['owner','admin','operator','vessel'];
   const isFixed = (role:UserRole, key:PermissionKey) => role === 'owner' || role === 'vessel' || key === 'enterManagement' || key === 'deleteTasks' || key === 'manageRolePermissions' || key === 'manageSystemSettings' || (role === 'operator' && ['manageUsers','manageVessels','viewAuditLogs'].includes(key));

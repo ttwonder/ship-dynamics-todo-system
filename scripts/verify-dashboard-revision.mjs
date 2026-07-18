@@ -9,6 +9,7 @@ const modals = read('src/EditModals.tsx');
 const normalizer = read('src/normalize.ts');
 const morning = read('src/MorningWorkspace.tsx');
 const meetings = read('src/TemporaryMeetings.tsx');
+const meetingTasks = read('src/meetingTaskWorkflow.ts');
 const api = fs.existsSync('src/smartShipApi.ts') ? read('src/smartShipApi.ts') : '';
 
 assert.ok(types.includes("TaskPriority = '急' | '高' | '中' | '低'"), '关注程度需新增「急」等级');
@@ -35,7 +36,7 @@ assert.ok(dashboard.includes("['ETA','ETB','ETD']") && dashboard.includes("||'TB
 assert.ok(dashboard.includes("priority === '急'") && dashboard.includes('急 {urgent}'), '看板需显示急等级统计');
 assert.ok(app.includes('t.isAbnormal') && app.includes('異常</span>'), '清单及报告需显示异常资料');
 assert.ok(morning.includes('急:0') && morning.includes('異常'), '早会需按急等级排序并显示异常');
-assert.ok(meetings.includes("priority: savedDraft.priority") && meetings.includes('isAbnormal: false'), '临时会议产生的要事需带完整新资料契约');
+assert.ok(meetingTasks.includes('priority,') && meetingTasks.includes('isAbnormal: false'), '臨會/專題產生的要事需帶完整新資料契約');
 
 assert.ok(normalizer.includes("const priorities: TaskPriority[] = ['急', '高', '中', '低']"), '正規化器需接受急等级');
 assert.ok(normalizer.includes('isAbnormal: bool(item.isAbnormal)'), '正規化器需迁移异常选项');

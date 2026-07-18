@@ -34,9 +34,10 @@ try {
   const app = fs.readFileSync('src/App.tsx', 'utf8');
   const management = fs.readFileSync('src/Management.tsx', 'utf8');
   const meetings = fs.readFileSync('src/TemporaryMeetings.tsx', 'utf8');
+  const meetingAccess = fs.readFileSync('src/meetingAccess.ts', 'utf8');
   assert.ok(app.includes("hasPermission(data.settings.rolePermissions, currentUser, 'enterManagement')"), 'App 管理入口需使用統一權限判斷');
   assert.ok(app.includes("hasPermission(data.settings.rolePermissions, currentUser, 'editBusinessContent')"), '內容修改需使用統一權限判斷');
-  assert.ok(meetings.includes("hasPermission(data.settings.rolePermissions, currentUser, 'manageMeetings')"), '臨時會議需使用精細權限');
+  assert.ok(meetings.includes('canEditTemporaryMeetings(data.settings.rolePermissions, currentUser)') && meetingAccess.includes("hasPermission(matrix, user, 'manageMeetings')"), '臨時會議需使用精細權限');
   assert.ok(management.includes('RolePermissionMatrix') && management.includes('只有 Owner 可以調整'), '管理頁需提供 Owner 可調的權限矩陣');
 
   console.log('Role permission runtime contracts passed.');

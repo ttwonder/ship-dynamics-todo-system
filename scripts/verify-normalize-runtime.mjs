@@ -18,10 +18,11 @@ try {
     },
     users: [null, { id: 'u1', name: '測試', username: 'qa', role: 'owner', passwordHash: 'hash', isActive: true, managedVesselIds: ['v1', { unsafe: true }] }],
     vessels: [null, { id: 'v1', name: '船一', fleetTags: ['A', { unsafe: true }], assignedUserIds: ['u1', null], weeklyAttention: ['psc-window', 'unsafe'], position: { navigationStatus: '停泊', etb: '2026-07-18 08:00' }, cargo: { name: '原油', quantity: '5,000 MT' }, note: { statusList: ['裝載', { unsafe: true }] } }],
-    tasks: [null, { id: 't1', vesselId: 'v1', priority: '急', isAbnormal: true, departments: ['航務', { unsafe: true }], ownerUserIds: ['u1', null], statusLogs: [null, { id: 'l1', text: '正常', at: '2026-07-17', by: 'QA' }, { id: 'l2', text: { unsafe: true } }] }],
+    tasks: [null, { id: 't1', vesselId: 'v1', sourceMeetingId: 'm1', description: '舊版已生成待辦', priority: '急', isAbnormal: true, departments: ['航務', { unsafe: true }], ownerUserIds: ['u1', null], statusLogs: [null, { id: 'l1', text: '正常', at: '2026-07-17', by: 'QA' }, { id: 'l2', text: { unsafe: true } }] }],
     meetings: [null, { id: 'm1', subject: { unsafe: true }, vessels: ['v1', { unsafe: true }], departments: [{ unsafe: true }] }],
     agendaReports: [null, { id: 'r1', title: { unsafe: true }, vesselIds: ['v1', { unsafe: true }], taskCount: 'bad' }],
     auditLogs: [null, { id: 'a1', actorName: { unsafe: true }, detail: { unsafe: true }, actorRole: 'invalid' }],
+    notifications: [{ id: 'n1', userId: 'u1', vesselId: 'v1', taskId: 't1', kind: 'task_archived', title: '取消待辦', message: '已取消', actorId: 'owner', createdAt: '2026-07-18' }],
   };
 
   const data = normalizeAppData(malformed);
@@ -42,9 +43,17 @@ try {
   assert.equal(data.tasks[0].isAbnormal, true);
   assert.equal(data.tasks[0].statusLogs.length, 1);
   assert.equal(data.meetings[0].subject, '');
+  assert.equal(data.meetings[0].taskDescription, '舊版已生成待辦', '舊會議需由既有关聯待辦回填獨立待辦欄');
+  const explicitCleared = normalizeAppData({
+    ...malformed,
+    tasks: [{ id: 't-clear', vesselId: 'v1', sourceMeetingId: 'm-clear', description: '不應回填的舊待辦' }],
+    meetings: [{ id: 'm-clear', subject: '明確清空', taskDescription: '', vessels: ['v1'], departments: [] }],
+  });
+  assert.equal(explicitCleared.meetings[0].taskDescription, '', '明確存在的空 taskDescription 不得被舊關聯待辦回填');
   assert.deepEqual(data.meetings[0].vessels, ['v1']);
   assert.equal(data.agendaReports[0].title, '');
   assert.equal(data.auditLogs[0].actorRole, 'system');
+  assert.equal(data.notifications[0].kind, 'task_archived', '会议取消待办通知经 normalize 后不得降级为一般更新');
   assert.doesNotThrow(() => JSON.stringify(data));
 
   assert.equal(normalizeAppData({ settings: {}, users: [], vessels: [] }), null, 'missing core task collection must be rejected');

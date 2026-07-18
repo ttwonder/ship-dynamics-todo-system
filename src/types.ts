@@ -2,10 +2,11 @@ export type UserRole = 'owner' | 'admin' | 'operator' | 'vessel';
 export type PermissionKey = 'viewAllVessels' | 'editBusinessContent' | 'createTasks' | 'closeTasks' | 'deleteTasks' | 'manageMeetings' | 'exportReports' | 'enterManagement' | 'manageUsers' | 'manageVessels' | 'viewAuditLogs' | 'manageRolePermissions' | 'manageSystemSettings';
 export type RolePermissions = Record<UserRole, Record<PermissionKey, boolean>>;
 export type TaskPriority = '急' | '高' | '中' | '低';
-export type ShipStatus = '裝載' | '空載' | '去卸貨' | '去裝貨' | '等待order';
+export type ShipStatus = '裝載' | '空載' | '去卸貨' | '去裝貨' | '等待order' | '塢修/航修';
 export type NavigationStatus = '航行' | '拋錨' | '停泊';
 export type LoadStatus = '空載' | '非空載' | '滿載';
 export type ScheduleKind = 'ETA' | 'ETB' | 'ETD';
+export type TaskSource = 'morning' | 'temporary';
 export type WeeklyAttentionKey = 'crew-operation' | 'bunkering-water' | 'materials-parts' | 'maintenance' | 'survey' | 'audit-inspection' | 'psc-window';
 export type TemporaryMeetingStatus = '待開會' | '進行中' | '追蹤中' | '已完成';
 export type MeetingVesselScopeMode = 'all' | 'types' | 'vessels';
@@ -93,6 +94,7 @@ export interface TaskItem {
   internalControlCancelledAt?: string;
   internalControlCancelledBy?: string;
   category: string;
+  categories: string[];
   description: string;
   status: string;
   expectedDate: string;
@@ -102,6 +104,7 @@ export interface TaskItem {
   closedDate?: string;
   closedBy?: string;
   sourceMeetingId?: string;
+  sourceType: TaskSource;
   createdBy: string;
   updatedBy: string;
   createdAt: string;
@@ -109,7 +112,7 @@ export interface TaskItem {
   statusLogs: StatusLog[];
 }
 
-export type NotificationKind = 'task_created' | 'task_updated' | 'internal_control_cancelled' | 'task_deleted';
+export type NotificationKind = 'task_created' | 'task_updated' | 'task_archived' | 'internal_control_cancelled' | 'task_deleted';
 export interface UserNotification {
   id: string;
   userId: string;
@@ -134,6 +137,7 @@ export interface TemporaryMeeting {
   reason: string;
   departments: string[];
   resolution: string;
+  taskDescription: string;
   expectedDate: string;
   priority: TaskPriority;
   createdBy: string;
@@ -167,6 +171,7 @@ export interface AppSettings {
   systemTitle: string;
   departments: string[];
   taskCategories: string[];
+  taskCategorySchemaVersion: number;
   vesselStatuses: ShipStatus[];
   priorities: TaskPriority[];
   rolePermissions: RolePermissions;

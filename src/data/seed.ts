@@ -1,6 +1,7 @@
 import type { AppData, UserRole, ShipStatus, TaskPriority } from '../types';
 import { localDate } from '../utils';
 import { DEFAULT_ROLE_PERMISSIONS } from '../permissions';
+import { REQUIRED_TASK_CATEGORIES } from '../taskCategories';
 
 export const DEFAULT_USER_PASSWORD='123456';
 export const DEFAULT_SITE_PASSWORD='ship2026';
@@ -718,8 +719,8 @@ const rawVessels = [
 ] as const;
 
 export const DEPARTMENTS = Array.from(new Set(rawPersonnel.map(p => p.department)));
-export const TASK_CATEGORIES = ['人員', '物料', '證書', '檢驗', '內外部檢查', '缺失驗證', 'vetting', '貨品', '港口安排', '臨時會議決議'];
-export const VESSEL_STATUSES: ShipStatus[] = ['裝載', '空載', '去卸貨', '去裝貨', '等待order'];
+export const TASK_CATEGORIES = [...REQUIRED_TASK_CATEGORIES];
+export const VESSEL_STATUSES: ShipStatus[] = ['裝載', '空載', '去卸貨', '去裝貨', '等待order', '塢修/航修'];
 export const PRIORITIES: TaskPriority[] = ['急', '高', '中', '低'];
 
 const ports = ['高雄', '麥寮', '新加坡', '仁川', '東京', '上海', '香港', '馬尼拉', '釜山', '杜拜'];
@@ -783,7 +784,9 @@ export function createInitialData(): AppData {
     isAware: index % 2 === 0,
     isAbnormal: index === 0,
     isInternalControl: false,
+    sourceType: 'morning' as const,
     category: TASK_CATEGORIES[index % TASK_CATEGORIES.length],
+    categories: [TASK_CATEGORIES[index % TASK_CATEGORIES.length]],
     description: `${v.fullName} 早會跟進事項 ${index + 1}`,
     status: '昨日已更新，早會追蹤中',
     expectedDate: nextWeek,
@@ -803,6 +806,7 @@ export function createInitialData(): AppData {
       systemTitle: '船舶動態與會議管理系統',
       departments: [...DEPARTMENTS],
       taskCategories: [...TASK_CATEGORIES],
+      taskCategorySchemaVersion: 2,
       vesselStatuses: [...VESSEL_STATUSES],
       priorities: [...PRIORITIES],
       rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),

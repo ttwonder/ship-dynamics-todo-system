@@ -2,12 +2,18 @@ import { useEffect, useState } from 'react';
 import type { AppData, LoadStatus, NavigationStatus, ShipStatus, TaskItem, TaskPriority, UserAccount, Vessel, VesselCargoItem } from './types';
 import { canManage, nowIso, todayDate, uid } from './utils';
 import { FLOW_INTERNAL_CONTROL_REMINDER } from './taskWorkflow';
+import { vesselDisplayName } from './vesselDisplay';
 
 type Commit = (updater: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => void;
 type MultiChoice = { value: string; label: string; detail?: string };
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const priorityBadgeClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
 const cargoLines = (items: VesselCargoItem[]) => items.map(item => `${item.name}${item.quantity ? `｜${item.quantity}` : ''}`).join('\n');
+export const scheduleInputValue = (value: string) => {
+  const normalized = value.trim().replace(' ', 'T');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return `${normalized}T00:00`;
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(normalized) ? normalized.slice(0, 16) : '';
+};
 const parseCargoLines = (value: string): VesselCargoItem[] => value.split(/\r?\n/).map(line => {
   const [name = '', ...quantityParts] = line.split(/[｜|]/);
   return { name: name.trim(), quantity: quantityParts.join('｜').trim() };
@@ -51,7 +57,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
       user.updatedAt = nowIso();
     });
   }, `修改經管人員：${values.length} 人`);
-  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="vessel-edit-title"><div className="modal-header"><div><h2 id="vessel-edit-title">快速更新｜{vessel.shortName || vessel.name}</h2><small>修改後立即保存；按 Esc 可關閉</small></div><button className="btn ghost" onClick={close}>完成並關閉</button></div>
+  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="vessel-edit-title"><div className="modal-header"><div><h2 id="vessel-edit-title">快速更新｜{vesselDisplayName(vessel)}</h2><small>修改後立即保存；按 Esc 可關閉</small></div><button className="btn ghost" onClick={close}>完成並關閉</button></div>
     <div className="smart-ship-api-note"><b>智慧船舶接口預留</b><span>上下港、位置、速度／拋錨／停泊、載況、ETA／ETB／ETD 與貨名貨量日後可自動同步；目前欄位同時支援手動修改，手動值會正常保存。</span></div>
     <div className="grid cols-4">
       <div className="field"><label>目前位置</label><input value={vessel.position.location} onChange={event => { const value = event.target.value; update(target => { target.position.location = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改目前位置'); }}/></div>
@@ -60,9 +66,9 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
       <div className="field"><label>航行狀態</label><select value={vessel.position.navigationStatus} onChange={event => { const value = event.target.value as NavigationStatus; update(target => { target.position.navigationStatus = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改航行狀態'); }}><option>航行</option><option>拋錨</option><option>停泊</option></select></div>
       <div className="field"><label>速度（kn）</label><input type="number" min="0" step="0.1" value={vessel.position.speedKnots} onChange={event => { const value = Number(event.target.value || 0); update(target => { target.position.speedKnots = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改速度'); }}/></div>
       <div className="field"><label>載況</label><select value={vessel.cargo.loadStatus} onChange={event => { const value = event.target.value as LoadStatus; update(target => { target.cargo.loadStatus = value; target.cargo.source = 'manual'; target.cargo.updatedAt = nowIso(); }, '修改載況'); }}><option>空載</option><option>非空載</option><option>滿載</option></select></div>
-      <div className="field"><label>ETA</label><input value={vessel.position.eta} placeholder="未確認則留空（TBA）" onChange={event => { const value = event.target.value; update(target => { target.position.eta = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETA'); }}/></div>
-      <div className="field"><label>ETB</label><input value={vessel.position.etb} placeholder="未確認則留空（TBA）" onChange={event => { const value = event.target.value; update(target => { target.position.etb = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETB'); }}/></div>
-      <div className="field"><label>ETD</label><input value={vessel.position.etd} placeholder="未確認則留空（TBA）" onChange={event => { const value = event.target.value; update(target => { target.position.etd = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETD'); }}/></div>
+      <div className="field"><label>ETA</label><input type="datetime-local" value={scheduleInputValue(vessel.position.eta)} onChange={event => { const value = event.target.value; update(target => { target.position.eta = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETA'); }}/><small>選填；未選擇時顯示 TBA</small></div>
+      <div className="field"><label>ETB</label><input type="datetime-local" value={scheduleInputValue(vessel.position.etb)} onChange={event => { const value = event.target.value; update(target => { target.position.etb = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETB'); }}/><small>選填；未選擇時顯示 TBA</small></div>
+      <div className="field"><label>ETD</label><input type="datetime-local" value={scheduleInputValue(vessel.position.etd)} onChange={event => { const value = event.target.value; update(target => { target.position.etd = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETD'); }}/><small>選填；未選擇時顯示 TBA</small></div>
       <div className="field span-2"><label>多筆貨名／貨量</label><textarea value={cargoLines(vessel.cargo.items)} placeholder={'每行一筆，例如：\n原油｜28,000 MT\n柴油｜5,000 MT'} onChange={event => { const items = parseCargoLines(event.target.value); update(target => { target.cargo.items = items; target.cargo.name = items[0]?.name || ''; target.cargo.quantity = items[0]?.quantity || ''; target.cargo.source = 'manual'; target.cargo.updatedAt = nowIso(); }, `修改貨名貨量：${items.length} 筆`); }}/></div>
       <div className="field"><label>人工備註</label><input value={vessel.position.manualRemark} onChange={event => { const value = event.target.value; update(target => { target.position.manualRemark = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改人工動態備註'); }}/></div>
       <div className="field span-2"><label>近期動態</label><textarea value={vessel.note.recentDynamics} onChange={event => { const value = event.target.value; update(target => { target.note.recentDynamics = value; target.note.updatedAt = nowIso(); }, '修改近期動態'); }}/></div>
@@ -85,15 +91,18 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const save = () => {
     if (!draft.description.trim()) return alert('請填寫事項內容');
     const saved=clone(draft);
+    saved.categories = Array.from(new Set(saved.categories || (saved.category ? [saved.category] : [])));
+    saved.category = saved.categories[0] || '';
+    if (saved.isClosed) { saved.closedDate ||= todayDate(); saved.closedBy ||= currentUser.id; }
+    else { delete saved.closedDate; delete saved.closedBy; }
     if (onSave(saved, creating)) close();
   };
   const users=data.users.filter(user=>user.isActive);
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{creating?'新增要事':readOnly?'查看要事':'更新要事'}</h2><small>{draft.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&canDelete&&<button className="btn red" onClick={onDelete}>刪除待辦</button>}{!readOnly&&canClose && <button className={`btn ${draft.isClosed?'green':'red'}`} onClick={toggleClosed}>{draft.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" onClick={close}>{readOnly?'關閉':'取消'}</button>{!readOnly&&<button className="btn primary" onClick={save}>{creating?'建立要事':'保存變更'}</button>}</div></div>
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
     <div className="grid cols-3">
-      <div className="field"><label>船舶</label><select value={draft.vesselId} onChange={event=>{const value=event.target.value;change(target=>{target.vesselId=value;});}}>{visibleVessels.map(vessel=><option key={vessel.id} value={vessel.id}>{vessel.shortName||vessel.name}｜{vessel.fullName}</option>)}</select></div>
+      <div className="field"><label>船舶</label><select value={draft.vesselId} onChange={event=>{const value=event.target.value;change(target=>{target.vesselId=value;});}}>{visibleVessels.map(vessel=><option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div>
       <div className="field"><label>關注程度</label><select value={draft.priority} onChange={event=>{const value=event.target.value as TaskPriority;change(target=>{target.priority=value;});}}>{data.settings.priorities.map(priority=><option key={priority}>{priority}</option>)}</select></div>
-      <div className="field"><label>分類</label><select value={draft.category} onChange={event=>{const value=event.target.value;change(target=>{target.category=value;});}}>{data.settings.taskCategories.map(category=><option key={category}>{category}</option>)}</select></div>
       <div className="field span-3"><label>事項內容</label><textarea value={draft.description} onChange={event=>{const value=event.target.value;change(target=>{target.description=value;});}}/></div>
       <div className="field span-2"><label>目前狀態／決議</label><textarea value={draft.status} onChange={event=>{const value=event.target.value;change(target=>{target.status=value;});}}/></div>
       <div className="field"><label>預計完成日期</label><input type="date" value={draft.expectedDate} onChange={event=>{const value=event.target.value;change(target=>{target.expectedDate=value;});}}/></div>
@@ -101,6 +110,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
       <label className="aware-toggle abnormal-toggle"><input type="checkbox" checked={draft.isAbnormal} onChange={event=>{const value=event.target.checked;change(target=>{target.isAbnormal=value;});}}/><span>異常（看板顯示「異常存在」）</span></label>
       <label className="aware-toggle internal-control-toggle"><input type="checkbox" checked={draft.isInternalControl} disabled={!creating&&Boolean(task?.isInternalControl)&&!canCancelInternalControl} onChange={event=>{const value=event.target.checked;if(draft.isInternalControl&&!value)alert(FLOW_INTERNAL_CONTROL_REMINDER);change(target=>{target.isInternalControl=value;if(value)target.isAbnormal=true;});}}/><span>內部管控（台面下異常管控）</span></label>
     </div>
+    <CheckboxMultiPicker label="分類" values={draft.categories || (draft.category ? [draft.category] : [])} choices={data.settings.taskCategories.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
     <CheckboxMultiPicker label="涉及部門" values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
     {currentUser.role!=='vessel'&&<CheckboxMultiPicker
       label="經管／負責人"

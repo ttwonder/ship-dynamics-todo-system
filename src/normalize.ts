@@ -17,11 +17,12 @@ import type {
 } from './types';
 import { nowIso } from './utils';
 import { normalizeRolePermissions } from './permissions';
+import { normalizeConfiguredTaskCategories, normalizeTaskCategoryList, sanitizeEditableTaskCategories } from './taskCategories';
 
 const roles: UserRole[] = ['owner', 'admin', 'operator', 'vessel'];
 const auditRoles: Array<UserRole | 'system'> = [...roles, 'system'];
 const priorities: TaskPriority[] = ['急', '高', '中', '低'];
-const shipStatuses: ShipStatus[] = ['裝載', '空載', '去卸貨', '去裝貨', '等待order'];
+const shipStatuses: ShipStatus[] = ['裝載', '空載', '去卸貨', '去裝貨', '等待order', '塢修/航修'];
 const navigationStatuses: NavigationStatus[] = ['航行', '拋錨', '停泊'];
 const loadStatuses: LoadStatus[] = ['空載', '非空載', '滿載'];
 const weeklyAttentionKeys: WeeklyAttentionKey[] = ['crew-operation', 'bunkering-water', 'materials-parts', 'maintenance', 'survey', 'audit-inspection', 'psc-window'];
@@ -37,6 +38,7 @@ const text = (value: unknown, fallback = '') => typeof value === 'string' ? valu
 const bool = (value: unknown, fallback = false) => typeof value === 'boolean' ? value : fallback;
 const finite = (value: unknown, fallback = 0) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T => typeof value === 'string' && allowed.includes(value as T) ? value as T : fallback;
+
 
 function normalizeStatusLogs(value: unknown): StatusLog[] {
   return objects(value).map(item => ({
@@ -73,7 +75,7 @@ function normalizeAuditLogs(value: unknown): AuditLog[] {
 }
 
 function normalizeNotifications(value: unknown): UserNotification[] {
-  const kinds: UserNotification['kind'][] = ['task_created', 'task_updated', 'internal_control_cancelled', 'task_deleted'];
+  const kinds: UserNotification['kind'][] = ['task_created', 'task_updated', 'task_archived', 'internal_control_cancelled', 'task_deleted'];
   return objects(value).map(item => ({
     id: text(item.id), userId: text(item.userId), vesselId: text(item.vesselId), taskId: text(item.taskId),
     kind: oneOf(item.kind, kinds, 'task_updated'), title: text(item.title), message: text(item.message),
@@ -93,6 +95,7 @@ function normalizeMeetings(value: unknown, timestamp: string): TemporaryMeeting[
     reason: text(item.reason),
     departments: strings(item.departments),
     resolution: text(item.resolution),
+    taskDescription: text(item.taskDescription),
     expectedDate: text(item.expectedDate),
     priority: oneOf(item.priority, priorities, '中'),
     createdBy: text(item.createdBy),
@@ -108,6 +111,7 @@ export function normalizeAppData(value: unknown): AppData | null {
   const settings = object(raw.settings);
   if (!settings) return null;
   const timestamp = text(raw.updatedAt, nowIso());
+  const meetingTaskDescriptionWasProvided = new Map(objects(raw.meetings).map(item => [text(item.id), Object.prototype.hasOwnProperty.call(item, 'taskDescription')]));
 
   const normalized: AppData = {
     revision: finite(raw.revision),
@@ -116,8 +120,11 @@ export function normalizeAppData(value: unknown): AppData | null {
       sitePasswordHash: text(settings.sitePasswordHash),
       systemTitle: text(settings.systemTitle, '船舶動態與會議管理系統'),
       departments: strings(settings.departments),
-      taskCategories: strings(settings.taskCategories),
-      vesselStatuses: strings(settings.vesselStatuses).filter((item): item is ShipStatus => shipStatuses.includes(item as ShipStatus)),
+      taskCategories: finite(settings.taskCategorySchemaVersion) === 2
+        ? sanitizeEditableTaskCategories(settings.taskCategories)
+        : normalizeConfiguredTaskCategories(settings.taskCategories),
+      taskCategorySchemaVersion: 2,
+      vesselStatuses: Array.from(new Set([...strings(settings.vesselStatuses).filter((item): item is ShipStatus => shipStatuses.includes(item as ShipStatus)), '塢修/航修' as ShipStatus])),
       priorities: [...priorities],
       rolePermissions: normalizeRolePermissions(settings.rolePermissions),
       lastCloudSyncAt: text(settings.lastCloudSyncAt),
@@ -187,7 +194,9 @@ export function normalizeAppData(value: unknown): AppData | null {
         updatedAt: text(item.updatedAt, timestamp),
       };
     }).filter(item => item.id && item.name),
-    tasks: objects(raw.tasks).map(item => ({
+    tasks: objects(raw.tasks).map(item => {
+      const categories = normalizeTaskCategoryList(item.category, item.categories);
+      return ({
       id: text(item.id),
       vesselId: text(item.vesselId),
       priority: oneOf(item.priority, priorities, '中'),
@@ -196,7 +205,8 @@ export function normalizeAppData(value: unknown): AppData | null {
       isInternalControl: bool(item.isInternalControl),
       internalControlCancelledAt: text(item.internalControlCancelledAt) || undefined,
       internalControlCancelledBy: text(item.internalControlCancelledBy) || undefined,
-      category: text(item.category),
+      category: categories[0] || '',
+      categories,
       description: text(item.description),
       status: text(item.status),
       expectedDate: text(item.expectedDate),
@@ -206,17 +216,24 @@ export function normalizeAppData(value: unknown): AppData | null {
       closedDate: text(item.closedDate) || undefined,
       closedBy: text(item.closedBy) || undefined,
       sourceMeetingId: text(item.sourceMeetingId) || undefined,
+      sourceType: oneOf(item.sourceType, ['morning', 'temporary'] as const, item.sourceMeetingId ? 'temporary' : 'morning'),
       createdBy: text(item.createdBy),
       updatedBy: text(item.updatedBy),
       createdAt: text(item.createdAt, timestamp),
       updatedAt: text(item.updatedAt, timestamp),
       statusLogs: normalizeStatusLogs(item.statusLogs),
-    })).filter(item => item.id && item.vesselId),
+    });
+    }).filter(item => item.id && item.vesselId),
     meetings: normalizeMeetings(raw.meetings, timestamp),
     agendaReports: normalizeAgendaReports(raw.agendaReports),
     auditLogs: normalizeAuditLogs(raw.auditLogs),
     notifications: normalizeNotifications(raw.notifications),
   };
+  normalized.meetings.forEach(meeting => {
+    if (meeting.taskDescription.trim() || meetingTaskDescriptionWasProvided.get(meeting.id)) return;
+    const linkedTask = normalized.tasks.find(task => task.sourceMeetingId === meeting.id && task.description.trim());
+    if (linkedTask) meeting.taskDescription = linkedTask.description;
+  });
   const activeVesselIds = new Set(normalized.vessels.filter(vessel => vessel.isActive).map(vessel => vessel.id));
   const vesselUserIds = new Set(normalized.users.filter(user => user.role === 'vessel').map(user => user.id));
   normalized.users.filter(user => user.role === 'vessel').forEach(user => {

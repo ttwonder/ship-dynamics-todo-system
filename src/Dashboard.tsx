@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ScheduleKind, TaskItem, UserAccount, Vessel, WeeklyAttentionKey } from './types';
 import { daysDiff, todayDate } from './utils';
+import { vesselDisplayName } from './vesselDisplay';
 
 const PRIORITY_RANK = { 急: 0, 高: 1, 中: 2, 低: 3 } as const;
 const WEEKLY_ATTENTION_OPTIONS: Array<{ key: WeeklyAttentionKey; label: string }> = [
@@ -102,14 +103,15 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
       const selectedForMeeting = selected.includes(vessel.id);
       return <article key={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
         <div className="ship-card-head">
-          <div className="ship-identity"><h3>{vessel.shortName || vessel.name}</h3><small>{vessel.fullName} · {vessel.shipType}</small></div>
+          <div className="ship-identity"><h3>{vesselDisplayName(vessel)}</h3><small>{vessel.shipType}</small></div>
           <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<span className={`priority-pill ${level}`}>{highest}</span></div>
         </div>
         <div className="ship-operation-grid">
           <div className="ship-route"><b>{vessel.position.lastPort || '未設定'}</b><span>→</span><b>{vessel.position.nextPort || '未設定'}</b></div>
           <div className="ship-position"><small>位置</small><b>{vessel.position.location || '未設定'}</b></div>
           <div className="ship-navigation"><small>航行狀態</small><b>{vessel.position.navigationStatus === '航行' ? `${vessel.position.speedKnots || 0} kn` : vessel.position.navigationStatus}</b></div>
-          <div className="ship-load"><b>{vessel.cargo.loadStatus}</b></div>
+          <div className="ship-load"><small>載況</small><b>{vessel.cargo.loadStatus}</b></div>
+          <div className="ship-status"><small>船舶狀態</small><b>{vessel.note.statusList.join('、') || '未設定'}</b></div>
           <button type="button" className="ship-schedule" onClick={() => cycleSchedule(vessel.id)} title="點擊循環顯示 ETA／ETB／ETD"><b>{scheduleKind}</b><span>{scheduleValue}</span></button>
           <div className="ship-cargo"><small>貨名貨量</small>{vessel.cargo.items.length ? vessel.cargo.items.map((item, index) => <span key={`${item.name}-${index}`}><b>{item.name || '未填貨名'}</b>{item.quantity && ` ${item.quantity}`}</span>) : <span>TBA</span>}</div>
         </div>

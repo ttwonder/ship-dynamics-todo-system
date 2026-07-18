@@ -7,6 +7,8 @@ const modals = fs.readFileSync('src/EditModals.tsx', 'utf8');
 const cloud = fs.readFileSync('src/cloud.ts', 'utf8');
 const css = fs.readFileSync('src/styles.css', 'utf8');
 const normalizer = fs.readFileSync('src/normalize.ts', 'utf8');
+const meetingAccess = fs.readFileSync('src/meetingAccess.ts', 'utf8');
+const meetingTasks = fs.readFileSync('src/meetingTaskWorkflow.ts', 'utf8');
 
 const checks = [
   ['登入頁不得公開預設密碼', !app.includes('初始測試密碼') && !app.includes('操作員初始密碼')],
@@ -24,10 +26,10 @@ const checks = [
   ['每次保存與同步皆需重新驗證目前 workspace identity', app.includes('currentIdentity !== activeCloudIdentity.current') && (app.match(/hasCurrentCloudIdentity\(\)/g) || []).length >= 2 && app.includes("cloudIdentity(latestConfig)!==syncIdentity") && app.includes('雲端設定在載入期間變更')],
   ['自動、手動保存與同步需共用串行／互斥控制', app.includes('cloudSaveInFlight') && app.includes('pendingCloudData') && app.includes('while (pendingCloudData.current)') && app.includes('enqueueCloudSave(data)') && app.includes('cloudSyncInFlight') && app.includes('cloudSyncing')],
   ['本機保存不得誤報已保存雲端', app.includes('已保存於本機瀏覽器')],
-  ['臨時會議需限制授權角色修改', meetings.includes("hasPermission(data.settings.rolePermissions, currentUser, 'manageMeetings')")],
+  ['臨時會議需限制授權角色修改', meetings.includes('canEditTemporaryMeetings(data.settings.rolePermissions, currentUser)') && meetingAccess.includes("hasPermission(matrix, user, 'manageMeetings') && hasPermission(matrix, user, 'viewAllVessels')")],
   ['臨時會議不得保存零艘範圍', meetings.includes("if (!resolvedVesselIds.length) return alert('請至少選擇一艘船舶')")],
-  ['會議跟進事項需帶來源 meeting id', meetings.includes('sourceMeetingId: id')],
-  ['會議跟進事項需避免重複', meetings.includes('linkedVesselIds')],
+  ['會議跟進事項需帶來源 meeting id', meetingTasks.includes('sourceMeetingId: meetingId')],
+  ['會議跟進事項需避免重複', meetingTasks.includes('canonicalByVessel') && meetingTasks.includes("task.sourceMeetingId === meetingId") && meetingTasks.includes('重複的臨會/專題待辦')],
   ['操作員不可修改船舶經管人', modals.includes('canManage(currentUser)')],
   ['正規化器需存在核心集合驗證', normalizer.includes('normalizeAppData') && normalizer.includes('raw.users')],
   ['正規化器需先過濾 null 物件及非字串陣列元素', normalizer.includes('objects(raw.users)') && normalizer.includes('strings(item.departments)') && normalizer.includes('normalizeStatusLogs')],

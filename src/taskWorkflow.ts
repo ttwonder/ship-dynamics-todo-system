@@ -3,6 +3,9 @@ import { nowIso, uid } from './utils';
 
 export const FLOW_INTERNAL_CONTROL_REMINDER = '請務必在FLOW系統中申報異常並處理！避免遺漏處理！';
 
+export const taskSourceLabel = (task: Pick<TaskItem, 'sourceType' | 'sourceMeetingId'>) =>
+  task.sourceType === 'temporary' || task.sourceMeetingId ? '臨會/專題' : '早會';
+
 type WorkflowUser = Pick<UserAccount, 'id' | 'role' | 'department' | 'managedVesselIds'> & { isActive?: boolean };
 type WorkflowVessel = Pick<Vessel, 'id' | 'assignedUserIds'>;
 
@@ -49,7 +52,7 @@ export function validateInternalControlTransition<T extends Pick<TaskItem, 'isIn
 
 export function buildTaskNotifications(users: WorkflowUser[], vessel: WorkflowVessel, actorId: string, task: Pick<TaskItem, 'id' | 'description' | 'isInternalControl'>, kind: UserNotification['kind'], actorName: string): UserNotification[] {
   const at = nowIso();
-  const action = kind === 'task_created' ? '新增待辦' : kind === 'task_deleted' ? '刪除待辦' : kind === 'internal_control_cancelled' ? '取消內部管控' : '更新待辦';
+  const action = kind === 'task_created' ? '新增待辦' : kind === 'task_archived' ? '取消待辦' : kind === 'task_deleted' ? '刪除待辦' : kind === 'internal_control_cancelled' ? '取消內部管控' : '更新待辦';
   return getTaskNotificationRecipientIds(users, vessel, actorId).map(userId => ({
     id: uid('notice'), userId, vesselId: vessel.id, taskId: task.id, kind,
     title: `${action}｜${task.isInternalControl ? '內部管控｜' : ''}${task.description || '未命名事項'}`,

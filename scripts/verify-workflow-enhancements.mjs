@@ -12,7 +12,7 @@ assert.ok(!/setCloudStatus\([^\n]{0,160}rev\./.test(app), '雲端狀態不可再
 assert.ok(management.includes('人員資料已保存'), '人員保存後必須顯示成功提示');
 assert.ok(source.includes('全選討論船舶'), '早會左欄必須提供全選按鈕');
 assert.ok(source.includes('selected.length === 0 || selected.length === visibleVessels.length'), '未選或全選時必須以全部船舶作為討論範圍');
-assert.ok(app.includes("['meeting','臨時會議']"), '主導覽必須提供臨時會議頁');
-assert.ok(types.includes('TemporaryMeetingStatus'), '臨時會議資料必須具有狀態型別');
+assert.ok(app.includes("['meeting','臨會/專題']"), '主導覽必須提供臨會/專題頁');
+assert.ok(types.includes('TemporaryMeetingStatus'), '臨會/專題資料必須具有狀態型別');
 
 console.log('Workflow enhancement contracts passed.');
