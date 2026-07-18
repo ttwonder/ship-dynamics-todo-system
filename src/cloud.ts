@@ -29,6 +29,42 @@ export class CloudConflictError extends Error {
   constructor() { super('雲端已有較新的版本，已停止覆寫。請先同步最新資料後再修改。'); }
 }
 
+const sameCloudIdentity = (left: SupabaseConfig | null, right: SupabaseConfig) => Boolean(left
+  && left.supabaseUrl === right.supabaseUrl
+  && left.supabaseAnonKey === right.supabaseAnonKey
+  && left.workspaceKey === right.workspaceKey
+  && (left.tableName || 'ship_dynamics_app_state') === (right.tableName || 'ship_dynamics_app_state'));
+
+export async function persistPasswordMigrationCas(
+  supabase: SupabaseClient,
+  sourceConfig: SupabaseConfig & { tableName: string },
+  latestConfig: SupabaseConfig | null,
+  normalized: AppData,
+  sourceRevision: number,
+  migratedAt = new Date().toISOString(),
+): Promise<AppData> {
+  if (!sameCloudIdentity(latestConfig, sourceConfig)) throw new Error('密碼遷移期間雲端工作區 identity 已變更，已停止保存；請重試同步。');
+  normalized.revision = sourceRevision + 1;
+  normalized.updatedAt = migratedAt;
+  normalized.settings.lastCloudSyncAt = migratedAt;
+  const row = {
+    workspace_key: sourceConfig.workspaceKey,
+    revision: normalized.revision,
+    payload: normalized,
+    updated_at: migratedAt,
+  };
+  const { data: saved, error: saveError } = await supabase
+    .from(sourceConfig.tableName)
+    .update(row)
+    .eq('workspace_key', sourceConfig.workspaceKey)
+    .eq('revision', sourceRevision)
+    .select('revision')
+    .maybeSingle();
+  if (saveError) throw saveError;
+  if (!saved) throw new CloudConflictError();
+  return normalized;
+}
+
 export function getSupabaseClient() {
   const cfg = getSupabaseConfig();
   if (!cfg) return null;
@@ -57,9 +93,14 @@ export async function fetchCloudData(): Promise<AppData | null> {
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
+  const sourceRevision = Number.isFinite(data.revision) ? data.revision : 0;
+  const needsPasswordResetPersistence = Number(data.payload?.settings?.nonOwnerPasswordResetVersion || 0) < 1;
   const normalized = normalizeAppData(data.payload);
   if (!normalized) throw new Error('雲端資料格式不完整，已拒絕載入以避免白頁或資料污染。');
-  normalized.revision = Number.isFinite(data.revision) ? data.revision : normalized.revision;
+  normalized.revision = sourceRevision;
+  if (needsPasswordResetPersistence) {
+    await persistPasswordMigrationCas(supabase, cfg, getSupabaseConfig(), normalized, sourceRevision);
+  }
   return normalized;
 }
 

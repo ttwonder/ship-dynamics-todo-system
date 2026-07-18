@@ -26,12 +26,23 @@ const meetingTasks = fs.readFileSync('src/meetingTaskWorkflow.ts', 'utf8');
 
 assert.ok(types.includes("TaskSource = 'morning' | 'temporary'"), '待辦必須有早會／臨會專題來源型別');
 assert.ok(types.includes('sourceType: TaskSource'), '每筆待辦必須保存明确來源');
-assert.ok(types.includes('taskDescription: string'), '臨會／專題必須保存獨立待辦事項');
-assert.ok(meetings.includes('<label>待辦事項</label>'), '臨會／專題詳情必須可輸入待辦事項');
+assert.ok(types.includes('taskDescription: string'), '臨會／專題必須保留舊版單一待辦欄位供迁移');
+assert.ok(types.includes('taskItems: MeetingTaskItem[]'), '臨會／專題必須保存多筆待辦事項');
+assert.ok(types.includes('sourceMeetingItemId?: string'), '关联待办必须记录所属会议待办事项 ID');
+assert.ok(meetings.includes('待辦事項 {index + 1}') && meetings.includes('＋ 增加待辦事項') && meetings.includes('移除此事項'), '臨會／專題詳情必須可新增及移除多筆待辦事項');
 assert.ok(meetingTasks.includes("sourceType: 'temporary'"), '臨會／專題生成待辦必須標記來源');
 assert.ok(meetings.includes('linkedTasks') && meetings.includes('關聯待辦事項'), '臨會／專題詳情必須呈現已生成待辦');
 assert.ok(app.includes('<th>來源</th>') && app.includes('taskSourceLabel(t)'), '總清單必須呈現待辦來源');
 assert.ok(workCenter.includes('taskSourceLabel(task)'), '個人待辦必須呈現待辦來源');
+for (const contract of [
+  '我的待辦關鍵字',
+  '我的待辦船舶篩選',
+  '我的待辦關注程度篩選',
+  '我的待辦來源篩選',
+  '我的待辦排序',
+  'filteredTasks',
+  'taskSort',
+]) assert.ok(workCenter.includes(contract), `個人待辦篩選／排序缺少 ${contract}`);
 assert.ok(normalizer.includes("item.sourceMeetingId ? 'temporary' : 'morning'"), '舊資料必須安全補上來源');
 assert.ok(app.includes("sourceType:'morning'"), '一般新增待辦必須标记為早會來源');
 for (const source of [app, meetings]) {

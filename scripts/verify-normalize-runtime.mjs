@@ -32,7 +32,12 @@ try {
   assert.equal(data.tasks.length, 1);
   assert.deepEqual(data.settings.departments, ['航務']);
   assert.deepEqual(data.settings.priorities, ['急', '高', '中', '低']);
-  assert.deepEqual(data.users[0].managedVesselIds, ['v1']);
+  assert.deepEqual(data.settings.vesselStatuses, ['loading', 'unloading', 'to load', 'to unload', 'waiting order', 'drydock/repiar']);
+  assert.deepEqual(data.vessels[0].note.statusList, ['loading']);
+  assert.deepEqual(data.users[0].managedVesselIds, [], 'Owner／管理員不分管具體船舶');
+  assert.deepEqual(data.vessels[0].assignedUserIds, [], '船舶分管名單不得保留管理層帳號');
+  assert.equal(data.users[0].passwordHash, 'hash', '一次性密碼遷移不得覆蓋 Owner');
+  assert.equal(data.settings.nonOwnerPasswordResetVersion, 1);
   assert.deepEqual(data.vessels[0].fleetTags, ['A']);
   assert.equal(data.vessels[0].position.navigationStatus, '停泊');
   assert.equal(data.vessels[0].position.etb, '2026-07-18 08:00');
@@ -44,6 +49,8 @@ try {
   assert.equal(data.tasks[0].statusLogs.length, 1);
   assert.equal(data.meetings[0].subject, '');
   assert.equal(data.meetings[0].taskDescription, '舊版已生成待辦', '舊會議需由既有关聯待辦回填獨立待辦欄');
+  assert.deepEqual(data.meetings[0].taskItems.map(item => item.description), ['舊版已生成待辦'], '舊會議單一待辦需迁移為待辦事項 1');
+  assert.equal(data.tasks[0].sourceMeetingItemId, data.meetings[0].taskItems[0].id, '舊关联待办需补上稳定会议事项 ID');
   const explicitCleared = normalizeAppData({
     ...malformed,
     tasks: [{ id: 't-clear', vesselId: 'v1', sourceMeetingId: 'm-clear', description: '不應回填的舊待辦' }],

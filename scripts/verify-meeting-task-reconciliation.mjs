@@ -136,6 +136,28 @@ try {
   assert.equal(restored.created.length, 1, '重新填寫待辦時需建立一筆新關聯待辦');
   assert.equal(tasks.filter(item => item.sourceMeetingId === 'm1' && item.vesselId === 'v1').length, 1);
 
+  const multiTasks = [];
+  const multiResult = reconcileMeetingTasks({
+    ...common,
+    tasks: multiTasks,
+    meetingId: 'multi',
+    vesselIds: ['v1', 'v2'],
+    followUps: [{ id: 'item-1', description: '待辦一' }, { id: 'item-2', description: '待辦二' }],
+  });
+  assert.equal(multiResult.created.length, 4, '兩個待辦事項套用兩艘船時必須建立四筆關聯待辦');
+  assert.equal(multiTasks.filter(item => item.sourceMeetingItemId === 'item-1').length, 2);
+  assert.equal(multiTasks.filter(item => item.sourceMeetingItemId === 'item-2').length, 2);
+  const removedItemResult = reconcileMeetingTasks({
+    ...common,
+    tasks: multiTasks,
+    meetingId: 'multi',
+    vesselIds: ['v1', 'v2'],
+    followUps: [{ id: 'item-2', description: '待辦二更新' }],
+  });
+  assert.equal(multiTasks.filter(item => item.sourceMeetingId === 'multi' && item.sourceMeetingItemId === 'item-1').length, 0, '刪除待辦事項格時需解除該事項的全部船舶關聯');
+  assert.equal(multiTasks.filter(item => item.sourceMeetingId === 'multi' && item.sourceMeetingItemId === 'item-2').length, 2, '其他待辦事項不得受刪除影響');
+  assert.equal(removedItemResult.archivedIds.length, 2, '刪除一個跨兩船事項需產生兩筆取消事件');
+
   assert.equal(departmentAfterRoleChange('船舶帳戶', 'operator', ['航務部', '工務部']), '航務部');
   assert.equal(departmentAfterRoleChange('工務部', 'admin', ['航務部', '工務部']), '工務部');
   assert.equal(departmentAfterRoleChange('航務部', 'vessel', ['航務部']), '船舶帳戶');

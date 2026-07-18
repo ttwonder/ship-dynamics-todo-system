@@ -2,7 +2,7 @@ export type UserRole = 'owner' | 'admin' | 'operator' | 'vessel';
 export type PermissionKey = 'viewAllVessels' | 'editBusinessContent' | 'createTasks' | 'closeTasks' | 'deleteTasks' | 'manageMeetings' | 'exportReports' | 'enterManagement' | 'manageUsers' | 'manageVessels' | 'viewAuditLogs' | 'manageRolePermissions' | 'manageSystemSettings';
 export type RolePermissions = Record<UserRole, Record<PermissionKey, boolean>>;
 export type TaskPriority = '急' | '高' | '中' | '低';
-export type ShipStatus = '裝載' | '空載' | '去卸貨' | '去裝貨' | '等待order' | '塢修/航修';
+export type ShipStatus = 'loading' | 'unloading' | 'to load' | 'to unload' | 'waiting order' | 'drydock/repiar';
 export type NavigationStatus = '航行' | '拋錨' | '停泊';
 export type LoadStatus = '空載' | '非空載' | '滿載';
 export type ScheduleKind = 'ETA' | 'ETB' | 'ETD';
@@ -18,6 +18,7 @@ export interface UserAccount {
   username: string;
   role: UserRole;
   passwordHash: string;
+  passwordVisible: string;
   isActive: boolean;
   managedVesselIds: string[];
   createdAt: string;
@@ -73,6 +74,7 @@ export interface Vessel {
   cargo: VesselCargo;
   note: VesselNote;
   weeklyAttention: WeeklyAttentionKey[];
+  manualAttentionLevel?: TaskPriority | '';
   createdAt: string;
   updatedAt: string;
 }
@@ -104,6 +106,7 @@ export interface TaskItem {
   closedDate?: string;
   closedBy?: string;
   sourceMeetingId?: string;
+  sourceMeetingItemId?: string;
   sourceType: TaskSource;
   createdBy: string;
   updatedBy: string;
@@ -126,6 +129,11 @@ export interface UserNotification {
   readAt?: string;
 }
 
+export interface MeetingTaskItem {
+  id: string;
+  description: string;
+}
+
 export interface TemporaryMeeting {
   id: string;
   subject: string;
@@ -138,6 +146,7 @@ export interface TemporaryMeeting {
   departments: string[];
   resolution: string;
   taskDescription: string;
+  taskItems: MeetingTaskItem[];
   expectedDate: string;
   priority: TaskPriority;
   createdBy: string;
@@ -175,6 +184,7 @@ export interface AppSettings {
   vesselStatuses: ShipStatus[];
   priorities: TaskPriority[];
   rolePermissions: RolePermissions;
+  nonOwnerPasswordResetVersion?: number;
   lastCloudSyncAt: string;
 }
 

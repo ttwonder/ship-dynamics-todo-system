@@ -3,9 +3,10 @@ import { localDate } from '../utils';
 import { DEFAULT_ROLE_PERMISSIONS } from '../permissions';
 import { REQUIRED_TASK_CATEGORIES } from '../taskCategories';
 
-export const DEFAULT_USER_PASSWORD='123456';
+export const DEFAULT_USER_PASSWORD='fpmc2026';
 export const DEFAULT_SITE_PASSWORD='ship2026';
-export const DEFAULT_PASSWORD_HASH='8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92';
+export const DEFAULT_PASSWORD_HASH='385b870cb91faa4b1cb040d624ab6a7c738352a032ade05cef752de2868f8b10';
+const OWNER_INITIAL_PASSWORD_HASH='8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92';
 export const DEFAULT_SITE_PASSWORD_HASH='2fa85d0298cf567e76c624a67ebe2d330e5c03cbd77383f688c6720b98101a13';
 
 const rawPersonnel = [
@@ -720,7 +721,7 @@ const rawVessels = [
 
 export const DEPARTMENTS = Array.from(new Set(rawPersonnel.map(p => p.department)));
 export const TASK_CATEGORIES = [...REQUIRED_TASK_CATEGORIES];
-export const VESSEL_STATUSES: ShipStatus[] = ['裝載', '空載', '去卸貨', '去裝貨', '等待order', '塢修/航修'];
+export const VESSEL_STATUSES: ShipStatus[] = ['loading', 'unloading', 'to load', 'to unload', 'waiting order', 'drydock/repiar'];
 export const PRIORITIES: TaskPriority[] = ['急', '高', '中', '低'];
 
 const ports = ['高雄', '麥寮', '新加坡', '仁川', '東京', '上海', '香港', '馬尼拉', '釜山', '杜拜'];
@@ -734,8 +735,9 @@ export function createInitialData(): AppData {
     department: p.department,
     name: p.name,
     username: p.name,
-    role: 'operator' as UserRole,
-    passwordHash: DEFAULT_PASSWORD_HASH,
+    role: (p.name === '朱世毅' ? 'owner' : 'operator') as UserRole,
+    passwordHash: p.name === '朱世毅' ? OWNER_INITIAL_PASSWORD_HASH : DEFAULT_PASSWORD_HASH,
+    passwordVisible: p.name === '朱世毅' ? '' : DEFAULT_USER_PASSWORD,
     isActive: true,
     managedVesselIds: [],
     createdAt: now.toISOString(),
@@ -810,6 +812,7 @@ export function createInitialData(): AppData {
       vesselStatuses: [...VESSEL_STATUSES],
       priorities: [...PRIORITIES],
       rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),
+      nonOwnerPasswordResetVersion: 1,
       lastCloudSyncAt: '',
     },
     users,

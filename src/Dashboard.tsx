@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ScheduleKind, TaskItem, UserAccount, Vessel, WeeklyAttentionKey } from './types';
+import type { ScheduleKind, TaskItem, TaskPriority, UserAccount, Vessel, WeeklyAttentionKey } from './types';
 import { daysDiff, todayDate } from './utils';
 import { vesselDisplayName } from './vesselDisplay';
 
@@ -23,6 +23,7 @@ interface DashboardProps {
   onEdit: (id: string) => void;
   onAddTask: (id: string) => void;
   onToggleAttention: (vesselId: string, key: WeeklyAttentionKey) => void;
+  onAdjustAttention: (vesselId: string) => void;
   onStartMeeting: () => void;
   onOpenReport: () => void;
   onTaskMetric: (mode: 'open' | 'high' | 'overdue') => void;
@@ -32,7 +33,7 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, vessels, tasks, selected, setSelected, onEdit, onAddTask, onToggleAttention, onStartMeeting, onOpenReport, onTaskMetric, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ user, vessels, tasks, selected, setSelected, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [fleetFilter, setFleetFilter] = useState('all');
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
@@ -94,17 +95,19 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
       const high = vesselTasks.filter(task => task.priority === '高').length;
       const mid = vesselTasks.filter(task => task.priority === '中').length;
       const low = vesselTasks.filter(task => task.priority === '低').length;
-      const level = urgent ? 'urgent' : high ? 'high' : mid ? 'mid' : 'low';
       const abnormal = vesselTasks.some(task => task.isAbnormal);
+      const autoAttention: TaskPriority = abnormal || urgent ? '急' : high ? '高' : mid ? '中' : '低';
+      const attention = vessel.manualAttentionLevel || autoAttention;
+      const level = attention === '急' ? 'urgent' : attention === '高' ? 'high' : attention === '中' ? 'mid' : 'low';
       const scheduleKind = scheduleByVessel[vessel.id] || 'ETA';
       const scheduleValue = vessel.position[scheduleField[scheduleKind]]||'TBA';
       const sortedTasks = [...vesselTasks].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || Number(b.isAbnormal) - Number(a.isAbnormal));
-      const highest = urgent ? `急關注 ${urgent}` : high ? `高關注 ${high}` : mid ? `中關注 ${mid}` : `低關注 ${low}`;
+      const highest = vessel.manualAttentionLevel ? `手動 ${attention}關注` : urgent ? `急關注 ${urgent}` : abnormal ? '急關注 異常' : high ? `高關注 ${high}` : mid ? `中關注 ${mid}` : `低關注 ${low}`;
       const selectedForMeeting = selected.includes(vessel.id);
       return <article key={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
         <div className="ship-card-head">
           <div className="ship-identity"><h3>{vesselDisplayName(vessel)}</h3><small>{vessel.shipType}</small></div>
-          <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<span className={`priority-pill ${level}`}>{highest}</span></div>
+          <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<button type="button" disabled={!canEdit} className={`priority-pill attention-adjust ${level}`} title={canEdit?'點擊切換自動／急／高／中／低关注度':'目前關注度'} onClick={()=>onAdjustAttention(vessel.id)}>{highest}</button></div>
         </div>
         <div className="ship-operation-grid">
           <div className="ship-route"><b>{vessel.position.lastPort || '未設定'}</b><span>→</span><b>{vessel.position.nextPort || '未設定'}</b></div>
@@ -119,7 +122,7 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
           const active = vessel.weeklyAttention.includes(option.key);
           return <button type="button" key={option.key} disabled={!canEdit} className={`${active ? 'active' : ''} ${option.key === 'psc-window' ? 'psc' : ''}`} aria-pressed={active} onClick={() => onToggleAttention(vessel.id, option.key)}><i />{option.label}</button>;
         })}</div>
-        <div className="ship-summary"><b>重要摘要：</b>{sortedTasks.length ? <ul>{sortedTasks.slice(0, 3).map(task => <li key={task.id}>{task.isAbnormal && <span>異常</span>}<strong>{task.priority}</strong>{task.description || '尚未輸入要事內容'}</li>)}</ul> : <p>目前無未結要事</p>}</div>
+        <div className="ship-summary"><b>重要摘要：</b><div className="ship-summary-content">{vessel.position.manualRemark&&<p><strong>人工備註</strong>{vessel.position.manualRemark}</p>}{vessel.note.recentDynamics&&<p><strong>近期／後續動態</strong>{vessel.note.recentDynamics}</p>}{sortedTasks.length ? <ul>{sortedTasks.slice(0, 3).map(task => <li key={task.id}>{task.isAbnormal && <span>異常</span>}<strong>{task.priority}</strong>{task.description || '尚未輸入要事內容'}</li>)}</ul> : <p>目前無未結要事</p>}</div></div>
         <div className="ship-card-foot"><span className="task-mini"><i className="urgent">急 {urgent}</i><i className="high">高 {high}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print">{canEdit && <button className="btn small" onClick={() => onEdit(vessel.id)}>快速更新</button>}{canCreateTasks && <button className="btn small ghost" onClick={() => onAddTask(vessel.id)}>新增要事</button>}{canUseMeetings&&<button className={`btn small ${selectedForMeeting ? 'pink' : 'ghost'}`} onClick={() => toggleMeeting(vessel.id)}>{selectedForMeeting ? '已選入會議' : '選入會議'}</button>}</div></div>
       </article>;
     })}</div>

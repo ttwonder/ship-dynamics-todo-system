@@ -41,6 +41,9 @@ assert.ok(schedulePosition !== -1 && vesselStatusPosition !== -1 && loadStatusPo
 assert.ok(schedulePosition < vesselStatusPosition && vesselStatusPosition < loadStatusPosition, '船舶看板 DOM 顺序应为 ETA、船舶状态、载况');
 assert.ok(styles.includes('grid-template-areas:"route position navigation" "schedule status load" "cargo cargo cargo"'), '船舶看板桌面 CSS Grid 视觉顺序应为 ETA、船舶状态、载况');
 assert.ok(styles.includes('grid-template-areas:"route route" "position navigation" "schedule status" "load load" "cargo cargo"'), '船舶看板窄屏 CSS Grid 视觉顺序应为 ETA、船舶状态、载况');
+assert.ok(styles.includes('gap:6px;margin:10px 0 8px'), '船舶动态区块需缩小网格间距与上下留白');
+assert.ok(styles.includes('.ship-route{grid-area:route;margin:0;padding:8px 7px}'), '航线区块需使用紧凑高度');
+assert.ok(styles.includes('min-height:112px') && styles.includes('.ship-summary{') && styles.includes('flex:1'), '重要摘要需取得更高的最小高度与剩余空间');
 assert.ok(dashboard.includes("priority === '急'") && dashboard.includes('急 {urgent}'), '看板需显示急等级统计');
 assert.ok(app.includes('t.isAbnormal') && app.includes('異常</span>'), '清单及报告需显示异常资料');
 assert.ok(morning.includes('急:0') && morning.includes('異常'), '早会需按急等级排序并显示异常');
