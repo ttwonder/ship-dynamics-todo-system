@@ -40,6 +40,12 @@ try {
   const morning = fs.readFileSync('src/MorningWorkspace.tsx','utf8');
   assert.ok(dashboard.includes('船舶狀態') && dashboard.includes('vessel.note.statusList'), '看板載況旁必須顯示船舶狀態');
   assert.ok(editor.includes('CheckboxMultiPicker label="分類"') && editor.includes('draft.categories'), '新增要事分類必須可多選');
+  assert.ok(editor.includes("if (creating && !draft.vesselId) return alert('請選擇船舶')"), '新增要事的船舶必須由保存 handler 验证');
+  assert.ok(editor.includes("if (creating && !draft.priority) return alert('請選擇關注程度')"), '新增要事的关注程度必须由保存 handler 验证');
+  assert.ok(editor.includes("if (creating && !selectedCategories.length) return alert('請選擇分類')"), '新增要事的分类必须由保存 handler 验证');
+  assert.ok(app.includes("category:'', categories:[]"), '新增要事分类必须初始为空并由使用者主动选择');
+  assert.ok(editor.includes("if (creating && !draft.departments.length) return alert('請選擇涉及部門')"), '新增要事的涉及部门必须由保存 handler 验证');
+  assert.ok(editor.includes('required={creating}') && editor.includes('label="分類" required={creating}') && editor.includes('label="涉及部門" required={creating}'), '新增要事的五个必选／必填字段必须显示原生或语义 required 标记');
   assert.ok(app.includes('mergeAttentionFromCategories') && app.includes('saved.categories'), '保存要事必須同步點亮看板狀態');
   assert.ok(app.includes('closedFilters') && app.includes("tasks={closedTasks}"), '已結案頁需使用獨立篩選與已結案資料源');
   assert.ok(morning.includes('onAddTask') && morning.includes('＋ 新增待辦'), '早會討論區需提供新增待辦');

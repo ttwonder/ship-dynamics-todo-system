@@ -11,6 +11,7 @@ const morning = read('src/MorningWorkspace.tsx');
 const meetings = read('src/TemporaryMeetings.tsx');
 const meetingTasks = read('src/meetingTaskWorkflow.ts');
 const api = fs.existsSync('src/smartShipApi.ts') ? read('src/smartShipApi.ts') : '';
+const styles = read('src/styles.css');
 
 assert.ok(types.includes("TaskPriority = '急' | '高' | '中' | '低'"), '关注程度需新增「急」等级');
 assert.ok(types.includes('isAbnormal: boolean'), '要事需保存异常选项');
@@ -33,6 +34,13 @@ for (const label of ['換員操作', '加油加水', '物料配件', '維修', '
   assert.ok(dashboard.includes(label), `船舶看板需提供「${label}」一周关注灯`);
 }
 assert.ok(dashboard.includes("['ETA','ETB','ETD']") && dashboard.includes("||'TBA'"), 'ETA／ETB／ETD 需点击循环且空值显示 TBA');
+const schedulePosition = dashboard.indexOf('className="ship-schedule"');
+const vesselStatusPosition = dashboard.indexOf('className="ship-status"');
+const loadStatusPosition = dashboard.indexOf('className="ship-load"');
+assert.ok(schedulePosition !== -1 && vesselStatusPosition !== -1 && loadStatusPosition !== -1, '船舶看板需同时渲染 ETA、船舶状态、载况区块');
+assert.ok(schedulePosition < vesselStatusPosition && vesselStatusPosition < loadStatusPosition, '船舶看板 DOM 顺序应为 ETA、船舶状态、载况');
+assert.ok(styles.includes('grid-template-areas:"route position navigation" "schedule status load" "cargo cargo cargo"'), '船舶看板桌面 CSS Grid 视觉顺序应为 ETA、船舶状态、载况');
+assert.ok(styles.includes('grid-template-areas:"route route" "position navigation" "schedule status" "load load" "cargo cargo"'), '船舶看板窄屏 CSS Grid 视觉顺序应为 ETA、船舶状态、载况');
 assert.ok(dashboard.includes("priority === '急'") && dashboard.includes('急 {urgent}'), '看板需显示急等级统计');
 assert.ok(app.includes('t.isAbnormal') && app.includes('異常</span>'), '清单及报告需显示异常资料');
 assert.ok(morning.includes('急:0') && morning.includes('異常'), '早会需按急等级排序并显示异常');

@@ -27,9 +27,9 @@ function useEscapeClose(close: () => void) {
   }, [close]);
 }
 
-function CheckboxMultiPicker({ label, values, choices, onChange }: { label: string; values: string[]; choices: MultiChoice[]; onChange: (values: string[]) => void }) {
+function CheckboxMultiPicker({ label, values, choices, onChange, required = false }: { label: string; values: string[]; choices: MultiChoice[]; onChange: (values: string[]) => void; required?: boolean }) {
   const toggle = (value: string) => onChange(values.includes(value) ? values.filter(item => item !== value) : [...values, value]);
-  return <fieldset className="checkbox-multi-picker"><legend>{label}<span>已選 {values.length}</span></legend><div className="checkbox-multi-grid">{choices.map(choice => {
+  return <fieldset className="checkbox-multi-picker" aria-required={required}><legend>{label}{required && <span className="danger-note" aria-hidden="true">＊</span>}<span>已選 {values.length}</span></legend><div className="checkbox-multi-grid">{choices.map(choice => {
     const checked = values.includes(choice.value);
     return <label key={choice.value} className={checked ? 'selected' : ''}><input type="checkbox" checked={checked} onChange={() => toggle(choice.value)}/><span><b>{choice.label}</b>{choice.detail && <small>{choice.detail}</small>}</span></label>;
   })}</div></fieldset>;
@@ -89,9 +89,14 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const addStatus = () => { const value=quickStatus.trim(); if(!value)return; change(target=>{target.status=value;target.statusLogs.unshift({id:uid('log'),at:nowIso(),by:currentUser.name,text:value});});setQuickStatus(''); };
   const toggleClosed = () => { if (!canClose) return alert('目前角色未獲授權結案或重新開啟要事'); change(target=>{target.isClosed=!target.isClosed;if(target.isClosed){target.closedDate=todayDate();target.closedBy=currentUser.id;}else{delete target.closedDate;delete target.closedBy;}}); };
   const save = () => {
+    const selectedCategories = Array.from(new Set(draft.categories || (draft.category ? [draft.category] : [])));
+    if (creating && !draft.vesselId) return alert('請選擇船舶');
+    if (creating && !draft.priority) return alert('請選擇關注程度');
     if (!draft.description.trim()) return alert('請填寫事項內容');
+    if (creating && !selectedCategories.length) return alert('請選擇分類');
+    if (creating && !draft.departments.length) return alert('請選擇涉及部門');
     const saved=clone(draft);
-    saved.categories = Array.from(new Set(saved.categories || (saved.category ? [saved.category] : [])));
+    saved.categories = selectedCategories;
     saved.category = saved.categories[0] || '';
     if (saved.isClosed) { saved.closedDate ||= todayDate(); saved.closedBy ||= currentUser.id; }
     else { delete saved.closedDate; delete saved.closedBy; }
@@ -101,17 +106,17 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{creating?'新增要事':readOnly?'查看要事':'更新要事'}</h2><small>{draft.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&canDelete&&<button className="btn red" onClick={onDelete}>刪除待辦</button>}{!readOnly&&canClose && <button className={`btn ${draft.isClosed?'green':'red'}`} onClick={toggleClosed}>{draft.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" onClick={close}>{readOnly?'關閉':'取消'}</button>{!readOnly&&<button className="btn primary" onClick={save}>{creating?'建立要事':'保存變更'}</button>}</div></div>
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
     <div className="grid cols-3">
-      <div className="field"><label>船舶</label><select value={draft.vesselId} onChange={event=>{const value=event.target.value;change(target=>{target.vesselId=value;});}}>{visibleVessels.map(vessel=><option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div>
-      <div className="field"><label>關注程度</label><select value={draft.priority} onChange={event=>{const value=event.target.value as TaskPriority;change(target=>{target.priority=value;});}}>{data.settings.priorities.map(priority=><option key={priority}>{priority}</option>)}</select></div>
-      <div className="field span-3"><label>事項內容</label><textarea value={draft.description} onChange={event=>{const value=event.target.value;change(target=>{target.description=value;});}}/></div>
+      <div className="field"><label>船舶{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><select required={creating} aria-required={creating} value={draft.vesselId} onChange={event=>{const value=event.target.value;change(target=>{target.vesselId=value;});}}>{visibleVessels.map(vessel=><option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div>
+      <div className="field"><label>關注程度{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><select required={creating} aria-required={creating} value={draft.priority} onChange={event=>{const value=event.target.value as TaskPriority;change(target=>{target.priority=value;});}}>{data.settings.priorities.map(priority=><option key={priority}>{priority}</option>)}</select></div>
+      <div className="field span-3"><label>事項內容{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><textarea required={creating} aria-required={creating} value={draft.description} onChange={event=>{const value=event.target.value;change(target=>{target.description=value;});}}/></div>
       <div className="field span-2"><label>目前狀態／決議</label><textarea value={draft.status} onChange={event=>{const value=event.target.value;change(target=>{target.status=value;});}}/></div>
       <div className="field"><label>預計完成日期</label><input type="date" value={draft.expectedDate} onChange={event=>{const value=event.target.value;change(target=>{target.expectedDate=value;});}}/></div>
       <label className="aware-toggle"><input type="checkbox" checked={draft.isAware} onChange={event=>{const value=event.target.checked;change(target=>{target.isAware=value;});}}/><span>標記為知曉事項</span></label>
       <label className="aware-toggle abnormal-toggle"><input type="checkbox" checked={draft.isAbnormal} onChange={event=>{const value=event.target.checked;change(target=>{target.isAbnormal=value;});}}/><span>異常（看板顯示「異常存在」）</span></label>
       <label className="aware-toggle internal-control-toggle"><input type="checkbox" checked={draft.isInternalControl} disabled={!creating&&Boolean(task?.isInternalControl)&&!canCancelInternalControl} onChange={event=>{const value=event.target.checked;if(draft.isInternalControl&&!value)alert(FLOW_INTERNAL_CONTROL_REMINDER);change(target=>{target.isInternalControl=value;if(value)target.isAbnormal=true;});}}/><span>內部管控（台面下異常管控）</span></label>
     </div>
-    <CheckboxMultiPicker label="分類" values={draft.categories || (draft.category ? [draft.category] : [])} choices={data.settings.taskCategories.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
-    <CheckboxMultiPicker label="涉及部門" values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
+    <CheckboxMultiPicker label="分類" required={creating} values={draft.categories || (draft.category ? [draft.category] : [])} choices={data.settings.taskCategories.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
+    <CheckboxMultiPicker label="涉及部門" required={creating} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
     {currentUser.role!=='vessel'&&<CheckboxMultiPicker
       label="經管／負責人"
       values={draft.ownerUserIds}

@@ -213,8 +213,7 @@ export default function App() {
     if (!canCreateTasks) return alert('目前角色未獲授權新增要事');
     if (!currentUser || !canUseVessel(currentUser, vesselId)) return alert('船舶帳戶只能新增本船待辦');
     const id = uid('task');
-    const category=data.settings.taskCategories[0] || '';
-    setCreatingTask({ id, vesselId, priority:'中', isAware:false, isAbnormal:false, isInternalControl:false, sourceType:'morning', category, categories:category?[category]:[], description:'', status:'', expectedDate:todayDate(), departments:[], ownerUserIds: currentUser.role==='vessel' ? [] : [currentUser.id], isClosed:false, createdBy:currentUser.id, updatedBy:currentUser.id, createdAt:nowIso(), updatedAt:nowIso(), statusLogs:[] });
+    setCreatingTask({ id, vesselId, priority:'中', isAware:false, isAbnormal:false, isInternalControl:false, sourceType:'morning', category:'', categories:[], description:'', status:'', expectedDate:todayDate(), departments:[], ownerUserIds: currentUser.role==='vessel' ? [] : [currentUser.id], isClosed:false, createdBy:currentUser.id, updatedBy:currentUser.id, createdAt:nowIso(), updatedAt:nowIso(), statusLogs:[] });
   };
   const saveTask = (candidate: TaskItem, creating: boolean) => {
     const vessel=data.vessels.find(item=>item.id===candidate.vesselId);

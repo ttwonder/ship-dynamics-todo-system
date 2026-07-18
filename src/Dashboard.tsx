@@ -110,9 +110,9 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
           <div className="ship-route"><b>{vessel.position.lastPort || '未設定'}</b><span>→</span><b>{vessel.position.nextPort || '未設定'}</b></div>
           <div className="ship-position"><small>位置</small><b>{vessel.position.location || '未設定'}</b></div>
           <div className="ship-navigation"><small>航行狀態</small><b>{vessel.position.navigationStatus === '航行' ? `${vessel.position.speedKnots || 0} kn` : vessel.position.navigationStatus}</b></div>
-          <div className="ship-load"><small>載況</small><b>{vessel.cargo.loadStatus}</b></div>
-          <div className="ship-status"><small>船舶狀態</small><b>{vessel.note.statusList.join('、') || '未設定'}</b></div>
           <button type="button" className="ship-schedule" onClick={() => cycleSchedule(vessel.id)} title="點擊循環顯示 ETA／ETB／ETD"><b>{scheduleKind}</b><span>{scheduleValue}</span></button>
+          <div className="ship-status"><small>船舶狀態</small><b>{vessel.note.statusList.join('、') || '未設定'}</b></div>
+          <div className="ship-load"><small>載況</small><b>{vessel.cargo.loadStatus}</b></div>
           <div className="ship-cargo"><small>貨名貨量</small>{vessel.cargo.items.length ? vessel.cargo.items.map((item, index) => <span key={`${item.name}-${index}`}><b>{item.name || '未填貨名'}</b>{item.quantity && ` ${item.quantity}`}</span>) : <span>TBA</span>}</div>
         </div>
         <div className="weekly-attention no-print" aria-label="未來一週關注事項">{WEEKLY_ATTENTION_OPTIONS.map(option => {
