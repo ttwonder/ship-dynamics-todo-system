@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AppData, LoadStatus, NavigationStatus, ShipStatus, TaskItem, TaskPriority, UserAccount, Vessel, VesselCargoItem } from './types';
 import { nowIso, todayDate, uid } from './utils';
 import { FLOW_INTERNAL_CONTROL_REMINDER } from './taskWorkflow';
 import { vesselDisplayName } from './vesselDisplay';
+import { taskHasVessel, taskShipTypeLabel, taskVesselIds, taskVesselLabel } from './taskVesselScope';
+import { isEligibleTaskOwner } from './permissions';
 
 type Commit = (updater: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => void;
 type MultiChoice = { value: string; label: string; detail?: string };
@@ -35,6 +37,45 @@ function CheckboxMultiPicker({ label, values, choices, onChange, required = fals
   })}</div></fieldset>;
 }
 
+function DropdownMultiPicker({ label, values, choices, onChange, disabled = false }: { label: string; values: string[]; choices: MultiChoice[]; onChange: (values: string[]) => void; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listId = `multi-picker-${label}`;
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, [open]);
+  useEffect(() => { if (disabled) { setOpen(false); setQuery(''); } }, [disabled]);
+  const selectedChoices = choices.filter(choice => values.includes(choice.value));
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredChoices = choices.filter(choice => !normalizedQuery || `${choice.label} ${choice.detail || ''}`.toLowerCase().includes(normalizedQuery));
+  const summary = selectedChoices.length
+    ? `${selectedChoices.slice(0, 3).map(choice => choice.label).join('、')}${selectedChoices.length > 3 ? ` 等 ${selectedChoices.length} 人` : ''}`
+    : '請選擇涉及人員';
+  const toggle = (value: string) => onChange(values.includes(value) ? values.filter(item => item !== value) : [...values, value]);
+  return <div ref={rootRef} className={`dropdown-multi-picker ${open ? 'open' : ''}`} onKeyDown={event => {
+    if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); window.setTimeout(()=>triggerRef.current?.focus(),0); }
+  }}>
+    <label>{label}<span>已選 {values.length}</span></label>
+    <button ref={triggerRef} type="button" className="dropdown-multi-trigger" disabled={disabled} aria-disabled={disabled} aria-expanded={open} aria-controls={listId} onClick={() => setOpen(value => !value)}>
+      <span className={selectedChoices.length ? '' : 'muted'}>{summary}</span><b aria-hidden="true">⌄</b>
+    </button>
+    {open && <div className="dropdown-multi-menu" id={listId}>
+      <div className="dropdown-multi-tools"><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="搜尋姓名或部門…" aria-label="搜尋涉及人員"/>{values.length > 0 && <button type="button" className="btn small ghost" onClick={() => onChange([])}>清空</button>}</div>
+      <div className="dropdown-multi-options">{filteredChoices.length ? filteredChoices.map(choice => {
+        const checked = values.includes(choice.value);
+        return <label key={choice.value} className={checked ? 'selected' : ''}><input type="checkbox" checked={checked} onChange={() => toggle(choice.value)}/><span><b>{choice.label}</b>{choice.detail && <small>{choice.detail}</small>}</span></label>;
+      }) : <div className="empty-state compact">沒有符合條件的人員</div>}</div>
+    </div>}
+  </div>;
+}
+
 export function VesselEditModal({ vessel, data, currentUser, close, commit, addTask, editTask }: { vessel?: Vessel; data: AppData; currentUser: UserAccount; close: () => void; commit: Commit; addTask: (vesselId: string) => void; editTask: (taskId: string) => void }) {
   useEscapeClose(close);
   if (!vessel) return null;
@@ -44,7 +85,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
     change(target, draft);
     target.updatedAt = nowIso();
   }, '快速更新船舶', 'vessel', vessel.id, detail);
-  const openTasks = data.tasks.filter(task => task.vesselId === vessel.id && !task.isClosed);
+  const openTasks = data.tasks.filter(task => taskHasVessel(task, vessel.id) && !task.isClosed);
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="vessel-edit-title"><div className="modal-header"><div><h2 id="vessel-edit-title">快速更新｜{vesselDisplayName(vessel)}</h2><small>修改後立即保存；按 Esc 可關閉</small></div><button className="btn ghost" onClick={close}>完成並關閉</button></div>
     <div className="smart-ship-api-note"><b>智慧船舶接口預留</b><span>上下港、位置、速度／拋錨／停泊、載況、ETA／ETB／ETD 與貨名貨量日後可自動同步；目前欄位同時支援手動修改，手動值會正常保存。</span></div>
     <div className="grid cols-4">
@@ -66,11 +107,16 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
   </div></div>;
 }
 
-export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, readOnly = false, close, onSave, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; readOnly?: boolean; close: () => void; onSave: (task: TaskItem, creating: boolean) => boolean; onDelete: () => void }) {
+export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, readOnly = false, close, onSave, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; readOnly?: boolean; close: () => void; onSave: (task: TaskItem, creating: boolean, expectedUpdatedAt: string, expectedRevision: number) => boolean; onDelete: () => void }) {
   useEscapeClose(close);
   const [draft, setDraft] = useState<TaskItem | null>(() => task ? clone(task) : null);
+  const expectedUpdatedAtRef=useRef(task?.updatedAt||'');
+  const expectedRevisionRef=useRef(data.revision);
   const [quickStatus, setQuickStatus] = useState('');
-  if (!draft || !visibleVessels.some(vessel => vessel.id === draft.vesselId)) return null;
+  if (!draft) return null;
+  const hasVisibleScope=taskVesselIds(draft).some(id=>visibleVessels.some(vessel=>vessel.id===id));
+  if(!hasVisibleScope)return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-restricted-title"><div className="modal-header"><div><h2 id="task-restricted-title">查看要事</h2><small>仅显示负责人可见内容；船舶资料仍受权限保护</small></div><button className="btn ghost" onClick={close}>關閉</button></div><div className="detail-grid"><div><b>事项内容</b><p>{draft.description||'尚未输入事项内容'}</p></div><div><b>状态</b><p>{draft.status||'尚未更新状态'}</p></div><div><b>涉及部门</b><p>{draft.departments.join('、')||'未指定部门'}</p></div><div><b>预计完成</b><p>{draft.expectedDate||'未设定'}</p></div></div><div className="callout warning">您可因负责人关系查看本事项，但目前无权查看或修改相关船舶资料。</div></div></div>;
+  const hasMeetingScope = Boolean(draft.sourceMeetingId);
   const change = (fn: (target: TaskItem) => void) => setDraft(previous => { if (!previous) return previous; const next=clone(previous); fn(next); next.updatedAt=nowIso(); next.updatedBy=currentUser.id; return next; });
   const addStatus = () => { const value=quickStatus.trim(); if(!value)return; change(target=>{target.status=value;target.statusLogs.unshift({id:uid('log'),at:nowIso(),by:currentUser.name,text:value});});setQuickStatus(''); };
   const toggleClosed = () => { if (!canClose) return alert('目前角色未獲授權結案或重新開啟要事'); change(target=>{target.isClosed=!target.isClosed;if(target.isClosed){target.closedDate=todayDate();target.closedBy=currentUser.id;}else{delete target.closedDate;delete target.closedBy;}}); };
@@ -86,9 +132,12 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     saved.category = saved.categories[0] || '';
     if (saved.isClosed) { saved.closedDate ||= todayDate(); saved.closedBy ||= currentUser.id; }
     else { delete saved.closedDate; delete saved.closedBy; }
-    if (onSave(saved, creating)) close();
+    if (onSave(saved, creating, expectedUpdatedAtRef.current, expectedRevisionRef.current)) close();
   };
   const users=data.users.filter(user=>user.isActive);
+  const taskScopeIds=taskVesselIds(draft);
+  const taskScopeVessels=taskScopeIds.map(vesselId=>data.vessels.find(item=>item.id===vesselId)).filter((vessel): vessel is Vessel=>Boolean(vessel));
+  const eligibleOwnerUsers=users.filter(user=>isEligibleTaskOwner(data.settings.rolePermissions,user,taskScopeVessels));
   const involvedUserIdsForVessel = (vesselId: string) => {
     const vessel = data.vessels.find(item => item.id === vesselId);
     const activeUserIds = new Set(users.filter(user => user.role !== 'vessel').map(user => user.id));
@@ -97,7 +146,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{creating?'新增要事':readOnly?'查看要事':'更新要事'}</h2><small>{draft.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&canDelete&&<button className="btn red" onClick={onDelete}>刪除待辦</button>}{!readOnly&&canClose && <button className={`btn ${draft.isClosed?'green':'red'}`} onClick={toggleClosed}>{draft.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" onClick={close}>{readOnly?'關閉':'取消'}</button>{!readOnly&&<button className="btn primary" onClick={save}>{creating?'建立要事':'保存變更'}</button>}</div></div>
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
     <div className="grid cols-3">
-      <div className="field"><label>船舶{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><select required={creating} aria-required={creating} value={draft.vesselId} onChange={event=>{const value=event.target.value;change(target=>{target.vesselId=value;if(creating)target.ownerUserIds=involvedUserIdsForVessel(value);});}}>{visibleVessels.map(vessel=><option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div>
+      <div className="field"><label>船舶{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label>{hasMeetingScope?<div className="scope-result-note task-scope-readonly"><b>{taskVesselLabel(draft, visibleVessels)}</b><span>船種：{taskShipTypeLabel(draft, visibleVessels)}｜範圍由臨會／專題同步</span></div>:<select required={creating} aria-required={creating} value={draft.vesselId} onChange={event=>{const value=event.target.value;change(target=>{target.vesselId=value;if(creating)target.ownerUserIds=involvedUserIdsForVessel(value);});}}>{visibleVessels.map(vessel=><option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select>}</div>
       <div className="field"><label>關注程度{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><select required={creating} aria-required={creating} value={draft.priority} onChange={event=>{const value=event.target.value as TaskPriority;change(target=>{target.priority=value;});}}>{data.settings.priorities.map(priority=><option key={priority}>{priority}</option>)}</select></div>
       <div className="field span-3"><label>事項內容{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><textarea required={creating} aria-required={creating} value={draft.description} onChange={event=>{const value=event.target.value;change(target=>{target.description=value;});}}/></div>
       <div className="field span-2"><label>目前狀態／決議</label><textarea value={draft.status} onChange={event=>{const value=event.target.value;change(target=>{target.status=value;});}}/></div>
@@ -108,11 +157,12 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     </div>
     <CheckboxMultiPicker label="分類" required={creating} values={draft.categories || (draft.category ? [draft.category] : [])} choices={data.settings.taskCategories.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
     <CheckboxMultiPicker label="涉及部門" required={creating} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
-    {creating&&currentUser.role!=='vessel'&&<CheckboxMultiPicker
+    {currentUser.role!=='vessel'&&<DropdownMultiPicker
       label="涉及人員"
       values={draft.ownerUserIds}
-      choices={users.filter(user=>user.role!=='vessel').map(user=>({value:user.id,label:user.name,detail:user.department}))}
+      choices={eligibleOwnerUsers.map(user=>({value:user.id,label:user.name,detail:user.department}))}
       onChange={values=>change(target=>{target.ownerUserIds=values;})}
+      disabled={readOnly}
     />}
     <div className="quick-status-bar"><input value={quickStatus} onChange={event=>setQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter')addStatus();}} placeholder="現場快速更新狀態…"/><button className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>
     <section className="status-history"><h3>狀態歷程</h3>{draft.statusLogs.length?draft.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{new Date(log.at).toLocaleString('zh-TW')}｜{log.by}</small></article>):<p className="muted">尚無狀態紀錄</p>}</section></div>

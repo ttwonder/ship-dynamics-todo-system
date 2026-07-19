@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import type { ScheduleKind, TaskItem, TaskPriority, UserAccount, Vessel, WeeklyAttentionKey } from './types';
+import type { ScheduleKind, TaskItem, UserAccount, Vessel, WeeklyAttentionKey } from './types';
 import { daysDiff, todayDate } from './utils';
 import { vesselDisplayName } from './vesselDisplay';
+import { taskHasVessel, taskVesselIds } from './taskVesselScope';
+import { deriveVesselAttention, vesselAttentionClass, vesselAttentionLabel } from './vesselAttention';
 
 const PRIORITY_RANK = { 急: 0, 高: 1, 中: 2, 低: 3 } as const;
 const WEEKLY_ATTENTION_OPTIONS: Array<{ key: WeeklyAttentionKey; label: string }> = [
@@ -20,6 +22,7 @@ interface DashboardProps {
   tasks: TaskItem[];
   selected: string[];
   setSelected: (ids: string[]) => void;
+  onOpenVessel: (id: string) => void;
   onEdit: (id: string) => void;
   onAddTask: (id: string) => void;
   onToggleAttention: (vesselId: string, key: WeeklyAttentionKey) => void;
@@ -33,7 +36,7 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, vessels, tasks, selected, setSelected, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ user, vessels, tasks, selected, setSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [fleetFilter, setFleetFilter] = useState('all');
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
@@ -41,9 +44,9 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
   const scheduleField = { ETA: 'eta', ETB: 'etb', ETD: 'etd' } as const;
 
   const visible = vessels.filter(vessel => {
-    const vesselTasks = tasks.filter(task => task.vesselId === vessel.id && !task.isClosed);
+    const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !task.isClosed);
     if (fleetFilter === 'selected' && !selected.includes(vessel.id)) return false;
-    if (fleetFilter === 'high' && !vesselTasks.some(task => task.priority === '急' || task.priority === '高')) return false;
+    if (fleetFilter === 'high' && !['高', '急', '特別關注'].includes(deriveVesselAttention(vessel, vesselTasks).effective)) return false;
     if (fleetFilter === 'mine' && !vessel.assignedUserIds.includes(user.id) && !user.managedVesselIds.includes(vessel.id)) return false;
     if (!['all', 'selected', 'high', 'mine'].includes(fleetFilter) && !vessel.fleetCategory.toLowerCase().includes(fleetFilter)) return false;
     const query = keyword.trim().toLowerCase();
@@ -60,7 +63,8 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
     ].join(' ').toLowerCase().includes(query);
   });
 
-  const openTasks = tasks.filter(task => !task.isClosed && vessels.some(vessel => vessel.id === task.vesselId));
+  const visibleVesselIds = new Set(vessels.map(vessel => vessel.id));
+  const openTasks = tasks.filter(task => !task.isClosed && taskVesselIds(task).some(id => visibleVesselIds.has(id)));
   const urgentHighCount = openTasks.filter(task => task.priority === '急' || task.priority === '高').length;
   const overdueCount = openTasks.filter(task => (daysDiff(task.expectedDate) ?? 0) < 0).length;
   const updatedToday = vessels.filter(vessel => (vessel.updatedAt || vessel.position.updatedAt).slice(0, 10) === todayDate()).length;
@@ -87,27 +91,27 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
       <input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
       {[
         ['all', '全部'], ['mine', '自管船舶'], ['tanker', '油輪'], ['bulk', '散貨'], ['high', '急／高關注'], ...(canUseMeetings ? [['selected', '選入會議']] : []),
-      ].map(([key, label]) => <button key={key} className={`filter-pill ${fleetFilter === key ? 'active' : ''}`} onClick={() => setFleetFilter(key)}>{label}</button>)}
+      ].map(([key, label]) => <button key={key} aria-pressed={fleetFilter === key} className={`filter-pill ${key === 'mine' ? 'filter-pill-mine' : key === 'high' ? 'filter-pill-high' : ''} ${fleetFilter === key ? 'active' : ''}`} onClick={() => setFleetFilter(key)}>{label}</button>)}
     </div>
     <div className="fleet-card-grid">{visible.map(vessel => {
-      const vesselTasks = tasks.filter(task => task.vesselId === vessel.id && !task.isClosed);
+      const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !task.isClosed);
       const urgent = vesselTasks.filter(task => task.priority === '急').length;
       const high = vesselTasks.filter(task => task.priority === '高').length;
       const mid = vesselTasks.filter(task => task.priority === '中').length;
       const low = vesselTasks.filter(task => task.priority === '低').length;
-      const abnormal = vesselTasks.some(task => task.isAbnormal);
-      const autoAttention: TaskPriority = abnormal || urgent ? '急' : high ? '高' : mid ? '中' : '低';
-      const attention = vessel.manualAttentionLevel || autoAttention;
-      const level = attention === '急' ? 'urgent' : attention === '高' ? 'high' : attention === '中' ? 'mid' : 'low';
+      const attentionResult = deriveVesselAttention(vessel, vesselTasks);
+      const abnormal = attentionResult.hasAbnormal;
+      const attention = attentionResult.effective;
+      const level = vesselAttentionClass(attention);
       const scheduleKind = scheduleByVessel[vessel.id] || 'ETA';
       const scheduleValue = vessel.position[scheduleField[scheduleKind]]||'TBA';
       const sortedTasks = [...vesselTasks].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || Number(b.isAbnormal) - Number(a.isAbnormal));
-      const highest = vessel.manualAttentionLevel ? `手動 ${attention}關注` : urgent ? `急關注 ${urgent}` : abnormal ? '急關注 異常' : high ? `高關注 ${high}` : mid ? `中關注 ${mid}` : `低關注 ${low}`;
+      const highest = vesselAttentionLabel(attentionResult, vesselTasks);
       const selectedForMeeting = selected.includes(vessel.id);
       return <article key={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
         <div className="ship-card-head">
-          <div className="ship-identity"><h3>{vesselDisplayName(vessel)}</h3><small>{vessel.shipType}</small></div>
-          <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<button type="button" disabled={!canEdit} className={`priority-pill attention-adjust ${level}`} title={canEdit?'點擊切換自動／急／高／中／低关注度':'目前關注度'} onClick={()=>onAdjustAttention(vessel.id)}>{highest}</button></div>
+          <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${vesselDisplayName(vessel)} 單船詳情`}>{vesselDisplayName(vessel)}</button><small>{vessel.shipType}</small></div>
+          <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<button type="button" disabled={!canEdit} className={`priority-pill attention-adjust ${level}`} title={canEdit?'點擊切換自動或不低於目前自動下限的手動關注度':'目前關注度'} onClick={()=>onAdjustAttention(vessel.id)}>{highest}</button></div>
         </div>
         <div className="ship-operation-grid">
           <div className="ship-route"><b>{vessel.position.lastPort || '未設定'}</b><span>→</span><b>{vessel.position.nextPort || '未設定'}</b></div>

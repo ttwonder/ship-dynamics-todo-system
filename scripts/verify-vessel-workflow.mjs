@@ -80,8 +80,8 @@ try {
   const modalSource = fs.readFileSync(new URL('../src/EditModals.tsx', import.meta.url), 'utf8');
   assert.ok(appSource.includes('canAccessTab(currentUser, k)'), '导航需套用船舶账户页签白名单');
   assert.ok(appSource.includes('buildTaskNotifications'), '事项保存需建立通知');
-  assert.ok(appSource.includes('creating&&!canUseVessel(currentUser,candidate.vesselId)'), '最终建立 handler 需再次检查船舶账户单船范围');
-  assert.ok(appSource.includes('buildTaskNotificationsForVessels'), '跨船更新需通知新旧两船');
+  assert.ok(appSource.includes('creating&&!canUseVessel(liveUser,candidate.vesselId)'), '最终建立 handler 需在最新 state 再次检查船舶账户单船范围');
+  assert.ok(appSource.includes('buildTaskScopeChangeNotifications'), '跨船更新需以新旧 task 快照通知新旧范围');
   assert.ok(appSource.includes('deleteTask'), 'App 需有删除事项 handler');
   assert.ok(modalSource.includes('內部管控'), '事项弹窗需有独立内控选项');
   assert.ok(modalSource.includes('FLOW_INTERNAL_CONTROL_REMINDER'), '取消内控需立即显示 FLOW 提醒');

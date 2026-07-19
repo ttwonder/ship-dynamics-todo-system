@@ -54,7 +54,7 @@ for (const heading of ['召開日期', '狀態', '會議主題', '會議範圍',
   assert.ok(meetings.includes(`<th>${heading}</th>`), `臨會／專題總清單必須顯示「${heading}」欄`);
 }
 assert.ok(meetings.includes('meetingTaskCount'), '總清單必須顯示每場會議的關聯待辦數量');
-assert.ok((meetings.match(/visibleIds\.has\(task\.vesselId\)/g) || []).length >= 2, '會議詳情及總清單待辦必須限制於目前可見船舶');
+assert.ok((meetings.match(/taskVesselIds\(task\)\.some\(id => visibleIds\.has\(id\)\)/g) || []).length >= 2, '會議詳情及總清單待辦必須限制於目前可見船舶');
 assert.ok(meetings.includes('進入詳情'), '總清單必須可以直接開啟會議詳情');
 
 console.log('User follow-up contracts passed.');

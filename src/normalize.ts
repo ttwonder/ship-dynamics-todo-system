@@ -12,6 +12,7 @@ import type {
   TemporaryMeetingStatus,
   UserNotification,
   UserRole,
+  VesselAttentionLevel,
   VesselPosition,
   WeeklyAttentionKey,
 } from './types';
@@ -20,8 +21,10 @@ import { normalizeRolePermissions } from './permissions';
 import { normalizeConfiguredTaskCategories, normalizeTaskCategoryList, sanitizeEditableTaskCategories } from './taskCategories';
 
 const roles: UserRole[] = ['owner', 'admin', 'operator', 'vessel'];
+const INVALID_PASSWORD_HASH = '0'.repeat(64);
 const auditRoles: Array<UserRole | 'system'> = [...roles, 'system'];
 const priorities: TaskPriority[] = ['急', '高', '中', '低'];
+const vesselAttentionLevels: VesselAttentionLevel[] = [...priorities, '特別關注'];
 const shipStatuses: ShipStatus[] = ['loading', 'unloading', 'to load', 'to unload', 'waiting order', 'drydock/repiar'];
 const legacyShipStatusMap: Record<string, ShipStatus> = {
   '裝載': 'loading',
@@ -38,7 +41,9 @@ const normalizeShipStatus = (value: unknown): ShipStatus | undefined => {
 const navigationStatuses: NavigationStatus[] = ['航行', '拋錨', '停泊'];
 const loadStatuses: LoadStatus[] = ['空載', '非空載', '滿載'];
 const weeklyAttentionKeys: WeeklyAttentionKey[] = ['crew-operation', 'bunkering-water', 'materials-parts', 'maintenance', 'survey', 'audit-inspection', 'psc-window'];
-const meetingStatuses: TemporaryMeetingStatus[] = ['待開會', '進行中', '追蹤中', '已完成'];
+const meetingStatuses: TemporaryMeetingStatus[] = ['待召開', '追蹤中', '已完成'];
+const normalizeMeetingStatus = (value: unknown): TemporaryMeetingStatus =>
+  value === '待開會' ? '待召開' : value === '進行中' ? '追蹤中' : oneOf(value, meetingStatuses, '待召開');
 const scopeModes: MeetingVesselScopeMode[] = ['all', 'types', 'vessels'];
 const positionSources: VesselPosition['source'][] = ['mock-smart-ship-api', 'manual', 'smart-ship-api'];
 
@@ -113,13 +118,15 @@ function normalizeMeetings(value: unknown, timestamp: string): TemporaryMeeting[
     return {
       id,
       subject: text(item.subject),
-      status: oneOf(item.status, meetingStatuses, '待開會'),
+      status: normalizeMeetingStatus(item.status),
       meetingDate: text(item.meetingDate),
       vesselScopeMode: oneOf(item.vesselScopeMode, scopeModes, 'vessels'),
       vesselTypeScopes: strings(item.vesselTypeScopes),
       vessels: strings(item.vessels),
       reason: text(item.reason),
       departments: strings(item.departments),
+      participantUserIds: strings(item.participantUserIds),
+      responsibleUserIds: strings(item.responsibleUserIds),
       resolution: text(item.resolution),
       taskDescription,
       taskItems,
@@ -157,21 +164,26 @@ export function normalizeAppData(value: unknown): AppData | null {
       priorities: [...priorities],
       rolePermissions: normalizeRolePermissions(settings.rolePermissions),
       nonOwnerPasswordResetVersion: finite(settings.nonOwnerPasswordResetVersion, 0),
+      meetingTaskAggregationVersion: finite(settings.meetingTaskAggregationVersion, 0),
       lastCloudSyncAt: text(settings.lastCloudSyncAt),
     },
-    users: objects(raw.users).map(item => ({
-      id: text(item.id),
-      department: text(item.department),
-      name: text(item.name),
-      username: text(item.username),
-      role: oneOf(item.role, roles, 'operator'),
-      passwordHash: text(item.passwordHash),
-      passwordVisible: text(item.passwordVisible),
-      isActive: bool(item.isActive, true),
-      managedVesselIds: strings(item.managedVesselIds),
-      createdAt: text(item.createdAt, timestamp),
-      updatedAt: text(item.updatedAt, timestamp),
-    })).filter(item => item.id && item.name),
+    users: objects(raw.users).map(item => {
+      const rawPasswordHash=item.passwordHash;
+      const passwordHashValid=typeof rawPasswordHash==='string'&&(rawPasswordHash===''||/^[a-f0-9]{64}$/i.test(rawPasswordHash));
+      return {
+        id: text(item.id),
+        department: text(item.department),
+        name: text(item.name),
+        username: text(item.username),
+        role: oneOf(item.role, roles, 'operator'),
+        passwordHash: passwordHashValid ? rawPasswordHash.toLowerCase() : INVALID_PASSWORD_HASH,
+        passwordVisible: passwordHashValid && rawPasswordHash !== '' ? text(item.passwordVisible) : '',
+        isActive: passwordHashValid && bool(item.isActive, true),
+        managedVesselIds: strings(item.managedVesselIds),
+        createdAt: text(item.createdAt, timestamp),
+        updatedAt: text(item.updatedAt, timestamp),
+      };
+    }).filter(item => item.id && item.name),
     vessels: objects(raw.vessels).map(item => {
       const position = object(item.position) || {};
       const cargo = object(item.cargo) || {};
@@ -222,7 +234,7 @@ export function normalizeAppData(value: unknown): AppData | null {
           updatedAt: text(note.updatedAt, timestamp),
         },
         weeklyAttention: strings(item.weeklyAttention).filter((entry): entry is WeeklyAttentionKey => weeklyAttentionKeys.includes(entry as WeeklyAttentionKey)),
-        manualAttentionLevel: oneOf(item.manualAttentionLevel, ['', ...priorities], ''),
+        manualAttentionLevel: oneOf(item.manualAttentionLevel, ['', ...vesselAttentionLevels], ''),
         createdAt: text(item.createdAt, timestamp),
         updatedAt: text(item.updatedAt, timestamp),
       };
@@ -232,6 +244,9 @@ export function normalizeAppData(value: unknown): AppData | null {
       return ({
       id: text(item.id),
       vesselId: text(item.vesselId),
+      vesselIds: strings(item.vesselIds),
+      vesselScopeMode: oneOf(item.vesselScopeMode, scopeModes, 'vessels'),
+      vesselTypeScopes: strings(item.vesselTypeScopes),
       priority: oneOf(item.priority, priorities, '中'),
       isAware: bool(item.isAware),
       isAbnormal: bool(item.isAbnormal) || bool(item.isInternalControl),
@@ -272,20 +287,19 @@ export function normalizeAppData(value: unknown): AppData | null {
     }
     if (meeting.taskItems.length) meeting.taskDescription = meeting.taskItems[0].description;
     const firstItemId = meeting.taskItems[0]?.id;
-    if (firstItemId) normalized.tasks.filter(task => task.sourceMeetingId === meeting.id && !task.sourceMeetingItemId).forEach(task => { task.sourceMeetingItemId = firstItemId; });
+    if (firstItemId) {
+      const itemIds=new Set(meeting.taskItems.map(item=>item.id));
+      normalized.tasks
+        .filter(task => task.sourceMeetingId === meeting.id && (!task.sourceMeetingItemId || (!itemIds.has(task.sourceMeetingItemId) && meeting.taskItems.length === 1)))
+        .forEach(task => { task.sourceMeetingItemId = firstItemId; });
+    }
   });
   const activeVesselIds = new Set(normalized.vessels.filter(vessel => vessel.isActive).map(vessel => vessel.id));
   if (!normalized.users.some(user => user.role === 'owner')) {
     const designatedOwner = normalized.users.find(user => user.name === '朱世毅');
     if (designatedOwner) designatedOwner.role = 'owner';
   }
-  if ((normalized.settings.nonOwnerPasswordResetVersion || 0) < 1) {
-    normalized.users.filter(user => user.role !== 'owner').forEach(user => {
-      user.passwordHash = '385b870cb91faa4b1cb040d624ab6a7c738352a032ade05cef752de2868f8b10';
-      user.passwordVisible = 'fpmc2026';
-    });
-    normalized.settings.nonOwnerPasswordResetVersion = 1;
-  }
+
   const vesselUserIds = new Set(normalized.users.filter(user => user.role === 'vessel').map(user => user.id));
   const managementUserIds = new Set(normalized.users.filter(user => user.role === 'owner' || user.role === 'admin').map(user => user.id));
   const personnelDepartments = normalized.settings.departments.map(department => department.trim()).filter(department => department && department !== '船舶帳戶');

@@ -1,4 +1,4 @@
-import type { PermissionKey, RolePermissions, UserAccount, UserRole } from './types';
+import type { PermissionKey, RolePermissions, UserAccount, UserRole, Vessel } from './types';
 
 export const PERMISSION_LABELS: Record<PermissionKey, { label: string; group: '業務內容' | '管理功能'; fixed?: string }> = {
   viewAllVessels: { label: '查看全部船舶', group: '業務內容' },
@@ -61,4 +61,22 @@ export function hasPermission(matrix: RolePermissions | undefined, user: Pick<Us
   if (user.role === 'owner') return true;
   const normalized = normalizeRolePermissions(matrix);
   return normalized[user.role][permission];
+}
+
+export function canAccessAllVessels(
+  matrix: RolePermissions | undefined,
+  user: Pick<UserAccount, 'id' | 'role' | 'managedVesselIds'> | null | undefined,
+  vessels: Array<Pick<Vessel, 'id' | 'assignedUserIds'>>,
+): boolean {
+  if (!user || !vessels.length) return false;
+  if (user.role === 'owner' || user.role === 'admin' || hasPermission(matrix, user, 'viewAllVessels')) return true;
+  return vessels.every(vessel => vessel.assignedUserIds.includes(user.id) || user.managedVesselIds.includes(vessel.id));
+}
+
+export function isEligibleTaskOwner(
+  matrix: RolePermissions | undefined,
+  user: Pick<UserAccount, 'id' | 'role' | 'managedVesselIds' | 'isActive'> | null | undefined,
+  vessels: Array<Pick<Vessel, 'id' | 'assignedUserIds'>>,
+): boolean {
+  return Boolean(user?.isActive && user.role !== 'vessel' && canAccessAllVessels(matrix, user, vessels));
 }

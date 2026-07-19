@@ -2,13 +2,14 @@ export type UserRole = 'owner' | 'admin' | 'operator' | 'vessel';
 export type PermissionKey = 'viewAllVessels' | 'editBusinessContent' | 'createTasks' | 'closeTasks' | 'deleteTasks' | 'manageMeetings' | 'exportReports' | 'enterManagement' | 'manageUsers' | 'manageVessels' | 'viewAuditLogs' | 'manageRolePermissions' | 'manageSystemSettings';
 export type RolePermissions = Record<UserRole, Record<PermissionKey, boolean>>;
 export type TaskPriority = '急' | '高' | '中' | '低';
+export type VesselAttentionLevel = TaskPriority | '特別關注';
 export type ShipStatus = 'loading' | 'unloading' | 'to load' | 'to unload' | 'waiting order' | 'drydock/repiar';
 export type NavigationStatus = '航行' | '拋錨' | '停泊';
 export type LoadStatus = '空載' | '非空載' | '滿載';
 export type ScheduleKind = 'ETA' | 'ETB' | 'ETD';
 export type TaskSource = 'morning' | 'temporary';
 export type WeeklyAttentionKey = 'crew-operation' | 'bunkering-water' | 'materials-parts' | 'maintenance' | 'survey' | 'audit-inspection' | 'psc-window';
-export type TemporaryMeetingStatus = '待開會' | '進行中' | '追蹤中' | '已完成';
+export type TemporaryMeetingStatus = '待召開' | '追蹤中' | '已完成';
 export type MeetingVesselScopeMode = 'all' | 'types' | 'vessels';
 
 export interface UserAccount {
@@ -74,7 +75,7 @@ export interface Vessel {
   cargo: VesselCargo;
   note: VesselNote;
   weeklyAttention: WeeklyAttentionKey[];
-  manualAttentionLevel?: TaskPriority | '';
+  manualAttentionLevel?: VesselAttentionLevel | '';
   createdAt: string;
   updatedAt: string;
 }
@@ -89,6 +90,9 @@ export interface StatusLog {
 export interface TaskItem {
   id: string;
   vesselId: string;
+  vesselIds?: string[];
+  vesselScopeMode?: MeetingVesselScopeMode;
+  vesselTypeScopes?: string[];
   priority: TaskPriority;
   isAware: boolean;
   isAbnormal: boolean;
@@ -144,6 +148,8 @@ export interface TemporaryMeeting {
   vessels: string[];
   reason: string;
   departments: string[];
+  participantUserIds: string[];
+  responsibleUserIds: string[];
   resolution: string;
   taskDescription: string;
   taskItems: MeetingTaskItem[];
@@ -185,6 +191,7 @@ export interface AppSettings {
   priorities: TaskPriority[];
   rolePermissions: RolePermissions;
   nonOwnerPasswordResetVersion?: number;
+  meetingTaskAggregationVersion?: number;
   lastCloudSyncAt: string;
 }
 

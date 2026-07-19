@@ -4,11 +4,15 @@ import { createServer } from 'vite';
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
-  const { reconcileMeetingTasks, meetingTaskDescription, meetingTaskNotificationEvents, shouldPreserveMeetingTaskDescriptions } = await server.ssrLoadModule('/src/meetingTaskWorkflow.ts');
+  const { reconcileMeetingTasks, meetingTaskDescription, meetingTaskNotificationEvents, resolveMeetingTaskItemIdForDeletion, shouldPreserveMeetingTaskDescriptions } = await server.ssrLoadModule('/src/meetingTaskWorkflow.ts');
   const { buildTaskNotifications } = await server.ssrLoadModule('/src/taskWorkflow.ts');
   const { canEditTemporaryMeetings, meetingAppliesToUser } = await server.ssrLoadModule('/src/meetingAccess.ts');
   const { departmentAfterRoleChange } = await server.ssrLoadModule('/src/personWorkflow.ts');
   const { scheduleInputValue } = await server.ssrLoadModule('/src/EditModals.tsx');
+  const { normalizeAppData } = await server.ssrLoadModule('/src/normalize.ts');
+  const { taskShipTypeLabel, taskVesselLabel } = await server.ssrLoadModule('/src/taskVesselScope.ts');
+  assert.equal(resolveMeetingTaskItemIdForDeletion({sourceMeetingItemId:'stale-item-id'},{taskItems:[{id:'actual-item-id',description:'Follow up'}]}),'actual-item-id','單一會議事項可安全修復失效關聯 ID');
+  assert.equal(resolveMeetingTaskItemIdForDeletion({sourceMeetingItemId:'stale-item-id'},{taskItems:[{id:'item-1',description:'A'},{id:'item-2',description:'B'}]}),null,'多事項失效關聯 ID 必須拒絕猜測');
   const task = (id, vesselId, meetingId, closed = false) => ({
     id,
     vesselId,
@@ -84,8 +88,12 @@ try {
     followUp: '船一客製待辦',
     preserveExistingDescriptions: true,
   });
-  assert.deepEqual(customizedTasks.map(item => item.description), ['船一客製待辦', '船二客製待辦'], '保存舊會議其他欄位時不得覆蓋逐船客製待辦內容');
-  assert.ok(customizedTasks.every(item => item.priority === '高' && item.expectedDate === '2026-07-31'), '保留描述時仍需同步其他會議欄位');
+  const activeCustomizedTasks = customizedTasks.filter(item => item.sourceMeetingId === 'legacy-custom');
+  assert.equal(activeCustomizedTasks.length, 1, '旧逐船待办必须聚合为一笔活动事项');
+  assert.equal(activeCustomizedTasks[0].description, '船一客製待辦', '使用者未修改会议内容时应保留 canonical 客制描述');
+  assert.deepEqual(activeCustomizedTasks[0].vesselIds, ['v1', 'v2']);
+  assert.ok(activeCustomizedTasks[0].priority === '高' && activeCustomizedTasks[0].expectedDate === '2026-07-31', '保留描述时仍需同步其他会议栏位');
+  assert.equal(customizedTasks.find(item => item.id === 'custom-v2').sourceMeetingId, undefined, '其余旧逐船记录必须解除关联并封存');
 
   const eventTasks = [task('event-created', 'v1', 'events'), task('event-updated', 'v2', 'events'), task('event-archived', 'v3', 'events')];
   const events = meetingTaskNotificationEvents(eventTasks, {
@@ -142,21 +150,67 @@ try {
     tasks: multiTasks,
     meetingId: 'multi',
     vesselIds: ['v1', 'v2'],
+    vesselScopeMode: 'vessels',
+    vesselTypeScopes: [],
     followUps: [{ id: 'item-1', description: '待辦一' }, { id: 'item-2', description: '待辦二' }],
   });
-  assert.equal(multiResult.created.length, 4, '兩個待辦事項套用兩艘船時必須建立四筆關聯待辦');
-  assert.equal(multiTasks.filter(item => item.sourceMeetingItemId === 'item-1').length, 2);
-  assert.equal(multiTasks.filter(item => item.sourceMeetingItemId === 'item-2').length, 2);
+  assert.equal(multiResult.created.length, 2, '兩個待辦事項套用兩艘船時只能建立兩筆關聯待辦');
+  assert.equal(multiTasks.filter(item => item.sourceMeetingItemId === 'item-1').length, 1);
+  assert.equal(multiTasks.filter(item => item.sourceMeetingItemId === 'item-2').length, 1);
+  assert.deepEqual(multiTasks.find(item => item.sourceMeetingItemId === 'item-1').vesselIds, ['v1', 'v2'], '每筆會議待辦應保存合併船舶範圍');
+  const scopeVessels = [{ id:'v1', name:'S1', shortName:'S1', fullName:'第一船', shipType:'油輪' }, { id:'v2', name:'S2', shortName:'S2', fullName:'第二船', shipType:'散裝船' }];
+  const allScopeTask = { ...multiTasks[0], vesselScopeMode:'all' };
+  assert.equal(taskVesselLabel(allScopeTask, scopeVessels), '全部船舶');
+  assert.equal(taskShipTypeLabel(allScopeTask, scopeVessels), '全部');
+  assert.equal(taskVesselLabel(multiTasks[0], scopeVessels), '第一船、第二船');
+  assert.equal(taskShipTypeLabel({ ...multiTasks[0], vesselScopeMode:'types', vesselTypeScopes:['油輪','散裝船'] }, scopeVessels), '油輪、散裝船');
   const removedItemResult = reconcileMeetingTasks({
     ...common,
     tasks: multiTasks,
     meetingId: 'multi',
     vesselIds: ['v1', 'v2'],
+    vesselScopeMode: 'vessels',
+    vesselTypeScopes: [],
     followUps: [{ id: 'item-2', description: '待辦二更新' }],
   });
-  assert.equal(multiTasks.filter(item => item.sourceMeetingId === 'multi' && item.sourceMeetingItemId === 'item-1').length, 0, '刪除待辦事項格時需解除該事項的全部船舶關聯');
-  assert.equal(multiTasks.filter(item => item.sourceMeetingId === 'multi' && item.sourceMeetingItemId === 'item-2').length, 2, '其他待辦事項不得受刪除影響');
-  assert.equal(removedItemResult.archivedIds.length, 2, '刪除一個跨兩船事項需產生兩筆取消事件');
+  assert.equal(multiTasks.filter(item => item.sourceMeetingId === 'multi' && item.sourceMeetingItemId === 'item-1').length, 0, '刪除待辦事項格時需解除該事項的單筆船舶範圍關聯');
+  assert.equal(multiTasks.filter(item => item.sourceMeetingId === 'multi' && item.sourceMeetingItemId === 'item-2').length, 1, '其他待辦事項不得受刪除影響');
+  assert.equal(removedItemResult.archivedIds.length, 1, '刪除一個跨多船事項只應產生一筆取消事件');
+
+  const legacyV1 = task('legacy-v1', 'v1', 'migration-meeting');
+  const legacyV2 = task('legacy-v2', 'v2', 'migration-meeting');
+  legacyV1.sourceMeetingItemId = 'migration-item';
+  legacyV2.sourceMeetingItemId = 'migration-item';
+  legacyV1.ownerUserIds = ['u1'];
+  legacyV2.ownerUserIds = ['u2'];
+  legacyV1.statusLogs = [{ id:'log-1', at:'2026-07-17T01:00:00.000Z', by:'u1', text:'船一更新' }];
+  legacyV2.statusLogs = [{ id:'log-2', at:'2026-07-18T01:00:00.000Z', by:'u2', text:'船二更新' }];
+  legacyV2.updatedAt = '2026-07-18T01:00:00.000Z';
+  const migrated = normalizeAppData({
+    revision: 12,
+    updatedAt: '2026-07-18T02:00:00.000Z',
+    settings: { sitePasswordHash:'x', systemTitle:'x', departments:['航務部'], taskCategories:['臨會/專題'], taskCategorySchemaVersion:2, rolePermissions:{}, nonOwnerPasswordResetVersion:1 },
+    users: [],
+    vessels: [{ id:'v1', name:'船一', isActive:true }, { id:'v2', name:'船二', isActive:true }],
+    tasks: [legacyV1, legacyV2],
+    meetings: [{ id:'migration-meeting', subject:'迁移会议', vesselScopeMode:'all', vessels:['v1','v2'], vesselTypeScopes:[], taskItems:[{ id:'migration-item', description:'旧事项' }] }],
+    agendaReports: [], auditLogs: [], notifications: [],
+  });
+  assert.ok(migrated, '旧资料应可安全正規化');
+  assert.equal(migrated.tasks.length, 2, '普通 normalize 不得删除旧逐船历史记录');
+  assert.equal(migrated.settings.meetingTaskAggregationVersion, 0, '普通读取不得自动标记破坏性迁移完成');
+  const explicitMigration = reconcileMeetingTasks({
+    tasks: migrated.tasks, meetingId:'migration-meeting', vesselIds:['v1','v2'], vesselScopeMode:'all', vesselTypeScopes:[],
+    followUps:[{ id:'migration-item', description:'旧事项' }], priority:'中', expectedDate:'2026-07-31', departments:['航務部'], ownerUserIds:['u1','u2'],
+    initialStatus:'待执行', actorId:'admin', actorName:'管理员', at:'2026-07-19T00:00:00.000Z',
+  });
+  assert.equal(migrated.tasks.filter(item=>item.sourceMeetingId==='migration-meeting').length, 1, '显式 reconciliation 后只保留一笔关联事项');
+  assert.equal(explicitMigration.archivedIds.length, 1, '重复旧记录必须封存而非删除');
+  assert.equal(migrated.tasks.length, 2, '封存后总记录数不得减少');
+  assert.ok(migrated.tasks.find(item=>explicitMigration.archivedIds.includes(item.id))?.isClosed, '重复记录必须可恢复地保留为已结案历史');
+  const migratedNormalized = normalizeAppData(structuredClone(migrated));
+  const migratedAgain = normalizeAppData(structuredClone(migratedNormalized));
+  assert.deepEqual(migratedAgain.tasks, migratedNormalized.tasks, '普通资料正規化必须幂等且不得再次聚合');
 
   assert.equal(departmentAfterRoleChange('船舶帳戶', 'operator', ['航務部', '工務部']), '航務部');
   assert.equal(departmentAfterRoleChange('工務部', 'admin', ['航務部', '工務部']), '工務部');
@@ -190,6 +244,7 @@ try {
   assert.equal(scheduleInputValue('TBA'), '');
 
   const meetingsSource = fs.readFileSync('src/TemporaryMeetings.tsx', 'utf8');
+  const editModalsSource = fs.readFileSync('src/EditModals.tsx', 'utf8');
   const managementSource = fs.readFileSync('src/Management.tsx', 'utf8');
   assert.ok(meetingsSource.includes('const selected = accessibleMeetings.find'), '目前選取會議必須從 accessibleMeetings 取值，避免切換身份後渲染不可見會議');
   const createPermissionResetIndex = meetingsSource.indexOf('if (creating && !editable)');
@@ -198,6 +253,8 @@ try {
   assert.ok(createReturnIndex === -1 || createPermissionResetIndex < createReturnIndex, 'creating 狀態略過重置前必須先處理權限喪失');
   assert.ok(meetingsSource.includes('if (!creating && !selected) return <section'), '不可見 selectedId 必須先回傳空狀態，不得渲染舊 draft');
   assert.ok(managementSource.includes("department !== '船舶帳戶'") && managementSource.includes("normalizedDepartment === '船舶帳戶'"), '非船舶角色保存路徑必須拒絕船舶帳戶部門');
+  assert.ok(editModalsSource.includes('<DropdownMultiPicker') && editModalsSource.includes('label="涉及人員"') && editModalsSource.includes('aria-label="搜尋涉及人員"'), '新增要事涉及人員必须使用可搜尋的下拉多选');
+  assert.ok(!editModalsSource.includes('<CheckboxMultiPicker label="涉及人員"'), '涉及人员不得恢复成全名单平铺');
 
   console.log('Meeting task reconciliation runtime contracts passed.');
 } finally {

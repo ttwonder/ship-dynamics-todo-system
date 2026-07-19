@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import type { AppData, TaskItem, Vessel } from './types';
 import { daysDiff } from './utils';
 import { vesselDisplayName } from './vesselDisplay';
+import { taskHasVessel, taskVesselIds } from './taskVesselScope';
+import { deriveVesselAttention } from './vesselAttention';
 
 type ScopeMode = 'overall' | 'department' | 'person';
 type Metrics = {
@@ -66,7 +68,7 @@ export default function DataAnalysisView({ data, vessels }: { data: AppData; ves
   const [department, setDepartment] = useState('');
   const [personId, setPersonId] = useState('');
   const vesselIds = useMemo(() => new Set(vessels.map(vessel => vessel.id)), [vessels]);
-  const tasks = useMemo(() => data.tasks.filter(task => vesselIds.has(task.vesselId)), [data.tasks, vesselIds]);
+  const tasks = useMemo(() => data.tasks.filter(task => taskVesselIds(task).some(id => vesselIds.has(id))), [data.tasks, vesselIds]);
   const users = data.users.filter(user => user.isActive && user.role !== 'vessel');
   const departments = Array.from(new Set([
     ...data.settings.departments,
@@ -78,8 +80,8 @@ export default function DataAnalysisView({ data, vessels }: { data: AppData; ves
   const selectedPerson = users.find(user => user.id === personId) || users[0];
   const vesselById = Object.fromEntries(vessels.map(vessel => [vessel.id, vessel]));
   const responsibleFor = (task: TaskItem, userIds: Set<string>, scopeDepartment = '') => {
-    const vessel = vesselById[task.vesselId];
-    return task.ownerUserIds.some(id => userIds.has(id)) || Boolean(vessel?.assignedUserIds.some(id => userIds.has(id))) || Boolean(scopeDepartment && task.departments.includes(scopeDepartment));
+    const taskScopeVessels = taskVesselIds(task).map(id => vesselById[id]).filter(Boolean);
+    return task.ownerUserIds.some(id => userIds.has(id)) || taskScopeVessels.some(vessel => vessel.assignedUserIds.some(id => userIds.has(id))) || Boolean(scopeDepartment && task.departments.includes(scopeDepartment));
   };
   const scopedUsers = scopeMode === 'department' ? departmentUsers : scopeMode === 'person' && selectedPerson ? [selectedPerson] : users;
   const scopedUserIds = new Set(scopedUsers.map(user => user.id));
@@ -104,15 +106,17 @@ export default function DataAnalysisView({ data, vessels }: { data: AppData; ves
   const personRows = compareRows('person');
   const months = monthKeys();
   const vesselRows = vessels.map(vessel => {
-    const vesselTasks = tasks.filter(task => task.vesselId === vessel.id);
+    const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id));
     const open = vesselTasks.filter(task => !task.isClosed);
-    const automaticAttention = open.some(task => task.isAbnormal || task.priority === '急') ? '急' : open.some(task => task.priority === '高') ? '高' : open.some(task => task.priority === '中') ? '中' : '低';
+    const attentionResult = deriveVesselAttention(vessel, open);
     return {
       vessel,
       counts: Object.fromEntries(['急', '高', '中', '低'].map(priority => [priority, vesselTasks.filter(task => task.priority === priority).length])) as Record<string, number>,
       abnormal: vesselTasks.filter(task => task.isAbnormal).length,
       lights: vessel.weeklyAttention.length,
-      attention: vessel.manualAttentionLevel ? `手動 ${vessel.manualAttentionLevel}` : automaticAttention,
+      attention: attentionResult.manual
+        ? `${attentionResult.effective}（手動 ${attentionResult.manual}／自動下限 ${attentionResult.automatic}）`
+        : `${attentionResult.effective}（自動）`,
       trend: months.map(month => vesselTasks.filter(task => localMonthKey(task.createdAt) === month).length),
     };
   });

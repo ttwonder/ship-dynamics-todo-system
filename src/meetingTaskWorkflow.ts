@@ -1,15 +1,18 @@
-import type { MeetingTaskItem, NotificationKind, TaskItem, TaskPriority } from './types';
+import type { MeetingTaskItem, MeetingVesselScopeMode, NotificationKind, TaskItem, TaskPriority, TemporaryMeeting } from './types';
 import { uid } from './utils';
 
 interface ReconcileMeetingTasksInput {
   tasks: TaskItem[];
   meetingId: string;
   vesselIds: string[];
+  vesselScopeMode?: MeetingVesselScopeMode;
+  vesselTypeScopes?: string[];
   followUp?: string;
   followUps?: MeetingTaskItem[];
   priority: TaskPriority;
   expectedDate: string;
   departments: string[];
+  ownerUserIds?: string[];
   initialStatus: string;
   actorId: string;
   actorName: string;
@@ -22,6 +25,16 @@ export interface ReconcileMeetingTasksResult {
   created: TaskItem[];
   updatedIds: string[];
   archivedIds: string[];
+}
+
+export function resolveMeetingTaskItemIdForDeletion(
+  task: Pick<TaskItem, 'sourceMeetingItemId'>,
+  meeting: Pick<TemporaryMeeting, 'taskItems'>,
+): string | null | undefined {
+  if (!meeting.taskItems.length) return undefined;
+  if (task.sourceMeetingItemId && meeting.taskItems.some(item => item.id === task.sourceMeetingItemId)) return task.sourceMeetingItemId;
+  if (meeting.taskItems.length === 1) return meeting.taskItems[0].id;
+  return null;
 }
 
 export type MeetingTaskNotificationKind = Extract<NotificationKind, 'task_created' | 'task_updated' | 'task_archived'>;
@@ -111,11 +124,14 @@ export const reconcileMeetingTasks = ({
   tasks,
   meetingId,
   vesselIds,
+  vesselScopeMode = 'vessels',
+  vesselTypeScopes = [],
   followUp = '',
   followUps,
   priority,
   expectedDate,
   departments,
+  ownerUserIds = [],
   initialStatus,
   actorId,
   actorName,
@@ -128,53 +144,60 @@ export const reconcileMeetingTasks = ({
       .map((item, index) => ({ id: item.id || `${meetingId}-task-${index + 1}`, description: item.description })),
     meetingId,
   );
-  const targetVesselIds = Array.from(new Set(vesselIds));
+  const targetVesselIds = Array.from(new Set(vesselIds.filter(Boolean)));
+  const normalizedTypeScopes = vesselScopeMode === 'types' ? Array.from(new Set(vesselTypeScopes.filter(Boolean))) : [];
   const legacyItemId = normalizedFollowUps[0]?.id || `${meetingId}-task-1`;
-  const keyOf = (itemId: string, vesselId: string) => `${itemId}\u0000${vesselId}`;
-  const targets = normalizedFollowUps.flatMap(item => targetVesselIds.map(vesselId => ({ item, vesselId, key: keyOf(item.id, vesselId) })));
-  const targetKeys = new Set(targets.map(target => target.key));
+  const targetItemIds = new Set(normalizedFollowUps.map(item => item.id));
   const grouped = new Map<string, TaskItem[]>();
 
   tasks.filter(task => task.sourceMeetingId === meetingId).forEach(task => {
     const itemId = task.sourceMeetingItemId || legacyItemId;
-    const key = keyOf(itemId, task.vesselId);
-    const group = grouped.get(key) || [];
+    const group = grouped.get(itemId) || [];
     group.push(task);
-    grouped.set(key, group);
+    grouped.set(itemId, group);
   });
 
-  const canonicalByKey = new Map<string, TaskItem>();
+  const canonicalByItemId = new Map<string, TaskItem>();
   const archivedIds: string[] = [];
-  grouped.forEach((group, key) => {
-    if (!targetKeys.has(key)) {
-      const reason = normalizedFollowUps.length ? '已取消（臨會/專題待辦事項或船舶範圍已移除）' : '已取消（臨會/專題待辦已清空）';
+  grouped.forEach((group, itemId) => {
+    if (!targetItemIds.has(itemId)) {
+      const reason = normalizedFollowUps.length ? '已取消（臨會/專題待辦事項已移除）' : '已取消（臨會/專題待辦已清空）';
       group.forEach(task => {
         if (archiveLinkedTask(task, reason, actorId, actorName, at)) archivedIds.push(task.id);
       });
       return;
     }
-    const canonical = group.find(task => !task.isClosed) || group[0];
-    canonicalByKey.set(key, canonical);
+    const canonical = [...group].sort((left,right) =>
+      Number(left.isClosed)-Number(right.isClosed)
+      || (Date.parse(right.updatedAt||right.createdAt||'')||0)-(Date.parse(left.updatedAt||left.createdAt||'')||0)
+      || left.id.localeCompare(right.id)
+    )[0];
+    canonicalByItemId.set(itemId, canonical);
     group.filter(task => task.id !== canonical.id).forEach(task => {
-      if (archiveLinkedTask(task, '已取消（重複的臨會/專題待辦）', actorId, actorName, at)) archivedIds.push(task.id);
+      if (archiveLinkedTask(task, '已取消（舊版逐船重複待辦已合併）', actorId, actorName, at)) archivedIds.push(task.id);
     });
   });
 
   const preserveItemIds = new Set(preserveExistingDescriptionItemIds);
   const created: TaskItem[] = [];
   const updatedIds: string[] = [];
-  targets.forEach(({ item, vesselId, key }) => {
-    const existingTask = canonicalByKey.get(key);
+  normalizedFollowUps.forEach(item => {
+    const existingTask = canonicalByItemId.get(item.id);
     if (existingTask) {
       Object.assign(existingTask, {
         sourceMeetingId: meetingId,
         sourceMeetingItemId: item.id,
         sourceType: 'temporary' as const,
+        vesselId: targetVesselIds[0],
+        vesselIds: [...targetVesselIds],
+        vesselScopeMode,
+        vesselTypeScopes: [...normalizedTypeScopes],
         priority,
         category: '臨會/專題',
         categories: ['臨會/專題'],
         expectedDate,
         departments: [...departments],
+        ownerUserIds: [...ownerUserIds],
         updatedBy: actorId,
         updatedAt: at,
       });
@@ -182,13 +205,17 @@ export const reconcileMeetingTasks = ({
       updatedIds.push(existingTask.id);
       return;
     }
+    if (!targetVesselIds.length) return;
 
     const task: TaskItem = {
       id: uid('task'),
       sourceMeetingId: meetingId,
       sourceMeetingItemId: item.id,
       sourceType: 'temporary',
-      vesselId,
+      vesselId: targetVesselIds[0],
+      vesselIds: [...targetVesselIds],
+      vesselScopeMode,
+      vesselTypeScopes: [...normalizedTypeScopes],
       priority,
       isAware: true,
       isAbnormal: false,
@@ -199,7 +226,7 @@ export const reconcileMeetingTasks = ({
       status: initialStatus.trim() || '待執行',
       expectedDate,
       departments: [...departments],
-      ownerUserIds: [],
+      ownerUserIds: [...ownerUserIds],
       isClosed: false,
       createdBy: actorId,
       updatedBy: actorId,

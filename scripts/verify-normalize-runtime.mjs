@@ -4,6 +4,7 @@ import { createServer } from 'vite';
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
   const { normalizeAppData } = await server.ssrLoadModule('/src/normalize.ts');
+  const validPasswordHash = 'a'.repeat(64);
   const malformed = {
     revision: 7,
     updatedAt: '2026-07-17T00:00:00.000Z',
@@ -16,7 +17,7 @@ try {
       priorities: ['高', null],
       lastCloudSyncAt: '',
     },
-    users: [null, { id: 'u1', name: '測試', username: 'qa', role: 'owner', passwordHash: 'hash', isActive: true, managedVesselIds: ['v1', { unsafe: true }] }],
+    users: [null, { id: 'u1', name: '測試', username: 'qa', role: 'owner', passwordHash: validPasswordHash, isActive: true, managedVesselIds: ['v1', { unsafe: true }] }],
     vessels: [null, { id: 'v1', name: '船一', fleetTags: ['A', { unsafe: true }], assignedUserIds: ['u1', null], weeklyAttention: ['psc-window', 'unsafe'], position: { navigationStatus: '停泊', etb: '2026-07-18 08:00' }, cargo: { name: '原油', quantity: '5,000 MT' }, note: { statusList: ['裝載', { unsafe: true }] } }],
     tasks: [null, { id: 't1', vesselId: 'v1', sourceMeetingId: 'm1', description: '舊版已生成待辦', priority: '急', isAbnormal: true, departments: ['航務', { unsafe: true }], ownerUserIds: ['u1', null], statusLogs: [null, { id: 'l1', text: '正常', at: '2026-07-17', by: 'QA' }, { id: 'l2', text: { unsafe: true } }] }],
     meetings: [null, { id: 'm1', subject: { unsafe: true }, vessels: ['v1', { unsafe: true }], departments: [{ unsafe: true }] }],
@@ -36,8 +37,13 @@ try {
   assert.deepEqual(data.vessels[0].note.statusList, ['loading']);
   assert.deepEqual(data.users[0].managedVesselIds, [], 'Owner／管理員不分管具體船舶');
   assert.deepEqual(data.vessels[0].assignedUserIds, [], '船舶分管名單不得保留管理層帳號');
-  assert.equal(data.users[0].passwordHash, 'hash', '一次性密碼遷移不得覆蓋 Owner');
-  assert.equal(data.settings.nonOwnerPasswordResetVersion, 1);
+  assert.equal(data.users[0].passwordHash, validPasswordHash, '通用 normalize 不得覆蓋有效 Owner 密碼');
+  assert.equal(data.settings.nonOwnerPasswordResetVersion, 0, '通用 normalize 不得触发账号密码迁移');
+  const invalidCredential=normalizeAppData({...malformed,users:[{...malformed.users[1],id:'bad-hash',passwordHash:{bad:true},isActive:true}]});
+  assert.equal(invalidCredential.users[0].isActive,false,'異常密碼 hash 必須 fail-closed 停用帳戶');
+  assert.equal(invalidCredential.users[0].passwordHash,'0'.repeat(64),'異常密碼 hash 必須轉成不可匹配的 fail-closed 哨兵');
+  const explicitNoPassword=normalizeAppData({...malformed,users:[{...malformed.users[1],id:'no-password',passwordHash:'',isActive:true}]});
+  assert.equal(explicitNoPassword.users[0].isActive,true,'只有明確空字串可保留無密碼帳戶語義');
   assert.deepEqual(data.vessels[0].fleetTags, ['A']);
   assert.equal(data.vessels[0].position.navigationStatus, '停泊');
   assert.equal(data.vessels[0].position.etb, '2026-07-18 08:00');
@@ -62,6 +68,22 @@ try {
   assert.equal(data.auditLogs[0].actorRole, 'system');
   assert.equal(data.notifications[0].kind, 'task_archived', '会议取消待办通知经 normalize 后不得降级为一般更新');
   assert.doesNotThrow(() => JSON.stringify(data));
+
+  const duplicateHistoryPayload = {
+    ...malformed,
+    settings: { ...malformed.settings, meetingTaskAggregationVersion: 0 },
+    meetings: [{ id: 'm-history', subject: '歷史會議', vessels: ['v1'], taskItems: [{ id: 'follow-1', description: '統一跟進' }] }],
+    tasks: [
+      { id: 'history-open', vesselId: 'v1', sourceMeetingId: 'm-history', sourceMeetingItemId: 'follow-1', description: '船一原始內容', status: '待執行', createdAt: '2026-07-01', updatedAt: '2026-07-02' },
+      { id: 'history-closed', vesselId: 'v1', sourceMeetingId: 'm-history', sourceMeetingItemId: 'follow-1', description: '已結案原始內容', status: '已完成', isClosed: true, closedDate: '2026-07-03', closedBy: 'u1', createdAt: '2026-07-01', updatedAt: '2026-07-03' },
+    ],
+  };
+  const preservedHistory = normalizeAppData(duplicateHistoryPayload);
+  assert.equal(preservedHistory.tasks.length, 2, '普通 normalize 不得删除重复历史任务');
+  assert.deepEqual(preservedHistory.tasks.map(task => task.id), ['history-open', 'history-closed'], '任务 ID 与顺序必须保留');
+  assert.equal(preservedHistory.tasks[1].description, '已結案原始內容', '非 canonical 描述不得丢失');
+  assert.equal(preservedHistory.tasks[1].closedDate, '2026-07-03', '结案资料不得丢失');
+  assert.equal(preservedHistory.settings.meetingTaskAggregationVersion, 0, '普通 normalize 不得假报已执行显式迁移');
 
   assert.equal(normalizeAppData({ settings: {}, users: [], vessels: [] }), null, 'missing core task collection must be rejected');
   console.log('Runtime payload normalization regression passed.');

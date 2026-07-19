@@ -11,7 +11,7 @@ export const WEEKLY_ATTENTION_CATEGORY_MAP: Record<string, WeeklyAttentionKey> =
 };
 
 export const REQUIRED_TASK_CATEGORIES = [
-  '換員操作', '加油加水', '物料配件', '維修', 'Survey', '稽核檢查', 'PSC窗口',
+  '換員操作', '加油加水', '物料配件', '維修', 'Survey', '稽核檢查', 'PSC窗口', '事故',
   '證書', '缺失驗證', 'vetting', '貨品', '港口安排', '臨會/專題',
 ] as const;
 
