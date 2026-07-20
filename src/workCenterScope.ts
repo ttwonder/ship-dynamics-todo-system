@@ -4,7 +4,7 @@ import { taskVesselIds } from './taskVesselScope';
 import { taskIsClosedForScope } from './taskVesselProgress';
 
 const meetingInvolvesUser = (meeting: TemporaryMeeting | undefined, userId: string) => Boolean(
-  meeting && (meeting.participantUserIds.includes(userId) || meeting.responsibleUserIds.includes(userId)),
+  meeting && ((meeting.trackingUserIds || []).includes(userId) || meeting.responsibleUserIds.includes(userId)),
 );
 
 const taskScopeVessels = (task: TaskItem, visibleVessels: Vessel[]) => {

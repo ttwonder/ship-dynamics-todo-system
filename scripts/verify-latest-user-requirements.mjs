@@ -77,12 +77,12 @@ try {
   assert.ok(app.includes("category:'', categories:[]"), '新增要事分类必须初始为空并由使用者主动选择');
   assert.ok(editor.includes("if (creating && !draft.departments.length) return alert('請選擇涉及部門')"), '新增要事的涉及部门必须由保存 handler 验证');
   assert.ok(editor.includes('required={creating}') && editor.includes("label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating}") && editor.includes('label="涉及部門" required={creating}'), '新增要事的五个必选／必填字段必须显示原生或语义 required 标记');
-  assert.ok(editor.includes('label="涉及部門" required={creating}') && editor.includes('label="涉及人員"'), '新增要事必须使用「涉及人員」标签');
+  assert.ok(editor.includes('label="涉及部門" required={creating}') && editor.includes('label="追蹤窗口"'), '新增要事必须使用「追蹤窗口」标签');
   const vesselEditor = editor.slice(editor.indexOf('export function VesselEditModal'), editor.indexOf('export function TaskEditModal'));
   const taskEditor = editor.slice(editor.indexOf('export function TaskEditModal'));
   assert.ok(!vesselEditor.includes('經管／負責人'), '船舶快速更新不得显示或修改管理页经管／负责人');
   assert.ok(!taskEditor.includes('label="經管／負責人"'), '要事编辑器不得把事项涉及人员标为船舶经管／负责人');
-  assert.ok(taskEditor.includes("currentUser.role!=='vessel'&&<MeetingPeoplePicker") && taskEditor.includes('disabled={globalReadOnly}'), '涉及人員需在新增與更新要事显示，并在只读模式明确禁用');
+  assert.ok(taskEditor.includes("currentUser.role!=='vessel'&&<MeetingPeoplePicker") && taskEditor.includes('disabled={globalReadOnly}'), '追蹤窗口需在新增與更新要事显示，并在只读模式明确禁用');
   assert.ok(app.includes('assignedOwnerUserIds') && app.includes('vessel.assignedUserIds'), '新增要事必须自动带入管理页已分配的船舶经管人员');
   assert.ok(!taskEditor.includes('assignedUserIds=') && !taskEditor.includes('managedVesselIds='), '事项涉及人员不得修改管理页船舶／人员分管');
   assert.ok(app.includes('taskReturnVesselId') && app.includes('closeTaskEditor') && app.includes('addTaskForVessel(id,true)'), '从快速更新进入新增要事后，取消或保存必须返回快速更新弹窗');
@@ -101,7 +101,7 @@ try {
   assert.ok(styles.includes('.meeting-print-page') && styles.includes('break-after:page'), '臨會列印 CSS 需強制逐會議分頁');
   assert.ok(app.includes("currentUser?.role==='owner'||currentUser?.role==='admin'||hasPermission"), 'Owner／管理員應固定查看全部船舶');
   assert.ok(app.includes('vesselMatchesUser(v,currentUser,canViewAllVessels)') && !app.includes('involvedVesselIds') && workCenterScope.includes('explicitlyResponsible'), '负责人可在我的待办查看事项，但不得因此扩大看板、总表、已结案或统计的船舶资料范围');
-  assert.ok(workCenter.includes('selectUserWorkCenterTasks(data,user,vessels)') && app.includes('selectUserWorkCenterTasks(data,currentUser,activeVessels)') && workCenterScope.includes('meetingInvolvesUser') && workCenterScope.includes('isVesselDelegatedMeetingTask'), '我的待辦清單與導航數量必須共用同一歸屬 selector，並只包含分管督導、事項涉及人員、臨會涉及/負責人或已分派到單船跟蹤的待辦');
+  assert.ok(workCenter.includes('selectUserWorkCenterTasks(data,user,vessels)') && app.includes('selectUserWorkCenterTasks(data,currentUser,activeVessels)') && workCenterScope.includes('meetingInvolvesUser') && workCenterScope.includes('isVesselDelegatedMeetingTask'), '我的待辦清單與導航數量必須共用同一歸屬 selector，並只包含分管督導、事項追蹤窗口、臨會追蹤窗口/負責人或已分派到單船跟蹤的待辦');
   assert.ok(normalizeSource.includes("user.role === 'admin' || user.role === 'operator'") && normalizeSource.includes('ownerUserIds.has(user.id)') && !normalizeSource.includes('managementUserIds'), 'Owner 不分管具體船舶；管理員與操作員可保留船舶經管關係');
   assert.ok(app.includes('aria-label="登入部門"') && app.includes('aria-label="登入人員"'), '登入頁應使用部門與人員下拉選擇');
   assert.ok(app.includes('if(user.passwordHash&&await sha256(pw)!==user.passwordHash)'), 'Owner 清除密碼後應允許無密碼登入');
@@ -114,6 +114,13 @@ try {
   assert.ok(management.includes('Owner 可重設或清除此人員密碼') && management.includes('clearPersonPassword') && !management.includes('Owner 可查看'), 'Owner 只能重設或清除密碼，不得查看既有明文');
   assert.ok(app.includes("['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['reports','報告中心'],['stats','數據分析']"), '主導航應依序為待辦總表、已結案、報告中心、數據分析');
   assert.ok(app.includes('priorityTone') && app.includes('filter-chip-meeting') && app.includes('filter-chip-internal') && app.includes('filter-reset-btn'), '待辦總清單篩選 chip 必須依關注/分類/內控提供語義色 class');
+  assert.ok(app.includes('<th>追蹤窗口</th>') && app.includes('const managerIds=[...new Set(t.ownerUserIds)]') && !app.includes('<th>經管人</th>'), '待辦總表需將經管人欄改為追蹤窗口，且只顯示待辦追蹤窗口 ownerUserIds');
+  assert.ok(styles.includes('.batch-task-table th:nth-child(7)') && styles.includes('.batch-task-table th:nth-child(8)') && styles.includes('.batch-task-table th:nth-child(10)') && styles.includes('min-width:260px'), '待辦總表部門/追蹤窗口/狀態欄寬需明確調整');
+  assert.ok(app.includes('autoDepartmentFilterKey') && app.includes('setFilters(previous => ({ ...previous, departments: [currentUser.department] }))') && app.includes('setClosedFilters(previous => ({ ...previous, departments: [currentUser.department] }))'), '待辦清單需依登入用戶部門自動預選部門篩選，且只在用戶切換時套用');
+  assert.ok(app.includes("toggleGroup=(key:'categories'|'meetingCategories'") && app.includes('filter-group-task') && app.includes('filter-group-meeting') && app.includes('全選／取消全部要事分類') && app.includes('全選／取消全部臨會/專題分類'), '要事分類與臨會/專題分類標題需可點擊全選/取消整組分類');
+  assert.ok(app.includes('filter-reset-btn" onClick={()=>setFilters({...emptyFilters,closedMode:filters.closedMode})}>清除篩選</button><button className="btn small ghost" onClick={toggleAll}'), '清除篩選按鈕需移到全選本頁前面');
+  assert.ok(styles.includes('.filter-chip-urgent{') && styles.includes('.filter-chip-high{') && styles.includes('.filter-chip-medium{') && styles.includes('.filter-chip-low{') && styles.includes('.filter-group-task') && styles.includes('.filter-group-meeting'), '關注等級與分類標題篩選需有明顯顏色區分');
+  assert.ok(meetings.includes('label="與會人員"') && meetings.includes('label="追蹤窗口"') && meetings.includes('同與會人員') && meetings.includes('ownerUserIds:effectiveDraft.trackingUserIds'), '臨會需區分與會人員、追蹤窗口與負責人，且只有追蹤窗口同步待辦');
   for (const cls of ['.filter-chip-urgent.on','.filter-chip-high.on','.filter-chip-medium.on','.filter-chip-low.on','.filter-chip-meeting.on','.filter-chip-internal.on','.filter-reset-btn']) assert.ok(styles.includes(cls), `篩選 chip 缺少明顯顏色樣式 ${cls}`);
   for (const label of ['完成率','逾期率','提出率／件數','高風險','需知曉','內控','異常','部門橫向比較與排名','人員橫向比較與排名','船舶優先級／異常／關注度／點亮項目／趨勢']) assert.ok(analysis.includes(label), `數據分析頁缺少 ${label}`);
   assert.ok(analysis.includes("tasks.filter(task => responsibleFor(task, scopedUserIds, scopeMode === 'department' ? selectedDepartment : ''))") && !analysis.includes("responsibleFor(task, scopedUserIds, scopeMode === 'department' ? selectedDepartment : '') || scopedUserIds.has(task.createdBy)"), '責任事項不得混入僅由該人員提出但未負責的事項');

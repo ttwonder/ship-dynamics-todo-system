@@ -135,6 +135,9 @@ function normalizeMeetings(value: unknown, timestamp: string, meetingTaskCategor
     if (!taskItems.length && Object.prototype.hasOwnProperty.call(item, 'taskDescription') && taskDescription.trim()) {
       taskItems.push({ id: `${id}-task-1`, description: taskDescription.trim(), categories: normalizeMeetingTaskCategoryList([], meetingTaskCategories), distributeToVessels: false });
     }
+    const participantUserIds = strings(item.participantUserIds);
+    const responsibleUserIds = strings(item.responsibleUserIds);
+    const trackingUserIds = Object.prototype.hasOwnProperty.call(item, 'trackingUserIds') ? strings(item.trackingUserIds) : [...responsibleUserIds];
     return {
       id,
       subject: text(item.subject),
@@ -145,8 +148,9 @@ function normalizeMeetings(value: unknown, timestamp: string, meetingTaskCategor
       vessels: strings(item.vessels),
       reason: text(item.reason),
       departments: strings(item.departments),
-      participantUserIds: strings(item.participantUserIds),
-      responsibleUserIds: strings(item.responsibleUserIds),
+      participantUserIds,
+      trackingUserIds,
+      responsibleUserIds,
       resolution: text(item.resolution),
       taskDescription,
       taskItems,

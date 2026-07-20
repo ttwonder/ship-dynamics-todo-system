@@ -15,7 +15,7 @@ assert.ok(meeting.includes('richTextToPlainText(meeting.reason)') && meeting.inc
 assert.ok(meeting.includes('<RichTextContent value={meeting.reason}') && meeting.includes('<RichTextContent value={meeting.resolution}') && meeting.includes('<RichTextContent value={item.description}'), 'meeting detail PDF must preserve sanitized rich formatting');
 assert.ok(app.includes('<RichTextContent compact value={t.description}') && app.includes('<RichTextContent compact className="task-list-status-text" value={projected.status}'), 'task list must render rich descriptions and clamp projected status safely');
 const styles=fs.readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
-assert.ok(styles.includes('.batch-task-table .task-list-status-text') && styles.includes('-webkit-line-clamp:3') && styles.includes('max-height:4.1em'), 'task list status must be visually clamped so long status text cannot stretch rows');
+assert.ok(styles.includes('.batch-task-table .task-list-status-text') && styles.includes('-webkit-line-clamp:5') && styles.includes('max-height:6.8em'), 'task list status must remain visually clamped while allowing the widened status column to show more text');
 assert.ok(detail.includes('<RichTextContent compact value={task.description}') && detail.includes('<RichTextContent compact value={progress.status}'), 'vessel detail must render vessel-scoped rich content safely');
 assert.ok(morning.includes('<RichTextContent compact value={t.description}') && morning.includes('<RichTextContent compact value={displayStatus}'), 'morning agenda must render rich content safely');
 assert.ok(rich.includes('sanitizeRichTextHtml(value)') && rich.includes('dangerouslySetInnerHTML'), 'rich-text display must sanitize before rendering HTML');

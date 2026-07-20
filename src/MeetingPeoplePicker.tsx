@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { UserAccount } from './types';
 
 type Props = {
@@ -9,9 +10,10 @@ type Props = {
   selectedIds: string[];
   onChange: (ids: string[]) => void;
   disabled?: boolean;
+  actions?: ReactNode;
 };
 
-export default function MeetingPeoplePicker({ label, required = false, users, departments, selectedIds, onChange, disabled = false }: Props) {
+export default function MeetingPeoplePicker({ label, required = false, users, departments, selectedIds, onChange, disabled = false, actions }: Props) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [department, setDepartment] = useState('all');
   const [query, setQuery] = useState('');
@@ -27,6 +29,7 @@ export default function MeetingPeoplePicker({ label, required = false, users, de
   });
   const selectedUsers = selectedIds.map(id => activeUsers.find(user => user.id === id)).filter((user): user is UserAccount => Boolean(user));
   const toggle = (id: string) => onChange(selectedIds.includes(id) ? selectedIds.filter(value => value !== id) : [...selectedIds, id]);
+  const remove = (id: string) => onChange(selectedIds.filter(value => value !== id));
   const selectFiltered = () => onChange(Array.from(new Set([...selectedIds, ...filteredUsers.map(user => user.id)])));
 
   return <div className="field span-3 meeting-people-field">
@@ -50,6 +53,7 @@ export default function MeetingPeoplePicker({ label, required = false, users, de
           <input aria-label={`${label}姓名搜尋`} value={query} onChange={event => setQuery(event.target.value)} placeholder="搜尋姓名或帳號" />
         </div>
         <div className="meeting-people-actions">
+          {actions}
           <button type="button" className="btn small ghost" onClick={selectFiltered}>全選目前篩選</button>
           <button type="button" className="btn small ghost" onClick={() => onChange([])}>清空</button>
         </div>
@@ -62,5 +66,6 @@ export default function MeetingPeoplePicker({ label, required = false, users, de
         </div>
       </div>
     </details>
+    {selectedUsers.length > 0 && <div className="meeting-people-selected" aria-label={`${label}已選人員`}>{selectedUsers.map(user => <span key={user.id}>{user.name}{!disabled && <button type="button" aria-label={`移除${label}${user.name}`} onClick={() => remove(user.id)}>×</button>}</span>)}</div>}
   </div>;
 }

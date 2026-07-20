@@ -35,14 +35,14 @@ try{
   const users={huang:{id:'huang',role:'operator',managedVesselIds:[],name:'黃燕華'},xiao:{id:'xiao',role:'operator',managedVesselIds:[],name:'肖紅林'},hero:{id:'hero-supervisor',role:'operator',managedVesselIds:[],name:'HERO督導'}};
   const vessels=[{id:'hero',assignedUserIds:['hero-supervisor']},{id:'amber',assignedUserIds:['amber-supervisor']}];
   const baseTask={vesselId:'hero',vesselIds:['hero'],vesselScopeMode:'vessels',vesselTypeScopes:[],priority:'中',isAware:false,isAbnormal:false,isInternalControl:false,category:'',categories:[],description:'',status:'',expectedDate:'',departments:[],ownerUserIds:[],isClosed:false,sourceType:'morning',createdBy:'admin',updatedBy:'admin',createdAt:'2026-07-20T00:00:00.000Z',updatedAt:'2026-07-20T00:00:00.000Z',statusLogs:[]};
-  const data={meetings:[{id:'m1',participantUserIds:['xiao'],responsibleUserIds:[],vessels:['hero','amber'],taskItems:[]}],tasks:[
+  const data={meetings:[{id:'m1',participantUserIds:['xiao'],trackingUserIds:['xiao'],responsibleUserIds:[],vessels:['hero','amber'],taskItems:[]}],tasks:[
     {...baseTask,id:'hero-ordinary',description:'HERO分管督導待辦'},
     {...baseTask,id:'huang-owned',vesselId:'amber',vesselIds:['amber'],description:'黃燕華涉及待辦',ownerUserIds:['huang']},
     {...baseTask,id:'xiao-meeting',description:'肖紅林涉及臨會待辦',sourceType:'temporary',sourceMeetingId:'m1',attentionDimension:'meeting'},
     {...baseTask,id:'distributed-hero',description:'已分派HERO單船待辦',sourceType:'temporary',sourceMeetingId:'m2',attentionDimension:'meeting',distributeToVessels:true},
   ]};
   assert.deepEqual(selectUserWorkCenterTasks(data,users.huang,vessels).map(task=>task.id),['huang-owned'],'我的待辦不得因可見/涉船範圍而顯示他船分管督導或他人臨會待辦');
-  assert.deepEqual(selectUserWorkCenterTasks(data,users.xiao,vessels).map(task=>task.id),['xiao-meeting'],'臨會涉及人員必須看到該臨會待辦');
+  assert.deepEqual(selectUserWorkCenterTasks(data,users.xiao,vessels).map(task=>task.id),['xiao-meeting'],'臨會追蹤窗口必須看到該臨會待辦');
   assert.deepEqual(selectUserWorkCenterTasks(data,users.hero,vessels).map(task=>task.id),['hero-ordinary','distributed-hero'],'分管督導只看到普通單船要事與已分派到單船跟蹤的會議待辦');
 } finally { await server.close(); }
 console.log('Compact work-center update marker contracts passed.');

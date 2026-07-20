@@ -166,6 +166,7 @@ export interface TemporaryMeeting {
   reason: string;
   departments: string[];
   participantUserIds: string[];
+  trackingUserIds: string[];
   responsibleUserIds: string[];
   resolution: string;
   taskDescription: string;

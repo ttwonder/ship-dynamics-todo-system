@@ -313,7 +313,7 @@ try {
   assert.equal(canEditTemporaryMeetings(rolePermissions, scopedEditor), false, '有 manageMeetings 但無 viewAllVessels 不得全域編輯會議');
   assert.equal(canEditTemporaryMeetings(rolePermissions, fullEditor), true, '具備 viewAllVessels 的會議管理者才可編輯');
   assert.equal(meetingAppliesToUser({ vesselScopeMode: 'vessels', vessels: ['v2'], vesselTypeScopes: [] }, visibleVessels, false), false, '不可見船舶的會議不得對 scoped 使用者曝光');
-  assert.equal(meetingAppliesToUser({ vesselScopeMode: 'vessels', vessels: ['v2'], vesselTypeScopes: [], participantUserIds:['u-scope'], responsibleUserIds:[] }, visibleVessels, false, 'u-scope'), true, '臨會涉及人員即使無涉船權限也應能檢視該臨會');
+  assert.equal(meetingAppliesToUser({ vesselScopeMode: 'vessels', vessels: ['v2'], vesselTypeScopes: [], participantUserIds:['u-scope'], responsibleUserIds:[] }, visibleVessels, false, 'u-scope'), true, '臨會與會人員即使無涉船權限也應能檢視該臨會');
   assert.equal(meetingAppliesToUser({ vesselScopeMode: 'vessels', vessels: ['v2'], vesselTypeScopes: [] }, visibleVessels, true), true, '全域編輯者可看到全部會議');
 
   const legacyMeeting = { id: 'legacy', taskDescription: undefined };
@@ -338,8 +338,8 @@ try {
   assert.ok(createReturnIndex === -1 || createPermissionResetIndex < createReturnIndex, 'creating 狀態略過重置前必須先處理權限喪失');
   assert.ok(meetingsSource.includes('if (!creating && !selected) return <section'), '不可見 selectedId 必須先回傳空狀態，不得渲染舊 draft');
   assert.ok(managementSource.includes("department !== '船舶帳戶'") && managementSource.includes("normalizedDepartment === '船舶帳戶'"), '非船舶角色保存路徑必須拒絕船舶帳戶部門');
-  assert.ok(editModalsSource.includes('<MeetingPeoplePicker') && editModalsSource.includes('label="涉及人員"') && peoplePickerSource.includes('姓名搜尋') && peoplePickerSource.includes('部門篩選'), '新增要事涉及人員必须使用可搜尋、可按部門篩選的下拉多选');
-  assert.ok(!editModalsSource.includes('<CheckboxMultiPicker label="涉及人員"'), '涉及人员不得恢复成全名单平铺');
+  assert.ok(editModalsSource.includes('<MeetingPeoplePicker') && editModalsSource.includes('label="追蹤窗口"') && peoplePickerSource.includes('姓名搜尋') && peoplePickerSource.includes('部門篩選'), '新增要事追蹤窗口必须使用可搜尋、可按部門篩選的下拉多选');
+  assert.ok(!editModalsSource.includes('<CheckboxMultiPicker label="追蹤窗口"'), '追蹤窗口不得恢复成全名单平铺');
 
   console.log('Meeting task reconciliation runtime contracts passed.');
 } finally {

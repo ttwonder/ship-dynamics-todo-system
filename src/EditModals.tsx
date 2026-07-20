@@ -63,7 +63,7 @@ function DropdownMultiPicker({ label, values, choices, onChange, disabled = fals
   const filteredChoices = choices.filter(choice => !normalizedQuery || `${choice.label} ${choice.detail || ''}`.toLowerCase().includes(normalizedQuery));
   const summary = selectedChoices.length
     ? `${selectedChoices.slice(0, 3).map(choice => choice.label).join('、')}${selectedChoices.length > 3 ? ` 等 ${selectedChoices.length} 人` : ''}`
-    : '請選擇涉及人員';
+    : `請選擇${label}`;
   const toggle = (value: string) => onChange(values.includes(value) ? values.filter(item => item !== value) : [...values, value]);
   return <div ref={rootRef} className={`dropdown-multi-picker ${open ? 'open' : ''}`} onKeyDown={event => {
     if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false); window.setTimeout(()=>triggerRef.current?.focus(),0); }
@@ -73,7 +73,7 @@ function DropdownMultiPicker({ label, values, choices, onChange, disabled = fals
       <span className={selectedChoices.length ? '' : 'muted'}>{summary}</span><b aria-hidden="true">⌄</b>
     </button>
     {open && <div className="dropdown-multi-menu" id={listId}>
-      <div className="dropdown-multi-tools"><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="搜尋姓名或部門…" aria-label="搜尋涉及人員"/>{values.length > 0 && <button type="button" className="btn small ghost" onClick={() => onChange([])}>清空</button>}</div>
+      <div className="dropdown-multi-tools"><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="搜尋姓名或部門…" aria-label={`搜尋${label}`}/>{values.length > 0 && <button type="button" className="btn small ghost" onClick={() => onChange([])}>清空</button>}</div>
       <div className="dropdown-multi-options">{filteredChoices.length ? filteredChoices.map(choice => {
         const checked = values.includes(choice.value);
         return <label key={choice.value} className={checked ? 'selected' : ''}><input type="checkbox" checked={checked} onChange={() => toggle(choice.value)}/><span><b>{choice.label}</b>{choice.detail && <small>{choice.detail}</small>}</span></label>;
@@ -193,7 +193,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     </div>
     <CheckboxMultiPicker label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating} values={draft.categories || (draft.category ? [draft.category] : [])} choices={taskCategoryChoices.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
     <CheckboxMultiPicker label="涉及部門" required={creating} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
-    {currentUser.role!=='vessel'&&<MeetingPeoplePicker label="涉及人員" users={eligibleOwnerUsers} departments={data.settings.departments} selectedIds={draft.ownerUserIds} onChange={values=>change(target=>{target.ownerUserIds=values;})} disabled={globalReadOnly}/>}</fieldset>
+    {currentUser.role!=='vessel'&&<MeetingPeoplePicker label="追蹤窗口" users={eligibleOwnerUsers} departments={data.settings.departments} selectedIds={draft.ownerUserIds} onChange={values=>change(target=>{target.ownerUserIds=values;})} disabled={globalReadOnly}/>}</fieldset>
     {editingSingleVessel&&<div className="field vessel-progress-status"><label>單船目前狀態／決議｜{selectedVessel?vesselDisplayName(selectedVessel):progressScope}</label><RichTextEditor ariaLabel="單船目前狀態" readOnly={readOnly} value={selectedProgress.status} onChange={value=>changeProgress(target=>{target.status=value;})}/></div>}
     {!readOnly&&<div className="quick-status-bar"><input value={quickStatus} onChange={event=>setQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();addStatus();}}} placeholder={editingSingleVessel?'快速更新此船狀態…':'快速更新總體狀態…'}/><button className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>}
     <section className="status-history"><h3>{editingSingleVessel?'單船狀態歷程':'總體狀態歷程'}</h3>{selectedProgress.statusLogs.length?selectedProgress.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{new Date(log.at).toLocaleString('zh-TW')}｜{log.by}</small></article>):<p className="muted">尚無狀態紀錄</p>}</section></div>
