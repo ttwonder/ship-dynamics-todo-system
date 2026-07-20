@@ -172,6 +172,8 @@ export interface TemporaryMeeting {
   taskDescription: string;
   taskItems: MeetingTaskItem[];
   expectedDate: string;
+  completedDate?: string;
+  completedBy?: string;
   priority: TaskPriority;
   includeInMorning?: boolean;
   latestStatus?: string;

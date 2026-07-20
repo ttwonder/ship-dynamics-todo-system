@@ -40,7 +40,7 @@ type Props = {
 
 type MeetingDraft = Pick<
   TemporaryMeeting,
-  'subject' | 'meetingDate' | 'vessels' | 'reason' | 'departments' | 'participantUserIds' | 'trackingUserIds' | 'responsibleUserIds' | 'resolution' | 'taskItems' | 'expectedDate' | 'priority'
+  'subject' | 'meetingDate' | 'vessels' | 'reason' | 'departments' | 'participantUserIds' | 'trackingUserIds' | 'responsibleUserIds' | 'resolution' | 'taskItems' | 'expectedDate' | 'completedDate' | 'completedBy' | 'priority'
 > & {
   status: TemporaryMeetingStatus;
   vesselScopeMode: MeetingVesselScopeMode;
@@ -54,6 +54,16 @@ type ScopeFilter = 'any' | MeetingVesselScopeMode;
 
 const statuses: TemporaryMeetingStatus[] = ['待召開', '追蹤中', '已完成'];
 const statusOf = (meeting: TemporaryMeeting): TemporaryMeetingStatus => meeting.status || '追蹤中';
+const askMeetingCompletionDate = (current = todayDate()) => {
+  const value = window.prompt('請選擇完成日期（YYYY-MM-DD）', current || todayDate());
+  if (value === null) return null;
+  const normalized = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    alert('完成日期格式需為 YYYY-MM-DD');
+    return null;
+  }
+  return normalized;
+};
 const scopeModeOf = (meeting: TemporaryMeeting): MeetingVesselScopeMode => meeting.vesselScopeMode || 'vessels';
 const scopeModeLabel = (mode: MeetingVesselScopeMode) => mode === 'all' ? '全部船舶' : mode === 'types' ? '按船舶類型' : '逐船選擇';
 const meetingScopeLabel = (meeting: TemporaryMeeting) => {
@@ -78,6 +88,8 @@ const blankDraft = (): MeetingDraft => ({
   resolution: '',
   taskItems: [{ id: uid('meeting-task-item'), description: '', categories: [], distributeToVessels: false }],
   expectedDate: todayDate(),
+  completedDate: '',
+  completedBy: '',
   priority: '中',
   includeInMorning: false,
   latestStatus: '',
@@ -99,6 +111,8 @@ const draftFrom = (meeting?: TemporaryMeeting, tasks = [] as AppData['tasks']): 
   resolution: meeting.resolution,
   taskItems: meetingTaskItems(meeting, tasks).length ? meetingTaskItems(meeting, tasks) : [{ id: uid('meeting-task-item'), description: '', categories: [], distributeToVessels: false }],
   expectedDate: meeting.expectedDate,
+  completedDate: meeting.completedDate || '',
+  completedBy: meeting.completedBy || '',
   priority: meeting.priority,
   includeInMorning: meeting.includeInMorning === true,
   latestStatus: meeting.latestStatus || '',
@@ -311,6 +325,24 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     });
   };
 
+  const setMeetingStatus = (status: TemporaryMeetingStatus) => {
+    if (status === '已完成' && draft.status !== '已完成') {
+      const completedDate = askMeetingCompletionDate(draft.completedDate || todayDate());
+      if (!completedDate) return;
+      setDraft(previous => ({ ...previous, status, completedDate, completedBy: currentUser.id }));
+      return;
+    }
+    setDraft(previous => status === '已完成'
+      ? { ...previous, status, completedDate: previous.completedDate || todayDate(), completedBy: previous.completedBy || currentUser.id }
+      : { ...previous, status, completedDate: '', completedBy: '' });
+  };
+
+  const setMeetingCompletedDate = (completedDate: string) => {
+    setDraft(previous => completedDate
+      ? { ...previous, status: '已完成', completedDate, completedBy: previous.completedBy || currentUser.id }
+      : { ...previous, status: previous.status === '已完成' ? '追蹤中' : previous.status, completedDate: '', completedBy: '' });
+  };
+
   const save = () => {
     if (!editable) return alert('您無權修改臨會/專題');
     if (savingRef.current) return;
@@ -327,8 +359,12 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     savingRef.current = true;
     const wasCreating=creating;
     const id = wasCreating ? uid('meet') : selectedId;
+    const completionFields = draft.status === '已完成'
+      ? { completedDate: draft.completedDate || todayDate(), completedBy: draft.completedBy || currentUser.id }
+      : { completedDate: '', completedBy: '' };
     const requestedDraft: MeetingDraft = {
       ...draft,
+      ...completionFields,
       vesselTypeScopes: draft.vesselScopeMode === 'types' ? [...draft.vesselTypeScopes] : [],
       vessels: [...resolvedVesselIds],
       taskItems: cleanTaskItems(draft.taskItems),
@@ -487,9 +523,10 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
         <fieldset disabled={!editable} className={`column-scroll temporary-form ${!editable?'readonly-form':''}`} aria-readonly={!editable}>
           <div className="grid cols-3">
             <div className="field span-2"><label>會議主題 <span className="required-mark">*</span></label><input required aria-required="true" value={draft.subject} onChange={event => setDraft({ ...draft, subject: event.target.value })} placeholder="例如：颱風避風臨時協調會" /></div>
-            <div className="field"><label>狀態 <span className="required-mark">*</span></label><select required aria-required="true" value={draft.status} onChange={event => setDraft({ ...draft, status: event.target.value as TemporaryMeetingStatus })}>{statuses.map(status => <option key={status}>{status}</option>)}</select></div>
+            <div className="field"><label>狀態 <span className="required-mark">*</span></label><select required aria-required="true" value={draft.status} onChange={event => setMeetingStatus(event.target.value as TemporaryMeetingStatus)}>{statuses.map(status => <option key={status}>{status}</option>)}</select></div>
             <div className="field"><label>召開日期 <span className="required-mark">*</span></label><input required aria-required="true" type="date" value={draft.meetingDate} onChange={event => setDraft({ ...draft, meetingDate: event.target.value })} /></div>
             <div className="field"><label>預計完成日期 <span className="required-mark">*</span></label><input required aria-required="true" type="date" value={draft.expectedDate} onChange={event => setDraft({ ...draft, expectedDate: event.target.value })} /></div>
+            <div className="field"><label>完成日期</label><input type="date" value={draft.completedDate || ''} onChange={event => setMeetingCompletedDate(event.target.value)} /><small>{draft.status === '已完成' ? '與切換「已完成」時彈出的日期同步' : '選擇日期會同步標記為已完成'}</small></div>
             <div className="field"><label>會議議題關注程度</label><select value={draft.priority} onChange={event => setDraft({ ...draft, priority: event.target.value as TaskPriority })}>{data.settings.priorities.map(priority => <option key={priority}>{priority}</option>)}</select><small>同步至本會議待辦，不影響船舶看板關注程度</small></div><label className="aware-toggle meeting-morning-toggle"><input type="checkbox" checked={draft.includeInMorning} onChange={event=>setDraft({...draft,includeInMorning:event.target.checked})}/><span><b>納入早會</b><small>勾選後，本會議待辦才會進入早會討論與早會報告</small></span></label>
             <div className="field span-3"><label>召開緣由</label><RichTextEditor ariaLabel="召開緣由" readOnly={!editable} value={draft.reason} onChange={reason=>setDraft({...draft,reason})} placeholder="說明為何召開本次臨會/專題" /></div>
             <div className="field span-3"><label>決議／會議結論 <span className="required-mark">*</span></label><RichTextEditor ariaLabel="決議／會議結論" required readOnly={!editable} value={draft.resolution} onChange={resolution=>setDraft({...draft,resolution})} placeholder="記錄本次會議決議或結論" /></div>
@@ -539,7 +576,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
         <div className="column-title"><h2>會議狀態</h2></div>
         <div className="column-scroll">
           <div className="temporary-status-grid">{statuses.map(status => <button key={status} className={statusFilter === status ? 'active' : ''} onClick={() => setStatusFilter(status)}><span>{status}</span><b>{counts[status]}</b></button>)}</div>
-          <div className="summary-card blue"><h3>目前會議</h3><div className="summary-line"><span>狀態</span><b>{draft.status}</b></div><div className="summary-line"><span>範圍</span><b>{scopeModeLabel(draft.vesselScopeMode)}</b></div><div className="summary-line"><span>船舶</span><b>{resolvedVesselIds.length}</b></div><div className="summary-line"><span>部門</span><b>{draft.departments.length}</b></div><div className="summary-line"><span>與會人員</span><b>{draft.participantUserIds.length}</b></div><div className="summary-line"><span>追蹤窗口</span><b>{draft.trackingUserIds.length}</b></div><div className="summary-line"><span>負責人</span><b>{draft.responsibleUserIds.length}</b></div><div className="summary-line"><span>關注</span><b>{draft.priority}</b></div><div className="summary-line"><span>早會</span><b>{draft.includeInMorning?'納入':'不納入'}</b></div><div className="summary-line"><span>最新狀態</span><b>{draft.latestStatus||'尚無記錄'}</b></div></div>
+          <div className="summary-card blue"><h3>目前會議</h3><div className="summary-line"><span>狀態</span><b>{draft.status}</b></div><div className="summary-line"><span>完成日期</span><b>{draft.completedDate||'未完成'}</b></div><div className="summary-line"><span>範圍</span><b>{scopeModeLabel(draft.vesselScopeMode)}</b></div><div className="summary-line"><span>船舶</span><b>{resolvedVesselIds.length}</b></div><div className="summary-line"><span>部門</span><b>{draft.departments.length}</b></div><div className="summary-line"><span>與會人員</span><b>{draft.participantUserIds.length}</b></div><div className="summary-line"><span>追蹤窗口</span><b>{draft.trackingUserIds.length}</b></div><div className="summary-line"><span>負責人</span><b>{draft.responsibleUserIds.length}</b></div><div className="summary-line"><span>關注</span><b>{draft.priority}</b></div><div className="summary-line"><span>早會</span><b>{draft.includeInMorning?'納入':'不納入'}</b></div><div className="summary-line"><span>最新狀態</span><b>{draft.latestStatus||'尚無記錄'}</b></div></div>
           <div className="summary-card"><h3>建立資訊</h3><p>{selected ? new Date(selected.createdAt).toLocaleString() : '尚未建立'}</p><small>{creator ? `${creator.department}｜${creator.name}｜${roleLabel(creator.role)}` : '建立後顯示建立者'}</small></div>
           <div className="summary-card mint"><h3>關聯待辦事項</h3>{linkedTasks.length ? <div className="meeting-linked-tasks">{linkedTasks.map(task => <article key={task.id}><b>{taskVesselLabel(task, visibleVessels)}</b><small>船種：{taskShipTypeLabel(task, visibleVessels)}</small><RichTextContent compact value={task.description} fallback="尚未填寫事項內容"/><small>{task.sourceMeetingItemId && selectedTaskItemNumbers.get(task.sourceMeetingItemId) ? `待辦事項 ${selectedTaskItemNumbers.get(task.sourceMeetingItemId)}｜` : ''}{task.isClosed ? '已結案' : richTextToPlainText(task.status) || '待執行'}｜期限 {task.expectedDate || '未設定'}</small></article>)}</div> : <p>{draft.taskItems.some(item => !isRichTextEmpty(item.description)) ? '保存後每個事項會依合併船舶範圍建立一筆待辦。' : '尚未填寫待辦事項。'}</p>}</div>
           <div className="summary-card blue"><h3>待辦同步規則</h3><p>每個已填寫的待辦事項只建立一筆待辦；船舶欄會顯示「全部船舶」或合併船名，船種欄同步顯示全部或涉及類型。</p></div>

@@ -155,6 +155,8 @@ function normalizeMeetings(value: unknown, timestamp: string, meetingTaskCategor
       taskDescription,
       taskItems,
       expectedDate: text(item.expectedDate),
+      completedDate: text(item.completedDate) || undefined,
+      completedBy: text(item.completedBy) || undefined,
       priority: oneOf(item.priority, priorities, '中'),
       includeInMorning: bool(item.includeInMorning),
       latestStatus: text(item.latestStatus),

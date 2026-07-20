@@ -26,6 +26,16 @@ const parseCargoLines = (value: string): VesselCargoItem[] => value.split(/\r?\n
   const [name = '', ...quantityParts] = line.split(/[｜|]/);
   return { name: name.trim(), quantity: quantityParts.join('｜').trim() };
 }).filter(item => item.name || item.quantity);
+const askCompletionDate = (current = todayDate()) => {
+  const value = window.prompt('請選擇完成日期（YYYY-MM-DD）', current || todayDate());
+  if (value === null) return null;
+  const normalized = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    alert('完成日期格式需為 YYYY-MM-DD');
+    return null;
+  }
+  return normalized;
+};
 
 function useEscapeClose(close: () => void) {
   useEffect(() => {
@@ -150,7 +160,23 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     target.vesselProgress=[progress,...(target.vesselProgress||[]).filter(item=>item.vesselId!==progressScope&&taskScopeIds.includes(item.vesselId))];
   });
   const addStatus = () => { const value=quickStatus.trim(); if(!value||readOnly)return; changeProgress(target=>{target.status=value;target.statusLogs.unshift({id:uid('log'),at:nowIso(),by:currentUser.name,text:value});});setQuickStatus(''); };
-  const toggleClosed = () => { if (!canClose||readOnly) return alert('目前角色未獲授權結案或重新開啟待辦'); changeProgress(target=>{target.isClosed=!target.isClosed;if(target.isClosed){target.closedDate=todayDate();target.closedBy=currentUser.id;}else{delete target.closedDate;delete target.closedBy;}}); };
+  const toggleClosed = () => {
+    if (!canClose||readOnly) return alert('目前角色未獲授權結案或重新開啟待辦');
+    if (selectedProgress.isClosed) {
+      changeProgress(target=>{target.isClosed=false;delete target.closedDate;delete target.closedBy;});
+      return;
+    }
+    const closedDate = askCompletionDate(selectedProgress.closedDate || todayDate());
+    if (!closedDate) return;
+    changeProgress(target=>{target.isClosed=true;target.closedDate=closedDate;target.closedBy=currentUser.id;});
+  };
+  const setCompletionDate = (closedDate: string) => {
+    if (!canClose||readOnly) return alert('目前角色未獲授權結案或重新開啟待辦');
+    changeProgress(target=>{
+      if (closedDate) { target.isClosed=true; target.closedDate=closedDate; target.closedBy ||= currentUser.id; }
+      else { target.isClosed=false; delete target.closedDate; delete target.closedBy; }
+    });
+  };
   const save = () => {
     if(editingSingleVessel){if(onSaveVesselProgress(draft,progressScope,expectedUpdatedAtRef.current,expectedRevisionRef.current))close();return;}
     const selectedCategories = Array.from(new Set(draft.categories || (draft.category ? [draft.category] : [])));
@@ -194,6 +220,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     <CheckboxMultiPicker label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating} values={draft.categories || (draft.category ? [draft.category] : [])} choices={taskCategoryChoices.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
     <CheckboxMultiPicker label="涉及部門" required={creating} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
     {currentUser.role!=='vessel'&&<MeetingPeoplePicker label="追蹤窗口" users={eligibleOwnerUsers} departments={data.settings.departments} selectedIds={draft.ownerUserIds} onChange={values=>change(target=>{target.ownerUserIds=values;})} disabled={globalReadOnly}/>}</fieldset>
+    {!creating&&<div className="grid cols-3 task-completion-date-row"><div className="field"><label>完成日期</label><input type="date" disabled={readOnly||!canClose} value={selectedProgress.closedDate||''} onChange={event=>setCompletionDate(event.target.value)}/><small>{selectedProgress.isClosed?'已結案日期；與「標記結案」彈出的日期同步':'選擇日期會同步標記為已結案'}</small></div></div>}
     {editingSingleVessel&&<div className="field vessel-progress-status"><label>單船目前狀態／決議｜{selectedVessel?vesselDisplayName(selectedVessel):progressScope}</label><RichTextEditor ariaLabel="單船目前狀態" readOnly={readOnly} value={selectedProgress.status} onChange={value=>changeProgress(target=>{target.status=value;})}/></div>}
     {!readOnly&&<div className="quick-status-bar"><input value={quickStatus} onChange={event=>setQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();addStatus();}}} placeholder={editingSingleVessel?'快速更新此船狀態…':'快速更新總體狀態…'}/><button className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>}
     <section className="status-history"><h3>{editingSingleVessel?'單船狀態歷程':'總體狀態歷程'}</h3>{selectedProgress.statusLogs.length?selectedProgress.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{new Date(log.at).toLocaleString('zh-TW')}｜{log.by}</small></article>):<p className="muted">尚無狀態紀錄</p>}</section></div>
