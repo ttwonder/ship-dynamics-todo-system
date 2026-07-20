@@ -28,11 +28,14 @@ for (const contract of [
   'canManageVesselAssignments',
   '經管部門篩選',
   'managerNames',
+  'assignment-selected-summary',
 ]) {
   assert.ok(source.includes(contract), `缺少正式管理／自管篩選契約：${contract}`);
 }
 
 assert.ok(management.includes("user.role === 'admin'") && management.includes("user.role === 'operator'"), '船舶經管人員必須允許管理員與操作員，不得只限操作員');
 assert.ok(!management.includes("users={activeUsers.filter(user => user.role === 'operator')}"), '船舶頁不可只把操作員傳入經管人員選擇器');
+assert.ok(management.includes('className="assignment-selected-summary"') && management.indexOf('assignment-selected-summary') < management.indexOf('management-assignment-tools'), '已選經管人員摘要需放在篩選／搜尋工具列上方');
+assert.ok(!management.includes('<span>已選 {count}'), '已選經管人員摘要不得再塞在搜尋框右側');
 
 console.log('Management selection regression contract passed.');
