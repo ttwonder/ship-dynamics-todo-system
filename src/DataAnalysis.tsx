@@ -5,6 +5,7 @@ import { vesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention } from './vesselAttention';
 import { vesselAttentionTasks } from './taskAttention';
+import { isMeetingTaskSource, taskCategoriesOf } from './taskCategories';
 
 type ScopeMode = 'overall' | 'department' | 'person';
 type Metrics = {
@@ -89,7 +90,9 @@ export default function DataAnalysisView({ data, vessels }: { data: AppData; ves
   const scopeTasks = scopeMode === 'overall' ? tasks : tasks.filter(task => responsibleFor(task, scopedUserIds, scopeMode === 'department' ? selectedDepartment : ''));
   const proposed = scopeMode === 'overall' ? tasks.length : tasks.filter(task => scopedUserIds.has(task.createdBy)).length;
   const metrics = metricOf(scopeTasks, proposed, tasks.length);
-  const scopeLabel = scopeMode === 'overall' ? '總體／全部船隊' : scopeMode === 'department' ? `部門：${selectedDepartment || '未選擇'}` : `個人：${selectedPerson?.name || '未選擇'}`;
+    const ordinaryCategoryCounts = categoryCounts(scopeTasks.filter(task => !isMeetingTaskSource(task)));
+    const meetingCategoryCounts = categoryCounts(scopeTasks.filter(task => isMeetingTaskSource(task)));
+    const scopeLabel = scopeMode === 'overall' ? '總體／全部船隊' : scopeMode === 'department' ? `部門：${selectedDepartment || '未選擇'}` : `個人：${selectedPerson?.name || '未選擇'}`;
 
   const compareRows = (mode: 'department' | 'person') => {
     const groups = mode === 'department'
@@ -141,6 +144,10 @@ export default function DataAnalysisView({ data, vessels }: { data: AppData; ves
       <MetricCard label="內控" value={metrics.internal} suffix={`件｜完成 ${metrics.internalRate}%`} />
       <MetricCard label="異常" value={metrics.abnormal} suffix={`件｜完成 ${metrics.abnormalRate}%`} />
     </div>
+    <div className="grid cols-2 analysis-category-grid">
+      <CategoryPanel title="要事分類比例" rows={ordinaryCategoryCounts} />
+      <CategoryPanel title="臨會/專題分類比例" rows={meetingCategoryCounts} />
+    </div>
     <ComparePanel title="部門橫向比較與排名" rows={departmentRows} />
     <ComparePanel title="人員橫向比較與排名" rows={personRows} />
     <div className="panel analysis-panel"><div className="panel-title"><h3>船舶優先級／異常／關注度／點亮項目／趨勢</h3><small>趨勢為近六個月新增事項件數</small></div><div className="table-wrap analysis-vessel-table"><table><thead><tr><th>船舶</th><th>急／高／中／低累計</th><th>異常</th><th>目前關注度</th><th>點亮項目</th><th>{months.join('　')}</th></tr></thead><tbody>{vesselRows.map(row => { const max = Math.max(1, ...row.trend); return <tr key={row.vessel.id}><td><b>{vesselDisplayName(row.vessel)}</b></td><td><div className="priority-counts"><span>急 {row.counts['急']}</span><span>高 {row.counts['高']}</span><span>中 {row.counts['中']}</span><span>低 {row.counts['低']}</span></div></td><td>{row.abnormal}</td><td><span className="attention-level">{row.attention}</span></td><td>{row.lights}／7</td><td><div className="analysis-trend" title={row.trend.join('、')}>{row.trend.map((count, index) => <i key={months[index]} style={{ height: `${Math.max(4, count / max * 100)}%` }} />)}</div></td></tr>; })}</tbody></table></div></div>
@@ -150,6 +157,20 @@ export default function DataAnalysisView({ data, vessels }: { data: AppData; ves
 
 function MetricCard({ label, value, suffix }: { label: string; value: number; suffix: string }) {
   return <div className="metric-card"><small>{label}</small><b>{value}</b><span>{suffix}</span></div>;
+}
+
+function categoryCounts(tasks: TaskItem[]) {
+  const counts = new Map<string, number>();
+  tasks.forEach(task => {
+    const categories = taskCategoriesOf(task);
+    (categories.length ? categories : ['未分類']).forEach(category => counts.set(category, (counts.get(category) || 0) + 1));
+  });
+  return Array.from(counts.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-TW'));
+}
+
+function CategoryPanel({ title, rows }: { title: string; rows: Array<{ name: string; count: number }> }) {
+  const total = rows.reduce((sum, row) => sum + row.count, 0);
+  return <div className="panel analysis-panel category-ratio-panel"><div className="panel-title"><h3>{title}</h3><small>{total} 件</small></div>{rows.length ? <div className="analysis-compare-list">{rows.map(row => <div className="analysis-compare-row" key={row.name}><b className="analysis-name">{row.name}</b><div className="analysis-bar"><i style={{ width: `${Math.max(4, row.count / Math.max(1, total) * 100)}%` }} /></div><span className="analysis-value">{row.count} 件</span><span className="analysis-value">{Math.round(row.count / Math.max(1, total) * 100)}%</span></div>)}</div> : <p className="empty-text">暫無資料</p>}</div>;
 }
 
 function ComparePanel({ title, rows }: { title: string; rows: Array<{ id: string; name: string; metrics: Metrics }> }) {

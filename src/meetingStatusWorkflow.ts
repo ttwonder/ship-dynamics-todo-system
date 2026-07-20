@@ -8,11 +8,12 @@ export function addMeetingStatusRecord(
   actorName: string,
   at: string,
   id: string,
+  actorId?: string,
 ): { latestStatus: string; statusLogs: StatusLog[] } | null {
   const text = rawText.trim();
   if (!text) return null;
   return {
     latestStatus: text,
-    statusLogs: [{ id, at, by: actorName, text }, ...(meeting.statusLogs || [])],
+    statusLogs: [{ id, at, by: actorName, byUserId: actorId, text }, ...(meeting.statusLogs || [])],
   };
 }

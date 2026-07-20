@@ -11,8 +11,9 @@ try {
 
   assert.deepEqual(categories.REQUIRED_TASK_CATEGORIES, [
     '換員操作', '加油加水', '物料配件', '維修', 'Survey', '稽核檢查', 'PSC窗口', '事故',
-    '證書', '缺失驗證', 'vetting', '貨品', '港口安排', '臨會/專題',
+    '證書', '缺失驗證', 'vetting', '貨品', '港口安排',
   ]);
+  assert.deepEqual(categories.REQUIRED_MEETING_TASK_CATEGORIES, ['船員管理','船員培訓','稽核認證','船舶維護管理','岸基培訓','岸基人員管理']);
   assert.deepEqual(categories.attentionKeysForCategories(['換員操作', 'Survey', '證書']), ['crew-operation', 'survey']);
   assert.deepEqual(categories.mergeAttentionFromCategories(['psc-window'], ['維修', '證書']), ['psc-window', 'maintenance']);
   assert.deepEqual(categories.normalizeTaskCategoryList('臨時會議決議', []), ['臨會/專題']);
@@ -31,7 +32,8 @@ try {
   assert.deepEqual(normalized.tasks[0].categories, ['證書']);
   assert.equal(normalized.tasks[0].category, '證書');
   assert.ok(normalized.settings.taskCategories.includes('換員操作'));
-  assert.ok(normalized.settings.taskCategories.includes('臨會/專題'));
+  assert.ok(!normalized.settings.taskCategories.includes('臨會/專題'));
+  assert.deepEqual(normalized.settings.meetingTaskCategories, categories.REQUIRED_MEETING_TASK_CATEGORIES);
   assert.ok(!normalized.settings.taskCategories.includes('人員'));
   assert.deepEqual(normalized.settings.vesselStatuses, ['loading', 'unloading', 'to load', 'to unload', 'waiting order', 'drydock/repiar']);
   assert.deepEqual(normalized.vessels[0].note.statusList, ['drydock/repiar']);
@@ -61,19 +63,20 @@ try {
   const styles = fs.readFileSync('src/styles.css','utf8');
   const management = fs.readFileSync('src/Management.tsx','utf8');
   const workCenter = fs.readFileSync('src/WorkCenter.tsx','utf8');
+  const workCenterScope = fs.readFileSync('src/workCenterScope.ts','utf8');
   const analysis = fs.readFileSync('src/DataAnalysis.tsx','utf8');
   const seed = fs.readFileSync('src/data/seed.ts','utf8');
   const normalizeSource = fs.readFileSync('src/normalize.ts','utf8');
   const cloudSource = fs.readFileSync('src/cloud.ts','utf8');
   const attentionSource = fs.readFileSync('src/vesselAttention.ts','utf8');
   assert.ok(dashboard.includes('船舶狀態') && dashboard.includes('vessel.note.statusList'), '看板載況旁必須顯示船舶狀態');
-  assert.ok(editor.includes('CheckboxMultiPicker label="分類"') && editor.includes('draft.categories'), '新增要事分類必須可多選');
+  assert.ok(editor.includes('categoryChoicesForTask') && editor.includes('draft.categories'), '新增要事／臨會待辦分類必須依來源使用各自分類並可多選');
   assert.ok(editor.includes("if (creating && !draft.vesselId) return alert('請選擇船舶')"), '新增要事的船舶必須由保存 handler 验证');
   assert.ok(editor.includes("if (creating && !draft.priority) return alert('請選擇關注程度')"), '新增要事的关注程度必须由保存 handler 验证');
   assert.ok(editor.includes("if (creating && !selectedCategories.length) return alert('請選擇分類')"), '新增要事的分类必须由保存 handler 验证');
   assert.ok(app.includes("category:'', categories:[]"), '新增要事分类必须初始为空并由使用者主动选择');
   assert.ok(editor.includes("if (creating && !draft.departments.length) return alert('請選擇涉及部門')"), '新增要事的涉及部门必须由保存 handler 验证');
-  assert.ok(editor.includes('required={creating}') && editor.includes('label="分類" required={creating}') && editor.includes('label="涉及部門" required={creating}'), '新增要事的五个必选／必填字段必须显示原生或语义 required 标记');
+  assert.ok(editor.includes('required={creating}') && editor.includes("label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating}") && editor.includes('label="涉及部門" required={creating}'), '新增要事的五个必选／必填字段必须显示原生或语义 required 标记');
   assert.ok(editor.includes('label="涉及部門" required={creating}') && editor.includes('label="涉及人員"'), '新增要事必须使用「涉及人員」标签');
   const vesselEditor = editor.slice(editor.indexOf('export function VesselEditModal'), editor.indexOf('export function TaskEditModal'));
   const taskEditor = editor.slice(editor.indexOf('export function TaskEditModal'));
@@ -97,8 +100,8 @@ try {
   assert.ok(meetings.includes('meeting-print-page') && meetings.includes('window.print()'), '臨會所選會議需使用獨立列印頁並逐會議分頁');
   assert.ok(styles.includes('.meeting-print-page') && styles.includes('break-after:page'), '臨會列印 CSS 需強制逐會議分頁');
   assert.ok(app.includes("currentUser?.role==='owner'||currentUser?.role==='admin'||hasPermission"), 'Owner／管理員應固定查看全部船舶');
-  assert.ok(app.includes('vesselMatchesUser(v,currentUser,canViewAllVessels)') && !app.includes('involvedVesselIds') && workCenter.includes('task.ownerUserIds.includes(user.id)'), '负责人可在我的待办查看事项，但不得因此扩大看板、总表、已结案或统计的船舶资料范围');
-  assert.ok(workCenter.includes('const visibleVesselIds=new Set(vessels.map') && workCenter.includes('task.ownerUserIds.includes(user.id)') && workCenter.includes('scopedIds.length'), '我的待辦应使用 App 已授权船舶范围，并包含事项涉及人员负责的待办');
+  assert.ok(app.includes('vesselMatchesUser(v,currentUser,canViewAllVessels)') && !app.includes('involvedVesselIds') && workCenterScope.includes('explicitlyResponsible'), '负责人可在我的待办查看事项，但不得因此扩大看板、总表、已结案或统计的船舶资料范围');
+  assert.ok(workCenter.includes('selectUserWorkCenterTasks(data,user,vessels)') && app.includes('selectUserWorkCenterTasks(data,currentUser,activeVessels)') && workCenterScope.includes('meetingInvolvesUser') && workCenterScope.includes('isVesselDelegatedMeetingTask'), '我的待辦清單與導航數量必須共用同一歸屬 selector，並只包含分管督導、事項涉及人員、臨會涉及/負責人或已分派到單船跟蹤的待辦');
   assert.ok(normalizeSource.includes('managementUserIds.has(user.id)).forEach(user => { user.managedVesselIds = []; })'), '管理層不得保留具體船舶分管');
   assert.ok(app.includes('aria-label="登入部門"') && app.includes('aria-label="登入人員"'), '登入頁應使用部門與人員下拉選擇');
   assert.ok(app.includes('if(user.passwordHash&&await sha256(pw)!==user.passwordHash)'), 'Owner 清除密碼後應允許無密碼登入');
@@ -110,6 +113,8 @@ try {
   assert.ok(!cloudSource.includes('needsPasswordResetPersistence') && !cloudSource.includes('persistPasswordMigrationCas') && app.includes("data.revision === remote.revision && data.updatedAt !== remote.updatedAt"), '读取／normalize 不得自动匿名写回密码迁移；同步仍须阻挡同 revision 的本机分歧');
   assert.ok(management.includes('Owner 可重設或清除此人員密碼') && management.includes('clearPersonPassword') && !management.includes('Owner 可查看'), 'Owner 只能重設或清除密碼，不得查看既有明文');
   assert.ok(app.includes("['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['reports','報告中心'],['stats','數據分析']"), '主導航應依序為待辦總表、已結案、報告中心、數據分析');
+  assert.ok(app.includes('priorityTone') && app.includes('filter-chip-meeting') && app.includes('filter-chip-internal') && app.includes('filter-reset-btn'), '待辦總清單篩選 chip 必須依關注/分類/內控提供語義色 class');
+  for (const cls of ['.filter-chip-urgent.on','.filter-chip-high.on','.filter-chip-medium.on','.filter-chip-low.on','.filter-chip-meeting.on','.filter-chip-internal.on','.filter-reset-btn']) assert.ok(styles.includes(cls), `篩選 chip 缺少明顯顏色樣式 ${cls}`);
   for (const label of ['完成率','逾期率','提出率／件數','高風險','需知曉','內控','異常','部門橫向比較與排名','人員橫向比較與排名','船舶優先級／異常／關注度／點亮項目／趨勢']) assert.ok(analysis.includes(label), `數據分析頁缺少 ${label}`);
   assert.ok(analysis.includes("tasks.filter(task => responsibleFor(task, scopedUserIds, scopeMode === 'department' ? selectedDepartment : ''))") && !analysis.includes("responsibleFor(task, scopedUserIds, scopeMode === 'department' ? selectedDepartment : '') || scopedUserIds.has(task.createdBy)"), '責任事項不得混入僅由該人員提出但未負責的事項');
   assert.ok(dashboard.includes('onAdjustAttention') && dashboard.includes('deriveVesselAttention') && attentionSource.includes('manualAttentionLevel') && attentionSource.includes("'特別關注'"), '船隊看板應支援受自動下限保護的手動關注度與特別關注');

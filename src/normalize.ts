@@ -19,7 +19,7 @@ import type {
 } from './types';
 import { nowIso } from './utils';
 import { normalizeRolePermissions } from './permissions';
-import { normalizeConfiguredTaskCategories, normalizeTaskCategoryList, sanitizeEditableTaskCategories } from './taskCategories';
+import { isMeetingTaskSource, normalizeConfiguredMeetingTaskCategories, normalizeConfiguredTaskCategories, normalizeMeetingTaskCategoryList, normalizeTaskCategoryList, sanitizeEditableMeetingTaskCategories, sanitizeEditableTaskCategories } from './taskCategories';
 
 const roles: UserRole[] = ['owner', 'admin', 'operator', 'vessel'];
 const INVALID_PASSWORD_HASH = '0'.repeat(64);
@@ -63,6 +63,7 @@ function normalizeStatusLogs(value: unknown): StatusLog[] {
     id: text(item.id),
     at: text(item.at),
     by: text(item.by),
+    byUserId: text(item.byUserId) || undefined,
     text: text(item.text),
   })).filter(item => item.id && item.text);
 }
@@ -119,7 +120,7 @@ function normalizeNotifications(value: unknown): UserNotification[] {
   })).filter(item => item.id && item.userId && item.taskId);
 }
 
-function normalizeMeetings(value: unknown, timestamp: string): TemporaryMeeting[] {
+function normalizeMeetings(value: unknown, timestamp: string, meetingTaskCategories: string[]): TemporaryMeeting[] {
   return objects(value).map(item => {
     const id = text(item.id);
     const taskDescription = text(item.taskDescription);
@@ -129,10 +130,10 @@ function normalizeMeetings(value: unknown, timestamp: string): TemporaryMeeting[
       const cleanDescription = text(taskItem.description).trim();
       const uniqueId = seenTaskItemIds.has(rawId) ? `${rawId}-duplicate-${index + 1}` : rawId;
       seenTaskItemIds.add(uniqueId);
-      return { id: uniqueId, description: cleanDescription, distributeToVessels: bool(taskItem.distributeToVessels) };
+      return { id: uniqueId, description: cleanDescription, categories: normalizeMeetingTaskCategoryList(taskItem.categories, meetingTaskCategories), distributeToVessels: bool(taskItem.distributeToVessels) };
     }).filter(taskItem => taskItem.id && taskItem.description);
     if (!taskItems.length && Object.prototype.hasOwnProperty.call(item, 'taskDescription') && taskDescription.trim()) {
-      taskItems.push({ id: `${id}-task-1`, description: taskDescription.trim(), distributeToVessels: false });
+      taskItems.push({ id: `${id}-task-1`, description: taskDescription.trim(), categories: normalizeMeetingTaskCategoryList([], meetingTaskCategories), distributeToVessels: false });
     }
     return {
       id,
@@ -170,6 +171,12 @@ export function normalizeAppData(value: unknown): AppData | null {
   const timestamp = text(raw.updatedAt, nowIso());
   const meetingTaskDescriptionWasProvided = new Map(objects(raw.meetings).map(item => [text(item.id), Object.prototype.hasOwnProperty.call(item, 'taskDescription')]));
   const meetingTaskItemsWereProvided = new Map(objects(raw.meetings).map(item => [text(item.id), Object.prototype.hasOwnProperty.call(item, 'taskItems')]));
+  const normalizedTaskCategories = finite(settings.taskCategorySchemaVersion) === 2
+    ? sanitizeEditableTaskCategories(settings.taskCategories)
+    : normalizeConfiguredTaskCategories(settings.taskCategories);
+  const normalizedMeetingTaskCategories = finite(settings.meetingTaskCategorySchemaVersion) === 2
+    ? sanitizeEditableMeetingTaskCategories(settings.meetingTaskCategories)
+    : normalizeConfiguredMeetingTaskCategories(settings.meetingTaskCategories);
 
   const normalized: AppData = {
     revision: finite(raw.revision),
@@ -178,10 +185,10 @@ export function normalizeAppData(value: unknown): AppData | null {
       sitePasswordHash: text(settings.sitePasswordHash),
       systemTitle: text(settings.systemTitle, '船舶動態與會議管理系統'),
       departments: strings(settings.departments),
-      taskCategories: finite(settings.taskCategorySchemaVersion) === 2
-        ? sanitizeEditableTaskCategories(settings.taskCategories)
-        : normalizeConfiguredTaskCategories(settings.taskCategories),
+      taskCategories: normalizedTaskCategories,
       taskCategorySchemaVersion: 2,
+      meetingTaskCategories: normalizedMeetingTaskCategories,
+      meetingTaskCategorySchemaVersion: 2,
       vesselStatuses: [...shipStatuses],
       priorities: [...priorities],
       rolePermissions: normalizeRolePermissions(settings.rolePermissions),
@@ -261,10 +268,13 @@ export function normalizeAppData(value: unknown): AppData | null {
       };
     }).filter(item => item.id && item.name),
     tasks: objects(raw.tasks).map(item => {
-      const categories = normalizeTaskCategoryList(item.category, item.categories);
       const vesselId=text(item.vesselId);
       const vesselIds=strings(item.vesselIds);
       const sourceMeetingId=text(item.sourceMeetingId)||undefined;
+      const sourceType=oneOf(item.sourceType, ['morning', 'temporary'] as const, sourceMeetingId ? 'temporary' : 'morning');
+      const attentionDimension=oneOf(item.attentionDimension, ['task', 'meeting'] as const, sourceMeetingId || sourceType === 'temporary' ? 'meeting' : 'task');
+      const meetingSource=isMeetingTaskSource({ sourceType, sourceMeetingId, attentionDimension });
+      const categories = meetingSource ? normalizeMeetingTaskCategoryList(item.categories || item.category, normalizedMeetingTaskCategories) : normalizeTaskCategoryList(item.category, item.categories);
       const status=text(item.status);
       const isClosed=bool(item.isClosed);
       const closedDate=text(item.closedDate)||undefined;
@@ -284,7 +294,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       vesselScopeMode: oneOf(item.vesselScopeMode, scopeModes, 'vessels'),
       vesselTypeScopes: strings(item.vesselTypeScopes),
       priority: oneOf(item.priority, priorities, '中'),
-      attentionDimension: oneOf(item.attentionDimension, ['task', 'meeting'] as const, sourceMeetingId || item.sourceType === 'temporary' ? 'meeting' : 'task'),
+      attentionDimension,
       isAware: bool(item.isAware),
       isAbnormal: bool(item.isAbnormal) || bool(item.isInternalControl),
       isInternalControl: bool(item.isInternalControl),
@@ -303,7 +313,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       sourceMeetingId,
       sourceMeetingItemId: text(item.sourceMeetingItemId) || undefined,
       distributeToVessels: bool(item.distributeToVessels),
-      sourceType: oneOf(item.sourceType, ['morning', 'temporary'] as const, sourceMeetingId ? 'temporary' : 'morning'),
+      sourceType,
       createdBy: text(item.createdBy),
       updatedBy,
       createdAt: text(item.createdAt, timestamp),
@@ -312,7 +322,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       vesselProgress,
     });
     }).filter(item => item.id && item.vesselId),
-    meetings: normalizeMeetings(raw.meetings, timestamp),
+    meetings: normalizeMeetings(raw.meetings, timestamp, normalizedMeetingTaskCategories),
     agendaReports: normalizeAgendaReports(raw.agendaReports),
     auditLogs: normalizeAuditLogs(raw.auditLogs),
     notifications: normalizeNotifications(raw.notifications),
@@ -322,7 +332,7 @@ export function normalizeAppData(value: unknown): AppData | null {
     const taskDescriptionProvided = meetingTaskDescriptionWasProvided.get(meeting.id);
     if (!meeting.taskItems.length && !taskItemsProvided && !taskDescriptionProvided) {
       const linkedTask = normalized.tasks.find(task => task.sourceMeetingId === meeting.id && task.description.trim());
-      if (linkedTask) meeting.taskItems.push({ id: `${meeting.id}-task-1`, description: linkedTask.description, distributeToVessels: linkedTask.distributeToVessels === true });
+      if (linkedTask) meeting.taskItems.push({ id: `${meeting.id}-task-1`, description: linkedTask.description, categories: normalizeMeetingTaskCategoryList(linkedTask.categories, normalizedMeetingTaskCategories), distributeToVessels: linkedTask.distributeToVessels === true });
     }
     if (meeting.taskItems.length) meeting.taskDescription = meeting.taskItems[0].description;
     const firstItemId = meeting.taskItems[0]?.id;

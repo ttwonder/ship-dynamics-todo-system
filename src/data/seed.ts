@@ -1,7 +1,7 @@
 import type { AppData, UserRole, ShipStatus, TaskPriority } from '../types';
 import { localDate } from '../utils';
 import { DEFAULT_ROLE_PERMISSIONS } from '../permissions';
-import { REQUIRED_TASK_CATEGORIES } from '../taskCategories';
+import { REQUIRED_MEETING_TASK_CATEGORIES, REQUIRED_TASK_CATEGORIES } from '../taskCategories';
 
 const rawPersonnel = [
   {
@@ -715,6 +715,7 @@ const rawVessels = [
 
 export const DEPARTMENTS = Array.from(new Set(rawPersonnel.map(p => p.department)));
 export const TASK_CATEGORIES = [...REQUIRED_TASK_CATEGORIES];
+export const MEETING_TASK_CATEGORIES = [...REQUIRED_MEETING_TASK_CATEGORIES];
 export const VESSEL_STATUSES: ShipStatus[] = ['loading', 'unloading', 'to load', 'to unload', 'waiting order', 'drydock/repiar'];
 export const PRIORITIES: TaskPriority[] = ['急', '高', '中', '低'];
 
@@ -802,6 +803,8 @@ export function createInitialData(): AppData {
       departments: [...DEPARTMENTS],
       taskCategories: [...TASK_CATEGORIES],
       taskCategorySchemaVersion: 2,
+      meetingTaskCategories: [...MEETING_TASK_CATEGORIES],
+      meetingTaskCategorySchemaVersion: 2,
       vesselStatuses: [...VESSEL_STATUSES],
       priorities: [...PRIORITIES],
       rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),

@@ -313,6 +313,7 @@ try {
   assert.equal(canEditTemporaryMeetings(rolePermissions, scopedEditor), false, '有 manageMeetings 但無 viewAllVessels 不得全域編輯會議');
   assert.equal(canEditTemporaryMeetings(rolePermissions, fullEditor), true, '具備 viewAllVessels 的會議管理者才可編輯');
   assert.equal(meetingAppliesToUser({ vesselScopeMode: 'vessels', vessels: ['v2'], vesselTypeScopes: [] }, visibleVessels, false), false, '不可見船舶的會議不得對 scoped 使用者曝光');
+  assert.equal(meetingAppliesToUser({ vesselScopeMode: 'vessels', vessels: ['v2'], vesselTypeScopes: [], participantUserIds:['u-scope'], responsibleUserIds:[] }, visibleVessels, false, 'u-scope'), true, '臨會涉及人員即使無涉船權限也應能檢視該臨會');
   assert.equal(meetingAppliesToUser({ vesselScopeMode: 'vessels', vessels: ['v2'], vesselTypeScopes: [] }, visibleVessels, true), true, '全域編輯者可看到全部會議');
 
   const legacyMeeting = { id: 'legacy', taskDescription: undefined };

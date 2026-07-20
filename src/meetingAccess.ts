@@ -9,11 +9,13 @@ export const canEditTemporaryMeetings = (
 ): boolean => hasPermission(matrix, user, 'manageMeetings') && hasPermission(matrix, user, 'viewAllVessels');
 
 export const meetingAppliesToUser = (
-  meeting: Pick<TemporaryMeeting, 'vesselScopeMode' | 'vesselTypeScopes' | 'vessels'>,
+  meeting: Pick<TemporaryMeeting, 'vesselScopeMode' | 'vesselTypeScopes' | 'vessels'> & Partial<Pick<TemporaryMeeting, 'participantUserIds' | 'responsibleUserIds'>>,
   visibleVessels: Pick<Vessel, 'id' | 'shipType'>[],
   canViewAllMeetings: boolean,
+  userId = '',
 ): boolean => {
   if (canViewAllMeetings) return true;
+  if (userId && ((meeting.participantUserIds || []).includes(userId) || (meeting.responsibleUserIds || []).includes(userId))) return true;
   const visibleIds = new Set(visibleVessels.map(vessel => vessel.id));
   const mode = scopeModeOf(meeting);
   if (mode === 'all') return visibleVessels.length > 0;

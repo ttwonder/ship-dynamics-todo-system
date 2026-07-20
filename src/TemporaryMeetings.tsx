@@ -26,7 +26,8 @@ import { meetingPdfVesselSummary } from './meetingPdf';
 import { addMeetingStatusRecord } from './meetingStatusWorkflow';
 import RichTextEditor from './RichTextEditor';
 import RichTextContent from './RichTextContent';
-import { isRichTextEmpty, richTextToPlainText } from './richText';
+import { richTextToPlainText, isRichTextEmpty } from './richText';
+import { normalizeMeetingTaskCategoryList } from './taskCategories';
 
 type Props = {
   data: AppData;
@@ -74,7 +75,7 @@ const blankDraft = (): MeetingDraft => ({
   participantUserIds: [],
   responsibleUserIds: [],
   resolution: '',
-  taskItems: [{ id: uid('meeting-task-item'), description: '', distributeToVessels: false }],
+  taskItems: [{ id: uid('meeting-task-item'), description: '', categories: [], distributeToVessels: false }],
   expectedDate: todayDate(),
   priority: '中',
   includeInMorning: false,
@@ -94,7 +95,7 @@ const draftFrom = (meeting?: TemporaryMeeting, tasks = [] as AppData['tasks']): 
   participantUserIds: [...meeting.participantUserIds],
   responsibleUserIds: [...meeting.responsibleUserIds],
   resolution: meeting.resolution,
-  taskItems: meetingTaskItems(meeting, tasks).length ? meetingTaskItems(meeting, tasks) : [{ id: uid('meeting-task-item'), description: '', distributeToVessels: false }],
+  taskItems: meetingTaskItems(meeting, tasks).length ? meetingTaskItems(meeting, tasks) : [{ id: uid('meeting-task-item'), description: '', categories: [], distributeToVessels: false }],
   expectedDate: meeting.expectedDate,
   priority: meeting.priority,
   includeInMorning: meeting.includeInMorning === true,
@@ -107,7 +108,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const editable = canEditTemporaryMeetings(data.settings.rolePermissions, currentUser);
   const visibleIds = new Set(visibleVessels.map(vessel => vessel.id));
   const visibleVesselKey = [...visibleIds].sort().join('\u0000');
-  const appliesToUser = (meeting: TemporaryMeeting) => meetingAppliesToUser(meeting, visibleVessels, canViewAllMeetings);
+  const appliesToUser = (meeting: TemporaryMeeting) => meetingAppliesToUser(meeting, visibleVessels, canViewAllMeetings, currentUser.id);
   const accessibleMeetings = data.meetings.filter(appliesToUser);
   const initialMeeting = accessibleMeetings[0];
   const [selectedId, setSelectedId] = useState(initialMeeting?.id || '');
@@ -176,7 +177,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       const rawId = item.id || `meeting-task-item-${index + 1}`;
       const id = seen.has(rawId) ? `${rawId}-duplicate-${index + 1}` : rawId;
       seen.add(id);
-      return { id, description: item.description.trim(), distributeToVessels: item.distributeToVessels === true };
+      return { id, description: item.description.trim(), categories: normalizeMeetingTaskCategoryList(item.categories, data.settings.meetingTaskCategories), distributeToVessels: item.distributeToVessels === true };
     }).filter(item => !isRichTextEmpty(item.description));
   };
 
@@ -214,14 +215,15 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   useEffect(() => {
     if (!printMode) return;
     printInFlightRef.current = true;
-    document.body.classList.add('printing-meetings');
+    const modeClass = printMode === 'meetings' ? 'printing-meeting-detail' : 'printing-meeting-register';
+    document.body.classList.add('printing-meetings', modeClass);
     let cleaned = false;
     let frame = 0;
     let fallback = 0;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
-      document.body.classList.remove('printing-meetings');
+      document.body.classList.remove('printing-meetings', modeClass);
       window.removeEventListener('afterprint', cleanup);
       if (frame) window.cancelAnimationFrame(frame);
       if (fallback) window.clearTimeout(fallback);
@@ -276,23 +278,35 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       ? previous.departments.filter(value => value !== name)
       : [...previous.departments, name],
   }));
-  const addTaskItem = () => setDraft(previous => ({ ...previous, taskItems: [...previous.taskItems, { id: uid('meeting-task-item'), description: '', distributeToVessels: false }] }));
+  const addTaskItem = () => setDraft(previous => ({ ...previous, taskItems: [...previous.taskItems, { id: uid('meeting-task-item'), description: '', categories: normalizeMeetingTaskCategoryList([], data.settings.meetingTaskCategories), distributeToVessels: false }] }));
   const updateTaskItem = (id: string, description: string) => setDraft(previous => ({ ...previous, taskItems: previous.taskItems.map(item => item.id === id ? { ...item, description } : item) }));
+  const updateTaskItemCategories = (id: string, categories: string[]) => setDraft(previous => ({ ...previous, taskItems: previous.taskItems.map(item => item.id === id ? { ...item, categories: normalizeMeetingTaskCategoryList(categories, data.settings.meetingTaskCategories) } : item) }));
   const toggleTaskItemDistribution = (id: string, distributeToVessels: boolean) => setDraft(previous => ({ ...previous, taskItems: previous.taskItems.map(item => item.id === id ? { ...item, distributeToVessels } : item) }));
   const removeTaskItem = (id: string) => setDraft(previous => ({
     ...previous,
     taskItems: previous.taskItems.length > 1
       ? previous.taskItems.filter(item => item.id !== id)
-      : previous.taskItems.map(item => item.id === id ? { ...item, description: '', distributeToVessels: false } : item),
+      : previous.taskItems.map(item => item.id === id ? { ...item, description: '', categories: normalizeMeetingTaskCategoryList([], data.settings.meetingTaskCategories), distributeToVessels: false } : item),
   }));
 
   const addStatus = () => {
     if (!editable) return alert('您無權修改臨會/專題');
     if (creating) return alert('請先建立會議，再加入狀態紀錄');
-    const next = addMeetingStatusRecord(draft, quickStatus, currentUser.name, nowIso(), uid('meeting-log'));
+    const next = addMeetingStatusRecord(draft, quickStatus, currentUser.name, nowIso(), uid('meeting-log'), currentUser.id);
     if (!next) return;
     setDraft(previous => ({ ...previous, ...next }));
     setQuickStatus('');
+  };
+
+  const canDeleteMeetingStatusLog = (log: StatusLog) => currentUser.role === 'owner' || currentUser.role === 'admin' || log.byUserId === currentUser.id || (!log.byUserId && log.by === currentUser.name);
+  const deleteStatusLog = (logId: string) => {
+    const log = draft.statusLogs.find(item => item.id === logId);
+    if (!log) return;
+    if (!canDeleteMeetingStatusLog(log)) return alert('只有 Owner／管理員或該狀態記錄添加人可以刪除');
+    setDraft(previous => {
+      const statusLogs = previous.statusLogs.filter(item => item.id !== logId);
+      return { ...previous, statusLogs, latestStatus: statusLogs[0]?.text || '' };
+    });
   };
 
   const save = () => {
@@ -343,7 +357,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       if(invalidResponsible){failure='负责人已停用或不具备全部涉船范围权限，请重新选择';return prev;}
       const liveMeeting=prev.meetings.find(item=>item.id===id);
       if(wasCreating&&liveMeeting){failure='會議識別碼已存在，請重新建立';return prev;}
-      if(!wasCreating&&(!liveMeeting||!meetingAppliesToUser(liveMeeting,liveVisibleVessels,canViewAll))){failure='會議已被刪除或不再可存取，未保存任何變更';return prev;}
+      if(!wasCreating&&(!liveMeeting||!meetingAppliesToUser(liveMeeting,liveVisibleVessels,canViewAll,liveUser.id))){failure='會議已被刪除或不再可存取，未保存任何變更';return prev;}
       if(!wasCreating&&liveMeeting!.updatedAt!==baseMeetingUpdatedAt){failure='會議已由其他操作更新，為避免覆蓋最新內容，本次未保存';return prev;}
       if(!wasCreating&&prev.revision!==baseRevision){failure='主資料版本已更新，為避免覆蓋其他操作，本次未保存；請重新選擇會議';return prev;}
       const at=nowIso();
@@ -362,6 +376,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       const reconciliation=reconcileMeetingTasks({
         tasks:draftData.tasks,meetingId:id,vesselIds:effectiveDraft.vessels,vesselScopeMode:effectiveDraft.vesselScopeMode,
         vesselTypeScopes:effectiveDraft.vesselTypeScopes,followUps:effectiveDraft.taskItems,priority:effectiveDraft.priority,
+        meetingTaskCategories:prev.settings.meetingTaskCategories,
         expectedDate:effectiveDraft.expectedDate,departments:effectiveDraft.departments,ownerUserIds:effectiveDraft.responsibleUserIds,
         initialStatus:effectiveDraft.resolution,actorId:liveUser.id,actorName:liveUser.name,at,preserveExistingDescriptionItemIds,
       });
@@ -392,7 +407,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       alert(failure);
       return;
     }
-    setDraft({...persistedDraft,taskItems:persistedDraft.taskItems.length?persistedDraft.taskItems:[{id:uid('meeting-task-item'),description:'',distributeToVessels:false}]});
+    setDraft({...persistedDraft,taskItems:persistedDraft.taskItems.length?persistedDraft.taskItems:[{id:uid('meeting-task-item'),description:'',categories:normalizeMeetingTaskCategoryList([],data.settings.meetingTaskCategories),distributeToVessels:false}]});
     setBaseMeetingUpdatedAt(persistedUpdatedAt);
     setBaseRevision(persistedRevision);
     setCreating(false);
@@ -478,7 +493,8 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
               {draft.taskItems.map((item, index) => <div className="meeting-task-item" key={item.id}>
                 <div><label htmlFor={`meeting-task-${item.id}`}>待辦事項 {index + 1}</label><button type="button" className="btn small ghost" onClick={() => removeTaskItem(item.id)}>移除此事項</button></div>
                 <RichTextEditor id={`meeting-task-${item.id}`} ariaLabel={`待辦事項 ${index+1}`} readOnly={!editable} value={item.description} onChange={description=>updateTaskItem(item.id,description)} placeholder="填寫後保存，預設作為公司層決議待辦" />
-                <label className="aware-toggle meeting-vessel-distribution-toggle"><input type="checkbox" checked={item.distributeToVessels===true} onChange={event=>toggleTaskItemDistribution(item.id,event.target.checked)}/><span><b>分派到涉及船舶單船跟蹤</b><small>勾選後，該會議待辦會分派到所有涉及船舶並出現在單船待辦清單；各船分別更新進度，只有全部涉及船舶完成，該待辦才記為完成。未勾選則只在臨會/專題、我的待辦、待辦總表與已結案中流轉。</small></span></label>
+                <div className="meeting-task-category-picker"><b>臨會/專題待辦分類</b><span>已選 {normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).length}</span><div className="temporary-chip-grid">{data.settings.meetingTaskCategories.map(category=>{const checked=normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).includes(category);return <label key={category} className={`meeting-task-category-chip ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const current=normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories);updateTaskItemCategories(item.id,checked?current.filter(value=>value!==category):[...current,category]);}}/><span>{category}</span></label>;})}</div></div>
+                <label className="aware-toggle meeting-vessel-distribution-toggle"><input type="checkbox" checked={item.distributeToVessels===true} onChange={event=>toggleTaskItemDistribution(item.id,event.target.checked)}/><span><b>分派到涉及船舶單船跟蹤：</b><small>勾選後，該會議待辦會分派到所有涉及船舶並出現在單船待辦清單；各船分別更新進度，只有全部涉及船舶完成，該待辦才記為完成。未勾選則只在臨會/專題、我的待辦、待辦總表與已結案中流轉。</small></span></label>
               </div>)}
             </div>
           </div>
@@ -509,7 +525,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
             <div className="meeting-status-update-title"><div><h3>加入狀態記錄</h3><p>快速更新本次臨會／專題的最新進度；加入後請按「保存變更」。</p></div>{draft.latestStatus&&<span>最新：{draft.latestStatus}</span>}</div>
             <div className="quick-status-bar"><input aria-label="會議最新狀態" value={quickStatus} onChange={event=>setQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();addStatus();}}} placeholder="快速輸入最新狀態…"/><button type="button" className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>
           </section>}
-          {!creating && <section className="status-history meeting-status-history"><h3>狀態歷程</h3>{draft.statusLogs.length?draft.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{new Date(log.at).toLocaleString('zh-TW')}｜{log.by}</small></article>):<p className="muted">尚無狀態紀錄</p>}</section>}
+          {!creating && <section className="status-history meeting-status-history"><h3>狀態歷程</h3>{draft.statusLogs.length?draft.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{new Date(log.at).toLocaleString('zh-TW')}｜{log.by}</small>{canDeleteMeetingStatusLog(log)&&<button type="button" className="btn small ghost no-print" onClick={()=>deleteStatusLog(log.id)}>刪除記錄</button>}</article>):<p className="muted">尚無狀態紀錄</p>}</section>}
         </fieldset>
       </section>
 
@@ -527,7 +543,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     {notice && <div className="management-save-toast" role="status" aria-live="polite">{notice}</div>}
   </section>
   {printMode&&<section className="meeting-print print-only">
-    {printMode==='meetings'&&printableMeetings.map(meeting=>{const items=meetingTaskItems(meeting,data.tasks);return <article className="meeting-print-page" key={meeting.id}><header><h1>臨會／專題會議報告</h1><p>匯出時間：{new Date().toLocaleString('zh-TW')}｜匯出人：{currentUser.name}</p></header><div className="meeting-print-meta"><div><small>會議主題</small><b>{meeting.subject||'-'}</b></div><div><small>狀態</small><b>{statusOf(meeting)}</b></div><div><small>召開日期</small><b>{meeting.meetingDate||'-'}</b></div><div><small>預計完成</small><b>{meeting.expectedDate||'-'}</b></div><div><small>關注程度</small><b>{meeting.priority}</b></div><div><small>會議範圍</small><b>{meetingScopeLabel(meeting)}</b></div></div><section><h2>涉會船舶</h2><p>{meetingPdfVesselSummary(meeting, visibleVessels)}</p></section><section><h2>涉及部門</h2><p>{meeting.departments.join('、')||'未指定'}</p></section><section><h2>涉及人員</h2><p>{peopleNames(meeting.participantUserIds)}</p></section><section><h2>負責人</h2><p>{peopleNames(meeting.responsibleUserIds)}</p></section><section><h2>召開緣由</h2><RichTextContent value={meeting.reason} fallback="未填寫"/></section><section><h2>決議／會議結論</h2><RichTextContent value={meeting.resolution} fallback="未填寫"/></section><section><h2>待辦事項</h2>{items.length?<ol>{items.map(item=><li key={item.id}><RichTextContent value={item.description} fallback="未填寫"/></li>)}</ol>:<p>尚無待辦事項</p>}</section></article>;})}
+    {printMode==='meetings'&&printableMeetings.map(meeting=>{const items=meetingTaskItems(meeting,data.tasks);return <article className="meeting-print-page" key={meeting.id}><header><div><span className={`meeting-status status-${statusOf(meeting)}`}>{statusOf(meeting)}</span><h1>{meeting.subject||'臨會／專題會議報告'}</h1><p>匯出時間：{new Date().toLocaleString('zh-TW')}｜匯出人：{currentUser.name}</p></div><b>臨會／專題</b></header><div className="meeting-print-meta"><div><small>召開日期</small><b>{meeting.meetingDate||'-'}</b></div><div><small>預計完成</small><b>{meeting.expectedDate||'-'}</b></div><div><small>關注程度</small><b>{meeting.priority}</b></div><div><small>會議範圍</small><b>{meetingScopeLabel(meeting)}</b></div><div><small>涉會船舶</small><b>{meetingVesselIds(meeting).length} 艘</b></div></div><div className="meeting-print-grid"><section className="meeting-print-section card-like"><h2>會議範圍</h2><p>{meetingPdfVesselSummary(meeting, visibleVessels)}</p></section><section className="meeting-print-section card-like"><h2>涉及部門</h2><p>{meeting.departments.join('、')||'未指定'}</p></section><section className="meeting-print-section card-like"><h2>涉及人員</h2><p>{peopleNames(meeting.participantUserIds)}</p></section><section className="meeting-print-section card-like"><h2>負責人</h2><p>{peopleNames(meeting.responsibleUserIds)}</p></section></div><section className="meeting-print-section card-like wide"><h2>召開緣由</h2><RichTextContent value={meeting.reason} fallback="未填寫"/></section><section className="meeting-print-section card-like wide"><h2>決議／會議結論</h2><RichTextContent value={meeting.resolution} fallback="未填寫"/></section><section className="meeting-print-section card-like wide"><h2>待辦事項</h2>{items.length?<ol className="meeting-print-task-list">{items.map((item,index)=><li key={item.id}><span>待辦 {index+1}</span><RichTextContent value={item.description} fallback="未填寫"/><small>{normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).join('、')}｜{item.distributeToVessels?'分派到涉及船舶單船跟蹤':'公司層決議待辦'}</small></li>)}</ol>:<p>尚無待辦事項</p>}</section><section className="meeting-print-section card-like wide meeting-print-status-history"><h2>狀態歷程</h2>{(meeting.statusLogs||[]).length?(meeting.statusLogs||[]).map(log=><article key={log.id}><b>{log.text}</b><small>{new Date(log.at).toLocaleString('zh-TW')}｜{log.by}</small></article>):<p>尚無狀態紀錄</p>}</section></article>;})}
     {printMode==='register'&&<article className="meeting-print-register"><header><h1>臨會／專題總清單</h1><p>匯出時間：{new Date().toLocaleString('zh-TW')}｜匯出人：{currentUser.name}｜共 {accessibleMeetings.length} 筆</p></header><table><thead><tr><th>召開日期</th><th>狀態</th><th>主題</th><th>範圍</th><th>船舶</th><th>部門</th><th>涉及人員／負責人</th><th>待辦</th><th>期限</th></tr></thead><tbody>{accessibleMeetings.map(meeting=>{return <tr key={meeting.id}><td>{meeting.meetingDate||'-'}</td><td>{statusOf(meeting)}</td><td><b>{meeting.subject||'-'}</b><br/>{richTextToPlainText(meeting.reason)||'未填召開緣由'}</td><td>{meetingScopeLabel(meeting)}</td><td>{meetingPdfVesselSummary(meeting, visibleVessels)}</td><td>{meeting.departments.join('、')||'-'}</td><td>{peopleNames(meeting.participantUserIds)}<br/>負責：{peopleNames(meeting.responsibleUserIds)}</td><td>{meetingTaskCount(meeting.id)} 件</td><td>{meeting.expectedDate||'-'}</td></tr>;})}</tbody></table></article>}
   </section>}
   </>;

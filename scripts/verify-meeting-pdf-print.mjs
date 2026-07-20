@@ -7,8 +7,14 @@ const meetings = fs.readFileSync('src/TemporaryMeetings.tsx', 'utf8');
 const app = fs.readFileSync('src/App.tsx', 'utf8');
 
 assert.ok(meetings.includes('className="meeting-print print-only"'), '臨會 PDF 必須有獨立列印容器');
-assert.ok(meetings.includes("printMode==='meetings'") && meetings.includes("printMode==='register'"), '所選會議及總清單必須各自渲染列印內容');
+assert.ok(meetings.includes('className="meeting-print print-only"'), '臨會 PDF 必須有獨立列印容器');
+assert.ok(meetings.includes('printing-meeting-detail') && meetings.includes('printing-meeting-register'), '臨會詳情與臨會總清單列印必須分離 print mode，避免互相影響');
+assert.ok(meetings.includes('meeting-print-section card-like') && meetings.includes('meeting-print-status-history'), '臨會詳情 PDF 必須使用接近詳情工作區的卡片式內容區塊與狀態歷程');
 assert.ok(styles.includes('body.printing-meetings .meeting-print{display:block!important}'), '臨會列印模式必須顯示列印容器');
+assert.ok(styles.includes('@page meeting-detail') && styles.includes('size:A4 portrait'), '臨會詳情 PDF 必須使用 A4 直式頁面');
+assert.ok(styles.includes('@page meeting-register') && styles.includes('size:A4 landscape'), '臨會總清單 PDF 必須維持 A4 橫式頁面');
+assert.ok(styles.includes('body.printing-meeting-detail .meeting-print-page') && styles.includes('page:meeting-detail'), '臨會詳情列印樣式需只套用於詳情頁');
+assert.ok(styles.includes('body.printing-meeting-register .meeting-print-register') && styles.includes('page:meeting-register'), '臨會總清單列印樣式需只套用於總清單');
 assert.ok(!styles.includes('body.printing-meetings .container>.print-only{display:none!important}'), '不得以更高權重隱藏臨會列印容器，否則 PDF 會空白');
 assert.ok(app.includes('className="print-only app-print-header"'), '一般頁面列印抬頭必須有獨立 class，才能在臨會列印時精準隱藏');
 assert.ok(styles.includes('body.printing-meetings .app-print-header{display:none!important}'), '臨會列印時只應隱藏一般頁面抬頭');

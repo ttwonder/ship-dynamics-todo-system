@@ -10,6 +10,7 @@ import RichTextContent from './RichTextContent';
 import MeetingPeoplePicker from './MeetingPeoplePicker';
 import { isRichTextEmpty, richTextToPlainText } from './richText';
 import { taskIsClosedForVessel, taskProgressForVessel, taskVesselProgressSummary, usesPerVesselProgress } from './taskVesselProgress';
+import { categoryChoicesForTask } from './taskCategories';
 
 type Commit = (updater: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => void;
 type MultiChoice = { value: string; label: string; detail?: string };
@@ -176,6 +177,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const progressSummary=taskVesselProgressSummary(draft,visibleScopeIds);
   const selectedVessel=data.vessels.find(vessel=>vessel.id===progressScope);
   const editorTitle=hasMeetingScope?(readOnly?'查看臨會／專題待辦':'更新臨會／專題待辦'):(creating?'新增要事':readOnly?'查看要事':'更新要事');
+  const taskCategoryChoices = categoryChoicesForTask(draft, data.settings);
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" onClick={onDelete}>刪除待辦</button>}{!readOnly&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" onClick={close}>{readOnly?'關閉':'取消'}</button>{!readOnly&&<button className="btn primary" onClick={save}>{creating?'建立要事':'保存變更'}</button>}</div></div>
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
     {perVesselMode&&<section className="vessel-progress-scope"><div className="field"><label>進度範圍</label><select aria-label="待辦進度範圍" value={progressScope} onChange={event=>{setProgressScope(event.target.value);setQuickStatus('');}}>{visibleScopeIds.map(id=>{const vessel=data.vessels.find(item=>item.id===id);return <option key={id} value={id}>單船進度｜{vessel?vesselDisplayName(vessel):id}</option>})}{canEditOverall&&<option value="overall">總體進度｜全部涉船</option>}</select></div><div className="progress-scope-note"><b>單船 {progressSummary.completed}/{progressSummary.total} 已結案</b><span>{editingSingleVessel?'目前操作只会更新所选船舶，不影响总体及其他船舶。':'目前操作会更新整项会议待办的总体进度。'}</span></div></section>}
@@ -189,7 +191,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
       <label className="aware-toggle abnormal-toggle"><input type="checkbox" checked={draft.isAbnormal} onChange={event=>{const value=event.target.checked;change(target=>{target.isAbnormal=value;});}}/><span>異常（看板顯示「異常存在」）</span></label>
       <label className="aware-toggle internal-control-toggle"><input type="checkbox" checked={draft.isInternalControl} disabled={!creating&&Boolean(task?.isInternalControl)&&!canCancelInternalControl} onChange={event=>{const value=event.target.checked;if(draft.isInternalControl&&!value)alert(FLOW_INTERNAL_CONTROL_REMINDER);change(target=>{target.isInternalControl=value;if(value)target.isAbnormal=true;});}}/><span>內部管控（台面下異常管控）</span></label>
     </div>
-    <CheckboxMultiPicker label="分類" required={creating} values={draft.categories || (draft.category ? [draft.category] : [])} choices={data.settings.taskCategories.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
+    <CheckboxMultiPicker label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating} values={draft.categories || (draft.category ? [draft.category] : [])} choices={taskCategoryChoices.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
     <CheckboxMultiPicker label="涉及部門" required={creating} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
     {currentUser.role!=='vessel'&&<MeetingPeoplePicker label="涉及人員" users={eligibleOwnerUsers} departments={data.settings.departments} selectedIds={draft.ownerUserIds} onChange={values=>change(target=>{target.ownerUserIds=values;})} disabled={globalReadOnly}/>}</fieldset>
     {editingSingleVessel&&<div className="field vessel-progress-status"><label>單船目前狀態／決議｜{selectedVessel?vesselDisplayName(selectedVessel):progressScope}</label><RichTextEditor ariaLabel="單船目前狀態" readOnly={readOnly} value={selectedProgress.status} onChange={value=>changeProgress(target=>{target.status=value;})}/></div>}

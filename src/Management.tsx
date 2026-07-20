@@ -5,7 +5,7 @@ import { isOwner, nowIso, roleLabel, sha256, uid } from './utils';
 import { hasPermission, normalizeRolePermissions, PERMISSION_KEYS, PERMISSION_LABELS } from './permissions';
 import { departmentAfterRoleChange } from './personWorkflow';
 import { vesselDisplayName } from './vesselDisplay';
-import { WEEKLY_ATTENTION_CATEGORY_MAP, taskCategoriesOf } from './taskCategories';
+import { WEEKLY_ATTENTION_CATEGORY_MAP, isMeetingTaskSource, taskCategoriesOf } from './taskCategories';
 
 type Section = 'directory' | 'people' | 'vessels' | 'categories' | 'attention' | 'roles' | 'owner' | 'audit';
 type DirectoryKind = 'all' | 'user' | 'vessel';
@@ -44,6 +44,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
   const canManageVessels = hasPermission(data.settings.rolePermissions, currentUser, 'manageVessels');
   const canViewAudit = hasPermission(data.settings.rolePermissions, currentUser, 'viewAuditLogs');
   const canManageSystem = hasPermission(data.settings.rolePermissions, currentUser, 'manageSystemSettings');
+  const canManageCategories = owner || currentUser.role === 'admin';
   const activeUsers = useMemo(() => data.users.filter(u => u.isActive), [data.users]);
   const activeVessels = useMemo(() => data.vessels.filter(v => v.isActive), [data.vessels]);
   const [section, setSection] = useState<Section>('directory');
@@ -82,7 +83,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
 
   const go = (next: Section) => {
     if (next === 'vessels' && !canManageVessels) return alert('目前角色未獲授權管理船舶');
-    if (next === 'categories' && !canManageSystem) return alert('只有 Owner 可以維護要事分類');
+    if (next === 'categories' && !canManageCategories) return alert('只有 Owner／管理員可以維護分類');
     if (next === 'audit' && !canViewAudit) return alert('目前角色未獲授權查看操作紀錄');
     if (next === 'owner' && !canManageSystem) return alert('只有 Owner 可以進入敏感設定');
     setSection(next);
@@ -256,7 +257,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
     { id: 'directory' as const, icon: '▦', label: '總清單' },
     ...(canManageUsers ? [{ id: 'people' as const, icon: '♟', label: '人員' }] : [{ id: 'people' as const, icon: '♟', label: '我的帳號' }]),
     ...(canManageVessels ? [{ id: 'vessels' as const, icon: '🚢', label: '船舶' }] : []),
-    ...(canManageSystem ? [{ id: 'categories' as const, icon: '≡', label: '要事分類' }] : []),
+    ...(canManageCategories ? [{ id: 'categories' as const, icon: '≡', label: '分類管理' }] : []),
     { id: 'attention' as const, icon: '◉', label: '關注度說明' },
     { id: 'roles' as const, icon: '◆', label: '角色權限' },
     ...(canManageSystem ? [{ id: 'owner' as const, icon: '🔐', label: 'Owner 與雲端' }] : []),
@@ -283,9 +284,9 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
         <div className="management-detail"><VesselEditor draft={shipDraft} setDraft={setShipDraft} creating={creatingVessel} users={activeUsers.filter(user => user.role === 'operator')} assignmentQuery={assignmentQuery} setAssignmentQuery={setAssignmentQuery} onSave={saveVessel} onDisable={disableVessel}/></div>
       </>}
 
-      {section === 'categories' && canManageSystem && <>
-        <div className="management-master"><div className="management-master-heading"><div><h2>要事分類 <small>{data.settings.taskCategories.length}</small></h2><small>新增要事與待辦總表共用</small></div></div><div className="management-list">{data.settings.taskCategories.map((category, index) => <div key={`${category}-${index}`} className="management-list-item category-summary"><span className="management-avatar category">≡</span><span><b>{category}</b><small>{WEEKLY_ATTENTION_CATEGORY_MAP[category] ? '自動點亮看板狀態' : '一般分類'}</small></span><em>{data.tasks.filter(task => taskCategoriesOf(task).includes(category)).length} 件</em></div>)}</div></div>
-        <div className="management-detail"><TaskCategoryManager key={data.revision} categories={data.settings.taskCategories} tasks={data.tasks} onSave={categories => { commit(d => { d.settings.taskCategories = categories; d.settings.taskCategorySchemaVersion = 2; }, '更新要事分類', 'settings', 'task-categories', categories.join('、')); setSaveNotice('要事分類已保存'); }}/></div>
+      {section === 'categories' && canManageCategories && <>
+        <div className="management-master"><div className="management-master-heading"><div><h2>分類管理 <small>{data.settings.taskCategories.length + data.settings.meetingTaskCategories.length}</small></h2><small>要事分類與臨會/專題待辦分類完全分開</small></div></div><div className="management-list"><div className="management-list-item category-summary"><span className="management-avatar category">要</span><span><b>要事分類</b><small>{data.settings.taskCategories.length} 個；普通/早會來源待辦使用</small></span><em>{data.tasks.filter(task => !isMeetingTaskSource(task)).length} 件</em></div>{data.settings.taskCategories.map((category, index) => <div key={`task-${category}-${index}`} className="management-list-item category-summary"><span className="management-avatar category">≡</span><span><b>{category}</b><small>{WEEKLY_ATTENTION_CATEGORY_MAP[category] ? '自動點亮看板狀態' : '一般要事分類'}</small></span><em>{data.tasks.filter(task => !isMeetingTaskSource(task) && taskCategoriesOf(task).includes(category)).length} 件</em></div>)}<div className="management-list-item category-summary"><span className="management-avatar meeting">臨</span><span><b>臨會/專題待辦分類</b><small>{data.settings.meetingTaskCategories.length} 個；臨會來源待辦使用</small></span><em>{data.tasks.filter(task => isMeetingTaskSource(task)).length} 件</em></div>{data.settings.meetingTaskCategories.map((category, index) => <div key={`meeting-${category}-${index}`} className="management-list-item category-summary"><span className="management-avatar meeting">◇</span><span><b>{category}</b><small>臨會/專題待辦分類</small></span><em>{data.tasks.filter(task => isMeetingTaskSource(task) && taskCategoriesOf(task).includes(category)).length} 件</em></div>)}</div></div>
+        <div className="management-detail"><div className="management-category-stack"><TaskCategoryManager key={`task-${data.revision}`} title="要事分類" subtitle="只套用於普通要事／早會來源待辦；歷史要事分類不會被改寫。" categories={data.settings.taskCategories} tasks={data.tasks.filter(task=>!isMeetingTaskSource(task))} onSave={categories => { commit(d => { d.settings.taskCategories = categories; d.settings.taskCategorySchemaVersion = 2; }, '更新要事分類', 'settings', 'task-categories', categories.join('、')); setSaveNotice('要事分類已保存'); }}/><TaskCategoryManager key={`meeting-${data.revision}`} title="臨會/專題待辦分類" subtitle="只套用於臨會/專題來源待辦；不會混入普通要事分類。" categories={data.settings.meetingTaskCategories} tasks={data.tasks.filter(task=>isMeetingTaskSource(task))} onSave={categories => { commit(d => { d.settings.meetingTaskCategories = categories; d.settings.meetingTaskCategorySchemaVersion = 2; }, '更新臨會/專題待辦分類', 'settings', 'meeting-task-categories', categories.join('、')); setSaveNotice('臨會/專題待辦分類已保存'); }}/></div></div>
       </>}
 
       {section === 'attention' && <><div className="management-master"><div className="management-master-heading"><div><h2>關注度規則</h2><small>自動下限與手動提高</small></div></div><div className="management-list"><div className="management-list-item category-summary"><span className="management-avatar">特</span><span><b>特別關注</b><small>最高人工關注</small></span></div><div className="management-list-item category-summary"><span className="management-avatar">急</span><span><b>存在急件</b><small>最高自動關注</small></span></div><div className="management-list-item category-summary"><span className="management-avatar">高</span><span><b>事故／異常／PSC</b><small>至少高關注</small></span></div><div className="management-list-item category-summary"><span className="management-avatar">中</span><span><b>其他狀態燈</b><small>至少中關注</small></span></div><div className="management-list-item category-summary"><span className="management-avatar">低</span><span><b>其餘情況</b><small>例行關注</small></span></div></div></div><div className="management-detail"><AttentionGuide/></div></>}
@@ -336,7 +337,7 @@ function VesselEditor({ draft, setDraft, creating, users, assignmentQuery, setAs
 function AssignmentPicker({ query, setQuery, count, onAll, onClear, children }: { query:string; setQuery:(v:string)=>void; count:number; onAll:()=>void; onClear:()=>void; children:React.ReactNode }) {
   return <div className="management-assignment"><div className="management-assignment-tools"><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋後勾選…"/><span>已選 {count}</span><button className="btn small ghost" onClick={onAll}>全選</button><button className="btn small ghost" onClick={onClear}>清空</button></div><div className="management-assignment-grid">{children}</div></div>;
 }
-function TaskCategoryManager({ categories, tasks, onSave }: { categories:string[]; tasks:AppData['tasks']; onSave:(categories:string[])=>void }) {
+function TaskCategoryManager({ title, subtitle, categories, tasks, onSave }: { title:string; subtitle:string; categories:string[]; tasks:AppData['tasks']; onSave:(categories:string[])=>void }) {
   const [draft, setDraft] = useState(() => [...categories]);
   const [newCategory, setNewCategory] = useState('');
   const usage = (category:string) => tasks.filter(task => taskCategoriesOf(task).includes(category)).length;
@@ -358,7 +359,7 @@ function TaskCategoryManager({ categories, tasks, onSave }: { categories:string[
     if (draft.length <= 1) return alert('至少要保留一個分類');
     const category = draft[index];
     const count = usage(category);
-    if (count && !window.confirm(`「${category}」已用於 ${count} 件歷史要事。刪除後只會從新要事選單移除，歷史資料仍會保留。是否繼續？`)) return;
+    if (count && !window.confirm(`「${category}」已用於 ${count} 件歷史待辦。刪除後只會從新建選單移除，歷史資料仍會保留。是否繼續？`)) return;
     setDraft(prev => prev.filter((_, itemIndex) => itemIndex !== index));
   };
   const save = () => {
@@ -367,7 +368,7 @@ function TaskCategoryManager({ categories, tasks, onSave }: { categories:string[
     if (new Set(clean.map(category => category.toLocaleLowerCase())).size !== clean.length) return alert('分類名稱不可重複');
     onSave(clean);
   };
-  return <div className="management-editor task-category-editor"><EditorHeading title="要事分類" subtitle="調整後會套用到新增要事、篩選與統計；歷史要事分類不會被改寫。" actions={<button className="btn primary" onClick={save}>保存分類設定</button>}/><EditorSection title="分類順序與名稱"><div className="task-category-list">{draft.map((category, index) => <div className="task-category-row" key={`${index}-${category}`}><span className="task-category-order">{index + 1}</span><input aria-label={`分類 ${index + 1}`} value={category} onChange={event => setDraft(prev => prev.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}/><span className={`task-category-link ${WEEKLY_ATTENTION_CATEGORY_MAP[category] ? 'linked' : ''}`}>{WEEKLY_ATTENTION_CATEGORY_MAP[category] ? '自動點亮' : `${usage(category)} 件`}</span><button className="btn small ghost" title="上移" disabled={index === 0} onClick={() => move(index, -1)}>↑ 上移</button><button className="btn small ghost" title="下移" disabled={index === draft.length - 1} onClick={() => move(index, 1)}>↓ 下移</button><button className="btn small danger" onClick={() => remove(index)}>刪除</button></div>)}</div></EditorSection><EditorSection title="新增分類"><div className="task-category-add"><input aria-label="新分類名稱" value={newCategory} onChange={event => setNewCategory(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') add(); }} placeholder="輸入新的分類名稱"/><button className="btn primary" onClick={add}>新增分類</button></div><p className="muted">名稱若與看板狀態提示完全相同（換員操作、加油加水、物料配件、維修、Survey、稽核檢查、PSC窗口），建立要事時會自動點亮對應狀態；仍可在看板手動調整。</p></EditorSection></div>;
+  return <div className="management-editor task-category-editor"><EditorHeading title={title} subtitle={subtitle} actions={<button className="btn primary" onClick={save}>保存分類設定</button>}/><EditorSection title="分類順序與名稱"><div className="task-category-list">{draft.map((category, index) => <div className="task-category-row" key={`${index}-${category}`}><span className="task-category-order">{index + 1}</span><input aria-label={`${title} 分類 ${index + 1}`} value={category} onChange={event => setDraft(prev => prev.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}/><span className={`task-category-link ${WEEKLY_ATTENTION_CATEGORY_MAP[category] ? 'linked' : ''}`}>{WEEKLY_ATTENTION_CATEGORY_MAP[category] ? '自動點亮' : `${usage(category)} 件`}</span><button className="btn small ghost" title="上移" disabled={index === 0} onClick={() => move(index, -1)}>↑ 上移</button><button className="btn small ghost" title="下移" disabled={index === draft.length - 1} onClick={() => move(index, 1)}>↓ 下移</button><button className="btn small danger" onClick={() => remove(index)}>刪除</button></div>)}</div></EditorSection><EditorSection title="新增分類"><div className="task-category-add"><input aria-label={`${title} 新分類名稱`} value={newCategory} onChange={event => setNewCategory(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') add(); }} placeholder="輸入新的分類名稱"/><button className="btn primary" onClick={add}>新增分類</button></div><p className="muted">兩套分類彼此獨立：要事分類只服務普通/早會來源待辦；臨會/專題待辦分類只服務臨會來源待辦。</p></EditorSection></div>;
 }
 
 function AttentionGuide() {

@@ -84,6 +84,7 @@ export interface StatusLog {
   id: string;
   at: string;
   by: string;
+  byUserId?: string;
   text: string;
 }
 
@@ -150,6 +151,7 @@ export interface UserNotification {
 export interface MeetingTaskItem {
   id: string;
   description: string;
+  categories: string[];
   distributeToVessels?: boolean;
 }
 
@@ -205,6 +207,8 @@ export interface AppSettings {
   departments: string[];
   taskCategories: string[];
   taskCategorySchemaVersion: number;
+  meetingTaskCategories: string[];
+  meetingTaskCategorySchemaVersion: number;
   vesselStatuses: ShipStatus[];
   priorities: TaskPriority[];
   rolePermissions: RolePermissions;
@@ -233,6 +237,7 @@ export interface FilterState {
   fleetTags: string[];
   priorities: TaskPriority[];
   categories: string[];
+  meetingCategories: string[];
   ownerMode: 'all' | 'mine';
   fromDate: string;
   toDate: string;

@@ -1,6 +1,7 @@
 import type { MeetingTaskItem, MeetingVesselScopeMode, NotificationKind, TaskItem, TaskPriority, TemporaryMeeting } from './types';
 import { uid } from './utils';
 import { reconcileTaskVesselScope } from './taskVesselProgress';
+import { normalizeMeetingTaskCategoryList } from './taskCategories';
 
 interface ReconcileMeetingTasksInput {
   tasks: TaskItem[];
@@ -14,6 +15,7 @@ interface ReconcileMeetingTasksInput {
   expectedDate: string;
   departments: string[];
   ownerUserIds?: string[];
+  meetingTaskCategories?: string[];
   initialStatus: string;
   actorId: string;
   actorName: string;
@@ -46,44 +48,44 @@ export interface MeetingTaskNotificationEvent {
 
 type MeetingWithTaskItems = { id: string; taskDescription?: unknown; taskItems?: unknown };
 
-export const canonicalMeetingTaskItems = (items: MeetingTaskItem[], meetingId: string): MeetingTaskItem[] => {
+export const canonicalMeetingTaskItems = (items: MeetingTaskItem[], meetingId: string, meetingTaskCategories?: string[]): MeetingTaskItem[] => {
   const seen = new Set<string>();
   return items.map((item, index) => {
     const rawId = item.id || `${meetingId}-task-${index + 1}`;
     const id = seen.has(rawId) ? `${rawId}-duplicate-${index + 1}` : rawId;
     seen.add(id);
-    return { id, description: item.description.trim(), distributeToVessels: item.distributeToVessels === true };
+    return { id, description: item.description.trim(), categories: normalizeMeetingTaskCategoryList(item.categories, meetingTaskCategories), distributeToVessels: item.distributeToVessels === true };
   }).filter(item => item.id && item.description);
 };
 
 export const meetingTaskItems = (
   meeting: MeetingWithTaskItems,
-  tasks: Pick<TaskItem, 'sourceMeetingId' | 'sourceMeetingItemId' | 'description' | 'distributeToVessels'>[] = [],
+  tasks: Pick<TaskItem, 'sourceMeetingId' | 'sourceMeetingItemId' | 'description' | 'categories' | 'distributeToVessels'>[] = [],
 ): MeetingTaskItem[] => {
   if (Object.prototype.hasOwnProperty.call(meeting, 'taskItems')) {
     if (!Array.isArray(meeting.taskItems)) return [];
     return canonicalMeetingTaskItems(meeting.taskItems.flatMap((value, index) => {
       if (!value || typeof value !== 'object') return [];
-      const item = value as { id?: unknown; description?: unknown; distributeToVessels?: unknown };
+      const item = value as { id?: unknown; description?: unknown; categories?: unknown; distributeToVessels?: unknown };
       const id = typeof item.id === 'string' && item.id ? item.id : `${meeting.id}-task-${index + 1}`;
-      return [{ id, description: typeof item.description === 'string' ? item.description : '', distributeToVessels: item.distributeToVessels === true }];
+      return [{ id, description: typeof item.description === 'string' ? item.description : '', categories: normalizeMeetingTaskCategoryList(item.categories), distributeToVessels: item.distributeToVessels === true }];
     }), meeting.id);
   }
   const hasSavedDescription = Object.prototype.hasOwnProperty.call(meeting, 'taskDescription');
   const savedDescription = typeof meeting.taskDescription === 'string' ? meeting.taskDescription : '';
-  if (hasSavedDescription) return savedDescription.trim() ? [{ id: `${meeting.id}-task-1`, description: savedDescription, distributeToVessels: false }] : [];
+  if (hasSavedDescription) return savedDescription.trim() ? [{ id: `${meeting.id}-task-1`, description: savedDescription, categories: normalizeMeetingTaskCategoryList([]), distributeToVessels: false }] : [];
   const linkedTask = tasks.find(task => task.sourceMeetingId === meeting.id && task.description.trim());
-  return linkedTask ? [{ id: linkedTask.sourceMeetingItemId || `${meeting.id}-task-1`, description: linkedTask.description, distributeToVessels: linkedTask.distributeToVessels === true }] : [];
+  return linkedTask ? [{ id: linkedTask.sourceMeetingItemId || `${meeting.id}-task-1`, description: linkedTask.description, categories: normalizeMeetingTaskCategoryList(linkedTask.categories), distributeToVessels: linkedTask.distributeToVessels === true }] : [];
 };
 
 export const meetingTaskDescription = (
   meeting: MeetingWithTaskItems,
-  tasks: Pick<TaskItem, 'sourceMeetingId' | 'sourceMeetingItemId' | 'description' | 'distributeToVessels'>[] = [],
+  tasks: Pick<TaskItem, 'sourceMeetingId' | 'sourceMeetingItemId' | 'description' | 'categories' | 'distributeToVessels'>[] = [],
 ): string => meetingTaskItems(meeting, tasks)[0]?.description || '';
 
 export const unchangedMeetingTaskItemIds = (
   meeting: MeetingWithTaskItems | null | undefined,
-  tasks: Pick<TaskItem, 'sourceMeetingId' | 'sourceMeetingItemId' | 'description' | 'distributeToVessels'>[],
+  tasks: Pick<TaskItem, 'sourceMeetingId' | 'sourceMeetingItemId' | 'description' | 'categories' | 'distributeToVessels'>[],
   nextItems: MeetingTaskItem[],
 ): string[] => {
   if (!meeting) return [];
@@ -93,7 +95,7 @@ export const unchangedMeetingTaskItemIds = (
 
 export const shouldPreserveMeetingTaskDescriptions = (
   meeting: MeetingWithTaskItems | null | undefined,
-  tasks: Pick<TaskItem, 'sourceMeetingId' | 'sourceMeetingItemId' | 'description' | 'distributeToVessels'>[],
+  tasks: Pick<TaskItem, 'sourceMeetingId' | 'sourceMeetingItemId' | 'description' | 'categories' | 'distributeToVessels'>[],
   nextDescription: string,
 ): boolean => {
   if (!meeting) return false;
@@ -133,6 +135,7 @@ export const reconcileMeetingTasks = ({
   expectedDate,
   departments,
   ownerUserIds = [],
+  meetingTaskCategories = [],
   initialStatus,
   actorId,
   actorName,
@@ -141,9 +144,10 @@ export const reconcileMeetingTasks = ({
   preserveExistingDescriptionItemIds = [],
 }: ReconcileMeetingTasksInput): ReconcileMeetingTasksResult => {
   const normalizedFollowUps = canonicalMeetingTaskItems(
-    (followUps ?? [{ id: `${meetingId}-task-1`, description: followUp }])
-      .map((item, index) => ({ id: item.id || `${meetingId}-task-${index + 1}`, description: item.description, distributeToVessels: item.distributeToVessels === true })),
+    (followUps ?? [{ id: `${meetingId}-task-1`, description: followUp, categories: normalizeMeetingTaskCategoryList([], meetingTaskCategories) }])
+      .map((item, index) => ({ id: item.id || `${meetingId}-task-${index + 1}`, description: item.description, categories: normalizeMeetingTaskCategoryList(item.categories, meetingTaskCategories), distributeToVessels: item.distributeToVessels === true })),
     meetingId,
+    meetingTaskCategories,
   );
   const targetVesselIds = Array.from(new Set(vesselIds.filter(Boolean)));
   const normalizedTypeScopes = vesselScopeMode === 'types' ? Array.from(new Set(vesselTypeScopes.filter(Boolean))) : [];
@@ -198,8 +202,8 @@ export const reconcileMeetingTasks = ({
         vesselTypeScopes: [...normalizedTypeScopes],
         priority,
         attentionDimension: 'meeting' as const,
-        category: '臨會/專題',
-        categories: ['臨會/專題'],
+        category: item.categories[0] || '',
+        categories: [...item.categories],
         expectedDate,
         departments: [...departments],
         ownerUserIds: [...ownerUserIds],
@@ -227,8 +231,8 @@ export const reconcileMeetingTasks = ({
       isAware: true,
       isAbnormal: false,
       isInternalControl: false,
-      category: '臨會/專題',
-      categories: ['臨會/專題'],
+      category: item.categories[0] || '',
+      categories: [...item.categories],
       description: item.description,
       status: initialStatus.trim() || '待執行',
       expectedDate,
