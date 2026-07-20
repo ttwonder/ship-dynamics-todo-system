@@ -35,6 +35,9 @@ for (const contract of [
 
 assert.ok(management.includes("user.role === 'admin'") && management.includes("user.role === 'operator'"), '船舶經管人員必須允許管理員與操作員，不得只限操作員');
 assert.ok(!management.includes("users={activeUsers.filter(user => user.role === 'operator')}"), '船舶頁不可只把操作員傳入經管人員選擇器');
+assert.ok(management.includes('`${count} 人`') && management.includes('`${managerNames(activeUsers, v.assignedUserIds).length} 人`'), '管理船舶列表只顯示船名與經管人數，不得列出經管人姓名');
+const vesselListSnippet = management.slice(management.indexOf("section === 'vessels'"), management.indexOf('<VesselEditor', management.indexOf("section === 'vessels'")));
+assert.ok(!vesselListSnippet.includes("join('、')") && !vesselListSnippet.includes(' 人｜'), '船舶列表不得顯示經管人姓名串列');
 assert.ok(management.includes('className="assignment-selected-summary"') && management.indexOf('assignment-selected-summary') < management.indexOf('management-assignment-tools'), '已選經管人員摘要需放在篩選／搜尋工具列上方');
 assert.ok(!management.includes('<span>已選 {count}'), '已選經管人員摘要不得再塞在搜尋框右側');
 

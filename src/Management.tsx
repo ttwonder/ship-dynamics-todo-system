@@ -246,7 +246,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
   const directoryItems = useMemo(() => {
     const q = query.trim().toLowerCase();
     const users = activeUsers.map(u => ({ key: `user:${u.id}`, kind: 'user' as const, title: u.name, subtitle: `${u.department}｜${roleLabel(u.role)}`, meta: `${(u.managedVesselIds || []).length} 艘船` }));
-    const vessels = activeVessels.map(v => { const names = managerNames(activeUsers, v.assignedUserIds); return { key: `vessel:${v.id}`, kind: 'vessel' as const, title: vesselDisplayName(v), subtitle: v.shipType || '未填船型', meta: names.length ? `${names.length} 人｜${names.join('、')}` : '0 人' }; });
+    const vessels = activeVessels.map(v => { const count = managerNames(activeUsers, v.assignedUserIds).length; return { key: `vessel:${v.id}`, kind: 'vessel' as const, title: vesselDisplayName(v), subtitle: v.shipType || '未填船型', meta: count ? `${count} 人` : '0 人' }; });
     return [...users, ...vessels].filter(item => (directoryKind === 'all' || item.kind === directoryKind) && (!q || `${item.title} ${item.subtitle} ${item.meta}`.toLowerCase().includes(q)));
   }, [activeUsers, activeVessels, directoryKind, query]);
   const personDepartments = Array.from(new Set(activeUsers.map(user => user.department).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'zh-TW'));
@@ -282,7 +282,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
       </>}
 
       {section === 'vessels' && <>
-        <div className="management-master"><MasterHeader title="船舶" count={filteredVessels.length} query={query} setQuery={setQuery} action={{ label: '＋ 新增', onClick: startNewVessel }}/><div className="management-list">{filteredVessels.map(v => <button key={v.id} className={`management-list-item ${!creatingVessel && selectedVesselId === v.id ? 'active' : ''}`} onClick={() => selectVessel(v.id)}><span className="management-avatar vessel">🚢</span><span><b>{vesselDisplayName(v)}</b><small>{v.shipType || '未填船型'}｜{v.fleetCategory}</small></span><em>{managerNames(activeUsers, v.assignedUserIds).length ? `${managerNames(activeUsers, v.assignedUserIds).length} 人｜${managerNames(activeUsers, v.assignedUserIds).join('、')}` : '0 人'}</em></button>)}</div></div>
+        <div className="management-master"><MasterHeader title="船舶" count={filteredVessels.length} query={query} setQuery={setQuery} action={{ label: '＋ 新增', onClick: startNewVessel }}/><div className="management-list">{filteredVessels.map(v => <button key={v.id} className={`management-list-item ${!creatingVessel && selectedVesselId === v.id ? 'active' : ''}`} onClick={() => selectVessel(v.id)}><span className="management-avatar vessel">🚢</span><span><b>{vesselDisplayName(v)}</b><small>{v.shipType || '未填船型'}｜{v.fleetCategory}</small></span><em>{managerNames(activeUsers, v.assignedUserIds).length ? `${managerNames(activeUsers, v.assignedUserIds).length} 人` : '0 人'}</em></button>)}</div></div>
         <div className="management-detail"><VesselEditor draft={shipDraft} setDraft={setShipDraft} creating={creatingVessel} users={activeUsers.filter(canManageVesselAssignments)} assignmentQuery={assignmentQuery} setAssignmentQuery={setAssignmentQuery} onSave={saveVessel} onDisable={disableVessel}/></div>
       </>}
 
