@@ -47,9 +47,27 @@ export function roleLabel(role?: UserRole | 'system') {
 export function canManage(user?: UserAccount | null) { return user?.role === 'owner' || user?.role === 'admin'; }
 export function isOwner(user?: UserAccount | null) { return user?.role === 'owner'; }
 
+export function sanitizeAppDataForStorage(data: AppData): AppData {
+  return {
+    ...data,
+    users: data.users.map(user => ({
+      id: user.id,
+      department: user.department,
+      name: user.name,
+      username: user.username,
+      role: user.role,
+      passwordHash: user.passwordHash,
+      isActive: user.isActive,
+      managedVesselIds: [...(user.managedVesselIds || [])],
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    })),
+  };
+}
+
 export function saveLocal(data: AppData) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitizeAppDataForStorage(data)));
     return true;
   } catch {
     return false;

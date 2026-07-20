@@ -1,5 +1,6 @@
 import type { TaskItem, Vessel, VesselAttentionLevel } from './types';
 import { taskCategoriesOf } from './taskCategories';
+import { vesselAttentionTasks } from './taskAttention';
 
 export const VESSEL_ATTENTION_LEVELS: VesselAttentionLevel[] = ['低', '中', '高', '急', '特別關注'];
 
@@ -21,11 +22,12 @@ export interface VesselAttentionResult {
 }
 
 export function deriveVesselAttention(vessel: Vessel, openTasks: TaskItem[]): VesselAttentionResult {
-  const hasAccident = openTasks.some(taskIndicatesAccident);
-  const hasAbnormal = openTasks.some(task => task.isAbnormal);
+  const attentionTasks = vesselAttentionTasks(openTasks);
+  const hasAccident = attentionTasks.some(taskIndicatesAccident);
+  const hasAbnormal = attentionTasks.some(task => task.isAbnormal);
   const hasPscWindow = vessel.weeklyAttention.includes('psc-window');
   const hasOtherIndicator = vessel.weeklyAttention.some(key => key !== 'psc-window');
-  const taskLevel = openTasks.reduce<VesselAttentionLevel>((level, task) => higherAttention(level, task.priority), '低');
+  const taskLevel = attentionTasks.reduce<VesselAttentionLevel>((level, task) => higherAttention(level, task.priority), '低');
   const signalFloor: VesselAttentionLevel = hasAccident || hasAbnormal || hasPscWindow ? '高' : hasOtherIndicator ? '中' : '低';
   const automatic = higherAttention(taskLevel, signalFloor);
   const manual = vessel.manualAttentionLevel || '';
@@ -42,13 +44,14 @@ export function nextManualVesselAttention(current: VesselAttentionLevel | '', au
 export const vesselAttentionClass = (level: VesselAttentionLevel) => level === '特別關注' ? 'special' : level === '急' ? 'urgent' : level === '高' ? 'high' : level === '中' ? 'mid' : 'low';
 
 export function vesselAttentionLabel(result: VesselAttentionResult, openTasks: TaskItem[]): string {
+  const attentionTasks = vesselAttentionTasks(openTasks);
   if (result.manual && result.effective === result.manual) return result.effective === '特別關注' ? '手動 特別關注' : `手動 ${result.effective}關注`;
-  if (result.effective === '急') return `急關注 ${openTasks.filter(task => task.priority === '急').length || 1}`;
+  if (result.effective === '急') return `急關注 ${attentionTasks.filter(task => task.priority === '急').length || 1}`;
   if (result.hasAccident) return '高關注 事故';
   if (result.hasAbnormal) return '高關注 異常';
   if (result.hasPscWindow) return '高關注 PSC窗開';
-  if (result.effective === '高') return `高關注 ${openTasks.filter(task => task.priority === '高').length || 1}`;
+  if (result.effective === '高') return `高關注 ${attentionTasks.filter(task => task.priority === '高').length || 1}`;
   if (result.hasOtherIndicator) return '中關注 狀態燈';
-  if (result.effective === '中') return `中關注 ${openTasks.filter(task => task.priority === '中').length || 1}`;
-  return `低關注 ${openTasks.filter(task => task.priority === '低').length}`;
+  if (result.effective === '中') return `中關注 ${attentionTasks.filter(task => task.priority === '中').length || 1}`;
+  return `低關注 ${attentionTasks.filter(task => task.priority === '低').length}`;
 }

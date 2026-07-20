@@ -4,6 +4,9 @@ import { selectVesselDetailTasks, type VesselTaskClosedMode, type VesselTaskSort
 import { vesselDisplayName } from './vesselDisplay';
 import { taskSourceLabel } from './taskWorkflow';
 import { deriveVesselAttention, vesselAttentionClass, vesselAttentionLabel } from './vesselAttention';
+import { vesselAttentionTasks } from './taskAttention';
+import { taskIsClosedForVessel, taskProgressForVessel } from './taskVesselProgress';
+import RichTextContent from './RichTextContent';
 
 const attentionLabels: Record<string, string> = {
   'crew-operation': '換員操作', 'bunkering-water': '加油加水', 'materials-parts': '物料配件',
@@ -34,9 +37,10 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
   const [sort, setSort] = useState<VesselTaskSort>('priority');
   const tasks = useMemo(() => selectVesselDetailTasks(data.tasks, vessel.id, { query, closedMode, priority, sort }), [data.tasks, vessel.id, query, closedMode, priority, sort]);
   const allVesselTasks = useMemo(() => selectVesselDetailTasks(data.tasks, vessel.id, { query: '', closedMode: 'all', priority: 'all', sort: 'priority' }), [data.tasks, vessel.id]);
-  const openCount = allVesselTasks.filter(task => !task.isClosed).length;
+  const openCount = allVesselTasks.filter(task => !taskIsClosedForVessel(task,vessel.id)).length;
   const closedCount = allVesselTasks.length - openCount;
-  const attention = deriveVesselAttention(vessel, allVesselTasks.filter(task => !task.isClosed));
+  const attentionTaskItems = vesselAttentionTasks(allVesselTasks.filter(task => !taskIsClosedForVessel(task,vessel.id)));
+  const attention = deriveVesselAttention(vessel, attentionTaskItems);
   const assignedNames = vessel.assignedUserIds.map(id => data.users.find(user => user.id === id)?.name).filter(Boolean);
   const ownerName = (id: string) => data.users.find(user => user.id === id)?.name || id;
   return <section className="vessel-detail-page">
@@ -47,7 +51,7 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
         {canCreateTasks && <button type="button" className="btn primary" onClick={onAddTask}>＋ 新增待辦</button>}
       </div>
     </div>
-    <div className="page-heading vessel-detail-heading"><div><h1>{vesselDisplayName(vessel)}</h1><p>{vessel.shipType || '未設定船種'}｜{vessel.fullName || vessel.name}</p></div><span className={`priority-pill ${vesselAttentionClass(attention.effective)}`}>{vesselAttentionLabel(attention, allVesselTasks.filter(task=>!task.isClosed))}</span></div>
+    <div className="page-heading vessel-detail-heading"><div><h1>{vesselDisplayName(vessel)}</h1><p>{vessel.shipType || '未設定船種'}｜{vessel.fullName || vessel.name}</p></div><span className={`priority-pill ${vesselAttentionClass(attention.effective)}`}>{vesselAttentionLabel(attention, attentionTaskItems)}</span></div>
     <div className="vessel-detail-metrics">
       <div><small>未結待辦</small><b>{openCount}</b></div><div><small>已結案</small><b>{closedCount}</b></div><div><small>目前位置</small><b>{value(vessel.position.location)}</b></div><div><small>航行狀態</small><b>{vessel.position.navigationStatus === '航行' ? `${vessel.position.speedKnots || 0} kn` : value(vessel.position.navigationStatus)}</b></div>
     </div>
@@ -85,7 +89,8 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
     </div>
 
     <section className="panel vessel-detail-tasks">
-      <div className="panel-title"><h2>待辦事項清單 <span className="muted">({tasks.length}/{allVesselTasks.length})</span></h2>{canCreateTasks&&<button type="button" className="btn primary small no-print" onClick={onAddTask}>＋ 新增待辦</button>}</div>
+      <div className="panel-title"><h2>單船重要事項清單 <span className="muted">({tasks.length}/{allVesselTasks.length})</span></h2>{canCreateTasks&&<button type="button" className="btn primary small no-print" onClick={onAddTask}>＋ 新增待辦</button>}</div>
+      <p className="muted single-vessel-task-note">單船待辦只顯示普通單船要事，以及已勾選「分派到涉及船舶單船跟蹤」的臨會／專題待辦；未分派的公司層決議請在臨會／專題或待辦總表跟蹤。</p>
       <div className="vessel-task-toolbar no-print">
         <input aria-label="單船待辦關鍵字" value={query} onChange={event=>setQuery(event.target.value)} placeholder="搜尋內容、狀態、分類、部門…" />
         <select aria-label="單船待辦狀態篩選" value={closedMode} onChange={event=>setClosedMode(event.target.value as VesselTaskClosedMode)}><option value="all">全部狀態</option><option value="open">未結</option><option value="closed">已結案</option></select>
@@ -93,7 +98,7 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
         <select aria-label="單船待辦排序" value={sort} onChange={event=>setSort(event.target.value as VesselTaskSort)}><option value="priority">關注程度：急到低</option><option value="due-asc">期限：近到遠</option><option value="updated-desc">最近更新</option></select>
         {(query||closedMode!=='all'||priority!=='all'||sort!=='priority')&&<button type="button" className="btn ghost small" onClick={()=>{setQuery('');setClosedMode('all');setPriority('all');setSort('priority');}}>清除篩選</button>}
       </div>
-      {tasks.length?<div className="table-wrap"><table className="data-table vessel-detail-task-table"><thead><tr><th>結案</th><th>關注</th><th>事項內容</th><th>狀態</th><th>分類／部門</th><th>涉及人員</th><th>期限</th><th>來源</th><th className="no-print">操作</th></tr></thead><tbody>{tasks.map(task=><tr key={task.id}><td><span className={`status-chip ${task.isClosed?'closed':'open'}`}>{task.isClosed?'已結案':'未結'}</span></td><td><span className={`badge ${priorityClass(task.priority)}`}>{task.priority}</span></td><td><b>{task.isAbnormal&&<span className="inline-abnormal">異常</span>}{task.description||'尚未輸入事項內容'}</b></td><td>{task.status||'尚未更新'}</td><td><small>{task.categories.join('、')||'未分類'}<br/>{task.departments.join('、')||'未指定部門'}</small></td><td>{task.ownerUserIds.map(ownerName).join('、')||'未指定'}</td><td>{task.expectedDate||'未設定'}</td><td>{taskSourceLabel(task)}</td><td className="no-print"><button type="button" className="btn small ghost" onClick={()=>onEditTask(task.id)}>{canEditTasks?'修改':'查看'}</button></td></tr>)}</tbody></table></div>:<div className="empty-state compact">沒有符合目前條件的待辦事項</div>}
+      {tasks.length?<div className="table-wrap"><table className="data-table vessel-detail-task-table"><thead><tr><th>結案</th><th>關注</th><th>事項內容</th><th>單船狀態</th><th>分類／部門</th><th>涉及人員</th><th>期限</th><th>來源</th><th className="no-print">操作</th></tr></thead><tbody>{tasks.map(task=>{const progress=taskProgressForVessel(task,vessel.id);return <tr key={task.id}><td><span className={`status-chip ${progress.isClosed?'closed':'open'}`}>{progress.isClosed?'已結案':'未結'}</span></td><td><span className={`badge ${priorityClass(task.priority)}`}>{task.priority}</span></td><td>{task.isAbnormal&&<span className="inline-abnormal">異常</span>}<RichTextContent compact value={task.description} fallback="尚未輸入事項內容"/></td><td><RichTextContent compact value={progress.status} fallback="尚未更新"/></td><td><small>{task.categories.join('、')||'未分類'}<br/>{task.departments.join('、')||'未指定部門'}</small></td><td>{task.ownerUserIds.map(ownerName).join('、')||'未指定'}</td><td>{task.expectedDate||'未設定'}</td><td>{taskSourceLabel(task)}</td><td className="no-print"><button type="button" className="btn small ghost" onClick={()=>onEditTask(task.id)}>{canEditTasks?'修改':'查看'}</button></td></tr>})}</tbody></table></div>:<div className="empty-state compact">沒有符合目前條件的待辦事項</div>}
     </section>
   </section>;
 }

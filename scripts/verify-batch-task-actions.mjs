@@ -15,6 +15,8 @@ try {
     { ...base, id:'open-b', description:'B' },
     { ...base, id:'closed-c', description:'C', isClosed:true, closedDate:'2026-07-10', closedBy:'u0' },
   ];
+  const companyMeeting = { ...base, id:'meeting-company', vesselIds:['v1','v2'], sourceType:'temporary', sourceMeetingId:'m1', attentionDimension:'meeting', distributeToVessels:false, vesselProgress:[] };
+  const multiMeeting = { ...base, id:'meeting-multi', vesselIds:['v1','v2'], sourceType:'temporary', sourceMeetingId:'m2', attentionDimension:'meeting', distributeToVessels:true, vesselProgress:[] };
   const result = batch.completeSelectedTasks(tasks, ['open-a','closed-c','missing'], {
     actorId:'u9', actorName:'測試主管', at:'2026-07-18T12:34:56.000Z', closedDate:'2026-07-18',
   });
@@ -38,6 +40,14 @@ try {
   assert.equal(batch.validateBatchTaskSelection(tasks,['closed-c'],new Set(['v1']),'complete').ok,false,'已结案记录不得再次批量完成');
   assert.equal(batch.validateBatchTaskSelection(tasks,['open-a'],new Set(['other']),'complete').ok,false,'不可见船舶记录必须拒绝整批');
   assert.equal(batch.validateBatchTaskSelection(tasks,['closed-c'],new Set(['v1']),'delete').ok,true,'已结案记录仍可由授权角色批量删除');
+  assert.equal(batch.validateBatchTaskSelection([...tasks,companyMeeting],['meeting-company'],new Set(['v1','v2']),'complete').ok,true,'未分派公司層會議待辦可在總表整體批量完成');
+  const companyClosed=batch.completeSelectedTasks([companyMeeting],['meeting-company'],{actorId:'u9',actorName:'測試主管',at:'2026-07-18T12:34:56.000Z',closedDate:'2026-07-18'});
+  assert.deepEqual(companyClosed.completedIds,['meeting-company'],'未分派公司層會議待辦應可整體結案');
+  assert.equal(companyClosed.tasks[0].isClosed,true,'未分派公司層會議待辦整體結案應更新頂層狀態');
+  assert.equal(batch.validateBatchTaskSelection([...tasks,multiMeeting],['meeting-multi'],new Set(['v1','v2']),'complete').ok,false,'已分派到單船逐船跟蹤的多船會議待辦不得通過批量完成校驗');
+  const guarded=batch.completeSelectedTasks([multiMeeting],['meeting-multi'],{actorId:'u9',actorName:'測試主管',at:'2026-07-18T12:34:56.000Z',closedDate:'2026-07-18'});
+  assert.deepEqual(guarded.completedIds,[],'批量工具本身也不得整体完成已分派逐船會議待辦');
+  assert.equal(guarded.tasks[0].isClosed,false,'已分派逐船會議待辦顶层结案状态不得被批量改变');
 
   const app = fs.readFileSync('src/App.tsx','utf8');
   const work = fs.readFileSync('src/WorkCenter.tsx','utf8');

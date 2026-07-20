@@ -33,3 +33,14 @@ export const taskShipTypeLabel = (task: TaskVesselScope, vessels: Vessel[]): str
   if (restrictedCount) labels.push(`另含受限船舶 ${restrictedCount} 艘`);
   return labels.join('、') || '-';
 };
+
+export const taskReportVesselLabel = (task: TaskVesselScope, reportVessels: Vessel[]): string => {
+  const reportIds = new Set(reportVessels.map(vessel => vessel.id));
+  const names = taskVessels(task, reportVessels).filter(vessel => reportIds.has(vessel.id)).map(vesselDisplayName);
+  return names.join('、') || '-';
+};
+
+export const taskReportShipTypeLabel = (task: TaskVesselScope, reportVessels: Vessel[]): string => {
+  const types = taskVessels(task, reportVessels).map(vessel => vessel.shipType).filter(Boolean);
+  return Array.from(new Set(types)).join('、') || '-';
+};

@@ -85,6 +85,16 @@ try {
   assert.equal(preservedHistory.tasks[1].closedDate, '2026-07-03', '结案资料不得丢失');
   assert.equal(preservedHistory.settings.meetingTaskAggregationVersion, 0, '普通 normalize 不得假报已执行显式迁移');
 
+  const legacyMulti=normalizeAppData({
+    ...malformed,
+    tasks:[{id:'legacy-multi',vesselId:'v1',vesselIds:['v1','v2'],sourceMeetingId:'m-multi',description:'旧多船',status:'已完成',isClosed:true,closedDate:'2026-07-02',closedBy:'u1',updatedAt:'2026-07-02',updatedBy:'u1',statusLogs:[]}],
+    meetings:[{id:'m-multi',subject:'旧多船会议',vessels:['v1','v2'],taskItems:[{id:'follow',description:'旧多船'}]}],
+  });
+  assert.equal(legacyMulti.tasks[0].vesselProgress.length,2,'缺少 vesselProgress 字段的旧多船会议待办必须迁移所有船舶');
+  assert.ok(legacyMulti.tasks[0].vesselProgress.every(progress=>progress.isClosed&&progress.status==='已完成'),'旧顶层结案与状态必须复制到各船，避免升级后重新显示未结');
+  const explicitIndependent=normalizeAppData({...malformed,tasks:[{...legacyMulti.tasks[0],id:'new-multi',vesselProgress:[]}]});
+  assert.deepEqual(explicitIndependent.tasks[0].vesselProgress,[],'显式空 vesselProgress 是新独立模型，不得继承总体状态');
+
   assert.equal(normalizeAppData({ settings: {}, users: [], vessels: [] }), null, 'missing core task collection must be rejected');
   console.log('Runtime payload normalization regression passed.');
 } finally {

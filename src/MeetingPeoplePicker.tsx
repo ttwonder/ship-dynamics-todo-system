@@ -8,9 +8,10 @@ type Props = {
   departments: string[];
   selectedIds: string[];
   onChange: (ids: string[]) => void;
+  disabled?: boolean;
 };
 
-export default function MeetingPeoplePicker({ label, required = false, users, departments, selectedIds, onChange }: Props) {
+export default function MeetingPeoplePicker({ label, required = false, users, departments, selectedIds, onChange, disabled = false }: Props) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [department, setDepartment] = useState('all');
   const [query, setQuery] = useState('');
@@ -30,13 +31,13 @@ export default function MeetingPeoplePicker({ label, required = false, users, de
 
   return <div className="field span-3 meeting-people-field">
     <label>{label}{required && <span className="required-mark"> *</span>}</label>
-    <details ref={detailsRef} className="meeting-people-picker" onKeyDown={event => {
+    <details ref={detailsRef} className="meeting-people-picker" aria-disabled={disabled} onToggle={event=>{if(disabled)(event.currentTarget as HTMLDetailsElement).removeAttribute('open');}} onKeyDown={event => {
       if (event.key === 'Escape') {
         detailsRef.current?.removeAttribute('open');
         (detailsRef.current?.querySelector('summary') as HTMLElement | null)?.focus();
       }
     }}>
-      <summary aria-label={`${label}下拉多選`}>
+      <summary aria-label={`${label}下拉多選`} aria-disabled={disabled} tabIndex={disabled?-1:0} onClick={event=>{if(disabled)event.preventDefault();}}>
         <span>{selectedUsers.length ? selectedUsers.map(user => user.name).join('、') : `選擇${label}`}</span>
         <b>{selectedUsers.length} 人</b>
       </summary>

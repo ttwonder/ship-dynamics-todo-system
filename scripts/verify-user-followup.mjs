@@ -43,7 +43,7 @@ for (const contract of [
   'filteredTasks',
   'taskSort',
 ]) assert.ok(workCenter.includes(contract), `個人待辦篩選／排序缺少 ${contract}`);
-assert.ok(normalizer.includes("item.sourceMeetingId ? 'temporary' : 'morning'"), '舊資料必須安全補上來源');
+assert.ok(normalizer.includes("sourceMeetingId ? 'temporary' : 'morning'"), '舊資料必須安全補上來源');
 assert.ok(app.includes("sourceType:'morning'"), '一般新增待辦必須标记為早會來源');
 for (const source of [app, meetings]) {
   assert.ok(source.includes('臨會/專題'), '主要操作界面名稱必須統一為「臨會/專題」');

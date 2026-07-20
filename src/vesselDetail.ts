@@ -1,5 +1,7 @@
 import type { TaskItem, TaskPriority } from './types';
+import { appearsInSingleVesselTasks } from './taskAttention';
 import { taskHasVessel } from './taskVesselScope';
+import { taskIsClosedForVessel, taskProgressForVessel } from './taskVesselProgress';
 
 export type VesselTaskClosedMode = 'all' | 'open' | 'closed';
 export type VesselTaskSort = 'priority' | 'due-asc' | 'updated-desc';
@@ -22,16 +24,18 @@ const compareDate = (left: string, right: string) => {
 export function selectVesselDetailTasks(tasks: TaskItem[], vesselId: string, filters: VesselDetailTaskFilters): TaskItem[] {
   const query = filters.query.trim().toLowerCase();
   return tasks.filter(task => {
+    if (!appearsInSingleVesselTasks(task)) return false;
     if (!taskHasVessel(task, vesselId)) return false;
-    if (filters.closedMode === 'open' && task.isClosed) return false;
-    if (filters.closedMode === 'closed' && !task.isClosed) return false;
+    const progress=taskProgressForVessel(task,vesselId);
+    if (filters.closedMode === 'open' && progress.isClosed) return false;
+    if (filters.closedMode === 'closed' && !progress.isClosed) return false;
     if (filters.priority !== 'all' && task.priority !== filters.priority) return false;
     if (!query) return true;
-    return [task.description, task.status, task.expectedDate, ...(task.categories || []), ...(task.departments || [])]
+    return [task.description, progress.status, task.expectedDate, ...(task.categories || []), ...(task.departments || [])]
       .join(' ').toLowerCase().includes(query);
   }).sort((left, right) => {
     if (filters.sort === 'due-asc') return compareDate(left.expectedDate, right.expectedDate) || priorityRank[left.priority] - priorityRank[right.priority];
     if (filters.sort === 'updated-desc') return right.updatedAt.localeCompare(left.updatedAt) || priorityRank[left.priority] - priorityRank[right.priority];
-    return priorityRank[left.priority] - priorityRank[right.priority] || Number(left.isClosed) - Number(right.isClosed) || compareDate(left.expectedDate, right.expectedDate);
+    return priorityRank[left.priority] - priorityRank[right.priority] || Number(taskIsClosedForVessel(left,vesselId)) - Number(taskIsClosedForVessel(right,vesselId)) || compareDate(left.expectedDate, right.expectedDate);
   });
 }

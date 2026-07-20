@@ -7,6 +7,7 @@ import type {
   NavigationStatus,
   ShipStatus,
   StatusLog,
+  TaskVesselProgress,
   TaskPriority,
   TemporaryMeeting,
   TemporaryMeetingStatus,
@@ -66,6 +67,24 @@ function normalizeStatusLogs(value: unknown): StatusLog[] {
   })).filter(item => item.id && item.text);
 }
 
+function normalizeTaskVesselProgress(value: unknown): TaskVesselProgress[] {
+  const seen=new Set<string>();
+  return objects(value).map(item=>({
+    vesselId:text(item.vesselId),
+    status:text(item.status),
+    isClosed:bool(item.isClosed),
+    closedDate:text(item.closedDate)||undefined,
+    closedBy:text(item.closedBy)||undefined,
+    updatedAt:text(item.updatedAt)||undefined,
+    updatedBy:text(item.updatedBy)||undefined,
+    statusLogs:normalizeStatusLogs(item.statusLogs),
+  })).filter(item=>{
+    if(!item.vesselId||seen.has(item.vesselId))return false;
+    seen.add(item.vesselId);
+    return true;
+  });
+}
+
 function normalizeAgendaReports(value: unknown): AgendaReport[] {
   return objects(value).map(item => ({
     id: text(item.id),
@@ -110,10 +129,10 @@ function normalizeMeetings(value: unknown, timestamp: string): TemporaryMeeting[
       const cleanDescription = text(taskItem.description).trim();
       const uniqueId = seenTaskItemIds.has(rawId) ? `${rawId}-duplicate-${index + 1}` : rawId;
       seenTaskItemIds.add(uniqueId);
-      return { id: uniqueId, description: cleanDescription };
+      return { id: uniqueId, description: cleanDescription, distributeToVessels: bool(taskItem.distributeToVessels) };
     }).filter(taskItem => taskItem.id && taskItem.description);
     if (!taskItems.length && Object.prototype.hasOwnProperty.call(item, 'taskDescription') && taskDescription.trim()) {
-      taskItems.push({ id: `${id}-task-1`, description: taskDescription.trim() });
+      taskItems.push({ id: `${id}-task-1`, description: taskDescription.trim(), distributeToVessels: false });
     }
     return {
       id,
@@ -132,6 +151,9 @@ function normalizeMeetings(value: unknown, timestamp: string): TemporaryMeeting[
       taskItems,
       expectedDate: text(item.expectedDate),
       priority: oneOf(item.priority, priorities, '中'),
+      includeInMorning: bool(item.includeInMorning),
+      latestStatus: text(item.latestStatus),
+      statusLogs: normalizeStatusLogs(item.statusLogs),
       createdBy: text(item.createdBy),
       createdAt: text(item.createdAt, timestamp),
       updatedAt: text(item.updatedAt, text(item.createdAt, timestamp)),
@@ -177,7 +199,6 @@ export function normalizeAppData(value: unknown): AppData | null {
         username: text(item.username),
         role: oneOf(item.role, roles, 'operator'),
         passwordHash: passwordHashValid ? rawPasswordHash.toLowerCase() : INVALID_PASSWORD_HASH,
-        passwordVisible: passwordHashValid && rawPasswordHash !== '' ? text(item.passwordVisible) : '',
         isActive: passwordHashValid && bool(item.isActive, true),
         managedVesselIds: strings(item.managedVesselIds),
         createdAt: text(item.createdAt, timestamp),
@@ -241,13 +262,29 @@ export function normalizeAppData(value: unknown): AppData | null {
     }).filter(item => item.id && item.name),
     tasks: objects(raw.tasks).map(item => {
       const categories = normalizeTaskCategoryList(item.category, item.categories);
+      const vesselId=text(item.vesselId);
+      const vesselIds=strings(item.vesselIds);
+      const sourceMeetingId=text(item.sourceMeetingId)||undefined;
+      const status=text(item.status);
+      const isClosed=bool(item.isClosed);
+      const closedDate=text(item.closedDate)||undefined;
+      const closedBy=text(item.closedBy)||undefined;
+      const updatedAt=text(item.updatedAt,timestamp);
+      const updatedBy=text(item.updatedBy);
+      const statusLogs=normalizeStatusLogs(item.statusLogs);
+      const taskScopeIds=Array.from(new Set([vesselId,...vesselIds].filter(Boolean)));
+      const isLegacyMultiVesselMeeting=Boolean(sourceMeetingId)&&taskScopeIds.length>1&&!Object.prototype.hasOwnProperty.call(item,'vesselProgress');
+      const vesselProgress=isLegacyMultiVesselMeeting
+        ? taskScopeIds.map(progressVesselId=>({vesselId:progressVesselId,status,isClosed,closedDate,closedBy,updatedAt,updatedBy,statusLogs:statusLogs.map(log=>({...log}))}))
+        : normalizeTaskVesselProgress(item.vesselProgress);
       return ({
       id: text(item.id),
-      vesselId: text(item.vesselId),
-      vesselIds: strings(item.vesselIds),
+      vesselId,
+      vesselIds,
       vesselScopeMode: oneOf(item.vesselScopeMode, scopeModes, 'vessels'),
       vesselTypeScopes: strings(item.vesselTypeScopes),
       priority: oneOf(item.priority, priorities, '中'),
+      attentionDimension: oneOf(item.attentionDimension, ['task', 'meeting'] as const, sourceMeetingId || item.sourceType === 'temporary' ? 'meeting' : 'task'),
       isAware: bool(item.isAware),
       isAbnormal: bool(item.isAbnormal) || bool(item.isInternalControl),
       isInternalControl: bool(item.isInternalControl),
@@ -256,21 +293,23 @@ export function normalizeAppData(value: unknown): AppData | null {
       category: categories[0] || '',
       categories,
       description: text(item.description),
-      status: text(item.status),
+      status,
       expectedDate: text(item.expectedDate),
       departments: strings(item.departments),
       ownerUserIds: strings(item.ownerUserIds),
-      isClosed: bool(item.isClosed),
-      closedDate: text(item.closedDate) || undefined,
-      closedBy: text(item.closedBy) || undefined,
-      sourceMeetingId: text(item.sourceMeetingId) || undefined,
+      isClosed,
+      closedDate,
+      closedBy,
+      sourceMeetingId,
       sourceMeetingItemId: text(item.sourceMeetingItemId) || undefined,
-      sourceType: oneOf(item.sourceType, ['morning', 'temporary'] as const, item.sourceMeetingId ? 'temporary' : 'morning'),
+      distributeToVessels: bool(item.distributeToVessels),
+      sourceType: oneOf(item.sourceType, ['morning', 'temporary'] as const, sourceMeetingId ? 'temporary' : 'morning'),
       createdBy: text(item.createdBy),
-      updatedBy: text(item.updatedBy),
+      updatedBy,
       createdAt: text(item.createdAt, timestamp),
-      updatedAt: text(item.updatedAt, timestamp),
-      statusLogs: normalizeStatusLogs(item.statusLogs),
+      updatedAt,
+      statusLogs,
+      vesselProgress,
     });
     }).filter(item => item.id && item.vesselId),
     meetings: normalizeMeetings(raw.meetings, timestamp),
@@ -283,7 +322,7 @@ export function normalizeAppData(value: unknown): AppData | null {
     const taskDescriptionProvided = meetingTaskDescriptionWasProvided.get(meeting.id);
     if (!meeting.taskItems.length && !taskItemsProvided && !taskDescriptionProvided) {
       const linkedTask = normalized.tasks.find(task => task.sourceMeetingId === meeting.id && task.description.trim());
-      if (linkedTask) meeting.taskItems.push({ id: `${meeting.id}-task-1`, description: linkedTask.description });
+      if (linkedTask) meeting.taskItems.push({ id: `${meeting.id}-task-1`, description: linkedTask.description, distributeToVessels: linkedTask.distributeToVessels === true });
     }
     if (meeting.taskItems.length) meeting.taskDescription = meeting.taskItems[0].description;
     const firstItemId = meeting.taskItems[0]?.id;

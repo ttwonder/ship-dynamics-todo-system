@@ -4,6 +4,7 @@ import { daysDiff } from './utils';
 import { vesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention } from './vesselAttention';
+import { vesselAttentionTasks } from './taskAttention';
 
 type ScopeMode = 'overall' | 'department' | 'person';
 type Metrics = {
@@ -107,17 +108,18 @@ export default function DataAnalysisView({ data, vessels }: { data: AppData; ves
   const months = monthKeys();
   const vesselRows = vessels.map(vessel => {
     const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id));
-    const open = vesselTasks.filter(task => !task.isClosed);
+    const attentionTasks = vesselAttentionTasks(vesselTasks);
+    const open = attentionTasks.filter(task => !task.isClosed);
     const attentionResult = deriveVesselAttention(vessel, open);
     return {
       vessel,
-      counts: Object.fromEntries(['急', '高', '中', '低'].map(priority => [priority, vesselTasks.filter(task => task.priority === priority).length])) as Record<string, number>,
-      abnormal: vesselTasks.filter(task => task.isAbnormal).length,
+      counts: Object.fromEntries(['急', '高', '中', '低'].map(priority => [priority, attentionTasks.filter(task => task.priority === priority).length])) as Record<string, number>,
+      abnormal: attentionTasks.filter(task => task.isAbnormal).length,
       lights: vessel.weeklyAttention.length,
       attention: attentionResult.manual
         ? `${attentionResult.effective}（手動 ${attentionResult.manual}／自動下限 ${attentionResult.automatic}）`
         : `${attentionResult.effective}（自動）`,
-      trend: months.map(month => vesselTasks.filter(task => localMonthKey(task.createdAt) === month).length),
+      trend: months.map(month => attentionTasks.filter(task => localMonthKey(task.createdAt) === month).length),
     };
   });
 

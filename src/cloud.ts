@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { AppData } from './types';
-import { isPlaceholder } from './utils';
+import { isPlaceholder, sanitizeAppDataForStorage } from './utils';
 import { normalizeAppData } from './normalize';
 
 export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string }
@@ -70,10 +70,11 @@ export async function saveCloudData(payload: AppData, expectedRevision: number):
   if (!supabase) throw new Error('尚未配置 Supabase；資料只保存在此瀏覽器。');
   const cfg = getSupabaseConfig();
   if (!cfg) throw new Error('尚未配置 Supabase；資料只保存在此瀏覽器。');
+  const cleanPayload = sanitizeAppDataForStorage(payload);
   const row = {
     workspace_key: cfg.workspaceKey,
-    revision: payload.revision,
-    payload,
+    revision: cleanPayload.revision,
+    payload: cleanPayload,
     updated_at: new Date().toISOString()
   };
 
@@ -83,7 +84,7 @@ export async function saveCloudData(payload: AppData, expectedRevision: number):
       if ((error as { code?: string }).code === '23505') throw new CloudConflictError();
       throw error;
     }
-    return payload.revision;
+    return cleanPayload.revision;
   }
 
   const { data, error } = await supabase
@@ -95,5 +96,5 @@ export async function saveCloudData(payload: AppData, expectedRevision: number):
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new CloudConflictError();
-  return payload.revision;
+  return cleanPayload.revision;
 }

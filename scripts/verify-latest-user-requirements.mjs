@@ -7,6 +7,7 @@ try {
   const categories = await server.ssrLoadModule('/src/taskCategories.ts');
   const names = await server.ssrLoadModule('/src/vesselDisplay.ts');
   const normalizer = await server.ssrLoadModule('/src/normalize.ts');
+  const utils = await server.ssrLoadModule('/src/utils.ts');
 
   assert.deepEqual(categories.REQUIRED_TASK_CATEGORIES, [
     '換員操作', '加油加水', '物料配件', '維修', 'Survey', '稽核檢查', 'PSC窗口', '事故',
@@ -49,7 +50,8 @@ try {
   });
   assert.equal(migrationFixture.users.find(user => user.id === 'owner').passwordHash, ownerHash);
   assert.equal(migrationFixture.users.find(user => user.id === 'user').passwordHash, userHash);
-  assert.equal(migrationFixture.users.find(user => user.id === 'user').passwordVisible, 'old');
+  assert.equal('passwordVisible' in migrationFixture.users.find(user => user.id === 'user'), false, 'normalize 必須丟棄舊 plaintext passwordVisible');
+  assert.equal('passwordVisible' in utils.sanitizeAppDataForStorage({ ...migrationFixture, users: [{ ...migrationFixture.users[1], passwordVisible:'old' }] }).users[0], false, '本機與雲端保存前必須以 UserAccount 白名單序列化，丟棄舊 plaintext password 欄位');
   assert.equal(migrationFixture.settings.nonOwnerPasswordResetVersion, 0);
   const dashboard = fs.readFileSync('src/Dashboard.tsx','utf8');
   const app = fs.readFileSync('src/App.tsx','utf8');
@@ -77,7 +79,7 @@ try {
   const taskEditor = editor.slice(editor.indexOf('export function TaskEditModal'));
   assert.ok(!vesselEditor.includes('經管／負責人'), '船舶快速更新不得显示或修改管理页经管／负责人');
   assert.ok(!taskEditor.includes('label="經管／負責人"'), '要事编辑器不得把事项涉及人员标为船舶经管／负责人');
-  assert.ok(taskEditor.includes("currentUser.role!=='vessel'&&<DropdownMultiPicker") && taskEditor.includes('disabled={readOnly}'), '涉及人員需在新增與更新要事显示，并在只读模式明确禁用');
+  assert.ok(taskEditor.includes("currentUser.role!=='vessel'&&<MeetingPeoplePicker") && taskEditor.includes('disabled={globalReadOnly}'), '涉及人員需在新增與更新要事显示，并在只读模式明确禁用');
   assert.ok(app.includes('assignedOwnerUserIds') && app.includes('vessel.assignedUserIds'), '新增要事必须自动带入管理页已分配的船舶经管人员');
   assert.ok(!taskEditor.includes('assignedUserIds=') && !taskEditor.includes('managedVesselIds='), '事项涉及人员不得修改管理页船舶／人员分管');
   assert.ok(app.includes('taskReturnVesselId') && app.includes('closeTaskEditor') && app.includes('addTaskForVessel(id,true)'), '从快速更新进入新增要事后，取消或保存必须返回快速更新弹窗');
@@ -96,14 +98,17 @@ try {
   assert.ok(styles.includes('.meeting-print-page') && styles.includes('break-after:page'), '臨會列印 CSS 需強制逐會議分頁');
   assert.ok(app.includes("currentUser?.role==='owner'||currentUser?.role==='admin'||hasPermission"), 'Owner／管理員應固定查看全部船舶');
   assert.ok(app.includes('vesselMatchesUser(v,currentUser,canViewAllVessels)') && !app.includes('involvedVesselIds') && workCenter.includes('task.ownerUserIds.includes(user.id)'), '负责人可在我的待办查看事项，但不得因此扩大看板、总表、已结案或统计的船舶资料范围');
-  assert.ok(workCenter.includes('task.ownerUserIds.includes(user.id)') && workCenter.includes('vessel.assignedUserIds.includes(user.id)'), '我的待辦應包含涉及人員及船舶分管人員');
+  assert.ok(workCenter.includes('const visibleVesselIds=new Set(vessels.map') && workCenter.includes('task.ownerUserIds.includes(user.id)') && workCenter.includes('scopedIds.length'), '我的待辦应使用 App 已授权船舶范围，并包含事项涉及人员负责的待办');
   assert.ok(normalizeSource.includes('managementUserIds.has(user.id)).forEach(user => { user.managedVesselIds = []; })'), '管理層不得保留具體船舶分管');
   assert.ok(app.includes('aria-label="登入部門"') && app.includes('aria-label="登入人員"'), '登入頁應使用部門與人員下拉選擇');
   assert.ok(app.includes('if(user.passwordHash&&await sha256(pw)!==user.passwordHash)'), 'Owner 清除密碼後應允許無密碼登入');
-  assert.ok(seed.includes("DEFAULT_USER_PASSWORD='fpmc2026'") && seed.includes('385b870cb91faa4b1cb040d624ab6a7c738352a032ade05cef752de2868f8b10'), '非 Owner 統一密碼及雜湊必須正確');
-  assert.ok(normalizeSource.includes('nonOwnerPasswordResetVersion') && !normalizeSource.includes("user.passwordVisible = 'fpmc2026'") && !normalizeSource.includes("user.passwordHash = '385b870"), '通用 normalize 不得重置任何帳號憑據');
+  const plaintextPasswordSources = [app, management, seed, normalizeSource, fs.readFileSync('src/types.ts','utf8')].join('\n');
+  assert.ok(!plaintextPasswordSources.includes('passwordVisible') && !plaintextPasswordSources.includes('DEFAULT_USER_PASSWORD') && !plaintextPasswordSources.includes('DEFAULT_SITE_PASSWORD') && !plaintextPasswordSources.includes('fpmc2026') && !plaintextPasswordSources.includes('ship2026'), '共享 AppData/localStorage/Supabase payload 不得保存或暴露可回復明文密碼');
+  assert.ok(!seed.includes('DEFAULT_PASSWORD_HASH') && !seed.includes('OWNER_INITIAL_PASSWORD_HASH') && !seed.includes('SITE_PASSWORD_HASH') && seed.includes("passwordHash: ''") && seed.includes("sitePasswordHash: ''"), 'production seed 不得保存舊預設密碼 hash；首次使用需由使用者設定進站與 Owner 密碼');
+  assert.ok(app.includes('needsSetup') && app.includes('首次使用請先設定進站密碼') && app.includes('初始化進站密碼') && app.includes('!siteUnlocked || !data.settings.sitePasswordHash'), '進站密碼需走首次設定流程；即使 sessionStorage unlock flag 殘留，未設定 hash 也必須進入 SiteGate');
+  assert.ok(normalizeSource.includes('nonOwnerPasswordResetVersion') && !normalizeSource.includes('passwordVisible') && !normalizeSource.includes("user.passwordHash = '385b870"), '通用 normalize 不得重置或保留任何帳號明文憑據');
   assert.ok(!cloudSource.includes('needsPasswordResetPersistence') && !cloudSource.includes('persistPasswordMigrationCas') && app.includes("data.revision === remote.revision && data.updatedAt !== remote.updatedAt"), '读取／normalize 不得自动匿名写回密码迁移；同步仍须阻挡同 revision 的本机分歧');
-  assert.ok(management.includes('Owner 可查看、修改或清除此人員密碼') && management.includes('clearPersonPassword'), 'Owner 應能查看、修改及清除其他人員密碼');
+  assert.ok(management.includes('Owner 可重設或清除此人員密碼') && management.includes('clearPersonPassword') && !management.includes('Owner 可查看'), 'Owner 只能重設或清除密碼，不得查看既有明文');
   assert.ok(app.includes("['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['reports','報告中心'],['stats','數據分析']"), '主導航應依序為待辦總表、已結案、報告中心、數據分析');
   for (const label of ['完成率','逾期率','提出率／件數','高風險','需知曉','內控','異常','部門橫向比較與排名','人員橫向比較與排名','船舶優先級／異常／關注度／點亮項目／趨勢']) assert.ok(analysis.includes(label), `數據分析頁缺少 ${label}`);
   assert.ok(analysis.includes("tasks.filter(task => responsibleFor(task, scopedUserIds, scopeMode === 'department' ? selectedDepartment : ''))") && !analysis.includes("responsibleFor(task, scopedUserIds, scopeMode === 'department' ? selectedDepartment : '') || scopedUserIds.has(task.createdBy)"), '責任事項不得混入僅由該人員提出但未負責的事項');

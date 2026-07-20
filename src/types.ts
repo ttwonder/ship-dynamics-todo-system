@@ -2,6 +2,7 @@ export type UserRole = 'owner' | 'admin' | 'operator' | 'vessel';
 export type PermissionKey = 'viewAllVessels' | 'editBusinessContent' | 'createTasks' | 'closeTasks' | 'deleteTasks' | 'manageMeetings' | 'exportReports' | 'enterManagement' | 'manageUsers' | 'manageVessels' | 'viewAuditLogs' | 'manageRolePermissions' | 'manageSystemSettings';
 export type RolePermissions = Record<UserRole, Record<PermissionKey, boolean>>;
 export type TaskPriority = '急' | '高' | '中' | '低';
+export type TaskAttentionDimension = 'task' | 'meeting';
 export type VesselAttentionLevel = TaskPriority | '特別關注';
 export type ShipStatus = 'loading' | 'unloading' | 'to load' | 'to unload' | 'waiting order' | 'drydock/repiar';
 export type NavigationStatus = '航行' | '拋錨' | '停泊';
@@ -19,7 +20,6 @@ export interface UserAccount {
   username: string;
   role: UserRole;
   passwordHash: string;
-  passwordVisible: string;
   isActive: boolean;
   managedVesselIds: string[];
   createdAt: string;
@@ -87,6 +87,17 @@ export interface StatusLog {
   text: string;
 }
 
+export interface TaskVesselProgress {
+  vesselId: string;
+  status: string;
+  isClosed: boolean;
+  closedDate?: string;
+  closedBy?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  statusLogs: StatusLog[];
+}
+
 export interface TaskItem {
   id: string;
   vesselId: string;
@@ -94,6 +105,7 @@ export interface TaskItem {
   vesselScopeMode?: MeetingVesselScopeMode;
   vesselTypeScopes?: string[];
   priority: TaskPriority;
+  attentionDimension?: TaskAttentionDimension;
   isAware: boolean;
   isAbnormal: boolean;
   isInternalControl: boolean;
@@ -111,12 +123,14 @@ export interface TaskItem {
   closedBy?: string;
   sourceMeetingId?: string;
   sourceMeetingItemId?: string;
+  distributeToVessels?: boolean;
   sourceType: TaskSource;
   createdBy: string;
   updatedBy: string;
   createdAt: string;
   updatedAt: string;
   statusLogs: StatusLog[];
+  vesselProgress?: TaskVesselProgress[];
 }
 
 export type NotificationKind = 'task_created' | 'task_updated' | 'task_archived' | 'internal_control_cancelled' | 'task_deleted';
@@ -136,6 +150,7 @@ export interface UserNotification {
 export interface MeetingTaskItem {
   id: string;
   description: string;
+  distributeToVessels?: boolean;
 }
 
 export interface TemporaryMeeting {
@@ -155,6 +170,9 @@ export interface TemporaryMeeting {
   taskItems: MeetingTaskItem[];
   expectedDate: string;
   priority: TaskPriority;
+  includeInMorning?: boolean;
+  latestStatus?: string;
+  statusLogs?: StatusLog[];
   createdBy: string;
   createdAt: string;
   updatedAt?: string;

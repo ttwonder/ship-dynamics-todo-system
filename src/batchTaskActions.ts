@@ -1,6 +1,7 @@
 import type { TaskItem } from './types';
 import { uid } from './utils';
 import { taskVesselIds } from './taskVesselScope';
+import { usesPerVesselProgress } from './taskVesselProgress';
 
 export interface BatchCompletionContext {
   actorId: string;
@@ -23,7 +24,7 @@ export function validateBatchTaskSelection(tasks: TaskItem[], selectedIds: strin
   const taskIds = [...new Set(selectedIds)];
   if (!taskIds.length) return { ok: false, taskIds: [], tasks: [], reason: 'empty' };
   const selectedTasks = taskIds.map(id => tasks.find(task => task.id === id));
-  if (selectedTasks.some(task => !task || (action === 'complete' && task.isClosed) || !taskVesselIds(task).every(id => visibleVesselIds.has(id)))) {
+  if (selectedTasks.some(task => !task || (action === 'complete' && (task.isClosed || usesPerVesselProgress(task))) || !taskVesselIds(task).every(id => visibleVesselIds.has(id)))) {
     return { ok: false, taskIds: [], tasks: [], reason: 'stale-or-inaccessible' };
   }
   return { ok: true, taskIds, tasks: selectedTasks as TaskItem[] };
@@ -33,7 +34,7 @@ export function completeSelectedTasks(tasks: TaskItem[], selectedIds: string[], 
   const selected = new Set(selectedIds);
   const completedIds: string[] = [];
   const nextTasks = tasks.map(task => {
-    if (!selected.has(task.id) || task.isClosed) return task;
+    if (!selected.has(task.id) || task.isClosed || usesPerVesselProgress(task)) return task;
     completedIds.push(task.id);
     return {
       ...task,

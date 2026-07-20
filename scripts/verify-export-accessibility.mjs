@@ -12,8 +12,10 @@ assert.match(meetings,/canExportReports&&/,'会议导出控件必须依权限显
 assert.match(meetings,/canExportReports&&<th className="no-print">選取<\/th>/,'无导出权限时必须隐藏选择栏');
 assert.match(meetings,/canExportReports&&<td className="no-print"><input aria-label=\{`選取會議/,'无导出权限时必须隐藏每列选择框');
 assert.match(app,/const reportVessels = activeVessels/,'报告中心只能接收当前用户授权船舶');
-assert.match(app,/const selectedIds=_selected\.filter\(id=>allowedIds\.has\(id\)\)[\s\S]*const reportVesselIds=new Set\(vessels\.map/,'报告选择必须先与授权范围取交集，并同步限制待办');
+assert.match(app,/const selectedIds=_selected\.filter\(id=>allowedIds\.has\(id\)\)[\s\S]*const reportScopeIds=vessels\.map\(v=>v\.id\)[\s\S]*const reportVesselIds=new Set\(reportScopeIds\)/,'报告选择必须先与授权范围取交集，并同步限制待办');
 assert.match(app,/const vessels=_selected\.length\?visibleVessels\.filter/,'非空选择与授权交集为空时不得回退全部授权船舶');
+assert.match(app,/taskReportVesselLabel\(t,vessels\)[\s\S]*taskReportShipTypeLabel\(t,vessels\)/,'跨船报告列必须使用报告专用标签，未选择船不得显示为受限船舶');
+assert.match(fs.readFileSync(new URL('../src/taskVesselScope.ts',import.meta.url),'utf8'),/taskReportVesselLabel[\s\S]*return names\.join\('、'\) \|\| '-'[\s\S]*taskReportShipTypeLabel/,'报告专用标签必须只显示本次报告船舶交集，不添加受限船舶文案');
 assert.match(app,/const reportHistory=data\.agendaReports\.filter[\s\S]*report\.vesselIds\.every\(id=>allowedIds\.has\(id\)\)/,'历史报告元数据需按完整授权范围过滤');
 assert.match(app,/disabled=\{!vessels\.length\}/,'空授权交集时必须禁用 PDF 输出');
 assert.match(app,/role="dialog"[^>]*aria-modal="true"[^>]*aria-labelledby="report-preview-title"/,'报告预览必须有 dialog 语义与名称');
