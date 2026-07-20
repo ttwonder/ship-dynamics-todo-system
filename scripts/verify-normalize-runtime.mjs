@@ -48,6 +48,22 @@ try {
   assert.equal(data.vessels[0].position.navigationStatus, '停泊');
   assert.equal(data.vessels[0].position.etb, '2026-07-18 08:00');
   assert.deepEqual(data.vessels[0].cargo.items, [{ name: '原油', quantity: '5,000 MT' }]);
+  const adminAssignments = normalizeAppData({
+    ...malformed,
+    users: [
+      { ...malformed.users[1], id:'owner', role:'owner', managedVesselIds:['v1'] },
+      { id:'admin', name:'管理員甲', username:'admin', role:'admin', passwordHash:validPasswordHash, isActive:true, managedVesselIds:['v1'] },
+      { id:'operator', name:'操作員乙', username:'operator', role:'operator', passwordHash:validPasswordHash, isActive:true, managedVesselIds:[] },
+      { id:'ship-user', name:'船舶帳戶', username:'ship', role:'vessel', passwordHash:validPasswordHash, isActive:true, managedVesselIds:['v1'] },
+    ],
+    vessels: [{ ...malformed.vessels[1], assignedUserIds:['owner','admin','operator','ship-user'] }],
+  });
+  assert.deepEqual(adminAssignments.users.find(user=>user.id==='owner').managedVesselIds, [], 'Owner 不分管具體船舶');
+  assert.deepEqual(adminAssignments.users.find(user=>user.id==='admin').managedVesselIds, ['v1'], '管理員可保留船舶經管關係');
+  assert.ok(adminAssignments.vessels[0].assignedUserIds.includes('admin'), '船舶經管名單必須保留管理員');
+  assert.ok(adminAssignments.vessels[0].assignedUserIds.includes('operator'), '船舶經管名單必須保留操作員');
+  assert.ok(!adminAssignments.vessels[0].assignedUserIds.includes('owner'), '船舶經管名單不得保留 Owner');
+  assert.ok(!adminAssignments.vessels[0].assignedUserIds.includes('ship-user'), '船舶經管名單不得保留船舶帳戶');
   assert.deepEqual(data.vessels[0].weeklyAttention, ['psc-window']);
   assert.deepEqual(data.tasks[0].departments, ['航務']);
   assert.equal(data.tasks[0].priority, '急');

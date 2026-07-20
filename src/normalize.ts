@@ -350,7 +350,7 @@ export function normalizeAppData(value: unknown): AppData | null {
   }
 
   const vesselUserIds = new Set(normalized.users.filter(user => user.role === 'vessel').map(user => user.id));
-  const managementUserIds = new Set(normalized.users.filter(user => user.role === 'owner' || user.role === 'admin').map(user => user.id));
+  const ownerUserIds = new Set(normalized.users.filter(user => user.role === 'owner').map(user => user.id));
   const personnelDepartments = normalized.settings.departments.map(department => department.trim()).filter(department => department && department !== '船舶帳戶');
   const fallbackPersonnelDepartment = personnelDepartments[0] || '未指定部門';
   if (!personnelDepartments.length && !normalized.settings.departments.includes(fallbackPersonnelDepartment)) normalized.settings.departments.push(fallbackPersonnelDepartment);
@@ -358,7 +358,7 @@ export function normalizeAppData(value: unknown): AppData | null {
     if (!user.department.trim() || user.department === '船舶帳戶') user.department = fallbackPersonnelDepartment;
     if (!normalized.settings.departments.includes(user.department)) normalized.settings.departments.push(user.department);
   });
-  normalized.users.filter(user => managementUserIds.has(user.id)).forEach(user => { user.managedVesselIds = []; });
+  normalized.users.filter(user => ownerUserIds.has(user.id)).forEach(user => { user.managedVesselIds = []; });
   normalized.users.filter(user => user.role === 'vessel').forEach(user => {
     const managed = user.managedVesselIds.filter((id, index, ids) => activeVesselIds.has(id) && ids.indexOf(id) === index);
     const assigned = normalized.vessels.filter(vessel => vessel.isActive && vessel.assignedUserIds.includes(user.id)).map(vessel => vessel.id);
@@ -368,7 +368,16 @@ export function normalizeAppData(value: unknown): AppData | null {
     if (!binding) user.isActive = false;
   });
   normalized.vessels.forEach(vessel => {
-    vessel.assignedUserIds = vessel.assignedUserIds.filter(userId => !vesselUserIds.has(userId) && !managementUserIds.has(userId));
+    vessel.assignedUserIds = vessel.assignedUserIds.filter(userId => !vesselUserIds.has(userId) && !ownerUserIds.has(userId));
+  });
+  normalized.users.filter(user => user.isActive && (user.role === 'admin' || user.role === 'operator')).forEach(user => {
+    const explicitManaged = user.managedVesselIds.filter((id, index, ids) => activeVesselIds.has(id) && ids.indexOf(id) === index);
+    const assigned = normalized.vessels.filter(vessel => vessel.isActive && vessel.assignedUserIds.includes(user.id)).map(vessel => vessel.id);
+    user.managedVesselIds = Array.from(new Set([...explicitManaged, ...assigned]));
+  });
+  normalized.vessels.forEach(vessel => {
+    const explicitManagers = normalized.users.filter(user => user.isActive && (user.role === 'admin' || user.role === 'operator') && user.managedVesselIds.includes(vessel.id)).map(user => user.id);
+    vessel.assignedUserIds = Array.from(new Set([...vessel.assignedUserIds, ...explicitManagers])).filter(userId => normalized.users.some(user => user.id === userId && user.isActive && (user.role === 'admin' || user.role === 'operator')));
   });
   return normalized;
 }

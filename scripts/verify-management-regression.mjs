@@ -25,8 +25,14 @@ for (const contract of [
   '總清單',
   '自管船舶',
   "assignedUserIds.includes(user.id)",
+  'canManageVesselAssignments',
+  '經管部門篩選',
+  'managerNames',
 ]) {
   assert.ok(source.includes(contract), `缺少正式管理／自管篩選契約：${contract}`);
 }
+
+assert.ok(management.includes("user.role === 'admin'") && management.includes("user.role === 'operator'"), '船舶經管人員必須允許管理員與操作員，不得只限操作員');
+assert.ok(!management.includes("users={activeUsers.filter(user => user.role === 'operator')}"), '船舶頁不可只把操作員傳入經管人員選擇器');
 
 console.log('Management selection regression contract passed.');

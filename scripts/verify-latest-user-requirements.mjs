@@ -102,7 +102,7 @@ try {
   assert.ok(app.includes("currentUser?.role==='owner'||currentUser?.role==='admin'||hasPermission"), 'Owner／管理員應固定查看全部船舶');
   assert.ok(app.includes('vesselMatchesUser(v,currentUser,canViewAllVessels)') && !app.includes('involvedVesselIds') && workCenterScope.includes('explicitlyResponsible'), '负责人可在我的待办查看事项，但不得因此扩大看板、总表、已结案或统计的船舶资料范围');
   assert.ok(workCenter.includes('selectUserWorkCenterTasks(data,user,vessels)') && app.includes('selectUserWorkCenterTasks(data,currentUser,activeVessels)') && workCenterScope.includes('meetingInvolvesUser') && workCenterScope.includes('isVesselDelegatedMeetingTask'), '我的待辦清單與導航數量必須共用同一歸屬 selector，並只包含分管督導、事項涉及人員、臨會涉及/負責人或已分派到單船跟蹤的待辦');
-  assert.ok(normalizeSource.includes('managementUserIds.has(user.id)).forEach(user => { user.managedVesselIds = []; })'), '管理層不得保留具體船舶分管');
+  assert.ok(normalizeSource.includes("user.role === 'admin' || user.role === 'operator'") && normalizeSource.includes('ownerUserIds.has(user.id)') && !normalizeSource.includes('managementUserIds'), 'Owner 不分管具體船舶；管理員與操作員可保留船舶經管關係');
   assert.ok(app.includes('aria-label="登入部門"') && app.includes('aria-label="登入人員"'), '登入頁應使用部門與人員下拉選擇');
   assert.ok(app.includes('if(user.passwordHash&&await sha256(pw)!==user.passwordHash)'), 'Owner 清除密碼後應允許無密碼登入');
   const plaintextPasswordSources = [app, management, seed, normalizeSource, fs.readFileSync('src/types.ts','utf8')].join('\n');
