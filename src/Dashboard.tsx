@@ -8,6 +8,7 @@ import QuickMorningPicker from './QuickMorningPicker';
 import { toggleDashboardFilter } from './dashboardFilters';
 import { appearsInSingleVesselTasks, vesselAttentionTasks } from './taskAttention';
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
+import { formatScheduleDisplay } from './scheduleTime';
 import RichTextContent from './RichTextContent';
 
 const PRIORITY_RANK = { 急: 0, 高: 1, 中: 2, 低: 3 } as const;
@@ -110,7 +111,7 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
       const attention = attentionResult.effective;
       const level = vesselAttentionClass(attention);
       const scheduleKind = scheduleByVessel[vessel.id] || 'ETA';
-      const scheduleValue = vessel.position[scheduleField[scheduleKind]]||'TBA';
+      const scheduleValue = formatScheduleDisplay(vessel.position[scheduleField[scheduleKind]])||'TBA';
       const summaryTasks = vesselTasks.filter(appearsInSingleVesselTasks);
       const sortedTasks = [...summaryTasks].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || Number(b.isAbnormal) - Number(a.isAbnormal));
       const highest = vesselAttentionLabel(attentionResult, attentionTasks);

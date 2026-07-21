@@ -106,6 +106,7 @@ export default function App() {
   const [agendaSelection, setAgendaSelection] = useState<string[]>([]);
   const [printTitle, setPrintTitle] = useState('');
   const [reportPreviewOpen, setReportPreviewOpen] = useState(false);
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [cloudBootstrapped, setCloudBootstrapped] = useState(false);
   const [cloudWriteBlocked, setCloudWriteBlocked] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
@@ -628,7 +629,7 @@ export default function App() {
       <nav className="nav">
         {([['dashboard','船隊看板'],['morning','早會工作台'],['meeting','臨會/專題'],['work',`我的待辦${myWorkTaskCount?`（${myWorkTaskCount}）`:''}`],['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['reports','報告中心'],['stats','數據分析'],['management','管理']] as [Tab,string][]).filter(([k])=>canAccessTab(currentUser, k)&&(k!=='reports'||canExportReports)&&(k!=='management'||canEnterManagement)).map(([k,label]) => <button key={k} className={tab===k?'active':''} onClick={() => { if (!canAccessTab(currentUser,k)) return; if (k==='reports' && !canExportReports) return alert('目前角色未獲授權預覽或匯出報告'); if (k==='management' && !requireManage()) return; setSelectedVesselDetailId(''); setTab(k); }}>{label}</button>)}
       </nav>
-      <div className="user-chip"><span className="cloud-dot"/><span>{currentUser.name}｜{roleLabel(currentUser.role)}</span><button className="btn small ghost" onClick={() => setCurrentUserId('')}>切換/退出</button></div>
+      <div className="user-chip"><span className="cloud-dot"/><button type="button" className="user-name-btn" onClick={() => setPasswordModalOpen(true)} title="修改個人密碼">{currentUser.name}｜{roleLabel(currentUser.role)}</button><button className="btn small ghost" onClick={() => setCurrentUserId('')}>切換/退出</button></div>
     </div></header>
     <main className="container">
       <div className="cloud-strip no-print"><span className={getSupabaseConfig()?'ok-note':'danger-note'}>{cloudStatus}</span><span className="spacer"/><button className="btn ghost small" onClick={syncLatest}>同步最新</button><button className="btn green small" onClick={saveChanges}>保存修改</button></div>
@@ -663,6 +664,7 @@ export default function App() {
     {editingVesselId && <VesselEditModal vessel={data.vessels.find(v=>v.id===editingVesselId)} data={data} currentUser={currentUser} close={()=>{setEditingVesselId('');releaseCurrentEditLock();}} commit={commit} addTask={id=>{if(addTaskForVessel(id,true)){setEditingVesselId('');releaseCurrentEditLock();}}} editTask={id=>{const vesselId=editingVesselId;const task=data.tasks.find(item=>item.id===id);setEditingVesselId('');releaseCurrentEditLock();if(task)openTask(task,vesselId);}} />}
     {(editingTaskId || creatingTask) && <TaskEditModal task={editingTask} creating={Boolean(creatingTask)} data={data} visibleVessels={activeVessels} currentUser={currentUser} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canCancelInternalControl={Boolean(editingTask&&editingTaskScopeVessels.length===taskVesselIds(editingTask).length&&editingTaskScopeVessels.every(vessel=>canCancelInternalControl(currentUser,vessel)))} canEditOverall={canEditOverallTask} initialProgressVesselId={taskProgressVesselId} readOnly={!creatingTask&&(!canEditBusinessContent||currentUser.role==='vessel')} close={closeTaskEditor} onSave={saveTask} onSaveVesselProgress={saveTaskVesselProgress} onDelete={()=>{const original=data.tasks.find(task=>task.id===editingTaskId);if(original)deleteTask(original);}} />}
     {reportPreviewOpen && <ReportPreviewModal data={data} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} close={()=>setReportPreviewOpen(false)} onPrint={printReport} />}
+    {passwordModalOpen && <PersonalPasswordModal currentUser={currentUser} close={()=>setPasswordModalOpen(false)} commit={commit} />}
     {currentUser.role!=='vessel'&&!selectedVesselDetailId&&(['dashboard','morning','reports'] as Tab[]).includes(tab) && <div className="selection-dock no-print">涉會船舶 <b className="selected-vessel-count">{agendaSelection.length}</b> 艘 <button className="btn pink small" onClick={()=>setTab('morning')}>進入早會</button><button className="btn primary small" onClick={openReportPreview}>預覽報告</button></div>}
   </div>;
 }
@@ -678,6 +680,25 @@ function OwnerSetup({ currentUser, setData, setCurrentUserId }: { currentUser:Us
   const create=async()=>{ if(!username.trim()||!pw) return alert('請輸入 Owner 用戶名與新密碼'); const hash=await sha256(pw); setData(prev=>withAudit({...prev, users:prev.users.map(u=>u.id===currentUser.id?{...u,role:'owner',username:username.trim(),passwordHash:hash,updatedAt:nowIso()}:u)}, currentUser, '建立Owner', 'user', currentUser.id, '已驗證使用者初始化為 Owner')); setCurrentUserId(currentUser.id); };
   return <div className="login-page"><div className="login-card"><h2>首次初始化 Owner</h2><p className="muted">已驗證身分：{currentUser.department}｜{currentUser.name}。只能將目前登入者初始化為第一位 Owner。</p><div className="field"><label>Owner 用戶名</label><input value={username} onChange={e=>setUsername(e.target.value)} /></div><div className="field"><label>Owner 新密碼</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} /></div><button className="btn primary" onClick={create}>將目前帳號設為 Owner</button></div></div>;
 }
+function PersonalPasswordModal({ currentUser, close, commit }: { currentUser: UserAccount; close:()=>void; commit:(mutate:(draft:AppData)=>void, action:string, entityType:string, entityId:string, detail:string)=>void }) {
+  const [oldPassword,setOldPassword]=useState('');
+  const [newPassword,setNewPassword]=useState('');
+  const [confirmPassword,setConfirmPassword]=useState('');
+  const [err,setErr]=useState('');
+  const noExistingPassword = !currentUser.passwordHash;
+  const updatePassword=async()=>{
+    setErr('');
+    if(!newPassword)return setErr('請輸入新密碼');
+    if(newPassword!==confirmPassword)return setErr('兩次輸入的新密碼不一致');
+    if(currentUser.passwordHash&&await sha256(oldPassword)!==currentUser.passwordHash)return setErr('舊密碼錯誤');
+    const hash=await sha256(newPassword);
+    commit(draft=>{const user=draft.users.find(item=>item.id===currentUser.id);if(user){user.passwordHash=hash;user.updatedAt=nowIso();}},'更新個人密碼','user',currentUser.id,`${currentUser.name} 自行修改密碼`);
+    close();
+    alert('個人密碼已更新；下次登入需使用新密碼。');
+  };
+  return <div className="modal-backdrop"><div className="modal personal-password-modal" role="dialog" aria-modal="true" aria-labelledby="personal-password-title"><div className="modal-head"><div><h2 id="personal-password-title">修改個人密碼</h2><p>{currentUser.name}｜{roleLabel(currentUser.role)}｜{noExistingPassword?'目前無個人密碼，舊密碼可留空':'已有個人密碼，需先驗證舊密碼'}</p></div><button className="btn ghost" onClick={close}>關閉</button></div><div className="grid cols-3"><div className="field"><label>舊密碼</label><input type="password" value={oldPassword} placeholder={noExistingPassword?'舊密碼可留空':'請輸入目前密碼'} onChange={event=>setOldPassword(event.target.value)} /></div><div className="field"><label>新密碼</label><input type="password" value={newPassword} onChange={event=>setNewPassword(event.target.value)} /></div><div className="field"><label>再次輸入新密碼</label><input type="password" value={confirmPassword} onChange={event=>setConfirmPassword(event.target.value)} onKeyDown={event=>{if(event.key==='Enter')void updatePassword();}} /></div></div>{err&&<p className="warn">{err}</p>}<div className="modal-actions"><button className="btn ghost" onClick={close}>取消</button><button className="btn primary" onClick={updatePassword}>更新密碼</button></div></div></div>;
+}
+
 function Login({ data, setCurrentUserId }: { data: AppData; setCurrentUserId:(id:string)=>void }) {
   const activeUsers=data.users.filter(user=>user.isActive);
   const departments=Array.from(new Set(activeUsers.map(user=>user.department || '未指定部門'))).filter(Boolean);
@@ -685,9 +706,9 @@ function Login({ data, setCurrentUserId }: { data: AppData; setCurrentUserId:(id
   const people=activeUsers.filter(user=>(user.department || '未指定部門')===department);
   useEffect(()=>{if(!people.some(user=>user.id===userId)){setUserId(people[0]?.id||'');setPw('');setErr('');}},[department,data.revision]);
   const selectedUser=activeUsers.find(user=>user.id===userId);
-  const selectedNeedsPassword=selectedUser?.role==='owner'||selectedUser?.role==='admin';
-  const login=async()=>{ const user=activeUsers.find(item=>item.id===userId); if(!user) return setErr('請選擇登入人員'); const needsPassword=user.role==='owner'||user.role==='admin'; if(!needsPassword){setCurrentUserId(user.id);return;} if(!user.passwordHash) return setErr('此 Owner／管理員帳號尚未設定密碼，請由 Owner 先設定密碼'); if(!pw) return setErr('Owner／管理員請輸入密碼'); if(await sha256(pw)!==user.passwordHash) return setErr('密碼錯誤'); setCurrentUserId(user.id); };
-  return <div className="login-page"><div className="login-card"><h2>人員登入／切換</h2><p className="muted">請先選擇部門與人員；Owner／管理員需輸入密碼，其餘人員可直接登入。</p><div className="field"><label>部門</label><select aria-label="登入部門" value={department} onChange={e=>setDepartment(e.target.value)}>{departments.map(item=><option key={item}>{item}</option>)}</select></div><div className="field"><label>人員</label><select aria-label="登入人員" value={userId} onChange={e=>{setUserId(e.target.value);setPw('');setErr('');}}>{people.map(user=><option key={user.id} value={user.id}>{user.name}</option>)}</select></div><div className="field"><label>密碼</label><input type="password" value={pw} placeholder={selectedNeedsPassword?'Owner／管理員請輸入密碼':'非管理角色可空白直接登入'} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') login();}} /></div>{err&&<p className="warn">{err}</p>}<button className="btn primary" disabled={!selectedUser} onClick={login}>登入</button></div></div>;
+  const selectedNeedsPassword=Boolean(selectedUser&&(selectedUser.role==='owner'||selectedUser.role==='admin'||selectedUser.passwordHash));
+  const login=async()=>{ const user=activeUsers.find(item=>item.id===userId); if(!user) return setErr('請選擇登入人員'); const needsPassword=user.role==='owner'||user.role==='admin'||Boolean(user.passwordHash); if(!needsPassword){setCurrentUserId(user.id);return;} if(!user.passwordHash) return setErr('此 Owner／管理員帳號尚未設定密碼，請由 Owner 先設定密碼'); if(!pw) return setErr(user.role==='owner'||user.role==='admin'?'Owner／管理員請輸入密碼':'已有個人密碼，請輸入密碼'); if(await sha256(pw)!==user.passwordHash) return setErr('密碼錯誤'); setCurrentUserId(user.id); };
+  return <div className="login-page"><div className="login-card"><h2>人員登入／切換</h2><p className="muted">請先選擇部門與人員；Owner／管理員或已設定個人密碼者需輸入密碼，其餘人員可直接登入。</p><div className="field"><label>部門</label><select aria-label="登入部門" value={department} onChange={e=>setDepartment(e.target.value)}>{departments.map(item=><option key={item}>{item}</option>)}</select></div><div className="field"><label>人員</label><select aria-label="登入人員" value={userId} onChange={e=>{setUserId(e.target.value);setPw('');setErr('');}}>{people.map(user=><option key={user.id} value={user.id}>{user.name}</option>)}</select></div><div className="field"><label>密碼</label><input type="password" value={pw} placeholder={selectedNeedsPassword?'請輸入密碼':'無密碼帳號可空白直接登入'} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') login();}} /></div>{err&&<p className="warn">{err}</p>}<button className="btn primary" disabled={!selectedUser} onClick={login}>登入</button></div></div>;
 }
 
 function ReportCenter({ data, visibleVessels, user, selected, setSelected, commit, onOpenPreview, onPrint }: { data:AppData; visibleVessels:Vessel[]; user:UserAccount; selected:string[]; setSelected:(ids:string[])=>void; commit:any; onOpenPreview:()=>void; onPrint:()=>void }) {

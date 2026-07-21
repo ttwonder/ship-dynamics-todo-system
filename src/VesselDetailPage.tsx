@@ -6,6 +6,7 @@ import { taskSourceLabel } from './taskWorkflow';
 import { deriveVesselAttention, vesselAttentionClass, vesselAttentionLabel } from './vesselAttention';
 import { vesselAttentionTasks } from './taskAttention';
 import { taskIsClosedForVessel, taskProgressForVessel } from './taskVesselProgress';
+import { formatScheduleDisplay } from './scheduleTime';
 import RichTextContent from './RichTextContent';
 
 const attentionLabels: Record<string, string> = {
@@ -70,8 +71,8 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
         <div><dt>下一港</dt><dd>{value(vessel.position.nextPort)}</dd></div><div className="span-2"><dt>航線</dt><dd>{value(vessel.position.lastPort)} → {value(vessel.position.nextPort)}</dd></div>
       </dl></section>
       <section className="panel vessel-info-panel"><h2>時間與資料來源</h2><dl>
-        <div><dt>ETA</dt><dd>{dateTime(vessel.position.eta)}</dd></div><div><dt>ETB</dt><dd>{dateTime(vessel.position.etb)}</dd></div>
-        <div><dt>ETD</dt><dd>{dateTime(vessel.position.etd)}</dd></div><div><dt>位置資料來源</dt><dd>{sourceLabel(vessel.position.source)}</dd></div>
+        <div><dt>ETA</dt><dd>{formatScheduleDisplay(vessel.position.eta)||'未設定'}</dd></div><div><dt>ETB</dt><dd>{formatScheduleDisplay(vessel.position.etb)||'未設定'}</dd></div>
+        <div><dt>ETD</dt><dd>{formatScheduleDisplay(vessel.position.etd)||'未設定'}</dd></div><div><dt>位置資料來源</dt><dd>{sourceLabel(vessel.position.source)}</dd></div>
         <div><dt>位置資料更新時間</dt><dd>{dateTime(vessel.position.updatedAt)}</dd></div><div><dt>貨載資料更新時間</dt><dd>{dateTime(vessel.cargo.updatedAt)}</dd></div>
       </dl></section>
       <section className="panel vessel-info-panel"><h2>貨載資訊</h2><dl>

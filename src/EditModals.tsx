@@ -12,17 +12,14 @@ import MeetingPeoplePicker from './MeetingPeoplePicker';
 import { isRichTextEmpty, richTextToPlainText } from './richText';
 import { taskIsClosedForVessel, taskProgressForVessel, taskVesselProgressSummary, usesPerVesselProgress } from './taskVesselProgress';
 import { categoryChoicesForTask } from './taskCategories';
+import { composeScheduleValue, scheduleDateValue, scheduleTimeValue } from './scheduleTime';
+export { scheduleDateValue as scheduleInputValue } from './scheduleTime';
 
 type Commit = (updater: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => void;
 type MultiChoice = { value: string; label: string; detail?: string };
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const priorityBadgeClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
 const cargoLines = (items: VesselCargoItem[]) => items.map(item => `${item.name}${item.quantity ? `｜${item.quantity}` : ''}`).join('\n');
-export const scheduleInputValue = (value: string) => {
-  const normalized = value.trim().replace(' ', 'T');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return `${normalized}T00:00`;
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(normalized) ? normalized.slice(0, 16) : '';
-};
 const parseCargoLines = (value: string): VesselCargoItem[] => value.split(/\r?\n/).map(line => {
   const [name = '', ...quantityParts] = line.split(/[｜|]/);
   return { name: name.trim(), quantity: quantityParts.join('｜').trim() };
@@ -93,6 +90,12 @@ function DropdownMultiPicker({ label, values, choices, onChange, disabled = fals
   </div>;
 }
 
+function ScheduleDateTimeField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const date = scheduleDateValue(value);
+  const time = scheduleTimeValue(value);
+  return <div className="field schedule-date-time-field"><label>{label}</label><div className="schedule-date-time-inputs"><input type="date" aria-label={`${label} 日期`} value={date} onChange={event => onChange(composeScheduleValue(event.target.value, time))}/><input type="time" aria-label={`${label} 小時分鐘`} value={time} disabled={!date} onChange={event => onChange(composeScheduleValue(date, event.target.value))}/></div><small>選填；可只填日期，若填小時分鐘會顯示到 HH:mm；未選擇時顯示 TBA</small></div>;
+}
+
 export function VesselEditModal({ vessel, data, currentUser, close, commit, addTask, editTask }: { vessel?: Vessel; data: AppData; currentUser: UserAccount; close: () => void; commit: Commit; addTask: (vesselId: string) => void; editTask: (taskId: string) => void }) {
   useEscapeClose(close);
   if (!vessel) return null;
@@ -112,9 +115,9 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
       <div className="field"><label>航行狀態</label><select value={vessel.position.navigationStatus} onChange={event => { const value = event.target.value as NavigationStatus; update(target => { target.position.navigationStatus = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改航行狀態'); }}><option>航行</option><option>拋錨</option><option>停泊</option></select></div>
       <div className="field"><label>速度（kn）</label><input type="number" min="0" step="0.1" value={vessel.position.speedKnots} onChange={event => { const value = Number(event.target.value || 0); update(target => { target.position.speedKnots = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改速度'); }}/></div>
       <div className="field"><label>載況</label><select value={vessel.cargo.loadStatus} onChange={event => { const value = event.target.value as LoadStatus; update(target => { target.cargo.loadStatus = value; target.cargo.source = 'manual'; target.cargo.updatedAt = nowIso(); }, '修改載況'); }}><option>空載</option><option>非空載</option><option>滿載</option></select></div>
-      <div className="field"><label>ETA</label><input type="datetime-local" value={scheduleInputValue(vessel.position.eta)} onChange={event => { const value = event.target.value; update(target => { target.position.eta = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETA'); }}/><small>選填；未選擇時顯示 TBA</small></div>
-      <div className="field"><label>ETB</label><input type="datetime-local" value={scheduleInputValue(vessel.position.etb)} onChange={event => { const value = event.target.value; update(target => { target.position.etb = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETB'); }}/><small>選填；未選擇時顯示 TBA</small></div>
-      <div className="field"><label>ETD</label><input type="datetime-local" value={scheduleInputValue(vessel.position.etd)} onChange={event => { const value = event.target.value; update(target => { target.position.etd = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETD'); }}/><small>選填；未選擇時顯示 TBA</small></div>
+      <ScheduleDateTimeField label="ETA" value={vessel.position.eta} onChange={value => update(target => { target.position.eta = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETA')}/>
+      <ScheduleDateTimeField label="ETB" value={vessel.position.etb} onChange={value => update(target => { target.position.etb = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETB')}/>
+      <ScheduleDateTimeField label="ETD" value={vessel.position.etd} onChange={value => update(target => { target.position.etd = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETD')}/>
       <div className="field span-2"><label>多筆貨名／貨量</label><textarea value={cargoLines(vessel.cargo.items)} placeholder={'每行一筆，例如：\n原油｜28,000 MT\n柴油｜5,000 MT'} onChange={event => { const items = parseCargoLines(event.target.value); update(target => { target.cargo.items = items; target.cargo.name = items[0]?.name || ''; target.cargo.quantity = items[0]?.quantity || ''; target.cargo.source = 'manual'; target.cargo.updatedAt = nowIso(); }, `修改貨名貨量：${items.length} 筆`); }}/></div>
       <div className="field"><label>人工備註</label><input value={vessel.position.manualRemark} onChange={event => { const value = event.target.value; update(target => { target.position.manualRemark = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改人工動態備註'); }}/></div>
       <div className="field span-2"><label>近期／後續動態</label><textarea value={vessel.note.recentDynamics} onChange={event => { const value = event.target.value; update(target => { target.note.recentDynamics = value; target.note.subsequentDynamics = ''; target.note.updatedAt = nowIso(); }, '修改近期／後續動態'); }}/></div>

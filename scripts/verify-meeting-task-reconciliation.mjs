@@ -8,7 +8,7 @@ try {
   const { buildTaskNotifications } = await server.ssrLoadModule('/src/taskWorkflow.ts');
   const { canEditTemporaryMeetings, meetingAppliesToUser } = await server.ssrLoadModule('/src/meetingAccess.ts');
   const { departmentAfterRoleChange } = await server.ssrLoadModule('/src/personWorkflow.ts');
-  const { scheduleInputValue } = await server.ssrLoadModule('/src/EditModals.tsx');
+  const { scheduleDateValue, scheduleTimeValue, composeScheduleValue, formatScheduleDisplay } = await server.ssrLoadModule('/src/scheduleTime.ts');
   const { normalizeAppData } = await server.ssrLoadModule('/src/normalize.ts');
   const { taskShipTypeLabel, taskVesselLabel, taskReportShipTypeLabel, taskReportVesselLabel } = await server.ssrLoadModule('/src/taskVesselScope.ts');
   const { usesPerVesselProgress, taskIsClosedForScope, updateTaskVesselProgress } = await server.ssrLoadModule('/src/taskVesselProgress.ts');
@@ -335,9 +335,14 @@ try {
   assert.equal(meetingTaskDescription(legacyMeeting, legacyTasks), '既有 legacy 會議待辦', 'legacy 會議缺 taskDescription 時需從既有关聯待辦回填');
   assert.equal(meetingTaskDescription({ id: 'explicit-clear', taskDescription: '' }, [task('clear-task', 'v1', 'explicit-clear')]), '', '已存在的空 taskDescription 表示使用者明確清空');
 
-  assert.equal(scheduleInputValue('2026-07-17'), '2026-07-17T00:00', 'date-only ETA/ETB/ETD 應在 datetime-local 中顯示為當日 00:00');
-  assert.equal(scheduleInputValue('2026-07-17 13:45:00'), '2026-07-17T13:45');
-  assert.equal(scheduleInputValue('TBA'), '');
+  assert.equal(scheduleDateValue('2026-07-17'), '2026-07-17', 'date-only ETA/ETB/ETD 應保留純日期');
+  assert.equal(scheduleTimeValue('2026-07-17'), '', 'date-only ETA/ETB/ETD 不應補 00:00');
+  assert.equal(scheduleDateValue('2026-07-17 13:45:00'), '2026-07-17');
+  assert.equal(scheduleTimeValue('2026-07-17 13:45:00'), '13:45');
+  assert.equal(composeScheduleValue('2026-07-17',''), '2026-07-17');
+  assert.equal(composeScheduleValue('2026-07-17','13:45'), '2026-07-17T13:45');
+  assert.equal(formatScheduleDisplay('2026-07-17T13:45'), '2026-07-17 13:45');
+  assert.equal(formatScheduleDisplay('TBA'), '');
 
   const meetingsSource = fs.readFileSync('src/TemporaryMeetings.tsx', 'utf8');
   const editModalsSource = fs.readFileSync('src/EditModals.tsx', 'utf8');

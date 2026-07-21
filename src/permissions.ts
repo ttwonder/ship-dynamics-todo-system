@@ -22,7 +22,7 @@ const row = (enabled: PermissionKey[]): Record<PermissionKey, boolean> => Object
 
 export const DEFAULT_ROLE_PERMISSIONS: RolePermissions = {
   owner: row(PERMISSION_KEYS),
-  admin: row(['viewAllVessels', 'editBusinessContent', 'createTasks', 'closeTasks', 'deleteTasks', 'manageMeetings', 'exportReports', 'enterManagement', 'manageVessels', 'viewAuditLogs']),
+  admin: row(['viewAllVessels', 'editBusinessContent', 'createTasks', 'closeTasks', 'deleteTasks', 'manageMeetings', 'exportReports', 'enterManagement', 'manageUsers', 'manageVessels', 'viewAuditLogs']),
   operator: row(['editBusinessContent', 'createTasks', 'closeTasks', 'exportReports']),
   vessel: row(['createTasks']),
 };
@@ -45,6 +45,7 @@ export function normalizeRolePermissions(value: unknown): RolePermissions {
   result.admin.deleteTasks = true;
   result.operator.deleteTasks = false;
   result.vessel.deleteTasks = false;
+  result.admin.manageUsers = true;
   result.admin.manageRolePermissions = false;
   result.operator.manageRolePermissions = false;
   result.admin.manageSystemSettings = false;

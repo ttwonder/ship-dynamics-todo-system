@@ -4,11 +4,10 @@ import fs from 'node:fs';
 const editors = fs.readFileSync('src/EditModals.tsx', 'utf8');
 
 for (const label of ['ETA', 'ETB', 'ETD']) {
-  const input = editors.match(new RegExp(`<label>${label}</label><input([^>]*)>`));
-  assert.ok(input, `快速更新需提供 ${label} 輸入`);
-  assert.match(input[1], /type="datetime-local"/, `${label} 必須使用日期時間選擇器`);
-  assert.doesNotMatch(input[1], /\brequired\b/, `${label} 必須可以留空`);
+  assert.ok(editors.includes(`ScheduleDateTimeField label="${label}"`), `快速更新需提供 ${label} 日期與時間欄位`);
 }
+assert.ok(editors.includes('type="date"') && editors.includes('type="time"'), 'ETA／ETB／ETD 必須拆成日期與可選小時分鐘輸入');
+assert.ok(!editors.includes('type="datetime-local"'), 'ETA／ETB／ETD 不得使用 datetime-local，需允許只保存日期');
 
 const management = fs.readFileSync('src/Management.tsx', 'utf8');
 assert.ok(

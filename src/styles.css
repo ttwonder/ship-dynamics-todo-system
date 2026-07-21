@@ -156,3 +156,7 @@
 .filter-chip-low{border-color:#a9dfc9!important;background:var(--mint-soft)!important;color:#2f8563!important}.filter-chip-low.on{background:#2f8563!important;color:#fff!important}
 .filter-group-heading{font-weight:950;letter-spacing:.02em}.filter-group-task{border-color:#0f766e!important;background:#ecfdf5!important;color:#0f766e!important}.filter-group-task.on{background:#0f766e!important;color:#fff!important}.filter-group-meeting{border-color:#7c3aed!important;background:#f4efff!important;color:#6d28d9!important}.filter-group-meeting.on{background:#7c3aed!important;color:#fff!important}
 .heading-actions .filter-reset-btn{min-height:31px;border-color:#f1b5c2!important;background:#fff7fa!important;color:#a43a52!important}.heading-actions .filter-reset-btn:hover{background:#ffe4eb!important;border-color:#dc7890!important;color:#84253b!important}
+
+.user-name-btn{border:0;background:transparent;color:inherit;font-weight:700;cursor:pointer;padding:2px 4px;border-radius:8px}.user-name-btn:hover,.user-name-btn:focus{background:#f1e8ff;outline:2px solid #dac8ff;outline-offset:1px}.personal-password-modal{max-width:860px}.personal-password-modal .modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}.personal-password-modal .modal-head h2{margin:0}.personal-password-modal .modal-head p{margin:4px 0 0;color:var(--muted)}
+
+.schedule-date-time-inputs{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,.9fr);gap:7px}.schedule-date-time-inputs input:disabled{background:#f4eef7;color:#9b8ea5}
