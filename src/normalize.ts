@@ -203,16 +203,18 @@ export function normalizeAppData(value: unknown): AppData | null {
       lastCloudSyncAt: text(settings.lastCloudSyncAt),
     },
     users: objects(raw.users).map(item => {
+      const role = oneOf(item.role, roles, 'operator');
       const rawPasswordHash=item.passwordHash;
+      const passwordRequired = role === 'owner' || role === 'admin';
       const passwordHashValid=typeof rawPasswordHash==='string'&&(rawPasswordHash===''||/^[a-f0-9]{64}$/i.test(rawPasswordHash));
       return {
         id: text(item.id),
         department: text(item.department),
         name: text(item.name),
         username: text(item.username),
-        role: oneOf(item.role, roles, 'operator'),
-        passwordHash: passwordHashValid ? rawPasswordHash.toLowerCase() : INVALID_PASSWORD_HASH,
-        isActive: passwordHashValid && bool(item.isActive, true),
+        role,
+        passwordHash: passwordRequired ? (passwordHashValid ? rawPasswordHash.toLowerCase() : INVALID_PASSWORD_HASH) : '',
+        isActive: (passwordRequired ? passwordHashValid : true) && bool(item.isActive, true),
         managedVesselIds: strings(item.managedVesselIds),
         createdAt: text(item.createdAt, timestamp),
         updatedAt: text(item.updatedAt, timestamp),

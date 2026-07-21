@@ -51,7 +51,7 @@ try {
     ], vessels:[], tasks:[], meetings:[], agendaReports:[], auditLogs:[], notifications:[],
   });
   assert.equal(migrationFixture.users.find(user => user.id === 'owner').passwordHash, ownerHash);
-  assert.equal(migrationFixture.users.find(user => user.id === 'user').passwordHash, userHash);
+  assert.equal(migrationFixture.users.find(user => user.id === 'user').passwordHash, '', '非 Owner／管理員密碼 hash 必須清空，確保無密碼登入');
   assert.equal('passwordVisible' in migrationFixture.users.find(user => user.id === 'user'), false, 'normalize 必須丟棄舊 plaintext passwordVisible');
   assert.equal('passwordVisible' in utils.sanitizeAppDataForStorage({ ...migrationFixture, users: [{ ...migrationFixture.users[1], passwordVisible:'old' }] }).users[0], false, '本機與雲端保存前必須以 UserAccount 白名單序列化，丟棄舊 plaintext password 欄位');
   assert.equal(migrationFixture.settings.nonOwnerPasswordResetVersion, 0);
@@ -104,7 +104,7 @@ try {
   assert.ok(workCenter.includes('selectUserWorkCenterTasks(data,user,vessels)') && app.includes('selectUserWorkCenterTasks(data,currentUser,activeVessels)') && workCenterScope.includes('meetingInvolvesUser') && workCenterScope.includes('isVesselDelegatedMeetingTask'), '我的待辦清單與導航數量必須共用同一歸屬 selector，並只包含分管督導、事項追蹤窗口、臨會追蹤窗口/負責人或已分派到單船跟蹤的待辦');
   assert.ok(normalizeSource.includes("user.role === 'admin' || user.role === 'operator'") && normalizeSource.includes('ownerUserIds.has(user.id)') && !normalizeSource.includes('managementUserIds'), 'Owner 不分管具體船舶；管理員與操作員可保留船舶經管關係');
   assert.ok(app.includes('aria-label="登入部門"') && app.includes('aria-label="登入人員"'), '登入頁應使用部門與人員下拉選擇');
-  assert.ok(app.includes("const needsPassword=user.role==='owner'||user.role==='admin'") && app.includes('if(needsPassword)') && app.includes('if(await sha256(pw)!==user.passwordHash)'), '登入密碼驗證應只套用 Owner／管理員');
+  assert.ok(app.includes("const needsPassword=user.role==='owner'||user.role==='admin'") && app.includes('if(!needsPassword){setCurrentUserId(user.id);return;}') && app.includes('if(await sha256(pw)!==user.passwordHash)'), '登入密碼驗證應只套用 Owner／管理員，非管理角色須在比對密碼前直接登入');
   assert.ok(app.includes("placeholder={selectedNeedsPassword?'Owner／管理員請輸入密碼':'非管理角色可空白直接登入'}") && !app.includes('disabled={!selectedUser?.passwordHash}'), '登入頁需保留密碼輸入框，但非管理角色可空白直接登入');
   const plaintextPasswordSources = [app, management, seed, normalizeSource, fs.readFileSync('src/types.ts','utf8')].join('\n');
   assert.ok(!plaintextPasswordSources.includes('passwordVisible') && !plaintextPasswordSources.includes('DEFAULT_USER_PASSWORD') && !plaintextPasswordSources.includes('DEFAULT_SITE_PASSWORD') && !plaintextPasswordSources.includes('fpmc2026') && !plaintextPasswordSources.includes('ship2026'), '共享 AppData/localStorage/Supabase payload 不得保存或暴露可回復明文密碼');

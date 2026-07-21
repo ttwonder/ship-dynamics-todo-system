@@ -14,5 +14,6 @@ assert.ok(!login.includes("user.name}｜"),'人员姓名后不得拼接操作层
 assert.match(login,/type="password"/,'认证密码栏不得因本次显示调整而移除');
 assert.doesNotMatch(login,/disabled=\{!selectedUser\?\.passwordHash\}/,'密碼欄需保留可輸入狀態，不得因非管理人員無密碼而 disabled');
 assert.match(login,/const needsPassword=user\.role==='owner'\|\|user\.role==='admin'/,'登入密碼驗證只應套用 Owner／管理員');
+assert.match(login,/if\(!needsPassword\)\{setCurrentUserId\(user\.id\);return;\}/,'非管理角色必須在密碼比對前直接登入');
 assert.match(login,/非管理角色可空白直接登入/,'非管理角色需提示可空白直接登入');
 console.log('Login identity labels show department and name without role level.');

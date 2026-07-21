@@ -56,7 +56,7 @@ export function sanitizeAppDataForStorage(data: AppData): AppData {
       name: user.name,
       username: user.username,
       role: user.role,
-      passwordHash: user.passwordHash,
+      passwordHash: user.role === 'owner' || user.role === 'admin' ? user.passwordHash : '',
       isActive: user.isActive,
       managedVesselIds: [...(user.managedVesselIds || [])],
       createdAt: user.createdAt,
