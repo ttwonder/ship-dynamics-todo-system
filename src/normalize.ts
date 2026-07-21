@@ -40,7 +40,7 @@ const normalizeShipStatus = (value: unknown): ShipStatus | undefined => {
   const normalized = text(value);
   return legacyShipStatusMap[normalized] || shipStatuses.find(status => status === normalized);
 };
-const navigationStatuses: NavigationStatus[] = ['航行', '拋錨', '停泊'];
+const navigationStatuses: NavigationStatus[] = ['航行', '拋錨', '進港中', '出港中', '停泊', '漂航'];
 const loadStatuses: LoadStatus[] = ['空載', '非空載', '滿載'];
 const weeklyAttentionKeys: WeeklyAttentionKey[] = ['crew-operation', 'bunkering-water', 'materials-parts', 'maintenance', 'survey', 'audit-inspection', 'psc-window'];
 const meetingStatuses: TemporaryMeetingStatus[] = ['待召開', '追蹤中', '已完成'];

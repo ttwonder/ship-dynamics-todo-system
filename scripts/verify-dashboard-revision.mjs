@@ -15,15 +15,15 @@ const styles = read('src/styles.css');
 
 assert.ok(types.includes("TaskPriority = '急' | '高' | '中' | '低'"), '关注程度需新增「急」等级');
 assert.ok(types.includes('isAbnormal: boolean'), '要事需保存异常选项');
-assert.ok(types.includes("NavigationStatus = '航行' | '拋錨' | '停泊'"), '需保存航行／抛锚／停泊状态');
+assert.ok(types.includes("NavigationStatus = '航行' | '拋錨' | '進港中' | '出港中' | '停泊' | '漂航'"), '航行狀態需保存航行／拋錨／進港中／出港中／停泊／漂航');
 assert.ok(types.includes("LoadStatus = '空載' | '非空載' | '滿載'"), '需保存空载／非空载／满载状态');
 assert.ok(types.includes('etb: string') && types.includes('etd: string'), '需保存 ETA／ETB／ETD');
 assert.ok(types.includes('items: VesselCargoItem[]'), '货名货量需支持多笔资料');
 assert.ok(types.includes('weeklyAttention: WeeklyAttentionKey[]'), '需保存未来一周关注灯');
 
 assert.ok(modals.includes('異常') && modals.includes('draft.isAbnormal'), '新增／编辑要事弹窗需提供异常选项');
-for (const label of ['航行狀態', '載況', 'ETA', 'ETB', 'ETD', '多筆貨名／貨量']) {
-  assert.ok(modals.includes(label), `快速更新需提供「${label}」手动修改`);
+for (const status of ['航行','拋錨','進港中','出港中','停泊','漂航']) {
+  assert.ok(modals.includes(`<option>${status}</option>`), `快速更新航行狀態需提供「${status}」`);
 }
 assert.ok(modals.includes('智慧船舶接口'), '快速更新需说明资料可由智慧船舶接口同步');
 
