@@ -53,6 +53,7 @@ const object = (value: unknown): Record<string, unknown> | null => value !== nul
 const objects = (value: unknown): Record<string, unknown>[] => list(value).map(object).filter((item): item is Record<string, unknown> => item !== null);
 const strings = (value: unknown): string[] => list(value).filter((item): item is string => typeof item === 'string');
 const text = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback;
+const normalizeDateText = (value: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(text(value)) ? text(value) : '';
 const bool = (value: unknown, fallback = false) => typeof value === 'boolean' ? value : fallback;
 const finite = (value: unknown, fallback = 0) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T => typeof value === 'string' && allowed.includes(value as T) ? value as T : fallback;
@@ -288,6 +289,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       const closedDate=text(item.closedDate)||undefined;
       const closedBy=text(item.closedBy)||undefined;
       const updatedAt=text(item.updatedAt,timestamp);
+      const createdAt=text(item.createdAt, timestamp);
       const updatedBy=text(item.updatedBy);
       const statusLogs=normalizeStatusLogs(item.statusLogs);
       const taskScopeIds=Array.from(new Set([vesselId,...vesselIds].filter(Boolean)));
@@ -313,6 +315,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       description: text(item.description),
       status,
       expectedDate: text(item.expectedDate),
+      reportDate: normalizeDateText(item.reportDate) || text(item.createdAt, timestamp).slice(0, 10),
       departments: strings(item.departments),
       ownerUserIds: strings(item.ownerUserIds),
       isClosed,
@@ -324,7 +327,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       sourceType,
       createdBy: text(item.createdBy),
       updatedBy,
-      createdAt: text(item.createdAt, timestamp),
+      createdAt,
       updatedAt,
       statusLogs,
       vesselProgress,

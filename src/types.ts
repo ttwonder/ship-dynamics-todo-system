@@ -117,6 +117,7 @@ export interface TaskItem {
   description: string;
   status: string;
   expectedDate: string;
+  reportDate: string;
   departments: string[];
   ownerUserIds: string[];
   isClosed: boolean;

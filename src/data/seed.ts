@@ -786,6 +786,7 @@ export function createInitialData(): AppData {
     description: `${v.fullName} 早會跟進事項 ${index + 1}`,
     status: '昨日已更新，早會追蹤中',
     expectedDate: nextWeek,
+    reportDate: yesterday.slice(0, 10),
     departments: [DEPARTMENTS[index % DEPARTMENTS.length]],
     ownerUserIds: [],
     isClosed: false,

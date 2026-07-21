@@ -26,7 +26,7 @@ const priorityOrder = { 急:0, 高:1, 中:2, 低:3 } as const;
 type AgendaViewMode = 'all' | 'today' | 'history';
 type AgendaSortMode = 'priority' | 'newest' | 'oldest';
 
-const taskReportDate = (task: TaskItem) => (task.createdAt || task.updatedAt || '').slice(0, 10);
+const taskReportDate = (task: TaskItem) => (task.reportDate || (task.createdAt || task.updatedAt || '').slice(0, 10));
 const taskReportTime = (task: TaskItem) => {
   const raw = task.createdAt || task.updatedAt;
   if (!raw) return '未記錄時間';
@@ -83,7 +83,7 @@ export default function MorningWorkspaceView({ data, user, visibleVessels, selec
     return <article className={`meeting-agenda-card priority-${task.priority}`} key={task.id}>
       <div className="agenda-number">{String(index+1).padStart(2,'0')}</div>
       <div className="agenda-content">
-        <div className="agenda-vessel-label"><b>{taskVesselLabel(task,visibleVessels)}</b><span className="agenda-report-time">報告時間 {taskReportTime(task)}</span></div>
+        <div className="agenda-vessel-label"><b>{taskVesselLabel(task,visibleVessels)}</b><span className="agenda-report-time">報告日期 {taskReportDate(task)||'未設定'}｜建立 {taskReportTime(task)}</span></div>
         <div className="agenda-task-title">{task.isAbnormal&&<span className="inline-abnormal">異常</span>}<RichTextContent compact value={task.description} fallback="尚未輸入要事內容"/></div>
         <p>{task.priority}關注｜{taskCategoryLabel(task)}｜{task.departments.join('、')||'未指定部門'}｜期限 {task.expectedDate||'未設定'}</p>
         <div className="agenda-status"><b>目前狀態：</b><RichTextContent compact value={displayStatus} fallback="尚未更新狀態"/></div>

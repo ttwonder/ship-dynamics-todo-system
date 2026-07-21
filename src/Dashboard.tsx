@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ScheduleKind, TaskItem, UserAccount, Vessel, WeeklyAttentionKey } from './types';
 import { daysDiff, todayDate } from './utils';
-import { vesselDisplayName } from './vesselDisplay';
+import { dashboardVesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention, vesselAttentionClass, vesselAttentionLabel } from './vesselAttention';
 import QuickMorningPicker from './QuickMorningPicker';
@@ -117,7 +117,7 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
       const selectedForMeeting = selected.includes(vessel.id);
       return <article key={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
         <div className="ship-card-head">
-          <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${vesselDisplayName(vessel)} 單船詳情`}>{vesselDisplayName(vessel)}</button><small>{vessel.shipType}</small></div>
+          <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${dashboardVesselDisplayName(vessel)} 單船詳情`}>{dashboardVesselDisplayName(vessel)}</button><small>{vessel.shipType}</small></div>
           <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<button type="button" disabled={!canEdit} className={`priority-pill attention-adjust ${level}`} title={canEdit?'點擊切換自動或不低於目前自動下限的手動關注度':'目前關注度'} onClick={()=>onAdjustAttention(vessel.id)}>{highest}</button></div>
         </div>
         <div className="ship-operation-grid">

@@ -241,6 +241,7 @@ export const reconcileMeetingTasks = ({
       description: item.description,
       status: initialStatus.trim() || '待執行',
       expectedDate,
+      reportDate: at.slice(0, 10),
       departments: [...departments],
       ownerUserIds: [...ownerUserIds],
       isClosed: false,
