@@ -208,8 +208,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       const role = oneOf(item.role, roles, 'operator');
       const rawPasswordHash=item.passwordHash;
       const passwordRequired = role === 'owner' || role === 'admin';
-      const passwordHashMissing = rawPasswordHash === undefined || rawPasswordHash === null;
-      const normalizedRawPassword = passwordHashMissing && !passwordRequired ? '' : rawPasswordHash;
+      const normalizedRawPassword = passwordRequired ? rawPasswordHash : '';
       const passwordHashValid=typeof normalizedRawPassword==='string'&&(normalizedRawPassword===''||/^[a-f0-9]{64}$/i.test(normalizedRawPassword));
       return {
         id: text(item.id),

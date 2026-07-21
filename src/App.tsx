@@ -694,12 +694,21 @@ function PersonalPasswordModal({ currentUser, close, commit }: { currentUser: Us
   const [newPassword,setNewPassword]=useState('');
   const [confirmPassword,setConfirmPassword]=useState('');
   const [err,setErr]=useState('');
+  const passwordRequired = currentUser.role === 'owner' || currentUser.role === 'admin';
   const noExistingPassword = !currentUser.passwordHash;
   const updatePassword=async()=>{
     setErr('');
-    if(!newPassword)return setErr('請輸入新密碼');
-    if(newPassword!==confirmPassword)return setErr('兩次輸入的新密碼不一致');
     if(currentUser.passwordHash&&await sha256(oldPassword)!==currentUser.passwordHash)return setErr('舊密碼錯誤');
+    if(!newPassword&&!confirmPassword){
+      if(passwordRequired)return setErr('Owner／管理員不可解除密碼，請輸入新密碼');
+      commit(draft=>{const user=draft.users.find(item=>item.id===currentUser.id);if(user){user.passwordHash='';user.updatedAt=nowIso();}},'解除個人密碼','user',currentUser.id,`${currentUser.name} 解除個人密碼`);
+      close();
+      alert('個人密碼已解除；下次可無密碼登入。');
+      return;
+    }
+    if(!newPassword||!confirmPassword)return setErr('請完整輸入新密碼與確認密碼；若要解除密碼，請將新密碼留空');
+    if(newPassword!==confirmPassword)return setErr('兩次輸入的新密碼不一致');
+    if(!passwordRequired)return setErr('非 Owner／管理員固定無密碼登入，不需設定個人密碼');
     const hash=await sha256(newPassword);
     commit(draft=>{const user=draft.users.find(item=>item.id===currentUser.id);if(user){user.passwordHash=hash;user.updatedAt=nowIso();}},'更新個人密碼','user',currentUser.id,`${currentUser.name} 自行修改密碼`);
     close();
@@ -715,9 +724,9 @@ function Login({ data, setCurrentUserId }: { data: AppData; setCurrentUserId:(id
   const people=activeUsers.filter(user=>(user.department || '未指定部門')===department);
   useEffect(()=>{if(!people.some(user=>user.id===userId)){setUserId(people[0]?.id||'');setPw('');setErr('');}},[department,data.revision]);
   const selectedUser=activeUsers.find(user=>user.id===userId);
-  const selectedNeedsPassword=Boolean(selectedUser&&(selectedUser.role==='owner'||selectedUser.role==='admin'||selectedUser.passwordHash));
-  const login=async()=>{ const user=activeUsers.find(item=>item.id===userId); if(!user) return setErr('請選擇登入人員'); const needsPassword=user.role==='owner'||user.role==='admin'||Boolean(user.passwordHash); if(!needsPassword){setCurrentUserId(user.id);return;} if(!user.passwordHash) return setErr('此 Owner／管理員帳號尚未設定密碼，請由 Owner 先設定密碼'); if(!pw) return setErr(user.role==='owner'||user.role==='admin'?'Owner／管理員請輸入密碼':'已有個人密碼，請輸入密碼'); if(await sha256(pw)!==user.passwordHash) return setErr('密碼錯誤'); setCurrentUserId(user.id); };
-  return <div className="login-page"><div className="login-card"><h2>人員登入／切換</h2><p className="muted">請先選擇部門與人員；Owner／管理員或已設定個人密碼者需輸入密碼，其餘人員可直接登入。</p><div className="field"><label>部門</label><select aria-label="登入部門" value={department} onChange={e=>setDepartment(e.target.value)}>{departments.map(item=><option key={item}>{item}</option>)}</select></div><div className="field"><label>人員</label><select aria-label="登入人員" value={userId} onChange={e=>{setUserId(e.target.value);setPw('');setErr('');}}>{people.map(user=><option key={user.id} value={user.id}>{user.name}</option>)}</select></div><div className="field"><label>密碼</label><input type="password" value={pw} placeholder={selectedNeedsPassword?'請輸入密碼':'無密碼帳號可空白直接登入'} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') login();}} /></div>{err&&<p className="warn">{err}</p>}<button className="btn primary" disabled={!selectedUser} onClick={login}>登入</button></div></div>;
+  const selectedNeedsPassword=Boolean(selectedUser&&(selectedUser.role==='owner'||selectedUser.role==='admin'));
+  const login=async()=>{ const user=activeUsers.find(item=>item.id===userId); if(!user) return setErr('請選擇登入人員'); const needsPassword=user.role==='owner'||user.role==='admin'; if(!needsPassword){setCurrentUserId(user.id);return;} if(!user.passwordHash) return setErr('此 Owner／管理員帳號尚未設定密碼，請由 Owner 先設定密碼'); if(!pw) return setErr('Owner／管理員請輸入密碼'); if(await sha256(pw)!==user.passwordHash) return setErr('密碼錯誤'); setCurrentUserId(user.id); };
+  return <div className="login-page"><div className="login-card"><h2>人員登入／切換</h2><p className="muted">請先選擇部門與人員；Owner／管理員需輸入密碼，其餘人員可直接登入。</p><div className="field"><label>部門</label><select aria-label="登入部門" value={department} onChange={e=>setDepartment(e.target.value)}>{departments.map(item=><option key={item}>{item}</option>)}</select></div><div className="field"><label>人員</label><select aria-label="登入人員" value={userId} onChange={e=>{setUserId(e.target.value);setPw('');setErr('');}}>{people.map(user=><option key={user.id} value={user.id}>{user.name}</option>)}</select></div><div className="field"><label>密碼</label><input type="password" value={pw} placeholder={selectedNeedsPassword?'請輸入密碼':'無密碼帳號可空白直接登入'} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') login();}} /></div>{err&&<p className="warn">{err}</p>}<button className="btn primary" disabled={!selectedUser} onClick={login}>登入</button></div></div>;
 }
 
 function ReportCenter({ data, visibleVessels, user, selected, setSelected, commit, onOpenPreview, onPrint }: { data:AppData; visibleVessels:Vessel[]; user:UserAccount; selected:string[]; setSelected:(ids:string[])=>void; commit:any; onOpenPreview:()=>void; onPrint:()=>void }) {

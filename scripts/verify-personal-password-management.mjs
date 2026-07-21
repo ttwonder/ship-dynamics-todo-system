@@ -15,18 +15,19 @@ assert.match(app, /舊密碼/, '個人密碼彈窗需提供舊密碼欄位');
 assert.match(app, /新密碼/, '個人密碼彈窗需提供新密碼欄位');
 assert.match(app, /再次輸入新密碼/, '個人密碼彈窗需要求新密碼二次確認');
 assert.match(app, /currentUser\.passwordHash[\s\S]*sha256\(oldPassword\)/, '已有密碼者更新前必須驗證舊密碼');
-assert.match(app, /!currentUser\.passwordHash[\s\S]*舊密碼可留空/, '原本無密碼者舊密碼可留空');
-assert.match(app, /const needsPassword=user\.role==='owner'\|\|user\.role==='admin'\|\|Boolean\(user\.passwordHash\)/, '登入需支援非管理人員設定密碼後必須驗證，無密碼者仍可空白登入');
-assert.match(app, /if\(!needsPassword\)\{setCurrentUserId\(user\.id\);return;\}/, '無密碼非管理人員仍需能直接登入');
-assert.match(app, /已有個人密碼，請輸入密碼/, '登入頁需提示已有個人密碼的非管理人員輸入密碼');
+assert.match(app, /!newPassword&&!confirmPassword[\s\S]*passwordRequired[\s\S]*不可解除密碼[\s\S]*passwordHash=''/, '只輸入舊密碼且新密碼留空時，非 Owner／管理員需解除密碼');
+assert.match(app, /const needsPassword=user\.role==='owner'\|\|user\.role==='admin'/, '登入密碼驗證只套用 Owner／管理員');
+assert.doesNotMatch(app, /\|\|Boolean\(user\.passwordHash\)/, '非 Owner／管理員不得因舊 passwordHash 被要求輸入密碼');
+assert.match(app, /if\(!needsPassword\)\{setCurrentUserId\(user\.id\);return;\}/, '非管理人員必須在密碼比對前直接登入');
+assert.match(app, /其餘人員可直接登入/, '登入頁需提示非管理人員可直接登入');
 
 assert.match(permissions, /admin: row\(\[[\s\S]*'manageUsers'/, '管理員預設需能看到並管理「人員」');
 assert.match(permissions, /result\.admin\.manageUsers = true/, '既有權限矩陣正規化後，管理員仍固定可管理非 Owner 人員');
 assert.match(management, /if \(!owner && \(targetUser\?\.role === 'owner' \|\| personDraft\.role === 'owner'\)\) return alert\('管理員不可建立或修改 Owner 帳號'\)/, '管理員不可建立或修改 Owner');
-assert.match(management, /const passwordHash = personDraft\.password \? await sha256\(personDraft\.password\) : selected\?\.passwordHash \|\| ''/, '管理頁保存人員時需保留或重設非 Owner 人員密碼 hash，而不是清空');
+assert.match(management, /const passwordHash = passwordRequired \? \(personDraft\.password \? await sha256\(personDraft\.password\) : selected\?\.passwordHash \|\| ''\) : ''/, '管理頁保存人員時必須清空非 Owner／管理員密碼 hash');
 assert.match(management, /const canClearPassword = !creating && manager && selectedUserId !== currentUser\.id && draft\.role !== 'owner'/, 'Owner／管理員可清除非 Owner 人員密碼，但不可清除 Owner 密碼');
 assert.doesNotMatch(management, /passwordVisible|Owner 可查看|具體密碼/, '管理頁不得顯示可回復明文密碼');
-assert.doesNotMatch(utils, /user\.role === 'owner' \|\| user\.role === 'admin' \? user\.passwordHash : ''/, '儲存時不得清空非管理人員自設密碼 hash');
+assert.match(utils, /user\.role === 'owner' \|\| user\.role === 'admin' \? user\.passwordHash : ''/, '儲存時必須清空非管理人員密碼 hash');
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
@@ -45,10 +46,10 @@ try {
     ],
     vessels: [], tasks: [], meetings: [], agendaReports: [], notifications: [], auditLogs: [],
   });
-  assert.equal(fixture.users.find(user => user.id === 'operator-password').passwordHash, otherHash, '非管理人員自設密碼 hash 正規化後必須保留');
+  assert.equal(fixture.users.find(user => user.id === 'operator-password').passwordHash, '', '非管理人員舊密碼 hash 正規化後必須清除');
   assert.equal(fixture.users.find(user => user.id === 'operator-blank').passwordHash, '', '非管理人員沒有密碼時仍保留無密碼登入語義');
   const stored = sanitizeAppDataForStorage(fixture);
-  assert.equal(stored.users.find(user => user.id === 'operator-password').passwordHash, otherHash, '保存到本地／雲端 payload 時必須同步保存非管理人員自設密碼 hash');
+  assert.equal(stored.users.find(user => user.id === 'operator-password').passwordHash, '', '保存到本地／雲端 payload 時必須清空非管理人員密碼 hash');
   const normalizedPermissions = normalizeRolePermissions(fixture.settings.rolePermissions);
   assert.equal(normalizedPermissions.admin.manageUsers, true, '管理員 manageUsers 需固定開啟，不受舊設定關閉影響');
   assert.equal(hasPermission(normalizedPermissions, fixture.users.find(user => user.id === 'admin'), 'manageUsers'), true, '管理員需能進管理頁看到人員');
