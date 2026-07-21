@@ -810,7 +810,7 @@ export function createInitialData(): AppData {
       vesselStatuses: [...VESSEL_STATUSES],
       priorities: [...PRIORITIES],
       rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),
-      nonOwnerPasswordResetVersion: 1,
+      nonOwnerPasswordResetVersion: 2,
       lastCloudSyncAt: '',
     },
     users,

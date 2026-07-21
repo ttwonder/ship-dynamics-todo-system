@@ -24,6 +24,7 @@ import { normalizeVesselDelegateManagers } from './vesselDelegation';
 
 const roles: UserRole[] = ['owner', 'admin', 'operator', 'vessel'];
 const INVALID_PASSWORD_HASH = '0'.repeat(64);
+const OPERATOR_PASSWORD_RESET_VERSION = 2;
 const auditRoles: Array<UserRole | 'system'> = [...roles, 'system'];
 const priorities: TaskPriority[] = ['急', '高', '中', '低'];
 const vesselAttentionLevels: VesselAttentionLevel[] = [...priorities, '特別關注'];
@@ -186,6 +187,9 @@ export function normalizeAppData(value: unknown): AppData | null {
     ? sanitizeEditableMeetingTaskCategories(settings.meetingTaskCategories)
     : normalizeConfiguredMeetingTaskCategories(settings.meetingTaskCategories);
 
+  const resetVersion = finite(settings.nonOwnerPasswordResetVersion, 0);
+  const shouldResetOperatorPasswords = resetVersion < OPERATOR_PASSWORD_RESET_VERSION;
+
   const normalized: AppData = {
     revision: finite(raw.revision),
     updatedAt: timestamp,
@@ -200,7 +204,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       vesselStatuses: [...shipStatuses],
       priorities: [...priorities],
       rolePermissions: normalizeRolePermissions(settings.rolePermissions),
-      nonOwnerPasswordResetVersion: finite(settings.nonOwnerPasswordResetVersion, 0),
+      nonOwnerPasswordResetVersion: Math.max(resetVersion, OPERATOR_PASSWORD_RESET_VERSION),
       meetingTaskAggregationVersion: finite(settings.meetingTaskAggregationVersion, 0),
       lastCloudSyncAt: text(settings.lastCloudSyncAt),
     },
@@ -208,14 +212,15 @@ export function normalizeAppData(value: unknown): AppData | null {
       const role = oneOf(item.role, roles, 'operator');
       const normalizedRawPassword=item.passwordHash;
       const passwordHashValid=typeof normalizedRawPassword==='string'&&(normalizedRawPassword===''||/^[a-f0-9]{64}$/i.test(normalizedRawPassword));
+      const clearOperatorPassword = shouldResetOperatorPasswords && role === 'operator';
       return {
         id: text(item.id),
         department: text(item.department),
         name: text(item.name),
         username: text(item.username),
         role,
-        passwordHash: passwordHashValid ? text(normalizedRawPassword).toLowerCase() : INVALID_PASSWORD_HASH,
-        isActive: passwordHashValid && bool(item.isActive, true),
+        passwordHash: clearOperatorPassword ? '' : passwordHashValid ? text(normalizedRawPassword).toLowerCase() : INVALID_PASSWORD_HASH,
+        isActive: clearOperatorPassword ? bool(item.isActive, true) : passwordHashValid && bool(item.isActive, true),
         managedVesselIds: strings(item.managedVesselIds),
         createdAt: text(item.createdAt, timestamp),
         updatedAt: text(item.updatedAt, timestamp),

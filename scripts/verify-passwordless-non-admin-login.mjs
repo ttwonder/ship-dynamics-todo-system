@@ -10,7 +10,7 @@ try {
   const normalized = normalizer.normalizeAppData({
     revision: 1,
     updatedAt: '2026-07-21T00:00:00.000Z',
-    settings: { sitePasswordHash: 'x', systemTitle: 'x', departments: ['航運處'], taskCategories: [], rolePermissions: {} },
+    settings: { sitePasswordHash: 'x', systemTitle: 'x', departments: ['航運處'], taskCategories: [], rolePermissions: {}, nonOwnerPasswordResetVersion: 1 },
     users: [
       { id: 'owner', department: '管理層', name: 'Owner', username: 'owner', role: 'owner', passwordHash: validHash, isActive: true, managedVesselIds: [] },
       { id: 'admin', department: '管理層', name: 'Admin', username: 'admin', role: 'admin', passwordHash: validHash, isActive: true, managedVesselIds: [] },
@@ -22,10 +22,13 @@ try {
   });
   assert.equal(normalized.users.find(user => user.id === 'owner').passwordHash, validHash, 'Owner password hash must be preserved');
   assert.equal(normalized.users.find(user => user.id === 'admin').passwordHash, validHash, 'Admin password hash must be preserved');
-  assert.equal(normalized.users.find(user => user.id === 'operator-password').passwordHash, validHash, 'Non-admin personal password hash must be preserved when explicitly set');
+  assert.equal(normalized.users.find(user => user.id === 'operator-password').passwordHash, '', 'Legacy/current operator password hashes must be cleared once so operators can log in blank now');
   assert.equal(normalized.users.find(user => user.id === 'operator-blank').passwordHash, '', 'Non-admin accounts remain passwordless by default');
-  const stored = utils.sanitizeAppDataForStorage(normalized);
-  assert.equal(stored.users.find(user => user.id === 'operator-password').passwordHash, validHash, 'Storage sanitization must preserve explicit non-admin personal passwords');
+  assert.equal(normalized.settings.nonOwnerPasswordResetVersion, 2, 'Operator password reset migration must be stamped so future personal passwords persist');
+  const afterReset = normalizer.normalizeAppData({ ...normalized, settings: { ...normalized.settings, nonOwnerPasswordResetVersion: 2 }, users: normalized.users.map(user => user.id === 'operator-password' ? { ...user, passwordHash: validHash } : user) });
+  assert.equal(afterReset.users.find(user => user.id === 'operator-password').passwordHash, validHash, 'After reset version is stamped, newly set operator personal passwords must persist');
+  const stored = utils.sanitizeAppDataForStorage(afterReset);
+  assert.equal(stored.users.find(user => user.id === 'operator-password').passwordHash, validHash, 'Storage sanitization must preserve future explicit non-admin personal passwords');
   assert.equal(stored.users.find(user => user.id === 'operator-blank').passwordHash, '', 'Storage sanitization must preserve blank non-admin passwords');
 } finally {
   await server.close();

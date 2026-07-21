@@ -38,7 +38,7 @@ try {
   assert.deepEqual(data.users[0].managedVesselIds, [], 'Owner／管理員不分管具體船舶');
   assert.deepEqual(data.vessels[0].assignedUserIds, [], '船舶分管名單不得保留管理層帳號');
   assert.equal(data.users[0].passwordHash, validPasswordHash, '通用 normalize 不得覆蓋有效 Owner 密碼');
-  assert.equal(data.settings.nonOwnerPasswordResetVersion, 0, '通用 normalize 不得触发账号密码迁移');
+  assert.equal(data.settings.nonOwnerPasswordResetVersion, 2, 'normalize 應標記本次操作員密碼清除遷移已完成');
   const invalidCredential=normalizeAppData({...malformed,users:[{...malformed.users[1],id:'bad-hash',passwordHash:{bad:true},isActive:true}]});
   assert.equal(invalidCredential.users[0].isActive,false,'異常密碼 hash 必須 fail-closed 停用帳戶');
   assert.equal(invalidCredential.users[0].passwordHash,'0'.repeat(64),'異常密碼 hash 必須轉成不可匹配的 fail-closed 哨兵');

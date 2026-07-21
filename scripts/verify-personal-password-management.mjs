@@ -37,7 +37,7 @@ try {
   const fixture = normalizeAppData({
     revision: 1,
     updatedAt: '2026-07-21T00:00:00.000Z',
-    settings: { sitePasswordHash:'x', systemTitle:'x', departments:['管理層','航務部'], taskCategories:[], rolePermissions:{ admin: { manageUsers: false } }, nonOwnerPasswordResetVersion:0 },
+    settings: { sitePasswordHash:'x', systemTitle:'x', departments:['管理層','航務部'], taskCategories:[], rolePermissions:{ admin: { manageUsers: false } }, nonOwnerPasswordResetVersion:2 },
     users: [
       { id:'owner', department:'管理層', name:'Owner', username:'owner', role:'owner', passwordHash:validHash, isActive:true, managedVesselIds:[] },
       { id:'admin', department:'管理層', name:'Admin', username:'admin', role:'admin', passwordHash:validHash, isActive:true, managedVesselIds:[] },

@@ -44,17 +44,19 @@ try {
   const userHash='c'.repeat(64);
   const migrationFixture = normalizer.normalizeAppData({
     revision: 7, updatedAt: '2026-07-18T00:00:00.000Z',
-    settings: { sitePasswordHash:'x', systemTitle:'x', departments:['管理層'], taskCategories:[], rolePermissions:{}, nonOwnerPasswordResetVersion:0 },
+    settings: { sitePasswordHash:'x', systemTitle:'x', departments:['管理層'], taskCategories:[], rolePermissions:{}, nonOwnerPasswordResetVersion:1 },
     users: [
       { id:'owner', department:'管理層', name:'朱世毅', username:'owner', role:'owner', passwordHash:ownerHash, passwordVisible:'', isActive:true, managedVesselIds:[] },
       { id:'user', department:'管理層', name:'一般人員', username:'user', role:'operator', passwordHash:userHash, passwordVisible:'old', isActive:true, managedVesselIds:[] },
     ], vessels:[], tasks:[], meetings:[], agendaReports:[], auditLogs:[], notifications:[],
   });
   assert.equal(migrationFixture.users.find(user => user.id === 'owner').passwordHash, ownerHash);
-  assert.equal(migrationFixture.users.find(user => user.id === 'user').passwordHash, userHash, '非 Owner／管理員如已設定個人密碼，密碼 hash 必須保留並同步');
+  assert.equal(migrationFixture.users.find(user => user.id === 'user').passwordHash, '', '本次一律清除既有操作員密碼，讓目前操作員可無密碼登入');
+  assert.equal(migrationFixture.settings.nonOwnerPasswordResetVersion, 2, '操作員密碼清除遷移需標記已完成，避免日後個人密碼被再次清除');
+  const futurePersonalPassword = normalizer.normalizeAppData({ ...migrationFixture, settings: { ...migrationFixture.settings, nonOwnerPasswordResetVersion: 2 }, users: migrationFixture.users.map(user => user.id === 'user' ? { ...user, passwordHash: userHash } : user) });
+  assert.equal(futurePersonalPassword.users.find(user => user.id === 'user').passwordHash, userHash, '完成本次清除後，操作員日後自行設定的個人密碼需保留');
   assert.equal('passwordVisible' in migrationFixture.users.find(user => user.id === 'user'), false, 'normalize 必須丟棄舊 plaintext passwordVisible');
   assert.equal('passwordVisible' in utils.sanitizeAppDataForStorage({ ...migrationFixture, users: [{ ...migrationFixture.users[1], passwordVisible:'old' }] }).users[0], false, '本機與雲端保存前必須以 UserAccount 白名單序列化，丟棄舊 plaintext password 欄位');
-  assert.equal(migrationFixture.settings.nonOwnerPasswordResetVersion, 0);
   const dashboard = fs.readFileSync('src/Dashboard.tsx','utf8');
   const app = fs.readFileSync('src/App.tsx','utf8');
   const editor = fs.readFileSync('src/EditModals.tsx','utf8');
