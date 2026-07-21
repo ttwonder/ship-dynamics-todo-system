@@ -13,8 +13,7 @@ assert.ok(!login.includes('roleLabel('),'人员登入界面不得显示角色／
 assert.ok(!login.includes("user.name}｜"),'人员姓名后不得拼接操作层级');
 assert.match(login,/type="password"/,'认证密码栏不得因本次显示调整而移除');
 assert.doesNotMatch(login,/disabled=\{!selectedUser\?\.passwordHash\}/,'密碼欄需保留可輸入狀態，不得因非管理人員無密碼而 disabled');
-assert.match(login,/const needsPassword=user\.role==='owner'\|\|user\.role==='admin'/,'登入密碼驗證只應套用 Owner／管理員');
-assert.doesNotMatch(login,/\|\|Boolean\(user\.passwordHash\)/,'非管理人員不得因舊個人密碼被要求登入密碼');
-assert.match(login,/if\(!needsPassword\)\{setCurrentUserId\(user\.id\);return;\}/,'非管理角色必須在密碼比對前直接登入');
-assert.match(login,/其餘人員可直接登入/,'非管理角色需提示可直接登入');
+assert.match(login,/const needsPassword=user\.role==='owner'\|\|user\.role==='admin'\|\|Boolean\(user\.passwordHash\)/,'登入密碼驗證應套用 Owner／管理員或已設定個人密碼者');
+assert.match(login,/if\(!needsPassword\)\{setCurrentUserId\(user\.id\);return;\}/,'沒有密碼的非管理角色必須在密碼比對前直接登入');
+assert.match(login,/Owner／管理員或已設定個人密碼者需輸入密碼/,'登入頁需提示已設定個人密碼者需輸入密碼');
 console.log('Login identity labels show department and name without role level.');

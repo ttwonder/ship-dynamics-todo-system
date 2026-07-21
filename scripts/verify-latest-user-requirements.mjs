@@ -51,7 +51,7 @@ try {
     ], vessels:[], tasks:[], meetings:[], agendaReports:[], auditLogs:[], notifications:[],
   });
   assert.equal(migrationFixture.users.find(user => user.id === 'owner').passwordHash, ownerHash);
-  assert.equal(migrationFixture.users.find(user => user.id === 'user').passwordHash, '', '非 Owner／管理員舊密碼 hash 必須清除，改為無密碼登入');
+  assert.equal(migrationFixture.users.find(user => user.id === 'user').passwordHash, userHash, '非 Owner／管理員如已設定個人密碼，密碼 hash 必須保留並同步');
   assert.equal('passwordVisible' in migrationFixture.users.find(user => user.id === 'user'), false, 'normalize 必須丟棄舊 plaintext passwordVisible');
   assert.equal('passwordVisible' in utils.sanitizeAppDataForStorage({ ...migrationFixture, users: [{ ...migrationFixture.users[1], passwordVisible:'old' }] }).users[0], false, '本機與雲端保存前必須以 UserAccount 白名單序列化，丟棄舊 plaintext password 欄位');
   assert.equal(migrationFixture.settings.nonOwnerPasswordResetVersion, 0);
@@ -104,7 +104,7 @@ try {
   assert.ok(workCenter.includes('selectUserWorkCenterTasks(data,user,vessels)') && app.includes('selectUserWorkCenterTasks(data,currentUser,activeVessels)') && workCenterScope.includes('meetingInvolvesUser') && workCenterScope.includes('isVesselDelegatedMeetingTask'), '我的待辦清單與導航數量必須共用同一歸屬 selector，並只包含分管督導、事項追蹤窗口、臨會追蹤窗口/負責人或已分派到單船跟蹤的待辦');
   assert.ok(normalizeSource.includes("user.role === 'admin' || user.role === 'operator'") && normalizeSource.includes('ownerUserIds.has(user.id)') && !normalizeSource.includes('managementUserIds'), 'Owner 不分管具體船舶；管理員與操作員可保留船舶經管關係');
   assert.ok(app.includes('aria-label="登入部門"') && app.includes('aria-label="登入人員"'), '登入頁應使用部門與人員下拉選擇');
-  assert.ok(app.includes("const needsPassword=user.role==='owner'||user.role==='admin'") && !app.includes('||Boolean(user.passwordHash)') && app.includes('if(!needsPassword){setCurrentUserId(user.id);return;}') && app.includes('if(await sha256(pw)!==user.passwordHash)'), '登入密碼驗證只套用 Owner／管理員；非管理角色即使有舊 hash 也直接登入');
+  assert.ok(app.includes("const needsPassword=user.role==='owner'||user.role==='admin'||Boolean(user.passwordHash)") && app.includes('if(!needsPassword){setCurrentUserId(user.id);return;}') && app.includes('if(await sha256(pw)!==user.passwordHash)'), '登入密碼驗證需套用 Owner／管理員或已設定個人密碼者；沒有密碼的非管理角色可直接登入');
   assert.ok(app.includes("placeholder={selectedNeedsPassword?'請輸入密碼':'無密碼帳號可空白直接登入'}") && !app.includes('disabled={!selectedUser?.passwordHash}'), '登入頁需保留密碼輸入框，無密碼角色可空白直接登入');
   const plaintextPasswordSources = [app, management, seed, normalizeSource, fs.readFileSync('src/types.ts','utf8')].join('\n');
   assert.ok(!plaintextPasswordSources.includes('passwordVisible') && !plaintextPasswordSources.includes('DEFAULT_USER_PASSWORD') && !plaintextPasswordSources.includes('DEFAULT_SITE_PASSWORD') && !plaintextPasswordSources.includes('fpmc2026') && !plaintextPasswordSources.includes('ship2026'), '共享 AppData/localStorage/Supabase payload 不得保存或暴露可回復明文密碼');
@@ -112,7 +112,7 @@ try {
   assert.ok(app.includes('needsSetup') && app.includes('首次使用請先設定進站密碼') && app.includes('初始化進站密碼') && app.includes('!siteUnlocked || !data.settings.sitePasswordHash'), '進站密碼需走首次設定流程；即使 sessionStorage unlock flag 殘留，未設定 hash 也必須進入 SiteGate');
   assert.ok(normalizeSource.includes('nonOwnerPasswordResetVersion') && !normalizeSource.includes('passwordVisible') && !normalizeSource.includes("user.passwordHash = '385b870"), '通用 normalize 不得重置或保留任何帳號明文憑據');
   assert.ok(!cloudSource.includes('needsPasswordResetPersistence') && !cloudSource.includes('persistPasswordMigrationCas') && app.includes("data.revision === remote.revision && data.updatedAt !== remote.updatedAt"), '读取／normalize 不得自动匿名写回密码迁移；同步仍须阻挡同 revision 的本机分歧');
-  assert.ok(management.includes('Owner／管理員登入必須使用密碼') && management.includes('canClearPassword') && management.includes('不可清除 Owner 密碼') && management.includes('clearPersonPassword') && !management.includes('Owner 可查看'), 'Owner／管理員只能重設或清除非 Owner 密碼，且不得查看既有明文');
+  assert.ok(management.includes('Owner／管理員登入必須使用密碼') && management.includes('個人密碼選填；未設定時可無密碼登入') && management.includes('canClearPassword') && management.includes('Owner／管理員不可清除密碼') && management.includes('clearPersonPassword') && !management.includes('Owner 可查看'), 'Owner／管理員必須有密碼；非管理人員可選填個人密碼；管理頁不得查看既有明文');
   assert.ok(app.includes("['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['reports','報告中心'],['stats','數據分析']"), '主導航應依序為待辦總表、已結案、報告中心、數據分析');
   assert.ok(app.includes('priorityTone') && app.includes('filter-chip-meeting') && app.includes('filter-chip-internal') && app.includes('filter-reset-btn'), '待辦總清單篩選 chip 必須依關注/分類/內控提供語義色 class');
   assert.ok(app.includes('<th>追蹤窗口</th>') && app.includes('const managerIds=[...new Set(t.ownerUserIds)]') && !app.includes('<th>經管人</th>'), '待辦總表需將經管人欄改為追蹤窗口，且只顯示待辦追蹤窗口 ownerUserIds');

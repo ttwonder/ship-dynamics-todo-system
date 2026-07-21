@@ -206,9 +206,7 @@ export function normalizeAppData(value: unknown): AppData | null {
     },
     users: objects(raw.users).map(item => {
       const role = oneOf(item.role, roles, 'operator');
-      const rawPasswordHash=item.passwordHash;
-      const passwordRequired = role === 'owner' || role === 'admin';
-      const normalizedRawPassword = passwordRequired ? rawPasswordHash : '';
+      const normalizedRawPassword=item.passwordHash;
       const passwordHashValid=typeof normalizedRawPassword==='string'&&(normalizedRawPassword===''||/^[a-f0-9]{64}$/i.test(normalizedRawPassword));
       return {
         id: text(item.id),
