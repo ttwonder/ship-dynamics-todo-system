@@ -13,6 +13,9 @@ assert.ok(types.includes('VesselDelegateAssignment'), 'Vessel 需有代管人員
 assert.ok(types.includes('delegateManagers: VesselDelegateAssignment[]'), '每艘船需保存代管人員與激活狀態');
 assert.ok(management.includes('代管') && management.includes('delegateManagers'), '管理頁船舶編輯需新增代管模組');
 assert.ok(management.includes('toggleDelegateActive') && management.includes('delegate-manager-toggle'), '代管人員需可個別切換激活／未激活');
+assert.ok(management.includes('delegateVessels') && management.includes('togglePersonDelegateVessel') && management.includes('togglePersonDelegateVesselActive'), '管理頁人員編輯需在經管船舶下方提供代管船舶模組並可個別切換激活');
+assert.ok(management.includes('title="代管船舶"') && management.includes('selectedDelegateVesselNames'), '人員頁代管船舶需有獨立模組與已選摘要');
+assert.ok((management.match(/isActive: false/g) || []).length >= 2, '人員頁與船舶頁新增代管時預設都必須為未激活');
 assert.ok(styles.includes('.delegate-manager-toggle.active') && styles.includes('.delegate-manager-toggle.inactive'), '代管激活狀態需有綠色／灰色樣式');
 assert.ok(app.includes('vesselMatchesUser') && app.includes('hasActiveVesselDelegation'), '可見船舶範圍需包含激活代管船舶');
 assert.ok(workCenter.includes('hasActiveVesselDelegation'), '我的待辦需把激活代管船舶視為本人相關船舶');
