@@ -4,6 +4,7 @@ import { nowIso, todayDate, uid } from './utils';
 import { FLOW_INTERNAL_CONTROL_REMINDER } from './taskWorkflow';
 import { vesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskShipTypeLabel, taskVesselIds, taskVesselLabel } from './taskVesselScope';
+import { appearsInSingleVesselTasks } from './taskAttention';
 import { isEligibleTaskOwner } from './permissions';
 import RichTextEditor from './RichTextEditor';
 import RichTextContent from './RichTextContent';
@@ -101,7 +102,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
     change(target, draft);
     target.updatedAt = nowIso();
   }, '快速更新船舶', 'vessel', vessel.id, detail);
-  const openTasks = data.tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
+  const openTasks = data.tasks.filter(task => appearsInSingleVesselTasks(task) && taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="vessel-edit-title"><div className="modal-header"><div><h2 id="vessel-edit-title">快速更新｜{vesselDisplayName(vessel)}</h2><small>修改後立即保存；按 Esc 可關閉</small></div><button className="btn ghost" onClick={close}>完成並關閉</button></div>
     <div className="smart-ship-api-note"><b>智慧船舶接口預留</b><span>上下港、位置、速度／拋錨／停泊、載況、ETA／ETB／ETD 與貨名貨量日後可自動同步；目前欄位同時支援手動修改，手動值會正常保存。</span></div>
     <div className="grid cols-4">
