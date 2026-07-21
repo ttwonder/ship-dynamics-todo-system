@@ -35,6 +35,8 @@ assert.ok(app.includes('const projected=taskProjectedProgressForScope(t,visibleS
 assert.ok(!app.includes("t=>t.isClosed&&taskMatchesFilters(t,closedFilters"),'已結案清單不得用頂層 isClosed 覆蓋單船作用域狀態');
 assert.ok(app.includes("taskMatchesFilters(t,closedFilters,vesselMap,currentUser,true"),'已结案清单必须复用统一作用域结案过滤');
 assert.ok(app.includes('setFilters({...emptyFilters,closedMode:filters.closedMode})'),'清除筛选必须保留当前清单的 open/closed 模式');
-assert.ok(app.includes('const reportTaskStatus=(task:TaskItem)=>taskProjectedProgressForScope(task,reportScopeIds).status'),'PDF 報告預覽狀態必須使用報告範圍投影，不得在多船時直接回退頂層 status');
+assert.ok(app.includes('function ReportTaskStatusBlock') && app.includes('const progress=taskProjectedProgressForScope(task,scopeIds)'),'PDF 報告預覽狀態必須使用報告範圍投影，不得在多船時直接回退頂層 status');
+assert.ok(app.includes('目前狀態：') && app.includes('完成情形：') && app.includes('完成日期：') && app.includes('最後更新：') && app.includes('最近狀態：'),'PDF 報告預覽需同步導出各事項狀態資訊');
+assert.ok(app.includes('<ReportTaskStatusBlock task={t} scopeIds={reportScopeIds}/>'),'PDF 報告表格需使用完整狀態資訊區塊');
 assert.ok(!app.includes('reportScopeIds.length===1?taskProgressForVessel(task,reportScopeIds[0]).status:task.status'),'PDF 報告預覽不得只在單船投影、多船回退頂層 status');
 console.log('Per-vessel meeting task progress contracts passed.');
