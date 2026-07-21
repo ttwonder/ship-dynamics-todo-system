@@ -17,7 +17,7 @@ assert.ok(app.includes('<RichTextContent compact value={t.description}') && app.
 const styles=fs.readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 assert.ok(styles.includes('.batch-task-table .task-list-status-text') && styles.includes('-webkit-line-clamp:5') && styles.includes('max-height:6.8em'), 'task list status must remain visually clamped while allowing the widened status column to show more text');
 assert.ok(detail.includes('<RichTextContent compact value={task.description}') && detail.includes('<RichTextContent compact value={progress.status}'), 'vessel detail must render vessel-scoped rich content safely');
-assert.ok(morning.includes('<RichTextContent compact value={t.description}') && morning.includes('<RichTextContent compact value={displayStatus}'), 'morning agenda must render rich content safely');
+assert.ok((morning.includes('<RichTextContent compact value={task.description}') || morning.includes('<RichTextContent compact value={t.description}')) && morning.includes('<RichTextContent compact value={displayStatus}'), 'morning agenda must render rich content safely');
 assert.ok(rich.includes('sanitizeRichTextHtml(value)') && rich.includes('dangerouslySetInnerHTML'), 'rich-text display must sanitize before rendering HTML');
 assert.ok(!editor.includes('dangerouslySetInnerHTML') && editor.includes('useLayoutEffect'), '富文本编辑器不得在每次受控重渲染时重写 innerHTML 与光标选区');
 const server=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});

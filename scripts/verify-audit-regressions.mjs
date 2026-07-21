@@ -20,7 +20,7 @@ const checks = [
   ['查無事項需顯示空狀態', app.includes('目前沒有符合條件的事項')],
   ['管理頁需有 handler/render 雙層防護', app.includes("hasPermission(data.settings.rolePermissions, currentUser, 'enterManagement')") && app.includes("tab==='management' && canEnterManagement")],
   ['Owner 初始化前需先完成個人登入', app.includes('!ownerExists && !currentUser') && app.includes('OwnerSetup currentUser={currentUser}') && !app.includes('Owner 人員</label><select')],
-  ['保存需使用雲端 revision CAS', app.includes('saveCloudData(next, lastCloudRevision.current)')],
+  ['保存需使用雲端 revision CAS', app.includes('saveCloudData(next, lastCloudRevision.current,')],
   ['啟動版本分歧需阻擋雲端寫入', app.includes('data.revision > remote.revision') && app.includes('setCloudWriteBlocked(true)') && app.includes('if (cloudWriteBlocked)')],
   ['工作區 identity 不同或來源未知時不得自動初始化空雲端', app.includes('CLOUD_CACHE_IDENTITY_KEY') && app.includes('localStorage.getItem(STORAGE_KEY) !== null') && app.includes('identityChanged || unknownDirtyCache') && app.includes('為避免跨工作區複製')],
   ['每次保存與同步皆需重新驗證目前 workspace identity', app.includes('currentIdentity !== activeCloudIdentity.current') && (app.match(/hasCurrentCloudIdentity\(\)/g) || []).length >= 2 && app.includes("cloudIdentity(latestConfig)!==syncIdentity") && app.includes('雲端設定在載入期間變更')],

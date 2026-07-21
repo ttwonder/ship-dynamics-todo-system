@@ -25,7 +25,7 @@ const morning=fs.readFileSync('src/MorningWorkspace.tsx','utf8');
 assert.ok(app.includes('taskProgressVesselId'),'打开任务必须携带单船进度上下文');
 assert.ok(editor.includes('單船進度')&&editor.includes('總體進度'),'会议待办编辑器必须明确区分两种进度');
 assert.ok(detail.includes('taskProgressForVessel'),'单船详情必须显示该船自己的进度');
-assert.ok(morning.includes("onEditTask(t,scopeIds.length===1&&taskIds.includes(scopeIds[0])?scopeIds[0]:'')"),'早会单船范围必须把当前讨论船传入编辑器');
+assert.ok(morning.includes("onEditTask(task,scopeIds.length===1&&taskIds.includes(scopeIds[0])?scopeIds[0]:'')") || morning.includes("onEditTask(t,scopeIds.length===1&&taskIds.includes(scopeIds[0])?scopeIds[0]:'')"),'早会单船范围必须把当前讨论船传入编辑器');
 assert.ok(app.includes("!taskIsClosedForVessel(t,v.id)"),'默认重点船选择必须按该船进度判断未结案');
 assert.ok(app.includes('taskProjectedProgressForScope'),'總表必須先把事項投影到目前可見船舶範圍');
 assert.ok(app.includes('Number(taskProjectedProgressForScope(a,visibleIds).isClosed)'),'總表排序必須使用投影後結案狀態而非頂層 isClosed');

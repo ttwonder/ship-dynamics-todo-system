@@ -4,7 +4,7 @@ import fpmcLogo from './assets/fpmc-logo.png';
 import { createInitialData } from './data/seed';
 import type { AppData, FilterState, TaskItem, TaskPriority, UserAccount, Vessel } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
-import { CloudConflictError, fetchCloudData, getSupabaseConfig, saveCloudData } from './cloud';
+import { CloudConflictError, claimEditLock, fetchCloudData, getSupabaseConfig, releaseEditLock, saveCloudData } from './cloud';
 import ManagementView from './Management';
 import MorningWorkspaceView from './MorningWorkspace';
 import TemporaryMeetingsPage from './TemporaryMeetings';
@@ -32,6 +32,7 @@ import RichTextContent from './RichTextContent';
 import { richTextToPlainText } from './richText';
 
 type Tab = 'dashboard' | 'morning' | 'total' | 'reports' | 'stats' | 'management' | 'meeting' | 'closed' | 'work';
+type ActiveEditLock = { sectionKey: string; label: string; status: 'owned' | 'blocked' | 'error'; lockedByName?: string };
 const SYSTEM_TITLE = '船舶動態與會議管理系統';
 const SYSTEM_SUBTITLE = 'Fleet Activities & Office Meeting Manage System';
 const emptyFilters: FilterState = { keyword:'', departments:[], vesselIds:[], fleetTags:[], priorities:[], categories:[], meetingCategories:[], ownerMode:'all', fromDate:'', toDate:'', closedMode:'open', overdueOnly:false, internalControlOnly:false };
@@ -108,6 +109,7 @@ export default function App() {
   const [cloudBootstrapped, setCloudBootstrapped] = useState(false);
   const [cloudWriteBlocked, setCloudWriteBlocked] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [activeEditLock, setActiveEditLock] = useState<ActiveEditLock | null>(null);
   const saveTimer = useRef<number | null>(null);
   const lastCloudRevision = useRef<number>(-1);
   const activeCloudIdentity = useRef('');
@@ -153,7 +155,7 @@ export default function App() {
           pendingCloudData.current = null;
           if (next.revision <= lastCloudRevision.current) continue;
           if (!hasCurrentCloudIdentity()) throw new Error('雲端工作區 identity 已變更');
-          await saveCloudData(next, lastCloudRevision.current);
+          await saveCloudData(next, lastCloudRevision.current, currentUser?.name || 'unknown');
           lastCloudRevision.current = next.revision;
           rememberCloudIdentity();
           setCloudWriteBlocked(false);
@@ -230,6 +232,56 @@ export default function App() {
     return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
   }, [data, currentUser, cloudBootstrapped, cloudWriteBlocked, cloudSyncing]);
 
+  useEffect(() => {
+    if (!activeEditLock || activeEditLock.status !== 'owned' || !currentUser || !getSupabaseConfig()) return;
+    const timer = window.setInterval(() => {
+      claimEditLock(activeEditLock.sectionKey, currentUser.id, currentUser.name).then(lock => {
+        if (!lock.ok) {
+          setActiveEditLock({ ...activeEditLock, status: 'blocked', lockedByName: lock.lockedByName || '其他使用者' });
+          setCloudStatus(`協作鎖已失效：${activeEditLock.label} 已由 ${lock.lockedByName || '其他使用者'} 編輯，請先同步最新`);
+        }
+      }).catch(error => {
+        setActiveEditLock({ ...activeEditLock, status: 'error' });
+        setCloudStatus(`協作鎖續期失敗：${error.message || error}`);
+      });
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [activeEditLock?.sectionKey, activeEditLock?.status, currentUser?.id]);
+
+  const releaseCurrentEditLock = () => {
+    const lock = activeEditLock;
+    setActiveEditLock(null);
+    if (lock?.status === 'owned' && currentUser && getSupabaseConfig()) {
+      releaseEditLock(lock.sectionKey, currentUser.id).catch(error => setCloudStatus(`協作鎖釋放失敗：${error.message || error}`));
+    }
+  };
+  const claimEditingLock = async (sectionKey: string, label: string) => {
+    if (!currentUser) return false;
+    if (!getSupabaseConfig()) {
+      setActiveEditLock({ sectionKey, label, status: 'owned' });
+      return true;
+    }
+    setCloudStatus(`正在檢查多人協作鎖：${label}`);
+    try {
+      const lock = await claimEditLock(sectionKey, currentUser.id, currentUser.name);
+      if (!lock.ok) {
+        const lockedByName = lock.lockedByName || '其他使用者';
+        setActiveEditLock({ sectionKey, label, status: 'blocked', lockedByName });
+        setCloudStatus(`此項目正在由 ${lockedByName} 編輯，已阻止打開以避免覆蓋對方內容`);
+        alert(`此項目正在由 ${lockedByName} 編輯；為避免覆蓋對方內容，請稍後再試或先按「同步最新」。`);
+        return false;
+      }
+      setActiveEditLock({ sectionKey, label, status: 'owned' });
+      setCloudStatus(`多人協作安全：已鎖定 ${label}，其他人會看到正在編輯提示`);
+      return true;
+    } catch (error: any) {
+      setActiveEditLock({ sectionKey, label, status: 'error' });
+      setCloudStatus(`無法確認多人協作鎖：${error.message || error}`);
+      alert(`無法確認是否有人正在編輯「${label}」，為避免衝突，請先同步最新或稍後再試。`);
+      return false;
+    }
+  };
+
   const commit = (updater: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => {
     setData(prev => { const d = clone(prev); updater(d); return withAudit(d, currentUser, action, entityType, entityId, detail); });
   };
@@ -269,14 +321,25 @@ export default function App() {
   if (!ownerExists && currentUser) return <OwnerSetup currentUser={currentUser} setData={setData} setCurrentUserId={setCurrentUserId} />;
   if (!currentUser) return <Login data={data} setCurrentUserId={setCurrentUserId} />;
 
-  const openTask = (task: TaskItem, vesselId = '') => {
+  const openVesselEditor = async (id: string) => {
+    const vessel = data.vessels.find(item => item.id === id);
+    if (!vessel) return alert('找不到對應船舶');
+    if (await claimEditingLock(`vessel:${id}`, `船舶｜${vesselDisplayName(vessel)}`)) setEditingVesselId(id);
+  };
+  const openTaskEditor = async (task: TaskItem, vesselId = '') => {
+    const label = richTextToPlainText(task.description) || task.id;
+    if (await claimEditingLock(`task:${task.id}`, `待辦｜${label.slice(0, 28)}`)) {
+      setTaskProgressVesselId(vesselId);
+      setEditingTaskId(task.id);
+    }
+  };
+  const openTask = async (task: TaskItem, vesselId = '') => {
     if (!task.ownerUserIds.includes(currentUser.id)&&!taskVesselIds(task).some(id=>activeVessels.some(vessel=>vessel.id===id))) return alert('無權查看此待辦');
     if(vesselId&&(!taskVesselIds(task).includes(vesselId)||!activeVessels.some(vessel=>vessel.id===vesselId)))return alert('無權更新此船舶進度');
     if(data.notifications.some(item=>item.userId===currentUser.id&&item.taskId===task.id&&!item.readAt)){
       commit(draft=>{const at=nowIso();draft.notifications.forEach(item=>{if(item.userId===currentUser.id&&item.taskId===task.id&&!item.readAt)item.readAt=at;});},'查看待辦更新','notification',task.id,'標記此待辦未讀變動');
     }
-    setTaskProgressVesselId(vesselId);
-    setEditingTaskId(task.id);
+    await openTaskEditor(task, vesselId);
   };
   const addTaskForVessel = (vesselId: string, returnToVessel = false) => {
     if (!requireLogin()) return false;
@@ -544,11 +607,12 @@ export default function App() {
   };
   const closeTaskEditor = () => {
     const returnVesselId = taskReturnVesselId;
+    releaseCurrentEditLock();
     setEditingTaskId('');
     setTaskProgressVesselId('');
     setCreatingTask(null);
     setTaskReturnVesselId('');
-    if (returnVesselId && activeVessels.some(vessel => vessel.id === returnVesselId)) setEditingVesselId(returnVesselId);
+    if (returnVesselId && activeVessels.some(vessel => vessel.id === returnVesselId)) void openVesselEditor(returnVesselId);
   };
   const editingTask=creatingTask||data.tasks.find(task=>task.id===editingTaskId);
   const editingTaskScopeVessels=editingTask?taskVessels(editingTask,data.vessels):[];
@@ -568,10 +632,11 @@ export default function App() {
     </div></header>
     <main className="container">
       <div className="cloud-strip no-print"><span className={getSupabaseConfig()?'ok-note':'danger-note'}>{cloudStatus}</span><span className="spacer"/><button className="btn ghost small" onClick={syncLatest}>同步最新</button><button className="btn green small" onClick={saveChanges}>保存修改</button></div>
+      {activeEditLock && <div className={`collaboration-banner no-print ${activeEditLock.status}`}><b>多人協作安全</b><span>{activeEditLock.status==='owned' ? `你正在編輯：${activeEditLock.label}；系統已建立短時鎖定，保存仍會做 revision 衝突檢查。` : activeEditLock.status==='blocked' ? `此項目正在由 ${activeEditLock.lockedByName || '其他使用者'} 編輯，已阻止打開以避免覆蓋對方內容。` : `無法確認 ${activeEditLock.label} 的編輯鎖，請同步最新後再試。`}</span>{activeEditLock.status!=='owned'&&<button className="btn small ghost" onClick={()=>setActiveEditLock(null)}>知道了</button>}</div>}
       <div className="print-only app-print-header"><h2>{printTitle || data.settings.systemTitle}</h2><p>列印時間：{new Date().toLocaleString()}｜列印人：{currentUser.name}</p></div>
-      {tab==='dashboard' && selectedVesselDetail && <VesselDetailPage vessel={selectedVesselDetail} data={data} currentUser={currentUser} onBack={()=>setSelectedVesselDetailId('')} onEditVessel={()=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');setEditingVesselId(selectedVesselDetail.id);}} onAddTask={()=>addTaskForVessel(selectedVesselDetail.id)} onEditTask={id=>{const task=data.tasks.find(item=>item.id===id);if(task)openTask(task,selectedVesselDetail.id);}} canEditVessel={canEditBusinessContent} canCreateTasks={canCreateTasks} canEditTasks={canEditBusinessContent&&currentUser.role!=='vessel'} />}
-      {tab==='dashboard' && !selectedVesselDetail && <DashboardView user={currentUser} vessels={activeVessels} tasks={data.tasks} selected={agendaSelection} setSelected={setAgendaSelection} onOpenVessel={setSelectedVesselDetailId} onEdit={id=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');setEditingVesselId(id);}} onAddTask={addTaskForVessel} onToggleAttention={(vesselId,key)=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改關注燈');commit(draft=>{const vessel=draft.vessels.find(item=>item.id===vesselId);if(!vessel)return;vessel.weeklyAttention=vessel.weeklyAttention.includes(key)?vessel.weeklyAttention.filter(item=>item!==key):[...vessel.weeklyAttention,key];vessel.updatedAt=nowIso();},'切換一週關注燈','vessel',vesselId,key);}} onAdjustAttention={vesselId=>{if(!canEditBusinessContent)return alert('目前角色未獲授權調整關注度');commit(draft=>{const vessel=draft.vessels.find(item=>item.id===vesselId);if(!vessel)return;const openVesselTasks=draft.tasks.filter(task=>taskHasVessel(task,vesselId)&&!task.isClosed);const automatic=deriveVesselAttention(vessel,openVesselTasks).automatic;vessel.manualAttentionLevel=nextManualVesselAttention(vessel.manualAttentionLevel||'',automatic);vessel.updatedAt=nowIso();},'調整船舶關注度','vessel',vesselId,'自動／低／中／高／急／特別關注（受自動下限保護）');}} onStartMeeting={(requestedIds) => { if (requestedIds) { const allowedIds=new Set(activeVessels.map(vessel=>vessel.id)); setAgendaSelection(Array.from(new Set(requestedIds.filter(id=>allowedIds.has(id))))); } else if (!agendaSelection.length) { const priority = activeVessels.filter(v => morningDiscussionTasks(data.tasks,data.meetings).some(t => taskHasVessel(t,v.id) && !taskIsClosedForVessel(t,v.id) && (t.priority==='急'||t.priority==='高'))).slice(0,4).map(v=>v.id); setAgendaSelection(priority.length ? priority : activeVessels.slice(0,4).map(v=>v.id)); } setTab('morning'); }} onOpenReport={openReportPreview} onTaskMetric={jumpToTaskList} canEdit={canEditBusinessContent} canCreateTasks={canCreateTasks} canUseMeetings={currentUser.role!=='vessel'} canUseReports={canExportReports} />}
-      {tab==='morning' && <MorningWorkspaceView data={data} user={currentUser} visibleVessels={activeVessels} selected={agendaSelection} setSelected={setAgendaSelection} onEditTask={openTask} onAddTask={addTaskForVessel} onOpenVessel={setEditingVesselId} onOpenTemporaryMeeting={()=>setTab('meeting')} onOpenReport={openReportPreview} commit={commit} />}
+      {tab==='dashboard' && selectedVesselDetail && <VesselDetailPage vessel={selectedVesselDetail} data={data} currentUser={currentUser} onBack={()=>setSelectedVesselDetailId('')} onEditVessel={()=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(selectedVesselDetail.id);}} onAddTask={()=>addTaskForVessel(selectedVesselDetail.id)} onEditTask={id=>{const task=data.tasks.find(item=>item.id===id);if(task)openTask(task,selectedVesselDetail.id);}} canEditVessel={canEditBusinessContent} canCreateTasks={canCreateTasks} canEditTasks={canEditBusinessContent&&currentUser.role!=='vessel'} />}
+      {tab==='dashboard' && !selectedVesselDetail && <DashboardView user={currentUser} vessels={activeVessels} tasks={data.tasks} selected={agendaSelection} setSelected={setAgendaSelection} onOpenVessel={setSelectedVesselDetailId} onEdit={id=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(id);}} onAddTask={addTaskForVessel} onToggleAttention={(vesselId,key)=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改關注燈');commit(draft=>{const vessel=draft.vessels.find(item=>item.id===vesselId);if(!vessel)return;vessel.weeklyAttention=vessel.weeklyAttention.includes(key)?vessel.weeklyAttention.filter(item=>item!==key):[...vessel.weeklyAttention,key];vessel.updatedAt=nowIso();},'切換一週關注燈','vessel',vesselId,key);}} onAdjustAttention={vesselId=>{if(!canEditBusinessContent)return alert('目前角色未獲授權調整關注度');commit(draft=>{const vessel=draft.vessels.find(item=>item.id===vesselId);if(!vessel)return;const openVesselTasks=draft.tasks.filter(task=>taskHasVessel(task,vesselId)&&!task.isClosed);const automatic=deriveVesselAttention(vessel,openVesselTasks).automatic;vessel.manualAttentionLevel=nextManualVesselAttention(vessel.manualAttentionLevel||'',automatic);vessel.updatedAt=nowIso();},'調整船舶關注度','vessel',vesselId,'自動／低／中／高／急／特別關注（受自動下限保護）');}} onStartMeeting={(requestedIds) => { if (requestedIds) { const allowedIds=new Set(activeVessels.map(vessel=>vessel.id)); setAgendaSelection(Array.from(new Set(requestedIds.filter(id=>allowedIds.has(id))))); } else if (!agendaSelection.length) { const priority = activeVessels.filter(v => morningDiscussionTasks(data.tasks,data.meetings).some(t => taskHasVessel(t,v.id) && !taskIsClosedForVessel(t,v.id) && (t.priority==='急'||t.priority==='高'))).slice(0,4).map(v=>v.id); setAgendaSelection(priority.length ? priority : activeVessels.slice(0,4).map(v=>v.id)); } setTab('morning'); }} onOpenReport={openReportPreview} onTaskMetric={jumpToTaskList} canEdit={canEditBusinessContent} canCreateTasks={canCreateTasks} canUseMeetings={currentUser.role!=='vessel'} canUseReports={canExportReports} />}
+      {tab==='morning' && <MorningWorkspaceView data={data} user={currentUser} visibleVessels={activeVessels} selected={agendaSelection} setSelected={setAgendaSelection} onEditTask={openTask} onAddTask={addTaskForVessel} onOpenVessel={openVesselEditor} onOpenTemporaryMeeting={()=>setTab('meeting')} onOpenReport={openReportPreview} commit={commit} />}
 
       {tab==='total' && <ListPanel title={currentUser.role==='vessel'?'本船待辦清單':'總清單'} tasks={filteredTasks} data={data} visibleVessels={activeVessels} filters={filters} setFilters={setFilters} fleetTags={fleetTags} userMap={userMap} onEdit={openTask} onPrint={() => print('船舶記事總清單')} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
       {tab==='work' && <WorkCenter
@@ -579,7 +644,7 @@ export default function App() {
         user={currentUser}
         vessels={activeVessels}
         onOpenTask={openTask}
-        onOpenVessel={setEditingVesselId}
+        onOpenVessel={openVesselEditor}
         onBatchComplete={batchCompleteTasks}
         onBatchDelete={batchDeleteTasks}
         canComplete={canCloseTasks&&currentUser.role!=='vessel'}
@@ -595,7 +660,7 @@ export default function App() {
       {tab==='reports' && <ReportCenter data={data} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} setSelected={setAgendaSelection} commit={commit} onOpenPreview={openReportPreview} onPrint={() => print('早會船舶動態與議程清單')} />}
       {tab==='management' && canEnterManagement && <ManagementView data={data} currentUser={currentUser} commit={commit} />}
     </main>
-    {editingVesselId && <VesselEditModal vessel={data.vessels.find(v=>v.id===editingVesselId)} data={data} currentUser={currentUser} close={()=>setEditingVesselId('')} commit={commit} addTask={id=>{if(addTaskForVessel(id,true))setEditingVesselId('');}} editTask={id=>{const vesselId=editingVesselId;const task=data.tasks.find(item=>item.id===id);setEditingVesselId('');if(task)openTask(task,vesselId);}} />}
+    {editingVesselId && <VesselEditModal vessel={data.vessels.find(v=>v.id===editingVesselId)} data={data} currentUser={currentUser} close={()=>{setEditingVesselId('');releaseCurrentEditLock();}} commit={commit} addTask={id=>{if(addTaskForVessel(id,true)){setEditingVesselId('');releaseCurrentEditLock();}}} editTask={id=>{const vesselId=editingVesselId;const task=data.tasks.find(item=>item.id===id);setEditingVesselId('');releaseCurrentEditLock();if(task)openTask(task,vesselId);}} />}
     {(editingTaskId || creatingTask) && <TaskEditModal task={editingTask} creating={Boolean(creatingTask)} data={data} visibleVessels={activeVessels} currentUser={currentUser} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canCancelInternalControl={Boolean(editingTask&&editingTaskScopeVessels.length===taskVesselIds(editingTask).length&&editingTaskScopeVessels.every(vessel=>canCancelInternalControl(currentUser,vessel)))} canEditOverall={canEditOverallTask} initialProgressVesselId={taskProgressVesselId} readOnly={!creatingTask&&(!canEditBusinessContent||currentUser.role==='vessel')} close={closeTaskEditor} onSave={saveTask} onSaveVesselProgress={saveTaskVesselProgress} onDelete={()=>{const original=data.tasks.find(task=>task.id===editingTaskId);if(original)deleteTask(original);}} />}
     {reportPreviewOpen && <ReportPreviewModal data={data} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} close={()=>setReportPreviewOpen(false)} onPrint={printReport} />}
     {currentUser.role!=='vessel'&&!selectedVesselDetailId&&(['dashboard','morning','reports'] as Tab[]).includes(tab) && <div className="selection-dock no-print">涉會船舶 <b className="selected-vessel-count">{agendaSelection.length}</b> 艘 <button className="btn pink small" onClick={()=>setTab('morning')}>進入早會</button><button className="btn primary small" onClick={openReportPreview}>預覽報告</button></div>}
