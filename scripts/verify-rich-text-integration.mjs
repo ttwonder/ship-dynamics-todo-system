@@ -10,7 +10,7 @@ const rich = fs.readFileSync(new URL('../src/RichTextContent.tsx', import.meta.u
 const editor = fs.readFileSync(new URL('../src/RichTextEditor.tsx', import.meta.url), 'utf8');
 
 assert.ok(meeting.includes('ariaLabel="召開緣由"') && meeting.includes('ariaLabel="決議／會議結論"') && meeting.includes('ariaLabel={`待辦事項 ${index+1}`}'), 'meeting reason, resolution and follow-ups must use rich-text editors');
-assert.ok(meeting.includes('isRichTextEmpty(draft.resolution)') && meeting.includes('!isRichTextEmpty(item.description)'), 'rich-text empty markup must not pass meeting validation');
+assert.ok(meeting.includes('isRichTextEmpty(draft.reason)') && meeting.includes('!isRichTextEmpty(item.description)'), 'rich-text empty markup must not pass required meeting reason or follow-up validation');
 assert.ok(meeting.includes('richTextToPlainText(meeting.reason)') && meeting.includes('richTextToPlainText(item.description)'), 'meeting search and compact exports must index plain text rather than markup');
 assert.ok(meeting.includes('<RichTextContent value={meeting.reason}') && meeting.includes('<RichTextContent value={meeting.resolution}') && meeting.includes('<RichTextContent value={item.description}'), 'meeting detail PDF must preserve sanitized rich formatting');
 assert.ok(app.includes('<RichTextContent compact value={t.description}') && app.includes('<RichTextContent compact className="task-list-status-text" value={projected.status}'), 'task list must render rich descriptions and clamp projected status safely');

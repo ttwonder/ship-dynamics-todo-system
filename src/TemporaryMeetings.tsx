@@ -122,6 +122,7 @@ const draftFrom = (meeting?: TemporaryMeeting, tasks = [] as AppData['tasks']): 
 export default function TemporaryMeetingsPage({ data, visibleVessels, currentUser, canExportReports, setData, commit }: Props) {
   const canViewAllMeetings = currentUser.role === 'owner' || currentUser.role === 'admin' || hasPermission(data.settings.rolePermissions, currentUser, 'viewAllVessels');
   const editable = canEditTemporaryMeetings(data.settings.rolePermissions, currentUser);
+  const canDeleteMeetings = (currentUser.role === 'owner' || currentUser.role === 'admin') && editable;
   const visibleIds = new Set(visibleVessels.map(vessel => vessel.id));
   const visibleVesselKey = [...visibleIds].sort().join('\u0000');
   const appliesToUser = (meeting: TemporaryMeeting) => meetingAppliesToUser(meeting, visibleVessels, canViewAllMeetings, currentUser.id);
@@ -350,7 +351,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     if (!statuses.includes(draft.status)) return alert('請選擇會議狀態');
     if (!draft.meetingDate) return alert('請選擇召開日期');
     if (!draft.expectedDate) return alert('請選擇預計完成日期');
-    if (isRichTextEmpty(draft.resolution)) return alert('請填寫會議決議');
+    if (isRichTextEmpty(draft.reason)) return alert('請填寫召開緣由');
     if (draft.vesselScopeMode === 'types' && !draft.vesselTypeScopes.length) return alert('請至少選擇一個船舶類型');
     if (!resolvedVesselIds.length) return alert('請至少選擇一艘船舶');
     if (!draft.departments.length) return alert('請至少選擇一個涉及部門');
@@ -457,6 +458,47 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     window.setTimeout(()=>{savingRef.current=false;},0);
   };
 
+  const deleteMeeting = (meeting: TemporaryMeeting) => {
+    if (!canDeleteMeetings) return alert('只有 Owner／管理員可以刪除臨會/專題');
+    if (!window.confirm(`確定刪除臨會/專題「${meeting.subject || '未命名會議'}」？\n此操作會同步刪除本會議產生的待辦。`)) return;
+    let applied = false;
+    let failure = '會議已變更或權限已更新，請重新整理後再試';
+    let nextMeeting: TemporaryMeeting | undefined;
+    flushSync(() => setData(prev => {
+      const liveUser = prev.users.find(user => user.id === currentUser.id && user.isActive);
+      if (!liveUser) { failure = '登入身份已失效，請重新登入'; return prev; }
+      if (!(liveUser.role === 'owner' || liveUser.role === 'admin') || !canEditTemporaryMeetings(prev.settings.rolePermissions, liveUser)) {
+        failure = '只有 Owner／管理員可以刪除臨會/專題';
+        return prev;
+      }
+      const canViewAll = liveUser.role === 'owner' || liveUser.role === 'admin' || hasPermission(prev.settings.rolePermissions, liveUser, 'viewAllVessels');
+      const liveVisibleVessels = prev.vessels.filter(vessel => vessel.isActive && (
+        canViewAll || vessel.assignedUserIds.includes(liveUser.id) || liveUser.managedVesselIds.includes(vessel.id)
+      ));
+      const liveMeeting = prev.meetings.find(item => item.id === meeting.id);
+      if (!liveMeeting || !meetingAppliesToUser(liveMeeting, liveVisibleVessels, canViewAll, liveUser.id)) {
+        failure = '會議已被刪除或不再可存取';
+        return prev;
+      }
+      const draftData = structuredClone(prev);
+      const removedTaskIds = new Set(draftData.tasks.filter(task => task.sourceMeetingId === meeting.id).map(task => task.id));
+      draftData.meetings = draftData.meetings.filter(item => item.id !== meeting.id);
+      draftData.tasks = draftData.tasks.filter(task => task.sourceMeetingId !== meeting.id);
+      draftData.notifications = draftData.notifications.filter(notice => !removedTaskIds.has(notice.taskId));
+      nextMeeting = draftData.meetings.find(item => meetingAppliesToUser(item, liveVisibleVessels, canViewAll, liveUser.id));
+      applied = true;
+      return withAudit(draftData, liveUser, '刪除臨會/專題', 'meeting', meeting.id, `${liveMeeting.subject || meeting.id}｜同步刪除 ${removedTaskIds.size} 件待辦`);
+    }));
+    if (!applied) return alert(failure);
+    setCreating(false);
+    setSelectedId(nextMeeting?.id || '');
+    setDraft(draftFrom(nextMeeting, data.tasks));
+    setBaseMeetingUpdatedAt(nextMeeting?.updatedAt || '');
+    setBaseRevision(data.revision + 1);
+    setMeetingExportSelection(previous => previous.filter(id => id !== meeting.id));
+    setNotice('✓ 臨會/專題已刪除');
+  };
+
   const counts = Object.fromEntries(statuses.map(status => [status, accessibleMeetings.filter(meeting => statusOf(meeting) === status).length])) as Record<TemporaryMeetingStatus, number>;
   const meetingVesselIds = (meeting: TemporaryMeeting) => {
     const saved = meeting.vessels.filter(id => visibleIds.has(id));
@@ -497,7 +539,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
         <select aria-label="總清單會議範圍篩選" value={scopeFilter} onChange={event => setScopeFilter(event.target.value as ScopeFilter)}><option value="any">全部範圍</option><option value="all">全部船舶</option><option value="types">按船舶類型</option><option value="vessels">逐船選擇</option></select>
         <select aria-label="總清單船舶類型篩選" value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">全部船型</option>{shipTypes.map(shipType => <option key={shipType}>{shipType}</option>)}</select>
       </div>
-      {filtered.length ? <div className="table-wrap"><table className="compact meeting-register-table"><thead><tr>{canExportReports&&<th className="no-print">選取</th>}<th>召開日期</th><th>狀態</th><th>會議主題</th><th>會議範圍</th><th>船舶</th><th>部門</th><th>追蹤窗口／負責人</th><th>待辦</th><th>期限</th><th className="no-print">操作</th></tr></thead><tbody>{pagedMeetings.items.map(meeting => { const vesselIds = meetingVesselIds(meeting); const vesselNames = vesselIds.map(id => vesselDisplayName(vesselById[id])); return <tr key={meeting.id}>{canExportReports&&<td className="no-print"><input aria-label={`選取會議 ${meeting.subject}`} type="checkbox" checked={meetingExportSelection.includes(meeting.id)} onChange={() => toggleMeetingExport(meeting.id)}/></td>}<td>{meeting.meetingDate || '-'}</td><td><span className={`meeting-status status-${statusOf(meeting)}`}>{statusOf(meeting)}</span></td><td><b>{meeting.subject}</b><RichTextContent compact className="muted" value={meeting.reason} fallback="未填召開緣由"/></td><td>{meetingScopeLabel(meeting)}</td><td title={vesselNames.join('、')}>{vesselIds.length} 艘<br/><span className="muted">{vesselNames.slice(0, 3).join('、')}{vesselNames.length > 3 ? '…' : ''}</span></td><td>{meeting.departments.join('、') || '-'}</td><td><b>追蹤：{peopleNames(meeting.trackingUserIds || [])}</b><br/><span className="muted">負責：{peopleNames(meeting.responsibleUserIds)}</span></td><td><span className="task-source-badge source-temporary">{meetingTaskCount(meeting.id)} 件</span></td><td>{meeting.expectedDate || '-'}</td><td className="no-print"><button className="btn small primary" onClick={() => selectMeeting(meeting)}>進入詳情</button></td></tr>; })}</tbody></table></div> : <div className="empty-state">目前沒有符合條件的臨會/專題</div>}
+      {filtered.length ? <div className="table-wrap"><table className="compact meeting-register-table"><thead><tr>{canExportReports&&<th className="no-print">選取</th>}<th>召開日期</th><th>狀態</th><th>會議主題</th><th>會議範圍</th><th>船舶</th><th>部門</th><th>追蹤窗口／負責人</th><th>待辦</th><th>期限</th><th className="no-print">操作</th></tr></thead><tbody>{pagedMeetings.items.map(meeting => { const vesselIds = meetingVesselIds(meeting); const vesselNames = vesselIds.map(id => vesselDisplayName(vesselById[id])); return <tr key={meeting.id}>{canExportReports&&<td className="no-print"><input aria-label={`選取會議 ${meeting.subject}`} type="checkbox" checked={meetingExportSelection.includes(meeting.id)} onChange={() => toggleMeetingExport(meeting.id)}/></td>}<td>{meeting.meetingDate || '-'}</td><td><span className={`meeting-status status-${statusOf(meeting)}`}>{statusOf(meeting)}</span></td><td><b>{meeting.subject}</b><RichTextContent compact className="muted" value={meeting.reason} fallback="未填召開緣由"/></td><td>{meetingScopeLabel(meeting)}</td><td title={vesselNames.join('、')}>{vesselIds.length} 艘<br/><span className="muted">{vesselNames.slice(0, 3).join('、')}{vesselNames.length > 3 ? '…' : ''}</span></td><td>{meeting.departments.join('、') || '-'}</td><td><b>追蹤：{peopleNames(meeting.trackingUserIds || [])}</b><br/><span className="muted">負責：{peopleNames(meeting.responsibleUserIds)}</span></td><td><span className="task-source-badge source-temporary">{meetingTaskCount(meeting.id)} 件</span></td><td>{meeting.expectedDate || '-'}</td><td className="no-print"><div className="heading-actions"><button className="btn small primary" onClick={() => selectMeeting(meeting)}>進入詳情</button>{canDeleteMeetings&&<button className="btn small red" onClick={() => deleteMeeting(meeting)}>刪除</button>}</div></td></tr>; })}</tbody></table></div> : <div className="empty-state">目前沒有符合條件的臨會/專題</div>}
       <PaginationControls ariaLabel="臨會清單分頁" page={pagedMeetings.page} pageCount={pagedMeetings.pageCount} total={pagedMeetings.total} from={pagedMeetings.from} to={pagedMeetings.to} onPageChange={setMeetingPage}/>
     </section> : <div className="temporary-meeting-workspace">
       <aside className="meeting-column temporary-list-column">
@@ -519,7 +561,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       </aside>
 
       <section className="meeting-column temporary-editor-column">
-        <div className="column-title"><div><h2>{creating ? '新增臨會/專題' : draft.subject || '會議資料'}</h2><span>{editable?(creating ? '建立基本資訊與會議範圍' : '修改後請按保存變更'):'唯讀檢視'}</span></div><div className="heading-actions no-print">{canExportReports&&selected&&<button className="btn primary" onClick={() => printMeetingDetail(selected.id)}>導出本次會議 PDF</button>}{editable&&<button className="btn green" onClick={save}>{creating ? '建立會議' : '保存變更'}</button>}</div></div>
+        <div className="column-title"><div><h2>{creating ? '新增臨會/專題' : draft.subject || '會議資料'}</h2><span>{editable?(creating ? '建立基本資訊與會議範圍' : '修改後請按保存變更'):'唯讀檢視'}</span></div><div className="heading-actions no-print">{!creating&&selected&&canDeleteMeetings&&<button className="btn red" onClick={() => deleteMeeting(selected)}>刪除會議</button>}{canExportReports&&selected&&<button className="btn primary" onClick={() => printMeetingDetail(selected.id)}>導出本次會議 PDF</button>}{editable&&<button className="btn green" onClick={save}>{creating ? '建立會議' : '保存變更'}</button>}</div></div>
         <fieldset disabled={!editable} className={`column-scroll temporary-form ${!editable?'readonly-form':''}`} aria-readonly={!editable}>
           <div className="grid cols-3">
             <div className="field span-2"><label>會議主題 <span className="required-mark">*</span></label><input required aria-required="true" value={draft.subject} onChange={event => setDraft({ ...draft, subject: event.target.value })} placeholder="例如：颱風避風臨時協調會" /></div>
@@ -528,8 +570,8 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
             <div className="field"><label>預計完成日期 <span className="required-mark">*</span></label><input required aria-required="true" type="date" value={draft.expectedDate} onChange={event => setDraft({ ...draft, expectedDate: event.target.value })} /></div>
             <div className="field"><label>完成日期</label><input type="date" value={draft.completedDate || ''} onChange={event => setMeetingCompletedDate(event.target.value)} /><small>{draft.status === '已完成' ? '與切換「已完成」時彈出的日期同步' : '選擇日期會同步標記為已完成'}</small></div>
             <div className="field"><label>會議議題關注程度</label><select value={draft.priority} onChange={event => setDraft({ ...draft, priority: event.target.value as TaskPriority })}>{data.settings.priorities.map(priority => <option key={priority}>{priority}</option>)}</select><small>同步至本會議待辦，不影響船舶看板關注程度</small></div><label className="aware-toggle meeting-morning-toggle"><input type="checkbox" checked={draft.includeInMorning} onChange={event=>setDraft({...draft,includeInMorning:event.target.checked})}/><span><b>納入早會</b><small>勾選後，本會議待辦才會進入早會討論與早會報告</small></span></label>
-            <div className="field span-3"><label>召開緣由</label><RichTextEditor ariaLabel="召開緣由" readOnly={!editable} value={draft.reason} onChange={reason=>setDraft({...draft,reason})} placeholder="說明為何召開本次臨會/專題" /></div>
-            <div className="field span-3"><label>決議／會議結論 <span className="required-mark">*</span></label><RichTextEditor ariaLabel="決議／會議結論" required readOnly={!editable} value={draft.resolution} onChange={resolution=>setDraft({...draft,resolution})} placeholder="記錄本次會議決議或結論" /></div>
+            <div className="field span-3"><label>召開緣由 <span className="required-mark">*</span></label><RichTextEditor ariaLabel="召開緣由" required readOnly={!editable} value={draft.reason} onChange={reason=>setDraft({...draft,reason})} placeholder="說明為何召開本次臨會/專題" /></div>
+            <div className="field span-3"><label>決議／會議結論</label><RichTextEditor ariaLabel="決議／會議結論" readOnly={!editable} value={draft.resolution} onChange={resolution=>setDraft({...draft,resolution})} placeholder="記錄本次會議決議或結論" /></div>
             <div className="field span-3 meeting-task-items-editor">
               <div className="meeting-task-items-title"><label>待辦事項</label><button type="button" className="btn small primary" onClick={addTaskItem}>＋ 增加待辦事項</button></div>
               {draft.taskItems.map((item, index) => <div className="meeting-task-item" key={item.id}>
