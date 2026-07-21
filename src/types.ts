@@ -54,6 +54,11 @@ export interface VesselCargo {
   updatedAt: string;
 }
 
+export interface VesselDelegateAssignment {
+  userId: string;
+  isActive: boolean;
+}
+
 export interface VesselNote {
   statusList: ShipStatus[];
   recentDynamics: string;
@@ -70,6 +75,7 @@ export interface Vessel {
   fleetCategory: 'tanker fleet' | 'bulk fleet' | string;
   fleetTags: string[];
   assignedUserIds: string[];
+  delegateManagers: VesselDelegateAssignment[];
   isActive: boolean;
   position: VesselPosition;
   cargo: VesselCargo;

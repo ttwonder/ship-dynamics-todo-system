@@ -2,6 +2,7 @@ import type { AppData, TaskItem, TemporaryMeeting, UserAccount, Vessel } from '.
 import { isMeetingAttentionTask, isVesselDelegatedMeetingTask } from './taskAttention';
 import { taskVesselIds } from './taskVesselScope';
 import { taskIsClosedForScope } from './taskVesselProgress';
+import { hasActiveVesselDelegation } from './vesselDelegation';
 
 const meetingInvolvesUser = (meeting: TemporaryMeeting | undefined, userId: string) => Boolean(
   meeting && ((meeting.trackingUserIds || []).includes(userId) || meeting.responsibleUserIds.includes(userId)),
@@ -21,7 +22,7 @@ export function taskBelongsToUserWorkCenter(
   const meeting = task.sourceMeetingId ? meetings.find(item => item.id === task.sourceMeetingId) : undefined;
   const scopeVessels = taskScopeVessels(task, visibleVessels);
   const assignedToScopedVessel = scopeVessels.some(vessel =>
-    vessel.assignedUserIds.includes(user.id) || user.managedVesselIds.includes(vessel.id),
+    vessel.assignedUserIds.includes(user.id) || user.managedVesselIds.includes(vessel.id) || hasActiveVesselDelegation(vessel, user.id),
   );
   const explicitlyResponsible = task.ownerUserIds.includes(user.id);
 

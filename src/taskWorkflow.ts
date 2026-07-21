@@ -1,6 +1,7 @@
 import type { RolePermissions, TaskItem, UserAccount, UserNotification, Vessel } from './types';
 import { hasPermission } from './permissions';
 import { nowIso, uid } from './utils';
+import { hasActiveVesselDelegation } from './vesselDelegation';
 
 export const FLOW_INTERNAL_CONTROL_REMINDER = '請務必在FLOW系統中申報異常並處理！避免遺漏處理！';
 
@@ -8,7 +9,7 @@ export const taskSourceLabel = (task: Pick<TaskItem, 'sourceType' | 'sourceMeeti
   task.sourceType === 'temporary' || task.sourceMeetingId ? '臨會/專題' : '早會';
 
 type WorkflowUser = Pick<UserAccount, 'id' | 'role' | 'department' | 'managedVesselIds'> & { isActive?: boolean };
-type WorkflowVessel = Pick<Vessel, 'id' | 'assignedUserIds'>;
+type WorkflowVessel = Pick<Vessel, 'id' | 'assignedUserIds' | 'delegateManagers'>;
 
 export function canAccessTab(user: Pick<UserAccount, 'role'>, tab: string): boolean {
   if (user.role !== 'vessel') return true;
@@ -28,7 +29,7 @@ export function getTaskNotificationRecipientIds(users: WorkflowUser[], vessel: W
   return users.filter(user => user.id !== actorId
     && user.isActive !== false
     && user.role !== 'vessel'
-    && (assigned.has(user.id) || user.managedVesselIds.includes(vessel.id))
+    && (assigned.has(user.id) || user.managedVesselIds.includes(vessel.id) || hasActiveVesselDelegation(vessel, user.id))
     && /督導|航運處/.test(user.department)
   ).map(user => user.id);
 }
@@ -36,7 +37,7 @@ export function getTaskNotificationRecipientIds(users: WorkflowUser[], vessel: W
 export function canCancelInternalControl(user: WorkflowUser | null | undefined, vessel: WorkflowVessel): boolean {
   if (!user || user.role === 'vessel') return false;
   if (user.role === 'owner' || user.role === 'admin') return true;
-  const assigned = vessel.assignedUserIds.includes(user.id) || user.managedVesselIds.includes(vessel.id);
+  const assigned = vessel.assignedUserIds.includes(user.id) || user.managedVesselIds.includes(vessel.id) || hasActiveVesselDelegation(vessel, user.id);
   return assigned;
 }
 
@@ -73,7 +74,7 @@ export function buildTaskNotificationsForVessels(users: WorkflowUser[], vessels:
     const owner=users.find(user=>user.id===ownerId);
     if(!owner||owner.isActive===false||owner.role==='vessel')return false;
     if(owner.role==='owner'||owner.role==='admin'||hasPermission(rolePermissions,owner,'viewAllVessels'))return true;
-    return vessels.every(vessel=>vessel.assignedUserIds.includes(owner.id)||(owner.managedVesselIds||[]).includes(vessel.id));
+    return vessels.every(vessel=>vessel.assignedUserIds.includes(owner.id)||(owner.managedVesselIds||[]).includes(vessel.id)||hasActiveVesselDelegation(vessel, owner.id));
   });
   const safeTask={...task,ownerUserIds};
   return vessels.flatMap(vessel => buildTaskNotifications(users, vessel, actorId, safeTask, kind, actorName, ownerUserIds))

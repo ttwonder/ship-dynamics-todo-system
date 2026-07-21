@@ -20,6 +20,7 @@ import type {
 import { nowIso } from './utils';
 import { normalizeRolePermissions } from './permissions';
 import { isMeetingTaskSource, normalizeConfiguredMeetingTaskCategories, normalizeConfiguredTaskCategories, normalizeMeetingTaskCategoryList, normalizeTaskCategoryList, sanitizeEditableMeetingTaskCategories, sanitizeEditableTaskCategories } from './taskCategories';
+import { normalizeVesselDelegateManagers } from './vesselDelegation';
 
 const roles: UserRole[] = ['owner', 'admin', 'operator', 'vessel'];
 const INVALID_PASSWORD_HASH = '0'.repeat(64);
@@ -244,6 +245,7 @@ export function normalizeAppData(value: unknown): AppData | null {
         fleetCategory: text(item.fleetCategory),
         fleetTags: strings(item.fleetTags),
         assignedUserIds: strings(item.assignedUserIds),
+        delegateManagers: normalizeVesselDelegateManagers(item.delegateManagers),
         isActive: bool(item.isActive, true),
         position: {
           source: oneOf(position.source, positionSources, 'manual'),
@@ -382,6 +384,7 @@ export function normalizeAppData(value: unknown): AppData | null {
   });
   normalized.vessels.forEach(vessel => {
     vessel.assignedUserIds = vessel.assignedUserIds.filter(userId => !vesselUserIds.has(userId) && !ownerUserIds.has(userId));
+    vessel.delegateManagers = vessel.delegateManagers.filter(delegate => normalized.users.some(user => user.id === delegate.userId && user.isActive && (user.role === 'admin' || user.role === 'operator')) && !vessel.assignedUserIds.includes(delegate.userId));
   });
   normalized.users.filter(user => user.isActive && (user.role === 'admin' || user.role === 'operator')).forEach(user => {
     const explicitManaged = user.managedVesselIds.filter((id, index, ids) => activeVesselIds.has(id) && ids.indexOf(id) === index);

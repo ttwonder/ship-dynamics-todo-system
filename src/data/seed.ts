@@ -746,6 +746,7 @@ export function createInitialData(): AppData {
     fleetCategory: v.category === 'bulk' ? 'bulk fleet' : 'tanker fleet',
     fleetTags: [v.category === 'bulk' ? 'bulk fleet' : 'tanker fleet', v.shipType],
     assignedUserIds: [],
+    delegateManagers: [],
     isActive: true,
     position: {
       source: 'mock-smart-ship-api' as const,

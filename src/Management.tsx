@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { AppData, PermissionKey, RolePermissions, UserAccount, UserRole, Vessel } from './types';
+import type { AppData, PermissionKey, RolePermissions, UserAccount, UserRole, Vessel, VesselDelegateAssignment } from './types';
 import { getSupabaseConfig, saveSupabaseConfig, type SupabaseConfig } from './cloud';
 import { isOwner, nowIso, roleLabel, sha256, uid } from './utils';
 import { hasPermission, normalizeRolePermissions, PERMISSION_KEYS, PERMISSION_LABELS } from './permissions';
@@ -10,7 +10,7 @@ import { WEEKLY_ATTENTION_CATEGORY_MAP, isMeetingTaskSource, taskCategoriesOf } 
 type Section = 'directory' | 'people' | 'vessels' | 'categories' | 'attention' | 'roles' | 'owner' | 'audit';
 type DirectoryKind = 'all' | 'user' | 'vessel';
 type UserDraft = Pick<UserAccount, 'department' | 'name' | 'username' | 'role' | 'isActive' | 'managedVesselIds'> & { password: string };
-type VesselDraft = Pick<Vessel, 'name' | 'shortName' | 'fullName' | 'shipType' | 'fleetCategory' | 'isActive' | 'assignedUserIds'>;
+type VesselDraft = Pick<Vessel, 'name' | 'shortName' | 'fullName' | 'shipType' | 'fleetCategory' | 'isActive' | 'assignedUserIds' | 'delegateManagers'>;
 
 type Props = {
   data: AppData;
@@ -36,7 +36,8 @@ const vesselDraft = (v?: Vessel): VesselDraft => v ? {
   fleetCategory: v.fleetCategory,
   isActive: v.isActive,
   assignedUserIds: [...(v.assignedUserIds || [])],
-} : { name: '', shortName: '', fullName: '', shipType: '', fleetCategory: 'tanker fleet', isActive: true, assignedUserIds: [] };
+  delegateManagers: [...(v.delegateManagers || [])],
+} : { name: '', shortName: '', fullName: '', shipType: '', fleetCategory: 'tanker fleet', isActive: true, assignedUserIds: [], delegateManagers: [] };
 const canManageVesselAssignments = (user: Pick<UserAccount, 'role' | 'isActive'>) => user.isActive && (user.role === 'admin' || user.role === 'operator');
 const managerNames = (users: UserAccount[], ids: string[]) => ids.map(id => users.find(user => user.id === id && user.isActive)?.name).filter(Boolean) as string[];
 
@@ -188,7 +189,7 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
     commit(d => {
       const user = d.users.find(u => u.id === selectedUserId);
       if (user) { user.isActive = false; user.updatedAt = nowIso(); }
-      d.vessels.forEach(v => { v.assignedUserIds = v.assignedUserIds.filter(id => id !== selectedUserId); });
+      d.vessels.forEach(v => { v.assignedUserIds = v.assignedUserIds.filter(id => id !== selectedUserId); v.delegateManagers = (v.delegateManagers || []).filter(delegate => delegate.userId !== selectedUserId); });
     }, '停用人員', 'user', selectedUserId, target.name);
     const next = activeUsers.find(u => u.id !== selectedUserId);
     if (next) selectUser(next.id);
@@ -199,12 +200,13 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
     if (!shipDraft.shortName.trim() && !shipDraft.name.trim()) return alert('請填寫船名或簡稱');
     const id = creatingVessel ? uid('vessel') : selectedVesselId;
     const assignedIds = activeUsers.filter(u => canManageVesselAssignments(u) && shipDraft.assignedUserIds.includes(u.id)).map(u => u.id);
+    const delegateManagers = shipDraft.delegateManagers.filter(delegate => activeUsers.some(user => canManageVesselAssignments(user) && user.id === delegate.userId && !assignedIds.includes(user.id)));
     commit(d => {
       let vessel = d.vessels.find(v => v.id === id);
       if (!vessel) {
         const at = nowIso();
         vessel = {
-          id, createdAt: at, updatedAt: at, name: '', shortName: '', fullName: '', shipType: '', fleetCategory: 'tanker fleet', fleetTags: [], assignedUserIds: [], isActive: true,
+          id, createdAt: at, updatedAt: at, name: '', shortName: '', fullName: '', shipType: '', fleetCategory: 'tanker fleet', fleetTags: [], assignedUserIds: [], delegateManagers: [], isActive: true,
           position: { source: 'manual', location: '', speedKnots: 0, navigationStatus: '航行', lastPort: '', nextPort: '', eta: '', etb: '', etd: '', updatedAt: at, manualRemark: '' },
           cargo: { source: 'manual', loadStatus: '空載', name: '', quantity: '', items: [], updatedAt: at },
           note: { statusList: [], recentDynamics: '', subsequentDynamics: '', updatedAt: at },
@@ -212,12 +214,13 @@ export default function ManagementView({ data, currentUser, commit }: Props) {
         };
         d.vessels.push(vessel);
       }
-      Object.assign(vessel, { name: shipDraft.name.trim() || shipDraft.shortName.trim(), shortName: shipDraft.shortName.trim() || shipDraft.name.trim(), fullName: shipDraft.fullName.trim(), shipType: shipDraft.shipType.trim(), fleetCategory: shipDraft.fleetCategory, isActive: shipDraft.isActive, assignedUserIds: assignedIds, updatedAt: nowIso() });
+      Object.assign(vessel, { name: shipDraft.name.trim() || shipDraft.shortName.trim(), shortName: shipDraft.shortName.trim() || shipDraft.name.trim(), fullName: shipDraft.fullName.trim(), shipType: shipDraft.shipType.trim(), fleetCategory: shipDraft.fleetCategory, isActive: shipDraft.isActive, assignedUserIds: assignedIds, delegateManagers, updatedAt: nowIso() });
       d.users.forEach(u => {
         if (u.role === 'owner') { u.managedVesselIds = []; return; }
-        if (!canManageVesselAssignments(u)) return;
+        if (!canManageVesselAssignments(u)) { vessel.delegateManagers = (vessel.delegateManagers || []).filter(delegate => delegate.userId !== u.id); return; }
         const assigned = assignedIds.includes(u.id);
         u.managedVesselIds = assigned ? Array.from(new Set([...(u.managedVesselIds || []), id])) : (u.managedVesselIds || []).filter(vesselId => vesselId !== id);
+        if (assigned) vessel.delegateManagers = (vessel.delegateManagers || []).filter(delegate => delegate.userId !== u.id);
       });
     }, creatingVessel ? '新增船舶' : '更新船舶', 'vessel', id, vesselDisplayName(shipDraft));
     setCreatingVessel(false);
@@ -335,15 +338,32 @@ function PersonEditor({ draft, setDraft, creating, owner, manager, currentUser, 
 
 function VesselEditor({ draft, setDraft, creating, users, assignmentQuery, setAssignmentQuery, onSave, onDisable }: { draft:VesselDraft; setDraft:React.Dispatch<React.SetStateAction<VesselDraft>>; creating:boolean; users:UserAccount[]; assignmentQuery:string; setAssignmentQuery:(v:string)=>void; onSave:()=>void; onDisable:()=>void }) {
   const [departmentFilter, setDepartmentFilter] = useState('all');
+  const [delegateDepartmentFilter, setDelegateDepartmentFilter] = useState('all');
   const departments = Array.from(new Set(users.map(user => user.department).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'zh-TW'));
   const selectedManagers = managerNames(users, draft.assignedUserIds);
+  const selectedDelegateNames = draft.delegateManagers.map(delegate => {
+    const user = users.find(item => item.id === delegate.userId);
+    return user ? `${user.name}（${delegate.isActive ? '激活' : '未激活'}）` : '';
+  }).filter(Boolean) as string[];
   const visibleAssignments = users
     .filter(user => departmentFilter === 'all' || user.department === departmentFilter)
     .filter(user => !assignmentQuery.trim() || `${user.name} ${user.department} ${user.username} ${roleLabel(user.role)}`.toLowerCase().includes(assignmentQuery.trim().toLowerCase()));
-  const toggle = (id:string) => setDraft(prev => ({ ...prev, assignedUserIds: prev.assignedUserIds.includes(id) ? prev.assignedUserIds.filter(x => x !== id) : [...prev.assignedUserIds, id] }));
-  return <div className="management-editor"><EditorHeading title={creating ? '新增船舶' : vesselDisplayName(draft)} subtitle={creating ? '建立船舶基本資料與經管人員' : draft.shipType || '未填船型'} actions={<>{!creating && <button className="btn danger" onClick={onDisable}>停用</button>}<button className="btn primary" onClick={onSave}>{creating ? '建立船舶' : '保存變更'}</button></>}/><div className="management-summary-grid"><Summary label="船隊" value={draft.fleetCategory}/><Summary label="經管人員" value={selectedManagers.length ? `${selectedManagers.length} 人｜${selectedManagers.join('、')}` : '0 人'}/><Summary label="狀態" value={draft.isActive ? '啟用' : '停用'}/></div><EditorSection title="船舶資料"><div className="management-form"><label>系統名稱<input value={draft.name} onChange={e => setDraft(prev => ({...prev,name:e.target.value}))}/></label><label>簡稱<input value={draft.shortName} onChange={e => setDraft(prev => ({...prev,shortName:e.target.value}))}/></label><label className="span-2">完整船名<input value={draft.fullName} onChange={e => setDraft(prev => ({...prev,fullName:e.target.value}))}/></label><label>船型<input value={draft.shipType} onChange={e => setDraft(prev => ({...prev,shipType:e.target.value}))}/></label><label>船隊<select value={draft.fleetCategory} onChange={e => setDraft(prev => ({...prev,fleetCategory:e.target.value}))}><option value="tanker fleet">油輪船隊</option><option value="bulk fleet">散貨船隊</option></select></label></div></EditorSection><EditorSection title="經管人員"><AssignmentPicker query={assignmentQuery} setQuery={setAssignmentQuery} count={draft.assignedUserIds.length} department={departmentFilter} setDepartment={setDepartmentFilter} departments={departments} departmentLabel="經管部門篩選" selectedNames={selectedManagers} onAll={() => setDraft(prev => ({...prev,assignedUserIds:visibleAssignments.map(user=>user.id)}))} onClear={() => setDraft(prev => ({...prev,assignedUserIds:[]}))}>{visibleAssignments.map(user => <label key={user.id} className={draft.assignedUserIds.includes(user.id) ? 'selected' : ''}><input type="checkbox" checked={draft.assignedUserIds.includes(user.id)} onChange={() => toggle(user.id)}/><span>{user.name}</span><small>{user.department}｜{roleLabel(user.role)}</small></label>)}</AssignmentPicker></EditorSection></div>;
+  const visibleDelegates = users
+    .filter(user => !draft.assignedUserIds.includes(user.id))
+    .filter(user => delegateDepartmentFilter === 'all' || user.department === delegateDepartmentFilter)
+    .filter(user => !assignmentQuery.trim() || `${user.name} ${user.department} ${user.username} ${roleLabel(user.role)}`.toLowerCase().includes(assignmentQuery.trim().toLowerCase()));
+  const toggle = (id:string) => setDraft(prev => {
+    const assigned = prev.assignedUserIds.includes(id) ? prev.assignedUserIds.filter(x => x !== id) : [...prev.assignedUserIds, id];
+    return { ...prev, assignedUserIds: assigned, delegateManagers: prev.delegateManagers.filter(delegate => !assigned.includes(delegate.userId)) };
+  });
+  const toggleDelegate = (id:string) => setDraft(prev => {
+    const exists = prev.delegateManagers.some(delegate => delegate.userId === id);
+    return { ...prev, delegateManagers: exists ? prev.delegateManagers.filter(delegate => delegate.userId !== id) : [...prev.delegateManagers, { userId: id, isActive: true }] };
+  });
+  const toggleDelegateActive = (id:string) => setDraft(prev => ({ ...prev, delegateManagers: prev.delegateManagers.map(delegate => delegate.userId === id ? { ...delegate, isActive: !delegate.isActive } : delegate) }));
+  const delegateState = (id:string): VesselDelegateAssignment | undefined => draft.delegateManagers.find(delegate => delegate.userId === id);
+  return <div className="management-editor"><EditorHeading title={creating ? '新增船舶' : vesselDisplayName(draft)} subtitle={creating ? '建立船舶基本資料與經管人員' : draft.shipType || '未填船型'} actions={<>{!creating && <button className="btn danger" onClick={onDisable}>停用</button>}<button className="btn primary" onClick={onSave}>{creating ? '建立船舶' : '保存變更'}</button></>}/><div className="management-summary-grid"><Summary label="船隊" value={draft.fleetCategory}/><Summary label="經管人員" value={selectedManagers.length ? `${selectedManagers.length} 人｜${selectedManagers.join('、')}` : '0 人'}/><Summary label="代管" value={selectedDelegateNames.length ? `${selectedDelegateNames.length} 人` : '0 人'}/><Summary label="狀態" value={draft.isActive ? '啟用' : '停用'}/></div><EditorSection title="船舶資料"><div className="management-form"><label>系統名稱<input value={draft.name} onChange={e => setDraft(prev => ({...prev,name:e.target.value}))}/></label><label>簡稱<input value={draft.shortName} onChange={e => setDraft(prev => ({...prev,shortName:e.target.value}))}/></label><label className="span-2">完整船名<input value={draft.fullName} onChange={e => setDraft(prev => ({...prev,fullName:e.target.value}))}/></label><label>船型<input value={draft.shipType} onChange={e => setDraft(prev => ({...prev,shipType:e.target.value}))}/></label><label>船隊<select value={draft.fleetCategory} onChange={e => setDraft(prev => ({...prev,fleetCategory:e.target.value}))}><option value="tanker fleet">油輪船隊</option><option value="bulk fleet">散貨船隊</option></select></label></div></EditorSection><EditorSection title="經管人員"><AssignmentPicker query={assignmentQuery} setQuery={setAssignmentQuery} count={draft.assignedUserIds.length} department={departmentFilter} setDepartment={setDepartmentFilter} departments={departments} departmentLabel="經管部門篩選" selectedNames={selectedManagers} onAll={() => setDraft(prev => ({...prev,assignedUserIds:visibleAssignments.map(user=>user.id),delegateManagers:prev.delegateManagers.filter(delegate=>!visibleAssignments.some(user=>user.id===delegate.userId))}))} onClear={() => setDraft(prev => ({...prev,assignedUserIds:[]}))}>{visibleAssignments.map(user => <label key={user.id} className={draft.assignedUserIds.includes(user.id) ? 'selected' : ''}><input type="checkbox" checked={draft.assignedUserIds.includes(user.id)} onChange={() => toggle(user.id)}/><span><b>{user.name}</b><small>{user.department}｜{roleLabel(user.role)}</small></span></label>)}</AssignmentPicker></EditorSection><EditorSection title="代管"><p className="muted">代管人員可先勾選，再用狀態按鈕單獨切換。綠色「激活」時，該船待辦會出現在該員「我的待辦」，也會進入「批量更新自管船舶」清單；灰色「未激活」時不納入。</p><AssignmentPicker query={assignmentQuery} setQuery={setAssignmentQuery} count={draft.delegateManagers.length} department={delegateDepartmentFilter} setDepartment={setDelegateDepartmentFilter} departments={departments} departmentLabel="代管部門篩選" selectedNames={selectedDelegateNames} onAll={() => setDraft(prev => ({...prev,delegateManagers:visibleDelegates.map(user=>prev.delegateManagers.find(delegate=>delegate.userId===user.id)||{userId:user.id,isActive:true})}))} onClear={() => setDraft(prev => ({...prev,delegateManagers:[]}))}>{visibleDelegates.map(user => { const delegate = delegateState(user.id); return <div key={user.id} className={`delegate-manager-option ${delegate ? 'selected' : ''}`}><label><input type="checkbox" checked={Boolean(delegate)} onChange={() => toggleDelegate(user.id)}/><span><b>{user.name}</b><small>{user.department}｜{roleLabel(user.role)}</small></span></label>{delegate && <button type="button" className={`delegate-manager-toggle ${delegate.isActive ? 'active' : 'inactive'}`} onClick={() => toggleDelegateActive(user.id)}>{delegate.isActive ? '激活' : '未激活'}</button>}</div>; })}</AssignmentPicker></EditorSection><EditorSection title="狀態"><label className="switch-line"><input type="checkbox" checked={draft.isActive} onChange={e => setDraft(prev => ({...prev,isActive:e.target.checked}))}/>啟用此船舶</label></EditorSection></div>;
 }
-
 function AssignmentPicker({ query, setQuery, count, onAll, onClear, children, department, setDepartment, departments = [], departmentLabel = '部門篩選', selectedNames = [] }: { query:string; setQuery:(v:string)=>void; count:number; onAll:()=>void; onClear:()=>void; children:React.ReactNode; department?:string; setDepartment?:(value:string)=>void; departments?:string[]; departmentLabel?:string; selectedNames?:string[] }) {
   const selectedSummary = selectedNames.length ? `已選 ${count}｜${selectedNames.join('、')}` : `已選 ${count}`;
   return <div className="management-assignment"><div className="assignment-selected-summary" title={selectedSummary}>{selectedSummary}</div><div className="management-assignment-tools">{setDepartment && <label className="assignment-department-filter"><span>{departmentLabel}</span><select aria-label={departmentLabel} value={department || 'all'} onChange={event => setDepartment(event.target.value)}><option value="all">全部部門</option>{departments.map(item => <option key={item} value={item}>{item}</option>)}</select></label>}<input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋後勾選…"/><button className="btn small ghost" onClick={onAll}>全選</button><button className="btn small ghost" onClick={onClear}>清空</button></div><div className="management-assignment-grid">{children}</div></div>;

@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+
+const app = fs.readFileSync('src/App.tsx', 'utf8');
+const dashboard = fs.readFileSync('src/Dashboard.tsx', 'utf8');
+const batch = fs.existsSync('src/BatchManagedVesselModal.tsx') ? fs.readFileSync('src/BatchManagedVesselModal.tsx', 'utf8') : '';
+const styles = fs.readFileSync('src/styles.css', 'utf8');
+
+assert.ok(dashboard.includes('批量更新自管船舶'), '船舶看板頁首需有「批量更新自管船舶」按鈕');
+assert.ok(dashboard.includes('onOpenBatchManagedVessels'), 'Dashboard 需把批量更新按鈕接到 App 層');
+assert.ok(app.includes('batchManagedOpen'), 'App 需管理批量更新自管船舶彈窗狀態');
+assert.ok(app.includes('<BatchManagedVesselModal'), 'App 需渲染批量更新彈窗');
+assert.ok(app.includes('taskReturnBatchManaged'), '新增要事關閉／保存後需可回到批量更新清單');
+assert.ok(app.includes('addTaskForVessel(id,false,true)'), '批量清單的新增要事需設定返回批量清單');
+assert.ok(app.includes('setBatchManagedOpen(true)'), '關閉新增要事後需重新打開批量更新清單');
+
+for (const label of ['目前位置','上一港','下一港','航行狀態','速度','載況','ETA','ETB','ETD','貨名貨量','近期動態']) {
+  assert.ok(batch.includes(label), `批量更新清單缺少欄位：${label}`);
+}
+assert.ok(batch.includes('managedVessels') && batch.includes("currentUser.role === 'owner' || currentUser.role === 'admin' ? vessels") && batch.includes('vessel.assignedUserIds.includes(currentUser.id)') && batch.includes('currentUser.managedVesselIds.includes(vessel.id)'), '批量清單必須讓 Owner／管理員使用可見船舶，其他人員只列自管船舶');
+assert.ok(batch.includes('ScheduleDateTimeField'), '批量清單需沿用 ETA／ETB／ETD 日期＋可選時間欄位');
+assert.ok(batch.includes('composeScheduleValue'), '批量清單需保存純日期或日期時間');
+assert.ok(batch.includes('parseCargoLines') && batch.includes('cargoLines'), '批量清單需支援貨名貨量多行編輯');
+assert.ok(batch.includes('onAddTask(vessel.id)'), '每艘船最後需提供新增要事按鈕');
+assert.ok(batch.includes("commit(draft =>") && batch.includes("'批量更新自管船舶'"), '批量清單每次修改需透過正式 commit 保存並留痕');
+assert.ok(styles.includes('.batch-managed-modal') && styles.includes('.batch-managed-list'), '批量更新清單需有專用樣式');
+console.log('Batch managed vessel update contracts passed.');

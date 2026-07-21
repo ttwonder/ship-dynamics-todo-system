@@ -9,6 +9,7 @@ import { toggleDashboardFilter } from './dashboardFilters';
 import { appearsInSingleVesselTasks, vesselAttentionTasks } from './taskAttention';
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
 import { formatScheduleDisplay } from './scheduleTime';
+import { hasActiveVesselDelegation } from './vesselDelegation';
 import RichTextContent from './RichTextContent';
 
 const PRIORITY_RANK = { 急: 0, 高: 1, 中: 2, 低: 3 } as const;
@@ -36,13 +37,14 @@ interface DashboardProps {
   onStartMeeting: (requestedIds?: string[]) => void;
   onOpenReport: () => void;
   onTaskMetric: (mode: 'open' | 'high' | 'overdue') => void;
+  onOpenBatchManagedVessels: () => void;
   canEdit: boolean;
   canCreateTasks: boolean;
   canUseMeetings: boolean;
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, vessels, tasks, selected, setSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ user, vessels, tasks, selected, setSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [fleetFilter, setFleetFilter] = useState('all');
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
@@ -53,7 +55,7 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
     const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
     if (fleetFilter === 'selected' && !selected.includes(vessel.id)) return false;
     if (fleetFilter === 'high' && !['高', '急', '特別關注'].includes(deriveVesselAttention(vessel, vesselAttentionTasks(vesselTasks)).effective)) return false;
-    if (fleetFilter === 'mine' && !vessel.assignedUserIds.includes(user.id) && !user.managedVesselIds.includes(vessel.id)) return false;
+    if (fleetFilter === 'mine' && !vessel.assignedUserIds.includes(user.id) && !user.managedVesselIds.includes(vessel.id) && !hasActiveVesselDelegation(vessel, user.id)) return false;
     if (!['all', 'selected', 'high', 'mine'].includes(fleetFilter) && !vessel.fleetCategory.toLowerCase().includes(fleetFilter)) return false;
     const query = keyword.trim().toLowerCase();
     return !query || [
@@ -83,7 +85,7 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
   return <section className="dashboard-view">
     <div className="page-heading">
       <div><h1>船舶看板</h1><p>集中查看上下港、位置、載況、時間、貨物、未來一週關注與重要要事。</p></div>
-      {(canUseMeetings||canUseReports)&&<div className="heading-actions no-print">{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>}
+      {(canEdit||canUseMeetings||canUseReports)&&<div className="heading-actions no-print">{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新自管船舶</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>}
     </div>
     <div className="metric-grid">
       <div className="metric-card blue"><small>今日船舶</small><b>{vessels.length}</b><span>艘</span></div>
