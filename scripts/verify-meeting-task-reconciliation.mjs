@@ -68,6 +68,18 @@ try {
   assert.equal(tasks.find(item => item.id === 'unrelated').sourceMeetingId, 'm2', '不得修改其他會議待辦');
   assert.deepEqual(first.updatedIds, ['canonical']);
 
+  const noVesselTasks = [task('no-vessel-existing', 'v1', 'no-vessel-meeting')];
+  const noVesselResult = reconcileMeetingTasks({
+    ...common,
+    tasks: noVesselTasks,
+    meetingId: 'no-vessel-meeting',
+    vesselIds: [],
+    followUps: [{ id: 'no-vessel-item', description: '未指定船舶仍可保存會議' }],
+  });
+  assert.deepEqual(noVesselResult.created, [], '未指定船舶範圍不得建立沒有船舶 ID 的待辦');
+  assert.equal(noVesselTasks[0].sourceMeetingId, undefined, '會議改為未指定船舶時既有關聯待辦需解除關聯');
+  assert.equal(noVesselTasks[0].isClosed, true, '會議改為未指定船舶時既有關聯待辦需封存');
+
   const customizedTasks = [task('custom-v1', 'v1', 'legacy-custom'), task('custom-v2', 'v2', 'legacy-custom')];
   customizedTasks[0].description = '船一客製待辦';
   customizedTasks[1].description = '船二客製待辦';

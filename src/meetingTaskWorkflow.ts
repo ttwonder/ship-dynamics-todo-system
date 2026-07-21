@@ -162,8 +162,15 @@ export const reconcileMeetingTasks = ({
     grouped.set(itemId, group);
   });
 
-  const canonicalByItemId = new Map<string, TaskItem>();
   const archivedIds: string[] = [];
+  if (!targetVesselIds.length) {
+    grouped.forEach(group => group.forEach(task => {
+      if (archiveLinkedTask(task, '已取消（臨會/專題未指定涉會船舶）', actorId, actorName, at)) archivedIds.push(task.id);
+    }));
+    return { created: [], updatedIds: [], archivedIds };
+  }
+
+  const canonicalByItemId = new Map<string, TaskItem>();
   grouped.forEach((group, itemId) => {
     if (!targetItemIds.has(itemId)) {
       const reason = normalizedFollowUps.length ? '已取消（臨會/專題待辦事項已移除）' : '已取消（臨會/專題待辦已清空）';
@@ -214,8 +221,6 @@ export const reconcileMeetingTasks = ({
       updatedIds.push(existingTask.id);
       return;
     }
-    if (!targetVesselIds.length) return;
-
     const task: TaskItem = {
       id: uid('task'),
       sourceMeetingId: meetingId,

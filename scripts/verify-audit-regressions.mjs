@@ -27,7 +27,7 @@ const checks = [
   ['自動、手動保存與同步需共用串行／互斥控制', app.includes('cloudSaveInFlight') && app.includes('pendingCloudData') && app.includes('while (pendingCloudData.current)') && app.includes('enqueueCloudSave(data)') && app.includes('cloudSyncInFlight') && app.includes('cloudSyncing')],
   ['本機保存不得誤報已保存雲端', app.includes('已保存於本機瀏覽器')],
   ['臨時會議需限制授權角色修改', meetings.includes('canEditTemporaryMeetings(data.settings.rolePermissions, currentUser)') && meetingAccess.includes("hasPermission(matrix, user, 'manageMeetings') && hasPermission(matrix, user, 'viewAllVessels')")],
-  ['臨時會議不得保存零艘範圍', meetings.includes("if (!resolvedVesselIds.length) return alert('請至少選擇一艘船舶')")],
+  ['臨時會議可保存未指定船舶範圍', !meetings.includes("if (!resolvedVesselIds.length) return alert('請至少選擇一艘船舶')") && meetings.includes('liveScopeVessels.length&&!canAccessAllVessels')],
   ['會議跟進事項需帶來源 meeting id', meetingTasks.includes('sourceMeetingId: meetingId')],
   ['會議跟進事項需避免重複', meetingTasks.includes('canonicalByItemId') && meetingTasks.includes('sourceMeetingItemId') && meetingTasks.includes('舊版逐船重複待辦已合併')],
   ['快速更新與事項編輯器不可修改船舶經管人', !modals.includes('assignedUserIds=') && !modals.includes('managedVesselIds=')],

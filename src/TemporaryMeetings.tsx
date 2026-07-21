@@ -185,7 +185,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   }, [draft.vesselScopeMode, draft.vesselTypeScopes, draft.vessels, visibleVessels]);
   const responsiblePeople = useMemo(() => {
     const scopeVessels = resolvedVesselIds.map(id => data.vessels.find(vessel => vessel.id === id)).filter((vessel): vessel is Vessel => Boolean(vessel));
-    return meetingPeople.filter(user => isEligibleTaskOwner(data.settings.rolePermissions, user, scopeVessels));
+    return scopeVessels.length ? meetingPeople.filter(user => isEligibleTaskOwner(data.settings.rolePermissions, user, scopeVessels)) : meetingPeople;
   }, [meetingPeople, resolvedVesselIds, data.vessels, data.settings.rolePermissions]);
 
   const cleanTaskItems = (items: MeetingTaskItem[]) => {
@@ -352,8 +352,6 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     if (!draft.meetingDate) return alert('請選擇召開日期');
     if (!draft.expectedDate) return alert('請選擇預計完成日期');
     if (isRichTextEmpty(draft.reason)) return alert('請填寫召開緣由');
-    if (draft.vesselScopeMode === 'types' && !draft.vesselTypeScopes.length) return alert('請至少選擇一個船舶類型');
-    if (!resolvedVesselIds.length) return alert('請至少選擇一艘船舶');
     if (!draft.departments.length) return alert('請至少選擇一個涉及部門');
     if (!draft.participantUserIds.length) return alert('請至少選擇一位與會人員');
     if (!draft.trackingUserIds.length) return alert('請至少選擇一位追蹤窗口');
@@ -388,14 +386,16 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
         :requestedDraft.vesselScopeMode==='types'
           ?liveVisibleVessels.filter(vessel=>requestedDraft.vesselTypeScopes.includes(vessel.shipType)).map(vessel=>vessel.id)
           :requestedDraft.vessels.filter(id=>liveVisibleVessels.some(vessel=>vessel.id===id));
-      if(!liveVesselIds.length||requestedDraft.vesselScopeMode==='vessels'&&liveVesselIds.length!==requestedDraft.vessels.length){failure='涉船範圍權限已變更，請重新選擇';return prev;}
+      if(requestedDraft.vesselScopeMode==='vessels'&&liveVesselIds.length!==requestedDraft.vessels.length){failure='涉船範圍權限已變更，請重新選擇';return prev;}
       const liveScopeVessels=liveVisibleVessels.filter(vessel=>liveVesselIds.includes(vessel.id));
-      if(!canAccessAllVessels(prev.settings.rolePermissions,liveUser,liveScopeVessels)){failure='必須具備全部涉船範圍權限才能保存會議';return prev;}
+      if(liveScopeVessels.length&&!canAccessAllVessels(prev.settings.rolePermissions,liveUser,liveScopeVessels)){failure='必須具備全部涉船範圍權限才能保存會議';return prev;}
       const invalidParticipant=requestedDraft.participantUserIds.some(id=>!prev.users.some(user=>user.id===id&&user.isActive&&user.role!=='vessel'));
       if(invalidParticipant){failure='與會人員已停用或不存在，請重新選擇';return prev;}
       const invalidTracking=requestedDraft.trackingUserIds.some(id=>!prev.users.some(user=>user.id===id&&user.isActive&&user.role!=='vessel'));
       if(invalidTracking){failure='追蹤窗口已停用或不存在，請重新選擇';return prev;}
-      const invalidResponsible=requestedDraft.responsibleUserIds.some(id=>!isEligibleTaskOwner(prev.settings.rolePermissions,prev.users.find(user=>user.id===id),liveScopeVessels));
+      const invalidResponsible=requestedDraft.responsibleUserIds.some(id=>liveScopeVessels.length
+        ? !isEligibleTaskOwner(prev.settings.rolePermissions,prev.users.find(user=>user.id===id),liveScopeVessels)
+        : !prev.users.some(user=>user.id===id&&user.isActive&&user.role!=='vessel'));
       if(invalidResponsible){failure='负责人已停用或不具备全部涉船范围权限，请重新选择';return prev;}
       const liveMeeting=prev.meetings.find(item=>item.id===id);
       if(wasCreating&&liveMeeting){failure='會議識別碼已存在，請重新建立';return prev;}
@@ -584,7 +584,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
           </div>
 
           <div className="temporary-picker meeting-scope-picker">
-            <div className="temporary-picker-title"><b>涉會船舶範圍 <span className="required-mark">*</span></b><span>{resolvedVesselIds.length} 艘</span></div>
+            <div className="temporary-picker-title"><b>涉會船舶範圍</b><span>{resolvedVesselIds.length} 艘</span></div>
             <div className="meeting-scope-modes">
               {(['all', 'types', 'vessels'] as MeetingVesselScopeMode[]).map(mode => <button key={mode} type="button" className={`scope-mode-card ${draft.vesselScopeMode === mode ? 'active' : ''}`} aria-pressed={draft.vesselScopeMode === mode} onClick={() => setDraft(previous => ({ ...previous, vesselScopeMode: mode }))}><b>{scopeModeLabel(mode)}</b><small>{mode === 'all' ? '目前可見的所有船舶' : mode === 'types' ? '可同時選一個或多個船型' : '逐艘勾選特定船舶'}</small></button>)}
             </div>
@@ -592,7 +592,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
             {draft.vesselScopeMode === 'types' && <>
               <div className="temporary-picker-title scope-subtitle"><b>選擇船舶類型</b><span>已選 {draft.vesselTypeScopes.length} 類</span><button className="btn small ghost" onClick={() => setDraft(previous => ({ ...previous, vesselTypeScopes: [...shipTypes] }))}>全選類型</button><button className="btn small ghost" onClick={() => setDraft(previous => ({ ...previous, vesselTypeScopes: [] }))}>清空</button></div>
               <div className="vessel-type-scope-grid">{shipTypes.map(shipType => { const count = visibleVessels.filter(vessel => vessel.shipType === shipType).length; const active = draft.vesselTypeScopes.includes(shipType); return <button type="button" key={shipType} className={`vessel-type-scope ${active ? 'active' : ''}`} aria-pressed={active} onClick={() => toggleVesselType(shipType)}><span className={`meeting-check ${active ? 'on' : ''}`}>{active ? '✓' : ''}</span><b>{shipType}</b><small>{count} 艘</small></button>; })}</div>
-              <div className="scope-result-note"><b>實際範圍</b><span>{draft.vesselTypeScopes.length ? `${draft.vesselTypeScopes.join('、')}，共 ${resolvedVesselIds.length} 艘` : '請至少選擇一個船舶類型'}</span></div>
+              <div className="scope-result-note"><b>實際範圍</b><span>{draft.vesselTypeScopes.length ? `${draft.vesselTypeScopes.join('、')}，共 ${resolvedVesselIds.length} 艘` : '未指定船舶類型；可直接保存為未指定船舶範圍'}</span></div>
             </>}
             {draft.vesselScopeMode === 'vessels' && <>
               <div className="temporary-picker-title scope-subtitle"><b>逐船選擇</b><span>{draft.vessels.length} 艘</span><button className="btn small ghost" onClick={() => setDraft(previous => ({ ...previous, vessels: visibleVessels.map(vessel => vessel.id) }))}>全選</button><button className="btn small ghost" onClick={() => setDraft(previous => ({ ...previous, vessels: [] }))}>清空</button></div>
