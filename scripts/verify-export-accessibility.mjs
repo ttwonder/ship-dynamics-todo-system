@@ -18,6 +18,10 @@ assert.match(app,/taskReportVesselLabel\(t,vessels\)[\s\S]*taskReportShipTypeLab
 assert.match(fs.readFileSync(new URL('../src/taskVesselScope.ts',import.meta.url),'utf8'),/taskReportVesselLabel[\s\S]*return names\.join\('、'\) \|\| '-'[\s\S]*taskReportShipTypeLabel/,'报告专用标签必须只显示本次报告船舶交集，不添加受限船舶文案');
 assert.match(app,/const reportHistory=data\.agendaReports\.filter[\s\S]*report\.vesselIds\.every\(id=>allowedIds\.has\(id\)\)/,'历史报告元数据需按完整授权范围过滤');
 assert.match(app,/disabled=\{!vessels\.length\}/,'空授权交集时必须禁用 PDF 输出');
+for (const label of ['目前位置','上一港','下一港','航行狀態','載況','ETA','ETB','ETD','貨名貨量','船舶狀態','要事']) {
+  assert.ok(app.includes(label), `早會 PDF 必須包含「${label}」欄位`);
+}
+assert.ok(app.includes('vesselReportCargo(v)') && app.includes('vesselReportNavigation(v)'), '早會 PDF 船舶動態需使用結構化 helper 匯出完整欄位');
 assert.match(app,/role="dialog"[^>]*aria-modal="true"[^>]*aria-labelledby="report-preview-title"/,'报告预览必须有 dialog 语义与名称');
 assert.match(app,/event\.key==='Escape'/,'报告预览必须支援 Escape');
 assert.match(app,/event\.key!==['"]Tab['"]/,'报告预览必须限制 Tab 焦点');
