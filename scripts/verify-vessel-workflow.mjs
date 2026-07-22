@@ -6,6 +6,7 @@ const server = await createServer({ server: { middlewareMode: true }, appType: '
 try {
   const { DEFAULT_ROLE_PERMISSIONS, hasPermission } = await server.ssrLoadModule('/src/permissions.ts');
   const workflow = await server.ssrLoadModule('/src/taskWorkflow.ts');
+  const { uid } = await server.ssrLoadModule('/src/utils.ts');
   const { createInitialData } = await server.ssrLoadModule('/src/data/seed.ts');
   const { normalizeAppData } = await server.ssrLoadModule('/src/normalize.ts');
   const owner = { id:'owner', role:'owner', department:'管理層', managedVesselIds:[] };
@@ -32,6 +33,16 @@ try {
   assert.equal(workflow.canDeleteTask(admin), true);
   assert.equal(workflow.canDeleteTask(operator), false);
   assert.equal(workflow.canDeleteTask(vesselAccount), false);
+  assert.equal(workflow.trustedClosureDate('2026-06-30','2026-07-22'),'2026-06-30','使用者選擇的有效歷史完成日期必須保留');
+  assert.equal(workflow.trustedClosureDate('2026-02-30','2026-07-22'),'2026-07-22','不存在的日期必須退回交易當日');
+  assert.equal(workflow.trustedClosureDate('','2026-07-22'),'2026-07-22','未提供完成日期時預設交易當日');
+  const originalNow=Date.now;
+  const originalRandom=Math.random;
+  try{
+    Date.now=()=>1700000000000;
+    Math.random=()=>0.5;
+    assert.equal(new Set([uid('task'),uid('task'),uid('log')]).size,3,'即使時間與隨機來源重複，單一執行環境產生的識別碼仍不得碰撞');
+  }finally{Date.now=originalNow;Math.random=originalRandom;}
 
   const recipients = workflow.getTaskNotificationRecipientIds([supervisor,director,unrelated,operator,vesselAccount], vessel, 'ship');
   assert.deepEqual(recipients.sort(), ['dir','sup'], '只通知本船对应督导与航运处人员');
@@ -55,6 +66,21 @@ try {
   assert.equal(cancelled.internalControlCancelledBy, 'sup');
   const selected = workflow.validateInternalControlTransition({...task,isInternalControl:false}, {...task,isInternalControl:true,isAbnormal:false}, operator, vessel);
   assert.equal(selected.isAbnormal, true, '内控必然属于异常');
+  const multiVesselTask={...task,vesselIds:['v1','v2']};
+  const movedToManagedVessel={...multiVesselTask,vesselId:'v2',vesselIds:['v2'],isInternalControl:true};
+  assert.equal(workflow.internalControlTransitionRequested(multiVesselTask,movedToManagedVessel),true,'移除原內控涉船也屬取消轉換');
+  assert.throws(()=>workflow.validateInternalControlTransition(multiVesselTask,movedToManagedVessel,unrelated,[vessel,vessel2]),/無權/,'不得先換到自己管理的船再取消原船內控');
+  const partial=workflow.validateInternalControlTransition(multiVesselTask,movedToManagedVessel,admin,[vessel,vessel2]);
+  assert.equal(partial.isInternalControl,true,'部分縮減後剩餘船舶仍維持內控');
+  assert.equal(partial.internalControlCancelledBy,'admin','部分縮減也需記錄取消人');
+  const mixedProgressTask={...multiVesselTask,isClosed:true,vesselProgress:[{vesselId:'v1',status:'完成',isClosed:true,statusLogs:[]},{vesselId:'v2',status:'執行中',isClosed:false,statusLogs:[]}]};
+  assert.equal(workflow.internalControlTransitionRequested(mixedProgressTask,movedToManagedVessel),true,'分船進度仍有未結案船舶時，不得被頂層 isClosed=true 繞過');
+  assert.throws(()=>workflow.validateInternalControlTransition(mixedProgressTask,movedToManagedVessel,unrelated,[vessel,vessel2]),/無權/);
+  const shrunkWithClosedHistory={...mixedProgressTask,vesselId:'v2',vesselIds:['v2'],isClosed:false,vesselProgress:[{vesselId:'v1',status:'完成',isClosed:true,statusLogs:[]},{vesselId:'v2',status:'執行中',isClosed:false,statusLogs:[]}]};
+  assert.equal(workflow.internalControlTransitionRequested(shrunkWithClosedHistory,{...shrunkWithClosedHistory,isInternalControl:false}),true,'已移出船舶的結案歷史不得把仍在範圍內的未結案內控誤判為全部完成');
+  const fullyClosedProgressTask={...mixedProgressTask,vesselProgress:mixedProgressTask.vesselProgress.map(progress=>({...progress,isClosed:true}))};
+  const preservedClosed=workflow.validateInternalControlTransition(fullyClosedProgressTask,movedToManagedVessel,unrelated,[vessel,vessel2]);
+  assert.deepEqual(preservedClosed.vesselIds,['v1','v2'],'全部分船已結案的內控歷史範圍不得被重寫');
 
   const legacy = createInitialData();
   delete legacy.notifications;
@@ -64,6 +90,13 @@ try {
   assert.equal(normalized.tasks[0].isInternalControl, false, '旧事项自动补非内控');
   assert.equal(normalized.settings.rolePermissions.vessel.createTasks, true, '旧权限矩阵自动补船舶角色');
   assert.equal(normalized.settings.rolePermissions.vessel.enterManagement, false);
+
+  const duplicateTaskData=createInitialData();
+  duplicateTaskData.tasks.push({...structuredClone(duplicateTaskData.tasks[0])});
+  assert.equal(normalizeAppData(duplicateTaskData),null,'重複頂層待辦 ID 必須拒絕載入，避免更新或刪除多筆同 ID 記錄');
+  const duplicateStatusData=createInitialData();
+  duplicateStatusData.tasks[0].statusLogs=[{id:'same-log',at:'2026-07-22',by:'A',text:'一'},{id:'same-log',at:'2026-07-22',by:'B',text:'二'}];
+  assert.equal(normalizeAppData(duplicateStatusData),null,'重複狀態歷程 ID 必須拒絕載入');
 
   const inconsistent = createInitialData();
   const firstVessel = inconsistent.vessels[0];
@@ -81,7 +114,15 @@ try {
   assert.ok(appSource.includes('canAccessTab(currentUser, k)'), '导航需套用船舶账户页签白名单');
   assert.ok(appSource.includes('buildTaskNotifications'), '事项保存需建立通知');
   assert.ok(appSource.includes('creating&&!canUseVessel(liveUser,candidate.vesselId)'), '最终建立 handler 需在最新 state 再次检查船舶账户单船范围');
-  assert.ok(appSource.includes('buildTaskScopeChangeNotifications'), '跨船更新需以新旧 task 快照通知新旧范围');
+  assert.ok(appSource.includes('buildTaskScopeChangeNotifications'), '跨船更新需以新舊 task 快照通知新舊範圍');
+  assert.ok(appSource.includes('internalControlTransitionRequested(previous,normalizedCandidate)') && appSource.includes('creating?scopeVessels:previousVessels') && appSource.includes('linkedMeeting?.isInternalControl') && appSource.includes('savedScopeVessels'), '普通待辦內控縮減或取消必須按待辦加關聯臨會的完整原範圍授權，並以最終保存範圍重驗負責人與通知');
+  assert.ok(appSource.includes('prev.tasks.filter(item=>item.id===task.id).length!==1'),'單筆刪除必須拒絕缺失或重複待辦 ID');
+  assert.ok(appSource.includes('const matchingTasks=prev.tasks.filter(item=>item.id===candidate.id)') && appSource.includes("if(matchingTasks.length>1){failure='待辦識別碼重複，為避免覆蓋錯誤資料，本次未保存';return prev;}"),'單筆保存必須拒絕重複待辦 ID');
+  assert.ok(!appSource.includes('if(internalControlDeletion){meeting.internalControlCancelledAt=meeting.updatedAt') && !appSource.includes('if(cancellationVesselsByTaskId.has(task.id)){meeting.internalControlCancelledAt=meeting.updatedAt'),'刪除個別內控子待辦不得把仍有效的父會議標記為已取消');
+  assert.ok(appSource.includes('hasRemainingDuplicate') && appSource.includes('hasUnselectedDuplicate'), '單筆或批量刪除不得讓未選重複待辦繼續指向已刪會議事項');
+  assert.ok(appSource.includes("linkedMeeting&&!canEditTemporaryMeetings(prev.settings.rolePermissions,liveUser)") && appSource.includes("linkedMeetingTasks.length&&!canEditTemporaryMeetings(prev.settings.rolePermissions,liveUser)"), '單筆與批量刪除關聯會議待辦時必須在最新 state 另行重驗會議管理權限');
+  assert.ok(appSource.includes("trustedClosureDate(boundaryCandidate.closedDate,todayDate())") && appSource.includes("trustedClosureDate(normalizedProgress.closedDate,todayDate())"), '普通及單船結案必須保留使用者選擇的有效完成日期');
+  assert.ok(appSource.includes("internalControlDeletion?'internal_control_cancelled':'task_deleted'") && appSource.includes("'取消內部管控','task'"), '單筆與批量刪除內控待辦需保留專用通知及稽核語義');
   assert.ok(appSource.includes('deleteTask'), 'App 需有删除事项 handler');
   assert.ok(modalSource.includes('內部管控'), '事项弹窗需有独立内控选项');
   assert.ok(modalSource.includes('FLOW_INTERNAL_CONTROL_REMINDER'), '取消内控需立即显示 FLOW 提醒');

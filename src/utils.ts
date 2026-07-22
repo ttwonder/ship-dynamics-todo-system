@@ -12,7 +12,12 @@ export async function sha256(text: string): Promise<string> {
 }
 
 export function nowIso() { return new Date().toISOString(); }
-export function uid(prefix: string) { return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`; }
+let uidSequence=0;
+export function uid(prefix: string) {
+  uidSequence=(uidSequence+1)%Number.MAX_SAFE_INTEGER;
+  const entropy=globalThis.crypto?.randomUUID?.()||Math.random().toString(36).slice(2,12);
+  return `${prefix}_${Date.now()}_${uidSequence.toString(36)}_${entropy}`;
+}
 
 export function localDate(date = new Date()) {
   const year = date.getFullYear();

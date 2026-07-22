@@ -21,6 +21,7 @@ import { nowIso } from './utils';
 import { normalizeRolePermissions } from './permissions';
 import { isMeetingTaskSource, normalizeConfiguredMeetingTaskCategories, normalizeConfiguredTaskCategories, normalizeMeetingTaskCategoryList, normalizeTaskCategoryList, sanitizeEditableMeetingTaskCategories, sanitizeEditableTaskCategories } from './taskCategories';
 import { normalizeVesselDelegateManagers } from './vesselDelegation';
+import { canonicalizeMeetingTaskItemIds } from './meetingTaskItemIds';
 
 const roles: UserRole[] = ['owner', 'admin', 'operator', 'vessel'];
 const INVALID_PASSWORD_HASH = '0'.repeat(64);
@@ -59,6 +60,14 @@ const normalizeDateText = (value: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(text(va
 const bool = (value: unknown, fallback = false) => typeof value === 'boolean' ? value : fallback;
 const finite = (value: unknown, fallback = 0) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T => typeof value === 'string' && allowed.includes(value as T) ? value as T : fallback;
+const idsAreUnique=(items:Array<{id:string}>):boolean=>{
+  const seen=new Set<string>();
+  for(const item of items){
+    if(!item.id||seen.has(item.id))return false;
+    seen.add(item.id);
+  }
+  return true;
+};
 
 
 function normalizeStatusLogs(value: unknown): StatusLog[] {
@@ -127,14 +136,13 @@ function normalizeMeetings(value: unknown, timestamp: string, meetingTaskCategor
   return objects(value).map(item => {
     const id = text(item.id);
     const taskDescription = text(item.taskDescription);
-    const seenTaskItemIds = new Set<string>();
-    const taskItems = objects(item.taskItems).map((taskItem, index) => {
-      const rawId = text(taskItem.id, `${id}-task-${index + 1}`);
-      const cleanDescription = text(taskItem.description).trim();
-      const uniqueId = seenTaskItemIds.has(rawId) ? `${rawId}-duplicate-${index + 1}` : rawId;
-      seenTaskItemIds.add(uniqueId);
-      return { id: uniqueId, description: cleanDescription, categories: normalizeMeetingTaskCategoryList(taskItem.categories, meetingTaskCategories), distributeToVessels: bool(taskItem.distributeToVessels) };
-    }).filter(taskItem => taskItem.id && taskItem.description);
+    const rawTaskItems = objects(item.taskItems).map((taskItem, index) => ({
+      id: text(taskItem.id, `${id}-task-${index + 1}`),
+      description: text(taskItem.description).trim(),
+      distributeToVessels: bool(taskItem.distributeToVessels),
+      categories: normalizeMeetingTaskCategoryList(taskItem.categories ?? taskItem.category, meetingTaskCategories),
+    }));
+    const taskItems = canonicalizeMeetingTaskItemIds(rawTaskItems, `${id}-task`).filter(taskItem=>taskItem.description);
     if (!taskItems.length && Object.prototype.hasOwnProperty.call(item, 'taskDescription') && taskDescription.trim()) {
       taskItems.push({ id: `${id}-task-1`, description: taskDescription.trim(), categories: normalizeMeetingTaskCategoryList([], meetingTaskCategories), distributeToVessels: false });
     }
@@ -161,6 +169,10 @@ function normalizeMeetings(value: unknown, timestamp: string, meetingTaskCategor
       completedDate: text(item.completedDate) || undefined,
       completedBy: text(item.completedBy) || undefined,
       priority: oneOf(item.priority, priorities, '中'),
+      isInternalControl: bool(item.isInternalControl),
+      isAbnormal: bool(item.isAbnormal) || bool(item.isInternalControl),
+      internalControlCancelledAt: text(item.internalControlCancelledAt) || undefined,
+      internalControlCancelledBy: text(item.internalControlCancelledBy) || undefined,
       includeInMorning: bool(item.includeInMorning),
       latestStatus: text(item.latestStatus),
       statusLogs: normalizeStatusLogs(item.statusLogs),
@@ -344,7 +356,20 @@ export function normalizeAppData(value: unknown): AppData | null {
     auditLogs: normalizeAuditLogs(raw.auditLogs),
     notifications: normalizeNotifications(raw.notifications),
   };
+  const topLevelCollections=[normalized.users,normalized.vessels,normalized.tasks,normalized.meetings,normalized.agendaReports,normalized.auditLogs,normalized.notifications];
+  if(topLevelCollections.some(collection=>!idsAreUnique(collection)))return null;
+  const duplicateStatusHistory=normalized.tasks.some(task=>!idsAreUnique(task.statusLogs)||task.vesselProgress.some(progress=>!idsAreUnique(progress.statusLogs)))
+    ||normalized.meetings.some(meeting=>!idsAreUnique(meeting.statusLogs));
+  if(duplicateStatusHistory)return null;
+  const rawMeetingById=new Map(objects(raw.meetings).map(item=>[text(item.id),item]));
   normalized.meetings.forEach(meeting => {
+    const rawMeeting=rawMeetingById.get(meeting.id);
+    const rawItemIdCounts=new Map<string,number>();
+    objects(rawMeeting?.taskItems).forEach((item,index)=>{
+      const rawId=text(item.id,`${meeting.id}-task-${index+1}`);
+      rawItemIdCounts.set(rawId,(rawItemIdCounts.get(rawId)||0)+1);
+    });
+    const duplicatedRawItemIds=new Set([...rawItemIdCounts].filter(([,count])=>count>1).map(([id])=>id));
     const taskItemsProvided = meetingTaskItemsWereProvided.get(meeting.id);
     const taskDescriptionProvided = meetingTaskDescriptionWasProvided.get(meeting.id);
     if (!meeting.taskItems.length && !taskItemsProvided && !taskDescriptionProvided) {
@@ -352,12 +377,15 @@ export function normalizeAppData(value: unknown): AppData | null {
       if (linkedTask) meeting.taskItems.push({ id: `${meeting.id}-task-1`, description: linkedTask.description, categories: normalizeMeetingTaskCategoryList(linkedTask.categories, normalizedMeetingTaskCategories), distributeToVessels: linkedTask.distributeToVessels === true });
     }
     if (meeting.taskItems.length) meeting.taskDescription = meeting.taskItems[0].description;
-    const firstItemId = meeting.taskItems[0]?.id;
-    if (firstItemId) {
+    if (meeting.taskItems.length) {
       const itemIds=new Set(meeting.taskItems.map(item=>item.id));
-      normalized.tasks
-        .filter(task => task.sourceMeetingId === meeting.id && (!task.sourceMeetingItemId || (!itemIds.has(task.sourceMeetingItemId) && meeting.taskItems.length === 1)))
-        .forEach(task => { task.sourceMeetingItemId = firstItemId; });
+      normalized.tasks.filter(task=>task.sourceMeetingId===meeting.id).forEach(task=>{
+        const sourceIdWasDuplicated=Boolean(task.sourceMeetingItemId&&duplicatedRawItemIds.has(task.sourceMeetingItemId));
+        if(task.sourceMeetingItemId&&itemIds.has(task.sourceMeetingItemId)&&!sourceIdWasDuplicated)return;
+        const matches=meeting.taskItems.filter(item=>item.description.trim()===task.description.trim());
+        if(matches.length===1)task.sourceMeetingItemId=matches[0].id;
+        else if(sourceIdWasDuplicated)delete task.sourceMeetingItemId;
+      });
     }
   });
   const activeVesselIds = new Set(normalized.vessels.filter(vessel => vessel.isActive).map(vessel => vessel.id));

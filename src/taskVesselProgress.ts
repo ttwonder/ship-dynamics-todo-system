@@ -49,23 +49,30 @@ export function reconcileTaskVesselScope(task: TaskItem, nextVesselIds: string[]
   const targetIds=Array.from(new Set(nextVesselIds.filter(Boolean)));
   const wasPerVessel=usesPerVesselProgress(task);
   const snapshots=new Map<string,TaskVesselProgress>();
+  const closedHistory=new Map<string,TaskVesselProgress>();
 
   sourceTasks.forEach(source=>{
-    const sourceIds=taskVesselIds(source).filter(id=>targetIds.includes(id));
-    if(usesPerVesselProgress(source)){
-      (source.vesselProgress||[]).forEach(progress=>{
-        if(sourceIds.includes(progress.vesselId)&&!snapshots.has(progress.vesselId)) snapshots.set(progress.vesselId,cloneProgress(progress));
-      });
-      return;
-    }
-    if(sourceIds.length===1&&!snapshots.has(sourceIds[0])) snapshots.set(sourceIds[0],topLevelProgress(source,sourceIds[0]));
+    const sourceIds=taskVesselIds(source);
+    (source.vesselProgress||[]).forEach(progress=>{
+      if(targetIds.includes(progress.vesselId)){
+        if(!snapshots.has(progress.vesselId)) snapshots.set(progress.vesselId,cloneProgress(progress));
+      }else if(progress.isClosed&&!closedHistory.has(progress.vesselId)){
+        closedHistory.set(progress.vesselId,cloneProgress(progress));
+      }
+    });
+    const activeSourceIds=sourceIds.filter(id=>targetIds.includes(id));
+    if(!usesPerVesselProgress(source)&&activeSourceIds.length===1&&!snapshots.has(activeSourceIds[0])) snapshots.set(activeSourceIds[0],topLevelProgress(source,activeSourceIds[0]));
   });
+  const retainedClosedHistory=()=>[...closedHistory.values()].map(cloneProgress);
 
   if(targetIds.length>1){
-    task.vesselProgress=targetIds.flatMap(vesselId=>{
-      const progress=snapshots.get(vesselId);
-      return progress ? [{...progress,vesselId}] : [];
-    });
+    task.vesselProgress=[
+      ...targetIds.flatMap(vesselId=>{
+        const progress=snapshots.get(vesselId);
+        return progress ? [{...progress,vesselId}] : [];
+      }),
+      ...retainedClosedHistory(),
+    ];
   }else if(targetIds.length===1){
     const progress=snapshots.get(targetIds[0])||(wasPerVessel?topLevelProgress(task,targetIds[0]):null);
     if(progress){
@@ -77,9 +84,9 @@ export function reconcileTaskVesselScope(task: TaskItem, nextVesselIds: string[]
       task.updatedBy=progress.updatedBy||task.updatedBy;
       task.statusLogs=structuredClone(progress.statusLogs||[]);
     }
-    task.vesselProgress=[];
+    task.vesselProgress=retainedClosedHistory();
   }else{
-    task.vesselProgress=[];
+    task.vesselProgress=retainedClosedHistory();
   }
   if(targetIds[0]) task.vesselId=targetIds[0];
   task.vesselIds=targetIds;
@@ -109,7 +116,8 @@ export function updateTaskVesselProgress(
   updated.vesselId=vesselId;
   updated.updatedAt=meta.at;
   updated.updatedBy=meta.actorId;
-  const entries=(next.vesselProgress||[]).filter(item=>item.vesselId!==vesselId&&taskVesselIds(next).includes(item.vesselId));
+  const activeVesselIds=new Set(taskVesselIds(next));
+  const entries=(next.vesselProgress||[]).filter(item=>item.vesselId!==vesselId&&(activeVesselIds.has(item.vesselId)||item.isClosed));
   next.vesselProgress=[updated,...entries];
   next.updatedAt=meta.at;
   next.updatedBy=meta.actorId;

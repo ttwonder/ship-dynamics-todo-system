@@ -28,6 +28,7 @@ try {
   assert.equal(completed.updatedAt, '2026-07-18T12:34:56.000Z');
   assert.equal(completed.updatedBy, 'u9');
   assert.match(completed.statusLogs[0].text, /批量完成/);
+  assert.equal(completed.statusLogs[0].byUserId,'u9','系統產生的批量完成歷程必須保存不可變 actor ID');
   assert.equal(result.tasks.find(task => task.id === 'open-b').isClosed, false, '未選事項不應改變');
   assert.equal(result.tasks.find(task => task.id === 'closed-c').closedDate, '2026-07-10', '既有結案資料不應被覆寫');
 
@@ -37,6 +38,11 @@ try {
   assert.deepEqual(batch.sanitizeTaskSelection(['open-a','stale'], tasks.slice(0,1)), ['open-a']);
   assert.deepEqual(batch.validateBatchTaskSelection(tasks,['open-a'],new Set(['v1']),'complete').taskIds,['open-a']);
   assert.equal(batch.validateBatchTaskSelection(tasks,['open-a','missing'],new Set(['v1']),'complete').ok,false,'缺失记录必须拒绝整批');
+  const duplicateTasks=[...tasks,{...tasks[0],description:'重複 ID'}];
+  assert.equal(batch.validateBatchTaskSelection(duplicateTasks,['open-a'],new Set(['v1']),'delete').ok,false,'重複待辦 ID 必須拒絕整批，避免一次確認刪除多筆');
+  assert.deepEqual(batch.deleteSelectedTasks(duplicateTasks,['open-a']),{tasks:duplicateTasks,deletedIds:[]},'批量刪除工具本身也必須對重複 ID fail closed');
+  const duplicateComplete=batch.completeSelectedTasks(duplicateTasks,['open-a'],{actorId:'u9',actorName:'測試主管',at:'2026-07-18T12:34:56.000Z',closedDate:'2026-07-18'});
+  assert.deepEqual(duplicateComplete,{tasks:duplicateTasks,completedIds:[]},'批量完成工具本身也必須對重複 ID fail closed');
   assert.equal(batch.validateBatchTaskSelection(tasks,['closed-c'],new Set(['v1']),'complete').ok,false,'已结案记录不得再次批量完成');
   assert.equal(batch.validateBatchTaskSelection(tasks,['open-a'],new Set(['other']),'complete').ok,false,'不可见船舶记录必须拒绝整批');
   assert.equal(batch.validateBatchTaskSelection(tasks,['closed-c'],new Set(['v1']),'delete').ok,true,'已结案记录仍可由授权角色批量删除');

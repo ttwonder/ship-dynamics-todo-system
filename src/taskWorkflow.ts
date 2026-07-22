@@ -24,6 +24,13 @@ export function canDeleteTask(user: Pick<UserAccount, 'role'> | null | undefined
   return user?.role === 'owner' || user?.role === 'admin';
 }
 
+export function trustedClosureDate(candidate: string | undefined, fallback: string): string {
+  const value=(candidate||'').trim();
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(value))return fallback;
+  const parsed=new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime())&&parsed.toISOString().slice(0,10)===value?value:fallback;
+}
+
 export function getTaskNotificationRecipientIds(users: WorkflowUser[], vessel: WorkflowVessel, actorId: string): string[] {
   const assigned = new Set(vessel.assignedUserIds);
   return users.filter(user => user.id !== actorId
@@ -41,11 +48,41 @@ export function canCancelInternalControl(user: WorkflowUser | null | undefined, 
   return assigned;
 }
 
-export function validateInternalControlTransition<T extends Pick<TaskItem, 'isInternalControl' | 'isAbnormal' | 'internalControlCancelledAt' | 'internalControlCancelledBy'>>(previous: T, next: T, user: WorkflowUser, vessel: WorkflowVessel): T {
+type InternalControlTaskState = Pick<TaskItem, 'isInternalControl' | 'isAbnormal' | 'internalControlCancelledAt' | 'internalControlCancelledBy'> & Partial<Pick<TaskItem, 'vesselId' | 'vesselIds' | 'vesselProgress' | 'isClosed'>>;
+
+const internalControlScopeIds = (task: InternalControlTaskState) => Array.from(new Set((task.vesselIds?.length ? task.vesselIds : task.vesselId ? [task.vesselId] : []).filter(Boolean)));
+const internalControlStateClosed = (task: InternalControlTaskState) => {
+  const scopeIds=internalControlScopeIds(task);
+  if(!scopeIds.length)return Boolean(task.isClosed);
+  return scopeIds.every(vesselId=>{
+    const progress=task.vesselProgress?.find(item=>item.vesselId===vesselId);
+    return progress?progress.isClosed:Boolean(scopeIds.length===1&&task.isClosed);
+  });
+};
+
+export function internalControlTransitionRequested(previous: InternalControlTaskState, next: InternalControlTaskState): boolean {
+  if (!previous.isInternalControl || internalControlStateClosed(previous)) return false;
+  if (!next.isInternalControl) return true;
+  const nextIds = new Set(internalControlScopeIds(next));
+  return internalControlScopeIds(previous).some(vesselId => !nextIds.has(vesselId));
+}
+
+export function validateInternalControlTransition<T extends InternalControlTaskState>(previous: T, next: T, user: WorkflowUser, vesselOrVessels: WorkflowVessel | WorkflowVessel[]): T {
   const result = { ...next };
+  if (internalControlStateClosed(previous) && previous.isInternalControl) {
+    result.isInternalControl = true;
+    result.isAbnormal = true;
+    if (previous.vesselId) result.vesselId = previous.vesselId;
+    if (previous.vesselIds) result.vesselIds = [...previous.vesselIds];
+    return result;
+  }
   if (result.isInternalControl) result.isAbnormal = true;
-  if (previous.isInternalControl && !result.isInternalControl) {
-    if (!canCancelInternalControl(user, vessel)) throw new Error('目前帳戶無權取消內部管控');
+  if (internalControlTransitionRequested(previous, result)) {
+    const vessels = Array.isArray(vesselOrVessels) ? vesselOrVessels : [vesselOrVessels];
+    const previousIds = internalControlScopeIds(previous);
+    if (!vessels.length || (previousIds.length && (vessels.length !== previousIds.length || previousIds.some(id => !vessels.some(vessel => vessel.id === id)))) || !vessels.every(vessel => canCancelInternalControl(user, vessel))) {
+      throw new Error('目前帳戶無權取消全部原有涉船範圍的內部管控');
+    }
     result.internalControlCancelledAt = nowIso();
     result.internalControlCancelledBy = user.id;
   }

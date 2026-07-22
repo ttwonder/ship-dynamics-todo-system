@@ -10,6 +10,7 @@ import { appearsInSingleVesselTasks, vesselAttentionTasks } from './taskAttentio
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
 import { formatScheduleDisplay } from './scheduleTime';
 import { hasActiveVesselDelegation } from './vesselDelegation';
+import { meetingCreatesVesselAbnormalAlert, type DashboardMeetingAlert } from './meetingVesselAttention';
 import RichTextContent from './RichTextContent';
 
 const PRIORITY_RANK = { 急: 0, 高: 1, 中: 2, 低: 3 } as const;
@@ -27,6 +28,7 @@ interface DashboardProps {
   user: UserAccount;
   vessels: Vessel[];
   tasks: TaskItem[];
+  meetings: DashboardMeetingAlert[];
   selected: string[];
   setSelected: (ids: string[]) => void;
   onOpenVessel: (id: string) => void;
@@ -44,17 +46,20 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, vessels, tasks, selected, setSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ user, vessels, tasks, meetings, selected, setSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [fleetFilter, setFleetFilter] = useState('all');
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
   const scheduleKinds: ScheduleKind[] = ['ETA','ETB','ETD'];
   const scheduleField = { ETA: 'eta', ETB: 'etb', ETD: 'etd' } as const;
 
+  const abnormalMeetingsForVessel = (vesselId: string) => meetings.filter(meeting => meetingCreatesVesselAbnormalAlert(meeting, vesselId));
+
   const visible = vessels.filter(vessel => {
     const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
+    const hasMeetingAbnormal = abnormalMeetingsForVessel(vessel.id).length > 0;
     if (fleetFilter === 'selected' && !selected.includes(vessel.id)) return false;
-    if (fleetFilter === 'high' && !['高', '急', '特別關注'].includes(deriveVesselAttention(vessel, vesselAttentionTasks(vesselTasks)).effective)) return false;
+    if (fleetFilter === 'high' && !['高', '急', '特別關注'].includes(deriveVesselAttention(vessel, vesselAttentionTasks(vesselTasks), hasMeetingAbnormal).effective)) return false;
     if (fleetFilter === 'mine' && !vessel.assignedUserIds.includes(user.id) && !user.managedVesselIds.includes(vessel.id) && !hasActiveVesselDelegation(vessel, user.id)) return false;
     if (!['all', 'selected', 'high', 'mine'].includes(fleetFilter) && !vessel.fleetCategory.toLowerCase().includes(fleetFilter)) return false;
     const query = keyword.trim().toLowerCase();
@@ -104,11 +109,12 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
     <div className="fleet-card-grid">{visible.map(vessel => {
       const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
       const attentionTasks = vesselAttentionTasks(vesselTasks);
+      const abnormalMeetings = abnormalMeetingsForVessel(vessel.id);
       const urgent = attentionTasks.filter(task => task.priority === '急').length;
       const high = attentionTasks.filter(task => task.priority === '高').length;
       const mid = attentionTasks.filter(task => task.priority === '中').length;
       const low = attentionTasks.filter(task => task.priority === '低').length;
-      const attentionResult = deriveVesselAttention(vessel, attentionTasks);
+      const attentionResult = deriveVesselAttention(vessel, attentionTasks, abnormalMeetings.length > 0);
       const abnormal = attentionResult.hasAbnormal;
       const attention = attentionResult.effective;
       const level = vesselAttentionClass(attention);
@@ -136,7 +142,7 @@ export default function Dashboard({ user, vessels, tasks, selected, setSelected,
           const active = vessel.weeklyAttention.includes(option.key);
           return <button type="button" key={option.key} disabled={!canEdit} className={`${active ? 'active' : ''} ${option.key === 'psc-window' ? 'psc' : ''}`} aria-pressed={active} onClick={() => onToggleAttention(vessel.id, option.key)}><i />{option.label}</button>;
         })}</div>
-        <div className="ship-summary"><b>重要摘要：</b><div className="ship-summary-content">{vessel.position.manualRemark&&<p><strong>人工備註</strong>{vessel.position.manualRemark}</p>}{vessel.note.recentDynamics&&<p><strong>近期／後續動態</strong>{vessel.note.recentDynamics}</p>}{sortedTasks.length ? <ul>{sortedTasks.slice(0, 3).map(task => <li key={task.id}>{task.isAbnormal && <span>異常</span>}<strong>{task.priority}</strong><RichTextContent compact value={task.description} fallback="尚未輸入要事內容"/></li>)}</ul> : <p>目前無未結要事</p>}</div></div>
+        <div className="ship-summary"><b>重要摘要：</b><div className="ship-summary-content">{vessel.position.manualRemark&&<p><strong>人工備註</strong>{vessel.position.manualRemark}</p>}{vessel.note.recentDynamics&&<p><strong>近期／後續動態</strong>{vessel.note.recentDynamics}</p>}{abnormalMeetings.length>0&&<p className="meeting-abnormal-summary"><strong>臨會/專題異常</strong>{canUseMeetings?abnormalMeetings.map(meeting=>meeting.subject||'未命名會議').join('、'):`存在需關注之臨會/專題異常 ${abnormalMeetings.length} 件`}</p>}{sortedTasks.length ? <ul>{sortedTasks.slice(0, 3).map(task => <li key={task.id}>{task.isAbnormal && <span>異常</span>}<strong>{task.priority}</strong><RichTextContent compact value={task.description} fallback="尚未輸入要事內容"/></li>)}</ul> : !abnormalMeetings.length&&<p>目前無未結要事</p>}</div></div>
         <div className="ship-card-foot"><span className="task-mini"><i className="urgent">急 {urgent}</i><i className="high">高 {high}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print">{canEdit && <button className="btn small" onClick={() => onEdit(vessel.id)}>快速更新</button>}{canCreateTasks && <button className="btn small ghost" onClick={() => onAddTask(vessel.id)}>新增要事</button>}{canUseMeetings&&<button className={`btn small ${selectedForMeeting ? 'pink' : 'ghost'}`} onClick={() => toggleMeeting(vessel.id)}>{selectedForMeeting ? '已選入會議' : '選入會議'}</button>}</div></div>
       </article>;
     })}</div>

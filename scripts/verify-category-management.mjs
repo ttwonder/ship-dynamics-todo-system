@@ -16,6 +16,12 @@ try {
   assert.ok(customized);
   assert.deepEqual(customized.settings.taskCategories, ['自訂一','自訂二'], '新版自訂分類不得被預設清單補回');
   assert.deepEqual(customized.settings.meetingTaskCategories, ['船員管理','岸基培訓'], '新版臨會/專題待辦分類不得被要事分類補回或覆蓋');
+  const workflow = await server.ssrLoadModule('/src/meetingTaskWorkflow.ts');
+  assert.deepEqual(
+    workflow.meetingTaskItems({ id:'m-custom', taskItems:[{ id:'i-custom', description:'自訂分類待辦', categories:['危機干預'] }] }, [], ['船員管理','危機干預']),
+    [{ id:'i-custom', description:'自訂分類待辦', categories:['危機干預'], distributeToVessels:false }],
+    '刷新臨會時必須依管理頁目前分類清單還原自訂分類，不得退回第一個「船員管理」',
+  );
   assert.deepEqual(customized.tasks[0].categories, ['歷史分類'], '移除選項不得破壞歷史任務分類');
 
   assert.deepEqual(categoriesModule.REQUIRED_MEETING_TASK_CATEGORIES, ['船員管理','船員培訓','稽核認證','船舶維護管理','岸基培訓','岸基人員管理'], '臨會/專題待辦分類預設值需符合使用者指定');

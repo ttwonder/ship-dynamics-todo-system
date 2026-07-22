@@ -163,7 +163,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     fn(progress);
     target.vesselProgress=[progress,...(target.vesselProgress||[]).filter(item=>item.vesselId!==progressScope&&taskScopeIds.includes(item.vesselId))];
   });
-  const addStatus = () => { const value=quickStatus.trim(); if(!value||readOnly)return; changeProgress(target=>{target.status=value;target.statusLogs.unshift({id:uid('log'),at:nowIso(),by:currentUser.name,text:value});});setQuickStatus(''); };
+  const addStatus = () => { const value=quickStatus.trim(); if(!value||readOnly)return; changeProgress(target=>{target.status=value;target.statusLogs.unshift({id:uid('log'),at:nowIso(),by:currentUser.name,byUserId:currentUser.id,text:value});});setQuickStatus(''); };
   const toggleClosed = () => {
     if (!canClose||readOnly) return alert('目前角色未獲授權結案或重新開啟待辦');
     if (selectedProgress.isClosed) {

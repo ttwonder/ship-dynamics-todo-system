@@ -21,10 +21,10 @@ export interface VesselAttentionResult {
   hasOtherIndicator: boolean;
 }
 
-export function deriveVesselAttention(vessel: Vessel, openTasks: TaskItem[]): VesselAttentionResult {
+export function deriveVesselAttention(vessel: Vessel, openTasks: TaskItem[], hasMeetingAbnormal = false): VesselAttentionResult {
   const attentionTasks = vesselAttentionTasks(openTasks);
   const hasAccident = attentionTasks.some(taskIndicatesAccident);
-  const hasAbnormal = attentionTasks.some(task => task.isAbnormal);
+  const hasAbnormal = hasMeetingAbnormal || attentionTasks.some(task => task.isAbnormal);
   const hasPscWindow = vessel.weeklyAttention.includes('psc-window');
   const hasOtherIndicator = vessel.weeklyAttention.some(key => key !== 'psc-window');
   const taskLevel = attentionTasks.reduce<VesselAttentionLevel>((level, task) => higherAttention(level, task.priority), '低');

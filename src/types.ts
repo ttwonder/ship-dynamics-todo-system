@@ -182,6 +182,10 @@ export interface TemporaryMeeting {
   completedDate?: string;
   completedBy?: string;
   priority: TaskPriority;
+  isAbnormal: boolean;
+  isInternalControl: boolean;
+  internalControlCancelledAt?: string;
+  internalControlCancelledBy?: string;
   includeInMorning?: boolean;
   latestStatus?: string;
   statusLogs?: StatusLog[];

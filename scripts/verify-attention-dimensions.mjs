@@ -12,6 +12,7 @@ const server=await createServer({root:process.cwd(),server:{middlewareMode:true}
 try{
   const attention=await server.ssrLoadModule('/src/taskAttention.ts');
   const vesselAttention=await server.ssrLoadModule('/src/vesselAttention.ts');
+  const analysisAttention=await server.ssrLoadModule('/src/dataAnalysisVesselAttention.ts');
   const workflow=await server.ssrLoadModule('/src/meetingTaskWorkflow.ts');
   const normalizer=await server.ssrLoadModule('/src/normalize.ts');
   const seed=await server.ssrLoadModule('/src/data/seed.ts');
@@ -31,6 +32,15 @@ try{
   assert.equal(vesselAttention.deriveVesselAttention(vessel,[ordinary,meetingTask]).automatic,'低','会议急关注不得抬高船舶关注');
   assert.equal(vesselAttention.vesselAttentionLabel(vesselAttention.deriveVesselAttention(vessel,[ordinary,meetingTask]),[ordinary,meetingTask]),'低關注 1','看板标签只计普通要事');
   assert.equal(vesselAttention.deriveVesselAttention(vessel,[{...ordinary,priority:'急'}]).automatic,'急','普通添加要事仍须影响船舶关注');
+  const splitProgressMeetingTask={...distributedMeetingTask,vesselIds:['v1','v2'],isAbnormal:true,vesselProgress:[
+    {vesselId:'v1',status:'完成',isClosed:true,statusLogs:[]},
+    {vesselId:'v2',status:'追蹤中',isClosed:false,statusLogs:[]},
+  ]};
+  assert.equal(analysisAttention.dataAnalysisVesselAbnormalCount([splitProgressMeetingTask],[],'v1'),0,'已完成船舶不得保留分派會議待辦異常數');
+  assert.equal(analysisAttention.dataAnalysisVesselAbnormalCount([splitProgressMeetingTask],[],'v2'),1,'未完成船舶必須保留分派會議待辦異常數');
+  assert.equal(analysisAttention.dataAnalysisVesselAbnormalCount([splitProgressMeetingTask],['m1'],'v1'),0,'已有分派子待辦時，父會議不得繞過逐船完成狀態重複計數');
+  assert.equal(analysisAttention.dataAnalysisVesselAbnormalCount([splitProgressMeetingTask],['m1'],'v2'),1,'父會議與分派子待辦須按會議 ID 去重並保留未完成船舶異常');
+  assert.equal(analysisAttention.dataAnalysisVesselAbnormalCount([],['m1'],'v1'),1,'沒有分派子待辦時，父會議異常仍須計入船舶分析');
 
   const tasks=[];
   workflow.reconcileMeetingTasks({tasks,meetingId:'m1',vesselIds:['v1'],followUps:[{id:'f1',description:'会议待办'}],priority:'高',expectedDate:'2026-07-31',departments:[],ownerUserIds:[],initialStatus:'待执行',actorId:'u1',actorName:'用户',at:'2026-07-19T00:00:00.000Z'});
@@ -58,6 +68,7 @@ try{
   assert.match(dashboardSource,/vesselAttentionTasks\(/,'船舶看板计数和聚合须先排除会议维度');
   assert.match(detailSource,/單船待辦只顯示普通單船要事，以及已勾選/,'单船详情须说明未分派会议决议不混入单船待办');
   assert.match(analysisSource,/vesselAttentionTasks\(/,'船舶分析关注须排除会议维度');
+  assert.ok(analysisSource.includes('dataAnalysisVesselAbnormalCount(tasks,abnormalMeetingIds,vessel.id)'),'船舶分析異常數必須使用可執行的逐船聚合函式，而非只做不可達的來源字串檢查');
   assert.ok(editorSource.includes('會議議題關注程度')&&editorSource.includes('範圍與關注程度由臨會／專題同步'),'会议待办编辑器须明确显示独立维度与同步来源');
   assert.match(editorSource,/disabled=\{globalReadOnly\|\|hasMeetingScope\}/,'会议派生待办的关注程度不可独立修改');
   assert.match(appSource,/canonicalTaskAttentionForSave\(/,'保存层须再次强制会议维度与会议关注程度');

@@ -5,7 +5,10 @@ import { vesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention } from './vesselAttention';
 import { vesselAttentionTasks } from './taskAttention';
+import { meetingCreatesVesselAbnormalAlert } from './meetingVesselAttention';
+import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
 import { isMeetingTaskSource, taskCategoriesOf } from './taskCategories';
+import { dataAnalysisVesselAbnormalCount } from './dataAnalysisVesselAttention';
 
 type ScopeMode = 'overall' | 'department' | 'person';
 type Metrics = {
@@ -27,9 +30,10 @@ type Metrics = {
 };
 
 const pct = (part: number, total: number) => total ? Math.round(part / total * 100) : 0;
+const taskClosedForAnalysis = (task: TaskItem) => taskIsClosedForScope(task,taskVesselIds(task));
 const metricOf = (tasks: TaskItem[], proposed: number, proposalBase: number): Metrics => {
-  const closed = tasks.filter(task => task.isClosed).length;
-  const overdue = tasks.filter(task => !task.isClosed && Boolean(task.expectedDate) && (daysDiff(task.expectedDate) ?? 0) < 0).length;
+  const closed = tasks.filter(taskClosedForAnalysis).length;
+  const overdue = tasks.filter(task => !taskClosedForAnalysis(task) && Boolean(task.expectedDate) && (daysDiff(task.expectedDate) ?? 0) < 0).length;
   const highRiskTasks = tasks.filter(task => task.priority === '急' || task.priority === '高');
   const awareTasks = tasks.filter(task => task.isAware);
   const internalTasks = tasks.filter(task => task.isInternalControl);
@@ -43,13 +47,13 @@ const metricOf = (tasks: TaskItem[], proposed: number, proposalBase: number): Me
     proposed,
     proposalRate: pct(proposed, proposalBase),
     highRisk: highRiskTasks.length,
-    highRiskRate: pct(highRiskTasks.filter(task => task.isClosed).length, highRiskTasks.length),
+    highRiskRate: pct(highRiskTasks.filter(taskClosedForAnalysis).length, highRiskTasks.length),
     aware: awareTasks.length,
-    awareRate: pct(awareTasks.filter(task => task.isClosed).length, awareTasks.length),
+    awareRate: pct(awareTasks.filter(taskClosedForAnalysis).length, awareTasks.length),
     internal: internalTasks.length,
-    internalRate: pct(internalTasks.filter(task => task.isClosed).length, internalTasks.length),
+    internalRate: pct(internalTasks.filter(taskClosedForAnalysis).length, internalTasks.length),
     abnormal: abnormalTasks.length,
-    abnormalRate: pct(abnormalTasks.filter(task => task.isClosed).length, abnormalTasks.length),
+    abnormalRate: pct(abnormalTasks.filter(taskClosedForAnalysis).length, abnormalTasks.length),
   };
 };
 const localMonthKey = (value: string) => {
@@ -112,12 +116,14 @@ export default function DataAnalysisView({ data, vessels }: { data: AppData; ves
   const vesselRows = vessels.map(vessel => {
     const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id));
     const attentionTasks = vesselAttentionTasks(vesselTasks);
-    const open = attentionTasks.filter(task => !task.isClosed);
-    const attentionResult = deriveVesselAttention(vessel, open);
+    const open = attentionTasks.filter(task => !taskIsClosedForVessel(task,vessel.id));
+    const abnormalMeetingIds=data.meetings.filter(meeting=>meetingCreatesVesselAbnormalAlert(meeting,vessel.id)).map(meeting=>meeting.id);
+    const hasMeetingAbnormal = abnormalMeetingIds.length>0;
+    const attentionResult = deriveVesselAttention(vessel, open, hasMeetingAbnormal);
     return {
       vessel,
       counts: Object.fromEntries(['急', '高', '中', '低'].map(priority => [priority, attentionTasks.filter(task => task.priority === priority).length])) as Record<string, number>,
-      abnormal: attentionTasks.filter(task => task.isAbnormal).length,
+      abnormal: dataAnalysisVesselAbnormalCount(tasks,abnormalMeetingIds,vessel.id),
       lights: vessel.weeklyAttention.length,
       attention: attentionResult.manual
         ? `${attentionResult.effective}（手動 ${attentionResult.manual}／自動下限 ${attentionResult.automatic}）`

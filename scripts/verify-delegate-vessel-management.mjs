@@ -17,6 +17,10 @@ assert.ok(management.includes('delegateVessels') && management.includes('toggleP
 assert.ok(management.includes('title="代管船舶"') && management.includes('selectedDelegateVesselNames'), '人員頁代管船舶需有獨立模組與已選摘要');
 assert.ok((management.match(/isActive: false/g) || []).length >= 2, '人員頁與船舶頁新增代管時預設都必須為未激活');
 assert.ok(styles.includes('.delegate-manager-toggle.active') && styles.includes('.delegate-manager-toggle.inactive'), '代管激活狀態需有綠色／灰色樣式');
+assert.ok(management.includes('delegate-state-dot') && management.includes("aria-label={delegate.isActive ? '已激活；點擊切換為未激活' : '未激活；點擊切換為激活'}"), '代管狀態需改為有無障礙名稱的小圓點按鈕');
+assert.ok(!management.includes(">{delegate.isActive ? '激活' : '未激活'}</button>"), '代管狀態按鈕不得再顯示會擋住選項的文字');
+assert.match(styles,/\.delegate-manager-toggle\{[^}]*width:24px[^}]*height:24px[^}]*padding:0/,'代管狀態點擊區需固定為不遮擋內容的小尺寸');
+assert.match(styles,/\.delegate-state-dot\{[^}]*width:10px[^}]*height:10px/,'代管狀態視覺需為小圓點');
 assert.ok(app.includes('vesselMatchesUser') && app.includes('hasActiveVesselDelegation'), '可見船舶範圍需包含激活代管船舶');
 assert.ok(workCenter.includes('hasActiveVesselDelegation'), '我的待辦需把激活代管船舶視為本人相關船舶');
 assert.ok(batch.includes('managedVessels') && batch.includes('hasActiveVesselDelegation'), '批量更新自管船舶需包含激活代管船舶');

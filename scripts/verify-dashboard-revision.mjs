@@ -48,7 +48,7 @@ assert.ok(styles.includes('min-height:112px') && styles.includes('.ship-summary{
 assert.ok(dashboard.includes("priority === '急'") && dashboard.includes('急 {urgent}'), '看板需显示急等级统计');
 assert.ok(app.includes('t.isAbnormal') && app.includes('異常</span>'), '清单及报告需显示异常资料');
 assert.ok(morning.includes('急:0') && morning.includes('異常'), '早会需按急等级排序并显示异常');
-assert.ok(meetingTasks.includes('priority,') && meetingTasks.includes('isAbnormal: false'), '臨會/專題產生的要事需帶完整新資料契約');
+assert.ok(meetingTasks.includes('priority,') && meetingTasks.includes('isAbnormal: isAbnormal || isInternalControl') && meetingTasks.includes('isInternalControl,'), '臨會/專題產生的要事需帶完整新資料契約');
 
 assert.ok(normalizer.includes("const priorities: TaskPriority[] = ['急', '高', '中', '低']"), '正規化器需接受急等级');
 assert.ok(normalizer.includes('isAbnormal: bool(item.isAbnormal)'), '正規化器需迁移异常选项');
