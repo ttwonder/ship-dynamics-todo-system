@@ -70,7 +70,8 @@ export default function WorkCenter({data,user,vessels,onOpenTask,onOpenInternalC
   const toggleOne=(id:string)=>setSelectedIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);
   const completeSelected=()=>{if(onBatchComplete(selectedTasks.map(task=>task.id)))setSelectedIds([]);};
   const deleteSelected=()=>{if(onBatchDelete(selectedTasks.map(task=>task.id)))setSelectedIds([]);};
-  const unreadByTask=unreadTaskUpdateCounts(data.notifications,user.id);
+  const visibleTaskIds=new Set(allTasks.map(task=>task.id));
+  const unreadByTask=unreadTaskUpdateCounts(data.notifications.filter(notice=>Boolean(notice.taskId&&visibleTaskIds.has(notice.taskId))),user.id);
   const unreadTaskCount=Object.keys(unreadByTask).length;
   const hasTaskFilters=Boolean(taskQuery.trim()||taskVessel!=='all'||taskPriority!=='all'||taskSource!=='all'||taskSort!=='priority');
   const resetTaskFilters=()=>{setTaskQuery('');setTaskVessel('all');setTaskPriority('all');setTaskSource('all');setTaskSort('priority');};

@@ -26,6 +26,7 @@ type Props = {
   canEdit: boolean;
   canClose: boolean;
   canExport: boolean;
+  authorizationEpoch: string;
   onCreate: (items: InternalControlCase[], expectedRevision: number) => boolean;
   onUpdate: (item: InternalControlCase, expectedUpdatedAt: string, expectedRevision: number) => boolean;
   onOpenTask: (taskId: string) => void;
@@ -44,11 +45,13 @@ const optionList = (values: string[]): MultiOption[] => values.filter(Boolean).m
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
 const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
 
-export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canExport, onCreate, onUpdate, onOpenTask }: Props) {
+export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canExport, authorizationEpoch, onCreate, onUpdate, onOpenTask }: Props) {
   const [subpage, setSubpage] = useState<Subpage>('open');
   const [filters, setFilters] = useState<InternalControlFilters>(() => emptyFilters(defaultInternalControlVesselIds(user, vessels)));
   const [batchOpen, setBatchOpen] = useState(false);
   const [editing, setEditing] = useState<InternalControlCase | null>(null);
+  const [editorAuthorizationEpoch,setEditorAuthorizationEpoch]=useState('');
+  const [batchAuthorizationEpoch,setBatchAuthorizationEpoch]=useState('');
   const [page, setPage] = useState(1);
   const visibleVesselIds = useMemo(() => new Set(vessels.map(vessel => vessel.id)), [vessels]);
   const scopedCases = data.internalControlCases.filter(item => visibleVesselIds.has(item.vesselId));
@@ -57,8 +60,11 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const filtered = filterInternalControlCases(scopedCases, vessels, effectiveFilters);
   const paged = paginateItems(filtered, page, 30);
   const stats = buildInternalControlStats(filtered, vessels);
+  const visibleEditing=Boolean(editing&&editorAuthorizationEpoch===authorizationEpoch&&scopedCases.some(item=>item.id===editing.id));
+  const visibleBatch=Boolean(batchOpen&&batchAuthorizationEpoch===authorizationEpoch&&canCreate&&vessels.length);
 
   useEffect(() => setPage(1), [subpage, JSON.stringify(filters)]);
+  useEffect(()=>{setEditing(null);setBatchOpen(false);setEditorAuthorizationEpoch('');setBatchAuthorizationEpoch('');},[authorizationEpoch]);
   useEffect(() => {
     setFilters(previous => {
       const allowed = previous.vesselIds.filter(id => visibleVesselIds.has(id));
@@ -84,7 +90,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   };
 
   return <section className="internal-control-page">
-    <div className="page-heading"><div><h1>內控異常</h1><p>督導日常、訪船、隨船及外部發現事項的獨立登記、跟進、結案與統計。</p></div><div className="heading-actions no-print">{canCreate && <button className="btn green" onClick={() => setBatchOpen(true)}>＋ 批量新增</button>}{canExport && <button className="btn ghost" disabled={!filtered.length} onClick={() => downloadInternalControlExcel(filtered, vessels, summary)}>導出 Excel</button>}{canExport && <button className="btn primary" disabled={!filtered.length} onClick={print}>導出 PDF</button>}</div></div>
+    <div className="page-heading"><div><h1>內控異常</h1><p>督導日常、訪船、隨船及外部發現事項的獨立登記、跟進、結案與統計。</p></div><div className="heading-actions no-print">{canCreate && <button className="btn green" onClick={() => {setBatchAuthorizationEpoch(authorizationEpoch);setBatchOpen(true);}}>＋ 批量新增</button>}{canExport && <button className="btn ghost" disabled={!filtered.length} onClick={() => downloadInternalControlExcel(filtered, vessels, summary)}>導出 Excel</button>}{canExport && <button className="btn primary" disabled={!filtered.length} onClick={print}>導出 PDF</button>}</div></div>
     <div className="ic-tabs no-print" role="tablist"><button className={subpage === 'open' ? 'active' : ''} onClick={() => setSubpage('open')}>內控未完清單 <b>{scopedCases.filter(item => !item.isClosed).length}</b></button><button className={subpage === 'closed' ? 'active' : ''} onClick={() => setSubpage('closed')}>內控結案清單 <b>{scopedCases.filter(item => item.isClosed).length}</b></button><button className={subpage === 'stats' ? 'active' : ''} onClick={() => setSubpage('stats')}>數據統計</button></div>
 
     <section className="panel ic-filter-panel no-print">
@@ -93,12 +99,12 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
       <div className="ic-filter-grid"><MultiFilter label="船舶名稱" options={vesselOptions} selected={filters.vesselIds} onChange={value => setFilter('vesselIds', value)}/><MultiFilter label="船舶類型" options={optionList(shipTypes)} selected={filters.shipTypes} onChange={value => setFilter('shipTypes', value)}/><MultiFilter label="重要程度" options={optionList(data.settings.priorities)} selected={filters.priorities} onChange={value => setFilter('priorities', value as TaskPriority[])}/><MultiFilter label="事項分類" options={optionList(categories)} selected={filters.categories} onChange={value => setFilter('categories', value)}/><MultiFilter label="涉及部門" options={optionList(departments)} selected={filters.departments} onChange={value => setFilter('departments', value)}/><MultiFilter label="報告來源" options={optionList(REPORT_SOURCES)} selected={filters.reportSources} onChange={value => setFilter('reportSources', value as InternalControlReportSource[])}/><MultiFilter label="設備故障細項" options={optionList(data.settings.equipmentFailureSubcategories)} selected={filters.equipmentSubcategories} onChange={value => setFilter('equipmentSubcategories', value)}/></div>
     </section>
 
-    {subpage !== 'stats' ? <section className="panel ic-list-panel"><div className="table-wrap"><table className="compact ic-table"><thead><tr><th>船舶／日期</th><th>來源</th><th>關注</th><th>事項內容</th><th>分類／部門</th><th>最新狀態</th><th>{subpage === 'closed' ? '結案' : '同步'}</th><th className="no-print">操作</th></tr></thead><tbody>{paged.items.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td><b>{vessel ? vesselDisplayName(vessel) : item.vesselId}</b><small>{vessel?.shipType || '未填船型'}｜{item.reportDate}</small></td><td>{item.reportSource}{item.isAware && <small>知曉事項</small>}</td><td><span className={`priority-pill ${priorityClass(item.priority)}`}>{item.priority}</span></td><td><b>{richTextToPlainText(item.description)}</b></td><td>{item.category}{item.equipmentSubcategory && <small>{item.equipmentSubcategory}</small>}<small>{item.departments.join('、') || '未指定部門'}</small></td><td>{richTextToPlainText(item.status) || '尚未更新'}<small>更新 {item.updatedAt.slice(0, 10)}</small></td><td>{item.isClosed ? <><b>已結案</b><small>{item.closedDate || '-'}</small></> : item.linkedTaskId ? <><b>已同步要事</b><small>{item.linkedTaskId}</small></> : '僅內控'}</td><td className="no-print"><div className="table-actions"><button className="btn small primary" onClick={() => setEditing(structuredClone(item))}>{canEdit ? '更新' : '查看'}</button>{item.linkedTaskId && <button className="btn small ghost" onClick={() => onOpenTask(item.linkedTaskId!)}>要事</button>}</div></td></tr>; })}</tbody></table></div>{!filtered.length && <div className="empty-state">目前篩選條件沒有案件</div>}<PaginationControls page={paged.page} pageCount={paged.pageCount} total={paged.total} from={paged.from} to={paged.to} onPageChange={setPage} ariaLabel="內控異常分頁"/></section> : <InternalControlStatsView stats={stats}/>}
+    {subpage !== 'stats' ? <section className="panel ic-list-panel"><div className="table-wrap"><table className="compact ic-table"><thead><tr><th>船舶／日期</th><th>來源</th><th>關注</th><th>事項內容</th><th>分類／部門</th><th>最新狀態</th><th>{subpage === 'closed' ? '結案' : '同步'}</th><th className="no-print">操作</th></tr></thead><tbody>{paged.items.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td><b>{vessel ? vesselDisplayName(vessel) : item.vesselId}</b><small>{vessel?.shipType || '未填船型'}｜{item.reportDate}</small></td><td>{item.reportSource}{item.isAware && <small>知曉事項</small>}</td><td><span className={`priority-pill ${priorityClass(item.priority)}`}>{item.priority}</span></td><td><b>{richTextToPlainText(item.description)}</b></td><td>{item.category}{item.equipmentSubcategory && <small>{item.equipmentSubcategory}</small>}<small>{item.departments.join('、') || '未指定部門'}</small></td><td>{richTextToPlainText(item.status) || '尚未更新'}<small>更新 {item.updatedAt.slice(0, 10)}</small></td><td>{item.isClosed ? <><b>已結案</b><small>{item.closedDate || '-'}</small></> : item.linkedTaskId ? <><b>已同步要事</b><small>{item.linkedTaskId}</small></> : '僅內控'}</td><td className="no-print"><div className="table-actions"><button className="btn small primary" onClick={() => {setEditorAuthorizationEpoch(authorizationEpoch);setEditing(structuredClone(item));}}>{canEdit ? '更新' : '查看'}</button>{item.linkedTaskId && <button className="btn small ghost" onClick={() => onOpenTask(item.linkedTaskId!)}>要事</button>}</div></td></tr>; })}</tbody></table></div>{!filtered.length && <div className="empty-state">目前篩選條件沒有案件</div>}<PaginationControls page={paged.page} pageCount={paged.pageCount} total={paged.total} from={paged.from} to={paged.to} onPageChange={setPage} ariaLabel="內控異常分頁"/></section> : <InternalControlStatsView stats={stats}/>}
 
     <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單' : subpage === 'closed' ? '結案清單' : '統計報告'}</h1><p>{summary}｜共 {filtered.length} 件｜匯出人 {user.name}｜{new Date().toLocaleString('zh-TW')}</p>{subpage === 'stats' ? <InternalControlStatsView stats={stats}/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{filtered.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? vesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
 
-    {batchOpen && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={items => { if (onCreate(items, data.revision)) { setBatchOpen(false); return true; } return false; }}/>}
-    {editing && <CaseEditModal item={editing} data={data} vessels={vessels} canEdit={canEdit} canClose={canClose} close={() => setEditing(null)} save={candidate => { if (onUpdate(candidate, editing.updatedAt, data.revision)) { setEditing(null); return true; } return false; }}/>}
+    {visibleBatch && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={items => { if (onCreate(items, data.revision)) { setBatchOpen(false); return true; } return false; }}/>}
+    {visibleEditing && editing && <CaseEditModal item={editing} data={data} vessels={vessels} canEdit={canEdit} canClose={canClose} close={() => setEditing(null)} save={candidate => { if (onUpdate(candidate, editing.updatedAt, data.revision)) { setEditing(null); return true; } return false; }}/>}
   </section>;
 }
 

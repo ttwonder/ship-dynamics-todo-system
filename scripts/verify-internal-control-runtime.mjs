@@ -11,12 +11,15 @@ try {
   const scope = await server.ssrLoadModule('/src/workCenterScope.ts');
   const taskScope = await server.ssrLoadModule('/src/taskVesselScope.ts');
   const batchActions = await server.ssrLoadModule('/src/batchTaskActions.ts');
+  const taskWorkflow = await server.ssrLoadModule('/src/taskWorkflow.ts');
+  const editLockCoordinator = await server.ssrLoadModule('/src/editLockCoordinator.ts');
   const styles = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
   const vesselDetailSource = await readFile(new URL('../src/VesselDetailPage.tsx', import.meta.url), 'utf8');
   const dataAnalysisSource = await readFile(new URL('../src/DataAnalysis.tsx', import.meta.url), 'utf8');
   const workCenterSource = await readFile(new URL('../src/WorkCenter.tsx', import.meta.url), 'utf8');
   const internalControlPageSource = await readFile(new URL('../src/InternalControlPage.tsx', import.meta.url), 'utf8');
   const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const cloudSource = await readFile(new URL('../src/cloud.ts', import.meta.url), 'utf8');
   const editModalsSource = await readFile(new URL('../src/EditModals.tsx', import.meta.url), 'utf8');
 
   assert.ok(
@@ -33,8 +36,40 @@ try {
   assert.ok(appSource.includes("previous.isInternalControl&&!candidate.isInternalControl&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')"), 'ordinary task saves must require close permission before cancelling internal control');
   assert.ok(appSource.includes("!previous.isInternalControl&&candidate.isInternalControl&&!hasPermission(prev.settings.rolePermissions,liveUser,'createTasks')"), 'turning an existing task into internal control must require create permission');
   assert.ok(appSource.includes("creating&&candidate.isInternalControl&&liveUser.role==='vessel'"), 'vessel accounts must not create internal control indirectly through ordinary task creation');
-  assert.ok(appSource.includes("currentUser.role==='vessel'?{...data,internalControlCases:[]}:data"), 'vessel detail props must redact internal-control cases for vessel accounts');
-  assert.ok(appSource.includes("internalControlCases={currentUser.role==='vessel'?[]:data.internalControlCases}"), 'vessel dashboard attention must not reveal standalone internal-control cases');
+  assert.ok(appSource.includes('const taskVisibilityRelationships = useMemo(()=>({internalControlCases:data.internalControlCases,meetings:data.meetings,visibleVesselIds:activeVessels.map(vessel=>vessel.id)})'), 'App must build role visibility from authoritative relationships and the current vessel scope');
+  assert.ok(appSource.includes('const roleVisibleTasks = useMemo(()=>selectTasksVisibleToUser(data.tasks,currentUser,taskVisibilityRelationships)'), 'App must derive a centralized role-visible task collection');
+  assert.ok(appSource.includes("data.meetings.filter(meeting=>currentUser.role!=='vessel'||!meeting.isInternalControl).filter(meeting=>meetingAppliesToUser"), 'meeting projection must exclude vessel internal-control meetings and enforce operator responsibility-or-vessel scope');
+  assert.ok(appSource.includes('internalControlCases:roleVisibleInternalControlCases') && appSource.includes('selectInternalControlCasesVisibleToUser(data.internalControlCases,data.tasks,currentUser,activeVessels.map(vessel=>vessel.id))'), 'role-visible backing data must project internal-control cases through reciprocal linkage and exact live vessel scope');
+  assert.match(appSource, /dashboardMeetingAlerts\(\s*roleVisibleMeetings,/, 'dashboard alert projection must not preserve the existence of internal-control meetings for vessel users');
+  assert.ok(appSource.includes('tasks={roleVisibleTasks} internalControlCases={roleVisibleData.internalControlCases}'), 'vessel dashboard metrics, attention, and summaries must consume only role-visible task and internal-control data');
+  assert.ok(appSource.includes("tab==='total' && <ListPanel") && appSource.includes('tasks={filteredTasks} data={roleVisibleData}'), 'vessel total-list props must not retain hidden internal-control records in the backing data object');
+  assert.ok(appSource.includes('const editingTask=taskEditorAuthorizationEpoch===authorizationEpoch?(creatingTask&&canCreateTasks?selectTasksVisibleToUser([creatingTask],currentUser,taskVisibilityRelationships)[0]:roleVisibleTasks.find'), 'identity, permission, and vessel-scope changes must synchronously suppress stale task editors and drafts');
+  assert.ok(appSource.includes("activeEditLock.authorizationEpoch===authorizationEpoch&&activeEditLock.ownerUserId===currentUser.id"), 'collaboration-lock labels must be bound to the exact live authorization epoch and owner');
+  assert.ok(appSource.includes("if(lock.status==='blocked')") && appSource.includes('releaseEditLock(leaseRecord.sectionKey,lock.leaseOwnerId,leaseRecord.config)') && appSource.includes('try{await releaseEditLock(sectionKey,leaseOwnerId,leaseConfig)') && appSource.includes('leaseCloudConfigs.current'), 'owned and possibly-owned error leases must retain their opaque owner and immutable cloud config until serialized release succeeds');
+  assert.ok(cloudSource.includes('config?: ResolvedSupabaseConfig|null') && cloudSource.includes('getSupabaseClient(cfg)'), 'lock RPCs must accept and use the immutable cloud configuration captured at claim time');
+  assert.ok(appSource.includes('previousAuthorizationEpochValue&&previousAuthorizationEpochValue!==authorizationEpoch') && appSource.includes('setTaskEditorAuthorizationEpoch(\'\');'), 'authorization epoch changes must clear stale editors, drafts, previews, and locks');
+  assert.ok(appSource.includes('const leaveCurrentIdentity = () => {') && appSource.includes('setCreatingTask(null);') && appSource.includes('setEditingTaskId(\'\');') && appSource.includes('releaseCurrentEditLock();') && appSource.includes('onClick={leaveCurrentIdentity}'), 'identity switching must synchronously clear sensitive UI state and release collaboration locks');
+  assert.ok(appSource.includes("canEditBusinessContent&&vesselEditorLeaseAuthorized&&editingVesselId") && appSource.includes('editingTask&&taskEditorLeaseAuthorized && <TaskEditModal') && appSource.includes('onClick={resolveEditLockNotice}'), 'identity, permission, vessel-scope, or lease loss must synchronously suppress writable editors and route error dismissal through release');
+  assert.ok(appSource.includes("canExportReports&&reportPreviewOpen && <ReportPreviewModal data={roleVisibleData}"), 'permission changes must synchronously suppress stale report previews and keep their backing data redacted');
+  assert.ok(appSource.includes("canEditBusinessContent&&batchManagedOpen && <BatchManagedVesselModal"), 'permission changes must synchronously suppress stale batch-managed editors');
+  assert.match(appSource, /<WorkCenter\s+data=\{roleVisibleData\}/, 'work center must receive centralized role-visible task data');
+  assert.ok(appSource.includes('<TemporaryMeetingsPage data={roleVisibleData}'), 'meeting consumers must receive centralized role-visible task data');
+  assert.ok(workCenterSource.includes('const visibleTaskIds=new Set(allTasks.map(task=>task.id))') && workCenterSource.includes('data.notifications.filter(notice=>Boolean(notice.taskId&&visibleTaskIds.has(notice.taskId)))'), 'work-center unread counts must reauthorize every task notification');
+  assert.ok(appSource.includes('authorizationEpoch={authorizationEpoch}') && internalControlPageSource.includes('editorAuthorizationEpoch===authorizationEpoch') && internalControlPageSource.includes('scopedCases.some(item=>item.id===editing.id)'), 'internal-control nested modals must be bound to the current authorization epoch and live case scope');
+  assert.ok(appSource.includes('const lockCoordinator=useRef(createEditLockCoordinator())') && appSource.includes('leaseOwnerId'), 'edit locks must use a serialized generation coordinator and opaque per-lease owner');
+  assert.ok(appSource.includes("if(!creating&&!requireMutationLease(`task:${candidate.id}`))return false") && appSource.includes("if(!requireMutationLease(`task:${candidate.id}`))return false") && appSource.includes("if(!requireMutationLease(`task:${task.id}`))return"), 'task save, per-vessel save, and delete mutation boundaries must require the exact live lease');
+  assert.ok(appSource.includes('commit={vesselEditorCommit}') && appSource.includes("requireMutationLease(`vessel:${editingVesselId}`)"), 'immediate vessel commits must pass through the same live lease boundary');
+  assert.ok(appSource.includes('validatedUntilMs:conservativeLeaseDeadline(') && appSource.includes('editLockAllowsMutation('), 'claim and renew must maintain a conservative server-expiry-bounded lease validity window enforced at mutation time');
+  assert.ok(appSource.includes('editingTask&&(!editingTaskCanMutate||mutationLeaseIsOwned') && appSource.includes('readOnly={!creatingVisibleTask&&!editingTaskCanMutate}'), 'cloud read-only viewers must retain task detail access without receiving writable controls or a lease');
+  assert.ok(appSource.includes("${cfg.workspaceKey}|${cfg.supabaseAnonKey}") && appSource.includes('sameCloudConfig(currentConfig,record.config)'), 'cloud identity and mutation boundaries must exactly include anon key, URL, workspace, and table snapshot equality');
+  assert.ok(appSource.includes("window.addEventListener('storage',onStorage)") && appSource.includes('window.setInterval(checkConfig,1000)') && appSource.includes('停止舊工作區續期'), 'cross-tab and same-tab cloud configuration changes must close editors and stop old-workspace renewal promptly');
+  assert.ok(appSource.includes('if(!sameCloudConfig(getSupabaseConfig(),leaseRecord.config))') && appSource.includes('releaseCurrentEditLock();'), 'renewal must recheck the captured cloud configuration and serialize release through the old snapshot on mismatch');
+  assert.ok(appSource.includes('pendingClaimConfig.current={generation,config:leaseConfig,invalidated:false}') && appSource.includes('pending&&!pending.invalidated&&!sameCloudConfig(getSupabaseConfig(),pending.config)'), 'pending claims must be invalidated when cloud configuration changes before a result arrives');
+  assert.ok(appSource.includes('const configStillCurrent=sameCloudConfig(getSupabaseConfig(),leaseConfig)') && appSource.includes('else leaseCloudConfigs.current.delete(leaseOwnerId)'), 'claim results must revalidate configuration and discard definitive stale blocked records without release');
+  assert.ok(appSource.includes('if(renewed.ok){await releaseEditLock(leaseRecord.sectionKey,lock.leaseOwnerId,leaseRecord.config);leaseCloudConfigs.current.delete(lock.leaseOwnerId);}') && appSource.includes('else leaseCloudConfigs.current.delete(lock.leaseOwnerId)'), 'stale definitive blocked renewals must discard non-owner records while stale successes compensate with release');
+  assert.ok(appSource.includes('const matchingTasks=prev.tasks.filter(item=>item.id===candidate.id)') && appSource.includes("matchingTasks.length!==1"), 'per-vessel progress mutations must reject missing or duplicate task IDs atomically');
+  assert.ok(appSource.includes("if(!canEditBusinessContent||!activeVessels.some(item=>item.id===vessel.id))") && appSource.includes('const taskLockIsAuthorized = (task: TaskItem) => canAcquireTaskEditLock(task,currentUser,canEditBusinessContent,activeVessels,data.settings.rolePermissions)') && appSource.includes('roleVisibleTasks.filter(taskLockIsAuthorized)'), 'read-only or out-of-scope handlers must not acquire collaboration locks');
+  assert.ok(appSource.includes('cloudStatusSectionKey') && appSource.includes('authorizedEditLockKeys.has(cloudStatusSectionKey)'), 'sensitive cloud lock labels must be synchronously tied to a still-authorized live section');
   assert.ok(appSource.includes("if(!canAccessTab(currentUser,'internalControl'))return"), 'vessel detail must not navigate to a forbidden internal-control tab');
   assert.ok(appSource.includes("tab==='internalControl' && canAccessTab(currentUser,'internalControl')"), 'internal-control page must enforce authorization synchronously at render time during role transitions');
   assert.ok(appSource.includes("canAccessTab(currentUser,tab) && <>{tab==='dashboard'"), 'all forbidden tab content must be synchronously suppressed before the redirect effect runs');
@@ -42,6 +77,112 @@ try {
   assert.ok(editModalsSource.includes("currentUser.role!=='vessel'&&<label className=\"aware-toggle internal-control-toggle\""), 'vessel task editor must not expose the internal-control creation toggle');
   assert.ok(appSource.includes("internalControlDeletion&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')"), 'deletion-driven internal-control closure must require close permission');
   assert.ok(appSource.includes("normalizedProgress.status!==previousProgress.status&&newProgressLogCount<1") && appSource.includes("newProgressLogCount>0&&normalizedProgress.statusLogs[0]?.text.trim()!==normalizedProgress.status.trim()"), 'per-vessel status changes must require matching newest history');
+
+  const ordinaryVisibleTask = { id: 'ordinary', isInternalControl: false, vesselId: 'vessel-a', sourceType: 'morning', attentionDimension: 'task', ownerUserIds: [] };
+  const otherVesselTask = { id: 'other-vessel', isInternalControl: false, vesselId: 'vessel-b', sourceType: 'morning', attentionDimension: 'task', ownerUserIds: [] };
+  const unscopedTask = { id: 'unscoped', isInternalControl: false, sourceType: 'morning', attentionDimension: 'task', ownerUserIds: [] };
+  const linkedInternalTask = { id: 'linked-internal', isInternalControl: true, internalControlCaseId: 'case-1', vesselId: 'vessel-a', sourceType: 'morning', attentionDimension: 'task', ownerUserIds: [] };
+  const malformedLinkClaim = { id: 'link-claim-only', isInternalControl: false, internalControlCaseId: 'case-2', vesselId: 'vessel-a', sourceType: 'morning', attentionDimension: 'task', ownerUserIds: [] };
+  const reciprocalCaseClaim = { id: 'reciprocal-case-only', isInternalControl: false, vesselId: 'vessel-a', sourceType: 'morning', attentionDimension: 'task', ownerUserIds: [] };
+  const meetingTask = (id, sourceMeetingId, sourceMeetingItemId, overrides = {}) => ({ id, isInternalControl: false, vesselId: 'vessel-a', vesselIds: ['vessel-a'], vesselScopeMode: 'vessels', vesselTypeScopes: [], sourceType: 'temporary', attentionDimension: 'meeting', sourceMeetingId, sourceMeetingItemId, distributeToVessels: true, ownerUserIds: [], ...overrides });
+  const meeting = (id, isInternalControl, itemId, overrides = {}) => ({ id, isInternalControl, vessels: ['vessel-a'], vesselScopeMode: 'vessels', vesselTypeScopes: [], taskItems: [{ id: itemId, description: id, categories: [], distributeToVessels: true }], ...overrides });
+  const internalMeetingClaim = meetingTask('internal-meeting-only', 'meeting-internal', 'item-internal');
+  const ordinaryMeetingTask = meetingTask('ordinary-meeting', 'meeting-ordinary', 'item-ordinary');
+  const missingMeetingTask = meetingTask('missing-meeting', 'meeting-missing', 'item-missing');
+  const orphanMeetingSemanticsTask = meetingTask('orphan-meeting-semantics', undefined, undefined);
+  const duplicateMeetingTask = meetingTask('duplicate-meeting', 'meeting-duplicate', 'item-duplicate');
+  const unclassifiedMeetingTask = meetingTask('unclassified-meeting', 'meeting-unclassified', 'item-unclassified');
+  const missingMeetingItemTask = meetingTask('missing-meeting-item', 'meeting-missing-item', 'item-not-present');
+  const duplicateMeetingItemTask = meetingTask('duplicate-meeting-item', 'meeting-duplicate-item', 'item-duplicate-item');
+  const mismatchedMeetingScopeTask = meetingTask('mismatched-meeting-scope', 'meeting-other-vessel', 'item-other-vessel');
+  const visibilityFixture = [ordinaryVisibleTask, otherVesselTask, unscopedTask, linkedInternalTask, malformedLinkClaim, reciprocalCaseClaim, internalMeetingClaim, ordinaryMeetingTask, missingMeetingTask, orphanMeetingSemanticsTask, duplicateMeetingTask, unclassifiedMeetingTask, missingMeetingItemTask, duplicateMeetingItemTask, mismatchedMeetingScopeTask];
+  const visibilityRelationships = {
+    internalControlCases: [{ linkedTaskId: 'reciprocal-case-only' }],
+    meetings: [meeting('meeting-internal', true, 'item-internal'), meeting('meeting-ordinary', false, 'item-ordinary'), meeting('meeting-duplicate', false, 'item-duplicate'), meeting('meeting-duplicate', false, 'item-duplicate'), meeting('meeting-unclassified', undefined, 'item-unclassified'), meeting('meeting-missing-item', false, 'different-item'), meeting('meeting-duplicate-item', false, 'item-duplicate-item', { taskItems: [{ id: 'item-duplicate-item', description: 'one', categories: [], distributeToVessels: true }, { id: 'item-duplicate-item', description: 'two', categories: [], distributeToVessels: true }] }), meeting('meeting-other-vessel', false, 'item-other-vessel', { vessels: ['vessel-b'] })],
+    visibleVesselIds: ['vessel-a'],
+  };
+  const vesselVisibilityUser = { id: 'vessel-user', role: 'vessel' };
+  const ownerVisibilityUser = { id: 'owner-user', role: 'owner' };
+  const operatorVisibilityUser = { id: 'operator-user', role: 'operator' };
+  assert.deepEqual(
+    taskWorkflow.selectTasksVisibleToUser(visibilityFixture, vesselVisibilityUser, visibilityRelationships).map(task => task.id),
+    ['ordinary', 'ordinary-meeting'],
+    'vessel-facing selectors must fail closed for vessel scope, task flags, either side of canonical links, and incomplete or internal-control meeting lineage',
+  );
+  assert.deepEqual(
+    taskWorkflow.selectTasksVisibleToUser(visibilityFixture, ownerVisibilityUser, visibilityRelationships).map(task => task.id),
+    visibilityFixture.map(task => task.id),
+    'authorized internal users must retain the complete task collection',
+  );
+  assert.deepEqual(taskWorkflow.selectTasksVisibleToUser([ordinaryVisibleTask, otherVesselTask], operatorVisibilityUser, visibilityRelationships).map(task => task.id), ['ordinary'], 'non-admin internal users must fail closed when vessel scope is revoked');
+  const validOperatorInternalTask={id:'operator-internal-valid',isInternalControl:true,internalControlCaseId:'operator-case-valid',vesselId:'vessel-a',vesselIds:['vessel-a'],sourceType:'morning',attentionDimension:'task',ownerUserIds:[]};
+  const orphanOperatorInternalTask={...validOperatorInternalTask,id:'operator-internal-orphan',internalControlCaseId:'missing-case'};
+  const crossScopeOperatorInternalTask={...validOperatorInternalTask,id:'operator-internal-cross',internalControlCaseId:'operator-case-cross'};
+  const reverseOnlyTask={id:'operator-reverse-only',isInternalControl:false,vesselId:'vessel-a',vesselIds:['vessel-a'],sourceType:'morning',attentionDimension:'task',ownerUserIds:[]};
+  const duplicateOperatorInternalTask={...validOperatorInternalTask,id:'operator-internal-duplicate',internalControlCaseId:'operator-case-duplicate-a'};
+  const validOperatorInternalMeetingTask=meetingTask('operator-internal-meeting','operator-meeting-internal','operator-item-internal',{isInternalControl:true});
+  const operatorInternalCases=[
+    {id:'operator-case-valid',vesselId:'vessel-a',syncToTask:true,linkedTaskId:'operator-internal-valid'},
+    {id:'operator-case-cross',vesselId:'vessel-b',syncToTask:true,linkedTaskId:'operator-internal-cross'},
+    {id:'operator-case-reverse',vesselId:'vessel-a',syncToTask:true,linkedTaskId:'operator-reverse-only'},
+    {id:'operator-case-duplicate-a',vesselId:'vessel-a',syncToTask:true,linkedTaskId:'operator-internal-duplicate'},
+    {id:'operator-case-duplicate-b',vesselId:'vessel-a',syncToTask:true,linkedTaskId:'operator-internal-duplicate'},
+    {id:'operator-case-standalone',vesselId:'vessel-a',syncToTask:false},
+  ];
+  const operatorInternalTasks=[validOperatorInternalTask,orphanOperatorInternalTask,crossScopeOperatorInternalTask,reverseOnlyTask,duplicateOperatorInternalTask,validOperatorInternalMeetingTask];
+  const operatorInternalRelationships={internalControlCases:operatorInternalCases,meetings:[meeting('operator-meeting-internal',true,'operator-item-internal')],visibleVesselIds:['vessel-a']};
+  assert.deepEqual(taskWorkflow.selectTasksVisibleToUser(operatorInternalTasks,operatorVisibilityUser,operatorInternalRelationships).map(task=>task.id),['operator-internal-valid','operator-internal-meeting'],'non-admin operators must see only reciprocal scoped ordinary internal links and valid scoped internal meetings');
+  assert.deepEqual(taskWorkflow.selectInternalControlCasesVisibleToUser(operatorInternalCases,operatorInternalTasks,operatorVisibilityUser,['vessel-a']).map(item=>item.id),['operator-case-valid','operator-case-standalone'],'operator internal-case projection must retain valid reciprocal and legitimate standalone cases while rejecting cross-scope, reverse-only, and duplicate links');
+  const duplicatedForwardClaim={...validOperatorInternalTask,id:'operator-internal-duplicate-forward'};
+  const validOperatorCase=operatorInternalCases[0];
+  assert.deepEqual(taskWorkflow.selectTasksVisibleToUser([validOperatorInternalTask,duplicatedForwardClaim],operatorVisibilityUser,{internalControlCases:[validOperatorCase],meetings:[],visibleVesselIds:['vessel-a']}).map(task=>task.id),[],'every task claiming a multiply-claimed internal-control case must fail closed');
+  assert.deepEqual(taskWorkflow.selectInternalControlCasesVisibleToUser([validOperatorCase],[validOperatorInternalTask,duplicatedForwardClaim],operatorVisibilityUser,['vessel-a']).map(item=>item.id),[],'a case claimed by more than one task must fail closed even when it reciprocates one task id');
+  const falselyClaimedStandaloneCase={id:'operator-case-falsely-standalone',vesselId:'vessel-a',syncToTask:false};
+  const oneSidedForwardTask={...validOperatorInternalTask,id:'operator-internal-one-sided-forward',internalControlCaseId:falselyClaimedStandaloneCase.id};
+  assert.deepEqual(taskWorkflow.selectInternalControlCasesVisibleToUser([falselyClaimedStandaloneCase],[oneSidedForwardTask],operatorVisibilityUser,['vessel-a']),[],'a nominally standalone case that is claimed by a task must fail closed instead of taking the standalone early return');
+  const lockVessel={id:'vessel-a',assignedUserIds:['operator-user'],delegateManagers:[]};
+  const lockOperator={id:'operator-user',role:'operator',managedVesselIds:[]};
+  const lockOwner={id:'owner-user',role:'owner',managedVesselIds:[]};
+  const lockVesselUser={id:'vessel-user',role:'vessel',managedVesselIds:['vessel-a']};
+  assert.equal(taskWorkflow.canAcquireTaskEditLock(ordinaryVisibleTask,lockOperator,false,[lockVessel],undefined),false,'close/delete-only or read-only identities must not acquire task locks');
+  assert.equal(taskWorkflow.canAcquireTaskEditLock(ordinaryVisibleTask,lockOperator,true,[],undefined),false,'responsibility-only viewers without live vessel scope must not acquire task locks');
+  assert.equal(taskWorkflow.canAcquireTaskEditLock(ordinaryVisibleTask,lockOperator,true,[lockVessel],undefined),true,'an operator with business-edit and exact vessel scope must acquire the task lock');
+  assert.equal(taskWorkflow.canAcquireTaskEditLock(ordinaryVisibleTask,lockOwner,true,[lockVessel],undefined),true,'owner edit flow must retain task locking');
+  assert.equal(taskWorkflow.canAcquireTaskEditLock(ordinaryVisibleTask,lockVesselUser,true,[lockVessel],undefined),false,'vessel identities must remain lock-free read-only viewers');
+  assert.deepEqual(taskWorkflow.selectTasksVisibleToUser(visibilityFixture, vesselVisibilityUser), [], 'missing relationship context must fail closed for vessel identities');
+  assert.deepEqual(taskWorkflow.selectTasksVisibleToUser(visibilityFixture, null, visibilityRelationships), [], 'missing identity must fail closed');
+  assert.deepEqual(visibilityFixture, [ordinaryVisibleTask, otherVesselTask, unscopedTask, linkedInternalTask, malformedLinkClaim, reciprocalCaseClaim, internalMeetingClaim, ordinaryMeetingTask, missingMeetingTask, orphanMeetingSemanticsTask, duplicateMeetingTask, unclassifiedMeetingTask, missingMeetingItemTask, duplicateMeetingItemTask, mismatchedMeetingScopeTask], 'visibility projection must not mutate source tasks');
+
+  const coordinator = editLockCoordinator.createEditLockCoordinator();
+  const generationOne = coordinator.beginGeneration();
+  let releaseFirst;
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  const order = [];
+  const first = coordinator.run(async () => { order.push('claim-1-start'); await firstGate; order.push('claim-1-end'); });
+  coordinator.invalidate();
+  const release = coordinator.run(async () => { order.push('release-1'); });
+  const generationTwo = coordinator.beginGeneration();
+  const second = coordinator.run(async () => { order.push('claim-2'); });
+  await Promise.resolve();
+  assert.deepEqual(order, ['claim-1-start'], 'serialized lock queue must not start release or successor claim before the first claim settles');
+  assert.equal(coordinator.isCurrent(generationOne), false, 'invalidated lock generation must fail closed synchronously');
+  assert.equal(coordinator.isCurrent(generationTwo), true, 'latest lock generation must remain current');
+  releaseFirst();
+  await Promise.all([first, release, second]);
+  assert.deepEqual(order, ['claim-1-start', 'claim-1-end', 'release-1', 'claim-2'], 'release must finish before a successor same-section claim can start');
+  const mutationLock={sectionKey:'task:one',status:'owned',ownerUserId:'operator-user',authorizationEpoch:'epoch-one',generation:7,validatedUntilMs:2000};
+  assert.equal(editLockCoordinator.editLockAllowsMutation(mutationLock,'task:one','operator-user','epoch-one',true,true,1000),true,'an exact current owned lease with retained record and conservative validity must allow mutation');
+  assert.equal(editLockCoordinator.editLockAllowsMutation({...mutationLock,status:'error'},'task:one','operator-user','epoch-one',true,true,1000),false,'error leases must fail closed at mutation boundary');
+  assert.equal(editLockCoordinator.editLockAllowsMutation(mutationLock,'task:other','operator-user','epoch-one',true,true,1000),false,'a lease for another section must not authorize mutation');
+  assert.equal(editLockCoordinator.editLockAllowsMutation(mutationLock,'task:one','other-user','epoch-one',true,true,1000),false,'a lease from another user must not authorize mutation');
+  assert.equal(editLockCoordinator.editLockAllowsMutation(mutationLock,'task:one','operator-user','epoch-two',true,true,1000),false,'a lease from a stale auth epoch must not authorize mutation');
+  assert.equal(editLockCoordinator.editLockAllowsMutation(mutationLock,'task:one','operator-user','epoch-one',false,true,1000),false,'an invalidated generation must not authorize a stale callback');
+  assert.equal(editLockCoordinator.editLockAllowsMutation(mutationLock,'task:one','operator-user','epoch-one',true,false,1000),false,'a missing opaque lease record must fail closed');
+  assert.equal(editLockCoordinator.editLockAllowsMutation(mutationLock,'task:one','operator-user','epoch-one',true,true,2000),false,'an expired conservative validity window must fail closed even before React rerenders');
+  const deadlineNow=Date.parse('2026-07-23T00:00:00.000Z');
+  assert.equal(editLockCoordinator.conservativeLeaseDeadline('2026-07-23T00:01:15.000Z',deadlineNow),deadlineNow+60_000,'mutation window must stay shorter than the requested server TTL');
+  assert.equal(editLockCoordinator.conservativeLeaseDeadline('2026-07-23T00:00:10.000Z',deadlineNow),deadlineNow+5_000,'a delayed response must use server expiry minus safety margin');
+  assert.equal(editLockCoordinator.conservativeLeaseDeadline(undefined,deadlineNow),deadlineNow,'missing server expiry must fail closed immediately');
 
   assert.deepEqual(workflow.DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES, [
     '机舱设备',

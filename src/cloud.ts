@@ -4,10 +4,11 @@ import { isPlaceholder, sanitizeAppDataForStorage } from './utils';
 import { normalizeAppData } from './normalize';
 
 export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string }
+export type ResolvedSupabaseConfig = SupabaseConfig & { tableName: string };
 export interface CloudEditingLock { ok: boolean; sectionKey: string; lockedBy?: string; lockedByName?: string; expiresAt?: string }
 declare global { interface Window { SHIP_DYNAMICS_SUPABASE_CONFIG?: SupabaseConfig } }
 
-export function getSupabaseConfig(): (SupabaseConfig & { tableName: string }) | null {
+export function getSupabaseConfig(): ResolvedSupabaseConfig | null {
   const file = window.SHIP_DYNAMICS_SUPABASE_CONFIG;
   let local: SupabaseConfig | null = null;
   try {
@@ -30,8 +31,8 @@ export class CloudConflictError extends Error {
   constructor() { super('雲端已有較新的版本，已停止覆寫。請先同步最新資料後再修改。'); }
 }
 
-export function getSupabaseClient() {
-  const cfg = getSupabaseConfig();
+export function getSupabaseClient(config?: ResolvedSupabaseConfig|null) {
+  const cfg = config===undefined?getSupabaseConfig():config;
   if (!cfg) return null;
   const key = `${cfg.supabaseUrl}|${cfg.supabaseAnonKey}`;
   if (!client || clientKey !== key) {
@@ -109,9 +110,9 @@ export async function saveCloudData(payload: AppData, expectedRevision: number, 
   return cleanPayload.revision;
 }
 
-export async function claimEditLock(sectionKey: string, lockedBy: string, lockedByName: string, ttlSeconds = 75): Promise<CloudEditingLock> {
-  const supabase = getSupabaseClient();
-  const cfg = getSupabaseConfig();
+export async function claimEditLock(sectionKey: string, lockedBy: string, lockedByName: string, ttlSeconds = 75, config?: ResolvedSupabaseConfig|null): Promise<CloudEditingLock> {
+  const cfg=config===undefined?getSupabaseConfig():config;
+  const supabase = getSupabaseClient(cfg);
   if (!supabase || !cfg) return { ok: true, sectionKey };
   const { data, error } = await supabase.rpc('claim_ship_dynamics_edit_lock', {
     p_workspace_key: cfg.workspaceKey,
@@ -124,9 +125,9 @@ export async function claimEditLock(sectionKey: string, lockedBy: string, locked
   return lockFromRpc(data, sectionKey);
 }
 
-export async function releaseEditLock(sectionKey: string, lockedBy: string): Promise<void> {
-  const supabase = getSupabaseClient();
-  const cfg = getSupabaseConfig();
+export async function releaseEditLock(sectionKey: string, lockedBy: string, config?: ResolvedSupabaseConfig|null): Promise<void> {
+  const cfg=config===undefined?getSupabaseConfig():config;
+  const supabase = getSupabaseClient(cfg);
   if (!supabase || !cfg) return;
   const { error } = await supabase.rpc('release_ship_dynamics_edit_lock', {
     p_workspace_key: cfg.workspaceKey,
