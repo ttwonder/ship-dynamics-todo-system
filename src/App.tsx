@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import fpmcLogo from './assets/fpmc-logo.png';
 import { createInitialData } from './data/seed';
-import type { AppData, FilterState, StatusLog, TaskItem, TaskPriority, UserAccount, Vessel } from './types';
+import type { AppData, FilterState, InternalControlCase, StatusLog, TaskItem, TaskPriority, UserAccount, Vessel } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
 import { CloudConflictError, claimEditLock, fetchCloudData, getSupabaseConfig, releaseEditLock, saveCloudData } from './cloud';
 import ManagementView from './Management';
@@ -16,7 +16,9 @@ import VesselDetailPage from './VesselDetailPage';
 import WorkCenter from './WorkCenter';
 import DataAnalysisView from './DataAnalysis';
 import { canAccessAllVessels, hasPermission, isEligibleTaskOwner } from './permissions';
-import { selectUserWorkCenterTasks } from './workCenterScope';
+import { selectUserWorkCenterInternalCases, selectUserWorkCenterTasks } from './workCenterScope';
+import InternalControlPage from './InternalControlPage';
+import { closeLinkedInternalControlCaseAfterTaskDelete, createInternalControlCases, reconcileInternalControlAfterTaskSave, syncLinkedInternalControlCasesFromTasks, updateInternalControlCase } from './internalControlData';
 import { buildTaskNotificationsForVessels, buildTaskScopeChangeNotifications, canAccessTab, canCancelInternalControl, canDeleteTask, canUseVessel, internalControlTransitionRequested, taskSourceLabel, trustedClosureDate, validateInternalControlTransition } from './taskWorkflow';
 import { isMeetingTaskSource, mergeAttentionFromCategories, normalizeMeetingTaskCategoryList, normalizeTaskCategoryList, taskCategoriesOf, taskCategoryLabel } from './taskCategories';
 import { vesselDisplayName } from './vesselDisplay';
@@ -36,7 +38,7 @@ import { formatScheduleDisplay } from './scheduleTime';
 import RichTextContent from './RichTextContent';
 import { richTextToPlainText } from './richText';
 
-type Tab = 'dashboard' | 'morning' | 'total' | 'reports' | 'stats' | 'management' | 'meeting' | 'closed' | 'work';
+type Tab = 'dashboard' | 'morning' | 'total' | 'reports' | 'stats' | 'management' | 'meeting' | 'closed' | 'internalControl' | 'work';
 type ActiveEditLock = { sectionKey: string; label: string; status: 'owned' | 'blocked' | 'error'; lockedByName?: string };
 const SYSTEM_TITLE = '船舶動態與會議管理系統';
 const SYSTEM_SUBTITLE = 'Fleet Activities & Office Meeting Manage System';
@@ -323,7 +325,7 @@ export default function App() {
   ),[data.meetings,data.settings.rolePermissions,currentUser,activeVessels,canUseMeetingWorkspace]);
   const selectedVesselDetail = activeVessels.find(vessel=>vessel.id===selectedVesselDetailId);
   const reportVessels = activeVessels;
-  const myWorkTaskCount = currentUser ? selectUserWorkCenterTasks(data,currentUser,activeVessels).length : 0;
+  const myWorkTaskCount = currentUser ? selectUserWorkCenterTasks(data,currentUser,activeVessels).length + selectUserWorkCenterInternalCases(data,currentUser,activeVessels).length : 0;
   useEffect(() => { setAgendaSelection(prev => prev.filter(id => activeVessels.some(v=>v.id===id))); }, [activeVessels]);
   useEffect(() => { if (selectedVesselDetailId && !activeVessels.some(vessel=>vessel.id===selectedVesselDetailId)) setSelectedVesselDetailId(''); }, [activeVessels, selectedVesselDetailId]);
   useEffect(() => { if (currentUser && (!canAccessTab(currentUser, tab) || (tab === 'reports' && !canExportReports))) setTab('dashboard'); }, [currentUser, tab, canExportReports]);
@@ -379,6 +381,46 @@ export default function App() {
     setCreatingTask({ id, vesselId, priority:'中', isAware:false, isAbnormal:false, isInternalControl:false, sourceType:'morning', category:'', categories:[], description:'', status:'', expectedDate:'', reportDate:todayDate(), departments:[], ownerUserIds: currentUser.role==='vessel' ? [] : assignedOwnerUserIds, isClosed:false, createdBy:currentUser.id, updatedBy:currentUser.id, createdAt:nowIso(), updatedAt:nowIso(), statusLogs:[] });
     return true;
   };
+  const createInternalCases = (items: InternalControlCase[], expectedRevision: number) => {
+    let applied=false;
+    let failure='內控案件未保存：資料或權限已變更';
+    flushSync(()=>setData(prev=>{
+      const liveUser=prev.users.find(user=>user.id===currentUser.id&&user.isActive);
+      if(!liveUser||liveUser.role==='vessel'||!hasPermission(prev.settings.rolePermissions,liveUser,'createTasks')){failure='目前身份無權新增內控案件';return prev;}
+      if(prev.revision!==expectedRevision){failure='主資料已更新，請保留輸入內容並重新提交';return prev;}
+      const caseVessels=items.map(item=>prev.vessels.find(vessel=>vessel.id===item.vesselId&&vessel.isActive));
+      if(caseVessels.some(vessel=>!vessel)||!canAccessAllVessels(prev.settings.rolePermissions,liveUser,caseVessels as Vessel[])){failure='必須具備全部所選船舶的權限';return prev;}
+      if(items.some(item=>item.isClosed)&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')){failure='目前身份無權建立已結案案件';return prev;}
+      const draft=clone(prev);
+      try{createInternalControlCases(draft,items,liveUser,nowIso());}
+      catch(error:any){failure=error.message||String(error);return prev;}
+      applied=true;
+      return withAudit(draft,liveUser,'批量新增內控異常','internal-control',items.map(item=>item.id).join(','),`新增 ${items.length} 件｜同步要事 ${items.filter(item=>item.syncToTask).length} 件`);
+    }));
+    if(!applied)alert(failure);
+    return applied;
+  };
+  const saveInternalCase = (candidate: InternalControlCase, expectedUpdatedAt: string, expectedRevision: number) => {
+    let applied=false;
+    let failure='內控案件未保存：資料或權限已變更';
+    flushSync(()=>setData(prev=>{
+      const liveUser=prev.users.find(user=>user.id===currentUser.id&&user.isActive);
+      if(!liveUser||liveUser.role==='vessel'||!hasPermission(prev.settings.rolePermissions,liveUser,'editBusinessContent')){failure='目前身份無權更新內控案件';return prev;}
+      const previous=prev.internalControlCases.find(item=>item.id===candidate.id);
+      if(!previous||prev.internalControlCases.filter(item=>item.id===candidate.id).length!==1){failure='內控案件不存在或識別碼重複';return prev;}
+      if(prev.revision!==expectedRevision||previous.updatedAt!==expectedUpdatedAt){failure='案件已由其他人更新，請重新開啟後再保存';return prev;}
+      const scopeVessels=[previous.vesselId,candidate.vesselId].map(id=>prev.vessels.find(vessel=>vessel.id===id&&vessel.isActive));
+      if(scopeVessels.some(vessel=>!vessel)||!canAccessAllVessels(prev.settings.rolePermissions,liveUser,scopeVessels as Vessel[])){failure='必須具備原船舶與新船舶的完整權限';return prev;}
+      if(candidate.isClosed!==previous.isClosed&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')){failure='目前身份無權結案或重新開啟內控案件';return prev;}
+      const draft=clone(prev);
+      try{updateInternalControlCase(draft,candidate,expectedUpdatedAt,liveUser,nowIso());}
+      catch(error:any){failure=error.message||String(error);return prev;}
+      applied=true;
+      return withAudit(draft,liveUser,candidate.isClosed&&!previous.isClosed?'結案內控異常':!candidate.isClosed&&previous.isClosed?'重新開啟內控異常':'更新內控異常','internal-control',candidate.id,richTextToPlainText(candidate.description)||candidate.id);
+    }));
+    if(!applied)alert(failure);
+    return applied;
+  };
   const saveTask = (candidate: TaskItem, creating: boolean, expectedUpdatedAt: string, expectedRevision: number) => {
     let applied=false;
     let failure='事項已變更或權限已更新，請重新整理後再試';
@@ -393,6 +435,7 @@ export default function App() {
       }
       if(creating&&!hasPermission(prev.settings.rolePermissions,liveUser,'createTasks')){failure='目前角色未獲授權新增要事';return prev;}
       if(creating&&!canUseVessel(liveUser,candidate.vesselId)){failure='船舶帳戶只能新增本船待辦';return prev;}
+      if(creating&&candidate.isInternalControl&&liveUser.role==='vessel'){failure='船舶帳戶無權建立內部管控案件';return prev;}
       if(!creating&&(!hasPermission(prev.settings.rolePermissions,liveUser,'editBusinessContent')||liveUser.role==='vessel')){failure='船舶帳戶新增後不可修改既有待辦';return prev;}
       const matchingTasks=prev.tasks.filter(item=>item.id===candidate.id);
       if(matchingTasks.length>1){failure='待辦識別碼重複，為避免覆蓋錯誤資料，本次未保存';return prev;}
@@ -404,7 +447,7 @@ export default function App() {
       if(creating&&!candidate.isClosed&&(candidate.closedDate||candidate.closedBy)){failure='未結案的新待辦不得夾帶結案資料';return prev;}
       if(!creating&&(candidate.sourceMeetingId!==previous.sourceMeetingId||candidate.sourceMeetingItemId!==previous.sourceMeetingItemId||candidate.sourceType!==previous.sourceType)){failure='待辦來源關聯不可由普通待辦保存路徑修改';return prev;}
       if(!creating&&(candidate.vesselScopeMode!==previous.vesselScopeMode||JSON.stringify(candidate.vesselTypeScopes||[])!==JSON.stringify(previous.vesselTypeScopes||[]))){failure='待辦涉船範圍模式只能由權威建立或臨會對帳流程更新';return prev;}
-      if(!creating&&(candidate.createdBy!==previous.createdBy||candidate.createdAt!==previous.createdAt||candidate.internalControlCancelledAt!==previous.internalControlCancelledAt||candidate.internalControlCancelledBy!==previous.internalControlCancelledBy)){failure='待辦建立者、建立時間與內控取消來源資料不可由普通保存改寫';return prev;}
+      if(!creating&&(candidate.createdBy!==previous.createdBy||candidate.createdAt!==previous.createdAt||candidate.internalControlCancelledAt!==previous.internalControlCancelledAt||candidate.internalControlCancelledBy!==previous.internalControlCancelledBy||candidate.internalControlCaseId!==previous.internalControlCaseId)){failure='待辦建立者、建立時間、內控關聯與內控取消來源資料不可由普通保存改寫';return prev;}
       if(!creating&&!meetingTaskLinkIsValidForMutation(previous,prev.meetings)){failure='會議來源關聯缺失、失效或與父會議狀態不一致，請先由臨會/專題頁安全修復';return prev;}
       const previousScopeIdsForClosure=taskVesselIds(previous);
       const candidateScopeIdsForClosure=taskVesselIds(candidate);
@@ -414,6 +457,8 @@ export default function App() {
       if(!creating&&(candidate.distributeToVessels!==previous.distributeToVessels||JSON.stringify(candidate.vesselProgress||[])!==JSON.stringify(previous.vesselProgress||[]))){failure='分船模式與分船進度只能由臨會對帳或單船進度流程更新，不得由普通待辦保存覆蓋';return prev;}
       if(!creating&&usesPerVesselProgress(previous)&&candidate.isClosed!==previous.isClosed){failure='分船待辦的頂層結案狀態不可由普通待辦保存改寫';return prev;}
       if(!creating&&candidate.isClosed!==previous.isClosed&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')){failure='目前身份無權結案或重新開啟待辦';return prev;}
+      if(!creating&&previous.isInternalControl&&!candidate.isInternalControl&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')){failure='取消內部管控會結束同步並結案，需具備結案權限';return prev;}
+      if(!creating&&!previous.isInternalControl&&candidate.isInternalControl&&!hasPermission(prev.settings.rolePermissions,liveUser,'createTasks')){failure='將既有待辦轉為內部管控會建立案件，需具備新增要事權限';return prev;}
       if(!creating&&previousSemanticallyClosed&&(usesPerVesselProgress(previous)||candidate.isClosed)&&(candidate.status!==previous.status||candidate.closedDate!==previous.closedDate||candidate.closedBy!==previous.closedBy||JSON.stringify(candidate.statusLogs||[])!==JSON.stringify(previous.statusLogs||[]))){failure='已結案待辦的狀態、結案資料及歷程不可由普通保存改寫';return prev;}
       if(!creating&&!statusLogsAppendOnly(candidate.statusLogs,previous.statusLogs)){failure='待辦狀態歷程只能附加，不得刪除、改寫或偽造既有紀錄';return prev;}
       if(!creating&&prev.revision!==expectedRevision){failure='主資料版本已更新，為避免覆蓋其他操作，本次未保存；請關閉後重新開啟事項';return prev;}
@@ -425,7 +470,13 @@ export default function App() {
       const boundaryCandidate=clone(candidate);
       boundaryCandidate.updatedBy=liveUser.id;
       boundaryCandidate.updatedAt=saveAt;
-      boundaryCandidate.statusLogs=trustedStatusLogs(candidate.statusLogs,creating?[]:previous.statusLogs,liveUser,saveAt);
+      if(creating&&!boundaryCandidate.status.trim())boundaryCandidate.status='待處理';
+      let submittedStatusLogs=creating&&!candidate.statusLogs.length?[{id:'',at:'',by:'',text:boundaryCandidate.status}]:candidate.statusLogs;
+      if(!creating&&boundaryCandidate.status!==previous.status&&candidate.statusLogs.length===previous.statusLogs.length)submittedStatusLogs=[{id:'',at:'',by:'',text:boundaryCandidate.status},...candidate.statusLogs];
+      boundaryCandidate.statusLogs=trustedStatusLogs(submittedStatusLogs,creating?[]:previous.statusLogs,liveUser,saveAt);
+      const newStatusLogCount=boundaryCandidate.statusLogs.length-(creating?0:previous.statusLogs.length);
+      if(!creating&&boundaryCandidate.status!==previous.status&&newStatusLogCount<1){failure='狀態變更必須新增相符歷程';return prev;}
+      if(newStatusLogCount>0&&boundaryCandidate.statusLogs[0]?.text.trim()!==boundaryCandidate.status.trim()){failure='最新狀態必須與新增歷程一致';return prev;}
       if(creating){
         boundaryCandidate.sourceType='morning';
         boundaryCandidate.attentionDimension='task';
@@ -437,6 +488,7 @@ export default function App() {
         boundaryCandidate.createdAt=saveAt;
         delete boundaryCandidate.sourceMeetingId;
         delete boundaryCandidate.sourceMeetingItemId;
+        delete boundaryCandidate.internalControlCaseId;
         delete boundaryCandidate.internalControlCancelledAt;
         delete boundaryCandidate.internalControlCancelledBy;
       }else{
@@ -490,7 +542,8 @@ export default function App() {
       if(cancelled){
         if(!saved.internalControlCancelledAt){saved.internalControlCancelledAt=nowIso();saved.internalControlCancelledBy=liveUser.id;}
         const removedVesselIds=Array.from(protectedVesselIds).filter(id=>!taskVesselIds(saved).includes(id));
-        saved.statusLogs=[{id:uid('log'),at:nowIso(),by:liveUser.name,byUserId:liveUser.id,text:saved.isInternalControl?`取消部分涉船內部管控：${removedVesselIds.join('、')}`:'取消內部管控'},...saved.statusLogs];
+        saved.status=saved.isInternalControl?`取消部分涉船內部管控：${removedVesselIds.join('、')}`:'取消內部管控';
+        saved.statusLogs=[{id:uid('log'),at:nowIso(),by:liveUser.name,byUserId:liveUser.id,text:saved.status},...saved.statusLogs];
       }
       const savedScopeIds=taskVesselIds(saved);
       const savedScopeVessels=taskVessels(saved,prev.vessels);
@@ -515,6 +568,8 @@ export default function App() {
         if(index<0){failure='事項已被刪除或不存在，未保存任何變更';return prev;}
         draft.tasks[index]=saved;
       }
+      try{reconcileInternalControlAfterTaskSave(draft,creating?undefined:previous,saved,liveUser,saveAt);}
+      catch(error:any){failure=error.message||String(error);return prev;}
       draft.vessels.filter(item=>taskHasVessel(saved,item.id)).forEach(targetVessel=>{targetVessel.weeklyAttention=mergeAttentionFromCategories(targetVessel.weeklyAttention,saved.categories);});
       draft.notifications=[...notices,...draft.notifications].slice(0,1000);
       applied=true;
@@ -544,7 +599,12 @@ export default function App() {
       if(!statusLogsAppendOnly(candidateProgress.statusLogs,previousProgress.statusLogs)){failure='單船進度歷程只能附加，不得刪除、改寫或偽造既有紀錄';return prev;}
       const at=nowIso();
       const normalizedProgress=clone(candidateProgress);
-      normalizedProgress.statusLogs=trustedStatusLogs(candidateProgress.statusLogs,previousProgress.statusLogs,liveUser,at);
+      let submittedProgressLogs=candidateProgress.statusLogs;
+      if(normalizedProgress.status!==previousProgress.status&&candidateProgress.statusLogs.length===previousProgress.statusLogs.length)submittedProgressLogs=[{id:'',at:'',by:'',text:normalizedProgress.status},...candidateProgress.statusLogs];
+      normalizedProgress.statusLogs=trustedStatusLogs(submittedProgressLogs,previousProgress.statusLogs,liveUser,at);
+      const newProgressLogCount=normalizedProgress.statusLogs.length-previousProgress.statusLogs.length;
+      if(normalizedProgress.status!==previousProgress.status&&newProgressLogCount<1){failure='單船狀態變更必須新增相符歷程';return prev;}
+      if(newProgressLogCount>0&&normalizedProgress.statusLogs[0]?.text.trim()!==normalizedProgress.status.trim()){failure='單船最新狀態必須與新增歷程一致';return prev;}
       if(normalizedProgress.isClosed){
         if(closureChanged){normalizedProgress.closedDate=trustedClosureDate(normalizedProgress.closedDate,todayDate());normalizedProgress.closedBy=liveUser.id;}
         else{normalizedProgress.closedDate=previousProgress.closedDate;normalizedProgress.closedBy=previousProgress.closedBy;}
@@ -579,8 +639,10 @@ export default function App() {
       const linkedMeeting=liveTask.sourceMeetingId?prev.meetings.find(item=>item.id===liveTask.sourceMeetingId):undefined;
       if(liveTask.sourceMeetingId&&!linkedMeeting){failure='會議來源關聯已失效，請先由臨會/專題頁修復';return prev;}
       if(linkedMeeting&&!canEditTemporaryMeetings(prev.settings.rolePermissions,liveUser)){failure='目前身份無權刪除關聯臨會/專題事項';return prev;}
-      const internalControlDeletion=!taskIsClosedForScope(liveTask,taskVesselIds(liveTask))&&Boolean(liveTask.isInternalControl||linkedMeeting?.isInternalControl);
-      const cancellationScopeSources=[...(liveTask.isInternalControl?[taskVesselIds(liveTask)]:[]),...(linkedMeeting?.isInternalControl?[linkedMeeting.vessels]:[])];
+      const linkedOpenInternalCases=prev.internalControlCases.filter(item=>!item.isClosed&&(item.id===liveTask.internalControlCaseId||item.linkedTaskId===liveTask.id));
+      const internalControlDeletion=Boolean(linkedOpenInternalCases.length||(!taskIsClosedForScope(liveTask,taskVesselIds(liveTask))&&(liveTask.isInternalControl||linkedMeeting?.isInternalControl)));
+      if(internalControlDeletion&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')){failure='刪除會結束內部管控，需具備結案權限';return prev;}
+      const cancellationScopeSources=[...linkedOpenInternalCases.map(item=>[item.vesselId]),...(liveTask.isInternalControl?[taskVesselIds(liveTask)]:[]),...(linkedMeeting?.isInternalControl?[linkedMeeting.vessels]:[])];
       const cancellationSourceInvalid=cancellationScopeSources.some(ids=>!ids.length||ids.some(id=>!prev.vessels.some(vessel=>vessel.id===id)));
       const cancellationVesselIds=new Set(cancellationScopeSources.flat());
       const cancellationVessels=prev.vessels.filter(vessel=>cancellationVesselIds.has(vessel.id));
@@ -606,6 +668,8 @@ export default function App() {
       const noticeTask={...liveTask,isInternalControl:internalControlDeletion?false:liveTask.isInternalControl,ownerUserIds:liveTask.ownerUserIds.filter(id=>isEligibleTaskOwner(prev.settings.rolePermissions,prev.users.find(user=>user.id===id),noticeScopeVessels))};
       const notices=buildTaskNotificationsForVessels(prev.users,noticeScopeVessels,liveUser.id,noticeTask,internalControlDeletion?'internal_control_cancelled':'task_deleted',liveUser.name,prev.settings.rolePermissions);
       let draft=clone(prev);
+      try{closeLinkedInternalControlCaseAfterTaskDelete(draft,liveTask,liveUser,nowIso());}
+      catch(error:any){failure=error.message||String(error);return prev;}
       draft.tasks=draft.tasks.filter(item=>item.id!==liveTask.id);
       if(liveTask.sourceMeetingId){
         const meeting=draft.meetings.find(item=>item.id===liveTask.sourceMeetingId);
@@ -640,6 +704,7 @@ export default function App() {
     const at=nowIso();
     const closedDate=todayDate();
     let applied=false;
+    let failure='批量完成未執行：資料或權限已變更，請保留選擇並重新確認';
     flushSync(()=>setData(prev=>{
       const liveUser=prev.users.find(user=>user.id===currentUser.id&&user.isActive);
       if(!liveUser||!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')||liveUser.role==='vessel') return prev;
@@ -655,12 +720,14 @@ export default function App() {
         return buildTaskNotificationsForVessels(draft.users,vessels,liveUser.id,noticeTask,'task_updated',liveUser.name,draft.settings.rolePermissions);
       });
       draft.tasks=result.tasks;
+      try{syncLinkedInternalControlCasesFromTasks(draft,liveSelection.taskIds,liveUser,at);}
+      catch(error:any){failure=error.message||String(error);return prev;}
       draft.notifications=[...notices,...draft.notifications].slice(0,1000);
       completedTasks.forEach(task=>{ draft=withAudit(draft,liveUser,'批量完成事項','task',task.id,richTextToPlainText(task.description)||task.id); });
       applied=true;
       return draft;
     }));
-    if(!applied) alert('批量完成未执行：资料或权限已变更，请保留选择并重新确认');
+    if(!applied) alert(failure);
     return applied;
   };
   const batchDeleteTasks = (taskIds: string[]) => {
@@ -673,6 +740,7 @@ export default function App() {
     const tasks=selectedTasks as TaskItem[];
     if(!confirm(`確定批量刪除所選 ${tasks.length} 筆待辦？此動作無法復原，並會逐筆留下操作紀錄。`)) return false;
     let applied=false;
+    let failure='批量刪除未執行：資料或權限已變更，請保留選擇並重新確認';
     flushSync(()=>setData(prev=>{
       const liveUser=prev.users.find(user=>user.id===currentUser.id&&user.isActive);
       if(!liveUser||!hasPermission(prev.settings.rolePermissions,liveUser,'deleteTasks')||!canDeleteTask(liveUser)||prev.revision!==data.revision) return prev;
@@ -682,10 +750,12 @@ export default function App() {
       if(linkedMeetingTasks.some(task=>!prev.meetings.some(meeting=>meeting.id===task.sourceMeetingId)))return prev;
       if(linkedMeetingTasks.length&&!canEditTemporaryMeetings(prev.settings.rolePermissions,liveUser))return prev;
       const cancellationVesselsByTaskId=new Map<string,Vessel[]>();
-      const internalControlTasks=liveSelection.tasks.filter(task=>!taskIsClosedForScope(task,taskVesselIds(task))&&Boolean(task.isInternalControl||(task.sourceMeetingId&&prev.meetings.find(meeting=>meeting.id===task.sourceMeetingId)?.isInternalControl)));
+      const internalControlTasks=liveSelection.tasks.filter(task=>prev.internalControlCases.some(item=>!item.isClosed&&(item.id===task.internalControlCaseId||item.linkedTaskId===task.id))||(!taskIsClosedForScope(task,taskVesselIds(task))&&Boolean(task.isInternalControl||(task.sourceMeetingId&&prev.meetings.find(meeting=>meeting.id===task.sourceMeetingId)?.isInternalControl))));
+      if(internalControlTasks.length&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')){failure='批量刪除會結束內部管控，需具備結案權限';return prev;}
       for(const task of internalControlTasks){
         const meeting=task.sourceMeetingId?prev.meetings.find(item=>item.id===task.sourceMeetingId):undefined;
-        const protectedSources=[...(task.isInternalControl?[taskVesselIds(task)]:[]),...(meeting?.isInternalControl?[meeting.vessels]:[])];
+        const linkedOpenCases=prev.internalControlCases.filter(item=>!item.isClosed&&(item.id===task.internalControlCaseId||item.linkedTaskId===task.id));
+        const protectedSources=[...linkedOpenCases.map(item=>[item.vesselId]),...(task.isInternalControl?[taskVesselIds(task)]:[]),...(meeting?.isInternalControl?[meeting.vessels]:[])];
         if(protectedSources.some(ids=>!ids.length||ids.some(id=>!prev.vessels.some(vessel=>vessel.id===id))))return prev;
         const protectedIds=new Set(protectedSources.flat());
         const protectedVessels=prev.vessels.filter(vessel=>protectedIds.has(vessel.id));
@@ -729,6 +799,8 @@ export default function App() {
         meeting.taskDescription=meeting.taskItems[0]?.description||'';
         meeting.updatedAt=nowIso();
       });
+      try{liveSelection.tasks.forEach(task=>closeLinkedInternalControlCaseAfterTaskDelete(draft,task,liveUser,nowIso()));}
+      catch(error:any){failure=error.message||String(error);return prev;}
       draft.tasks=deleteSelectedTasks(draft.tasks,liveSelection.taskIds).tasks;
       draft.notifications=[...notices,...draft.notifications].slice(0,1000);
       internalControlTasks.forEach(task=>{
@@ -739,7 +811,7 @@ export default function App() {
       applied=true;
       return draft;
     }));
-    if(!applied) alert('批量删除未执行：资料或权限已变更，请保留选择并重新确认');
+    if(!applied) alert(failure);
     return applied;
   };
   const openReportPreview = () => {
@@ -803,7 +875,7 @@ export default function App() {
     <header className="topbar no-print"><div className="topbar-inner">
       <div className="brand"><img className="brand-icon" src={fpmcLogo} alt="台塑 LOGO" /><span><b>{SYSTEM_TITLE}</b><small>{SYSTEM_SUBTITLE}</small></span></div>
       <nav className="nav">
-        {([['dashboard','船隊看板'],['morning','早會工作台'],['meeting','臨會/專題'],['work',`我的待辦${myWorkTaskCount?`（${myWorkTaskCount}）`:''}`],['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['reports','報告中心'],['stats','數據分析'],['management','管理']] as [Tab,string][]).filter(([k])=>canAccessTab(currentUser, k)&&(k!=='reports'||canExportReports)&&(k!=='management'||canEnterManagement)).map(([k,label]) => <button key={k} className={tab===k?'active':''} onClick={() => { if (!canAccessTab(currentUser,k)) return; if (k==='reports' && !canExportReports) return alert('目前角色未獲授權預覽或匯出報告'); if (k==='management' && !requireManage()) return; setSelectedVesselDetailId(''); setTab(k); }}>{label}</button>)}
+        {([['dashboard','船隊看板'],['morning','早會工作台'],['meeting','臨會/專題'],['work',`我的待辦${myWorkTaskCount?`（${myWorkTaskCount}）`:''}`],['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['internalControl','內控異常'],['reports','報告中心'],['stats','數據分析'],['management','管理']] as [Tab,string][]).filter(([k])=>canAccessTab(currentUser, k)&&(k!=='reports'||canExportReports)&&(k!=='management'||canEnterManagement)).map(([k,label]) => <button key={k} className={tab===k?'active':''} onClick={() => { if (!canAccessTab(currentUser,k)) return; if (k==='reports' && !canExportReports) return alert('目前角色未獲授權預覽或匯出報告'); if (k==='management' && !requireManage()) return; setSelectedVesselDetailId(''); setTab(k); }}>{label}</button>)}
       </nav>
       <div className="user-chip"><span className="cloud-dot"/><button type="button" className="user-name-btn" onClick={() => setPasswordModalOpen(true)} title="修改個人密碼">{currentUser.name}｜{roleLabel(currentUser.role)}</button><button className="btn small ghost" onClick={() => setCurrentUserId('')}>切換/退出</button></div>
     </div></header>
@@ -811,8 +883,8 @@ export default function App() {
       <div className="cloud-strip no-print"><span className={getSupabaseConfig()?'ok-note':'danger-note'}>{cloudStatus}</span><span className="spacer"/><button className="btn ghost small" onClick={syncLatest}>同步最新</button><button className="btn green small" onClick={saveChanges}>保存修改</button></div>
       {activeEditLock && <div className={`collaboration-banner no-print ${activeEditLock.status}`}><b>多人協作安全</b><span>{activeEditLock.status==='owned' ? `你正在編輯：${activeEditLock.label}；系統已建立短時鎖定，保存仍會做 revision 衝突檢查。` : activeEditLock.status==='blocked' ? `此項目正在由 ${activeEditLock.lockedByName || '其他使用者'} 編輯，已阻止打開以避免覆蓋對方內容。` : `無法確認 ${activeEditLock.label} 的編輯鎖，請同步最新後再試。`}</span>{activeEditLock.status!=='owned'&&<button className="btn small ghost" onClick={()=>setActiveEditLock(null)}>知道了</button>}</div>}
       <div className="print-only app-print-header"><h2>{printTitle || data.settings.systemTitle}</h2><p>列印時間：{new Date().toLocaleString()}｜列印人：{currentUser.name}</p></div>
-      {tab==='dashboard' && selectedVesselDetail && <VesselDetailPage vessel={selectedVesselDetail} data={data} currentUser={currentUser} onBack={()=>setSelectedVesselDetailId('')} onEditVessel={()=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(selectedVesselDetail.id);}} onAddTask={()=>addTaskForVessel(selectedVesselDetail.id)} onEditTask={id=>{const task=data.tasks.find(item=>item.id===id);if(task)openTask(task,selectedVesselDetail.id);}} canEditVessel={canEditBusinessContent} canCreateTasks={canCreateTasks} canEditTasks={canEditBusinessContent&&currentUser.role!=='vessel'} />}
-      {tab==='dashboard' && !selectedVesselDetail && <DashboardView user={currentUser} vessels={activeVessels} tasks={data.tasks} meetings={dashboardMeetings} selected={agendaSelection} setSelected={setAgendaSelection} onOpenVessel={setSelectedVesselDetailId} onEdit={id=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(id);}} onAddTask={addTaskForVessel} onToggleAttention={(vesselId,key)=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改關注燈');commit(draft=>{const vessel=draft.vessels.find(item=>item.id===vesselId);if(!vessel)return;vessel.weeklyAttention=vessel.weeklyAttention.includes(key)?vessel.weeklyAttention.filter(item=>item!==key):[...vessel.weeklyAttention,key];vessel.updatedAt=nowIso();},'切換一週關注燈','vessel',vesselId,key);}} onAdjustAttention={vesselId=>{if(!canEditBusinessContent)return alert('目前角色未獲授權調整關注度');commit(draft=>{const vessel=draft.vessels.find(item=>item.id===vesselId);if(!vessel)return;const openVesselTasks=vesselAttentionTasks(draft.tasks.filter(task=>taskHasVessel(task,vesselId))).filter(task=>!taskIsClosedForVessel(task,vesselId));const automatic=deriveVesselAttention(vessel,openVesselTasks,draft.meetings.some(meeting=>meetingCreatesVesselAbnormalAlert(meeting,vesselId))).automatic;vessel.manualAttentionLevel=nextManualVesselAttention(vessel.manualAttentionLevel||'',automatic);vessel.updatedAt=nowIso();},'調整船舶關注度','vessel',vesselId,'自動／低／中／高／急／特別關注（受自動下限保護）');}} onStartMeeting={(requestedIds) => { if (requestedIds) { const allowedIds=new Set(activeVessels.map(vessel=>vessel.id)); setAgendaSelection(Array.from(new Set(requestedIds.filter(id=>allowedIds.has(id))))); } else if (!agendaSelection.length) { const priority = activeVessels.filter(v => morningDiscussionTasks(data.tasks,data.meetings).some(t => taskHasVessel(t,v.id) && !taskIsClosedForVessel(t,v.id) && (t.priority==='急'||t.priority==='高'))).slice(0,4).map(v=>v.id); setAgendaSelection(priority.length ? priority : activeVessels.slice(0,4).map(v=>v.id)); } setTab('morning'); }} onOpenReport={openReportPreview} onTaskMetric={jumpToTaskList} onOpenBatchManagedVessels={()=>setBatchManagedOpen(true)} canEdit={canEditBusinessContent} canCreateTasks={canCreateTasks} canUseMeetings={canUseMeetingWorkspace} canUseReports={canExportReports} />}
+      {canAccessTab(currentUser,tab) && <>{tab==='dashboard' && selectedVesselDetail && <VesselDetailPage vessel={selectedVesselDetail} data={currentUser.role==='vessel'?{...data,internalControlCases:[]}:data} currentUser={currentUser} onBack={()=>setSelectedVesselDetailId('')} onOpenInternalControl={()=>{if(!canAccessTab(currentUser,'internalControl'))return;setSelectedVesselDetailId('');setTab('internalControl');}} onEditVessel={()=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(selectedVesselDetail.id);}} onAddTask={()=>addTaskForVessel(selectedVesselDetail.id)} onEditTask={id=>{const task=data.tasks.find(item=>item.id===id);if(task)openTask(task,selectedVesselDetail.id);}} canEditVessel={canEditBusinessContent} canCreateTasks={canCreateTasks} canEditTasks={canEditBusinessContent&&currentUser.role!=='vessel'} canViewInternalControl={canAccessTab(currentUser,'internalControl')} />}
+      {tab==='dashboard' && !selectedVesselDetail && <DashboardView user={currentUser} vessels={activeVessels} tasks={data.tasks} internalControlCases={currentUser.role==='vessel'?[]:data.internalControlCases} meetings={dashboardMeetings} selected={agendaSelection} setSelected={setAgendaSelection} onOpenVessel={setSelectedVesselDetailId} onEdit={id=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(id);}} onAddTask={addTaskForVessel} onToggleAttention={(vesselId,key)=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改關注燈');commit(draft=>{const vessel=draft.vessels.find(item=>item.id===vesselId);if(!vessel)return;vessel.weeklyAttention=vessel.weeklyAttention.includes(key)?vessel.weeklyAttention.filter(item=>item!==key):[...vessel.weeklyAttention,key];vessel.updatedAt=nowIso();},'切換一週關注燈','vessel',vesselId,key);}} onAdjustAttention={vesselId=>{if(!canEditBusinessContent)return alert('目前角色未獲授權調整關注度');commit(draft=>{const vessel=draft.vessels.find(item=>item.id===vesselId);if(!vessel)return;const openVesselTasks=vesselAttentionTasks(draft.tasks.filter(task=>taskHasVessel(task,vesselId))).filter(task=>!taskIsClosedForVessel(task,vesselId));const automatic=deriveVesselAttention(vessel,openVesselTasks,draft.meetings.some(meeting=>meetingCreatesVesselAbnormalAlert(meeting,vesselId)),draft.internalControlCases).automatic;vessel.manualAttentionLevel=nextManualVesselAttention(vessel.manualAttentionLevel||'',automatic);vessel.updatedAt=nowIso();},'調整船舶關注度','vessel',vesselId,'自動／低／中／高／急／特別關注（受自動下限保護）');}} onStartMeeting={(requestedIds) => { if (requestedIds) { const allowedIds=new Set(activeVessels.map(vessel=>vessel.id)); setAgendaSelection(Array.from(new Set(requestedIds.filter(id=>allowedIds.has(id))))); } else if (!agendaSelection.length) { const priority = activeVessels.filter(v => morningDiscussionTasks(data.tasks,data.meetings).some(t => taskHasVessel(t,v.id) && !taskIsClosedForVessel(t,v.id) && (t.priority==='急'||t.priority==='高'))).slice(0,4).map(v=>v.id); setAgendaSelection(priority.length ? priority : activeVessels.slice(0,4).map(v=>v.id)); } setTab('morning'); }} onOpenReport={openReportPreview} onTaskMetric={jumpToTaskList} onOpenBatchManagedVessels={()=>setBatchManagedOpen(true)} canEdit={canEditBusinessContent} canCreateTasks={canCreateTasks} canUseMeetings={canUseMeetingWorkspace} canUseReports={canExportReports} />}
       {tab==='morning' && <MorningWorkspaceView data={data} user={currentUser} visibleVessels={activeVessels} selected={agendaSelection} setSelected={setAgendaSelection} onEditTask={openTask} onAddTask={addTaskForVessel} onOpenVessel={openVesselEditor} onOpenTemporaryMeeting={()=>setTab('meeting')} onOpenReport={openReportPreview} commit={commit} />}
 
       {tab==='total' && <ListPanel title={currentUser.role==='vessel'?'本船待辦清單':'總清單'} tasks={filteredTasks} data={data} visibleVessels={activeVessels} filters={filters} setFilters={setFilters} fleetTags={fleetTags} userMap={userMap} onEdit={openTask} onPrint={() => print('船舶記事總清單')} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
@@ -821,6 +893,7 @@ export default function App() {
         user={currentUser}
         vessels={activeVessels}
         onOpenTask={openTask}
+        onOpenInternalControl={()=>setTab('internalControl')}
         onOpenVessel={openVesselEditor}
         onBatchComplete={batchCompleteTasks}
         onBatchDelete={batchDeleteTasks}
@@ -831,11 +904,12 @@ export default function App() {
         markAllRead={()=>commit(draft=>{const at=nowIso();draft.notifications.forEach(item=>{if(item.userId===currentUser.id&&!item.readAt)item.readAt=at;});},'標記通知已讀','notification',currentUser.id,'全部標記已讀')}
       />}
       {tab==='closed' && <ListPanel title="已結案清單" tasks={closedTasks} data={data} visibleVessels={activeVessels} filters={closedFilters} setFilters={setClosedFilters} fleetTags={fleetTags} userMap={userMap} onEdit={openTask} onPrint={() => print('已結案清單')} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
+      {tab==='internalControl' && canAccessTab(currentUser,'internalControl') && <InternalControlPage data={data} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canExport={canExportReports} onCreate={createInternalCases} onUpdate={saveInternalCase} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} />}
       {tab==='stats' && <DataAnalysisView data={data} vessels={canViewAllVessels?reportVessels:activeVessels} />}
       {tab==='meeting' && <TemporaryMeetingsPage data={data} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} setData={setData} commit={commit} />}
 
       {tab==='reports' && <ReportCenter data={data} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} setSelected={setAgendaSelection} commit={commit} onOpenPreview={openReportPreview} onPrint={() => print('早會船舶動態與議程清單')} />}
-      {tab==='management' && canEnterManagement && <ManagementView data={data} currentUser={currentUser} commit={commit} />}
+      {tab==='management' && canEnterManagement && <ManagementView data={data} currentUser={currentUser} commit={commit} />}</>}
     </main>
     {editingVesselId && <VesselEditModal vessel={data.vessels.find(v=>v.id===editingVesselId)} data={data} currentUser={currentUser} close={()=>{setEditingVesselId('');releaseCurrentEditLock();}} commit={commit} addTask={id=>{if(addTaskForVessel(id,true)){setEditingVesselId('');releaseCurrentEditLock();}}} editTask={id=>{const vesselId=editingVesselId;const task=data.tasks.find(item=>item.id===id);setEditingVesselId('');releaseCurrentEditLock();if(task)openTask(task,vesselId);}} />}
     {batchManagedOpen && <BatchManagedVesselModal vessels={activeVessels} currentUser={currentUser} commit={commit} close={()=>setBatchManagedOpen(false)} onAddTask={id=>{if(addTaskForVessel(id,false,true))setBatchManagedOpen(false);}} />}

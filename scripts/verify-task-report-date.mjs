@@ -12,7 +12,7 @@ assert.ok(typesSource.includes('reportDate: string;'), 'TaskItem 必須保存報
 assert.ok(appSource.includes('reportDate:todayDate()'), '新增要事必須自動先帶入當天報告日期');
 assert.ok(appSource.includes("expectedDate:''"), '新增要事仍不得自動帶入預計完成日期');
 assert.ok(editSource.includes('<label>報告日期</label>') && editSource.includes('value={draft.reportDate}') && editSource.includes('target.reportDate=value'), '更新要事彈窗必須提供可編輯的報告日期 date input');
-assert.ok(normalizeSource.includes('reportDate: normalizeDateText(item.reportDate) || text(item.createdAt, timestamp).slice(0, 10)'), '舊資料需用建立日期回填報告日期');
+assert.ok(normalizeSource.includes('reportDate: normalizeDateText(item.reportDate) || normalizeDateText(text(item.createdAt, timestamp).slice(0, 10)) || timestamp.slice(0, 10)'), '舊資料需先驗證建立日期，再安全回填報告日期');
 assert.ok(morningSource.includes("task.reportDate || (task.createdAt || task.updatedAt || '').slice(0, 10)"), '早會今日/歷史分組必須優先使用報告日期');
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });

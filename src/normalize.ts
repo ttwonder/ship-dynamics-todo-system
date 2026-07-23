@@ -2,6 +2,8 @@ import type {
   AgendaReport,
   AppData,
   AuditLog,
+  InternalControlCase,
+  InternalControlReportSource,
   LoadStatus,
   MeetingVesselScopeMode,
   NavigationStatus,
@@ -22,12 +24,14 @@ import { normalizeRolePermissions } from './permissions';
 import { isMeetingTaskSource, normalizeConfiguredMeetingTaskCategories, normalizeConfiguredTaskCategories, normalizeMeetingTaskCategoryList, normalizeTaskCategoryList, sanitizeEditableMeetingTaskCategories, sanitizeEditableTaskCategories } from './taskCategories';
 import { normalizeVesselDelegateManagers } from './vesselDelegation';
 import { canonicalizeMeetingTaskItemIds } from './meetingTaskItemIds';
+import { DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES, isValidInternalControlDate, sanitizeEquipmentFailureSubcategories, taskToInternalControlCase, validateInternalControlCase } from './internalControlWorkflow';
 
 const roles: UserRole[] = ['owner', 'admin', 'operator', 'vessel'];
 const INVALID_PASSWORD_HASH = '0'.repeat(64);
 const OPERATOR_PASSWORD_RESET_VERSION = 2;
 const auditRoles: Array<UserRole | 'system'> = [...roles, 'system'];
 const priorities: TaskPriority[] = ['急', '高', '中', '低'];
+const internalControlReportSources: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 const vesselAttentionLevels: VesselAttentionLevel[] = [...priorities, '特別關注'];
 const shipStatuses: ShipStatus[] = ['loading', 'unloading', 'to load', 'to unload', 'waiting order', 'drydock/repiar'];
 const legacyShipStatusMap: Record<string, ShipStatus> = {
@@ -56,7 +60,7 @@ const object = (value: unknown): Record<string, unknown> | null => value !== nul
 const objects = (value: unknown): Record<string, unknown>[] => list(value).map(object).filter((item): item is Record<string, unknown> => item !== null);
 const strings = (value: unknown): string[] => list(value).filter((item): item is string => typeof item === 'string');
 const text = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback;
-const normalizeDateText = (value: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(text(value)) ? text(value) : '';
+const normalizeDateText = (value: unknown) => isValidInternalControlDate(text(value)) ? text(value) : '';
 const bool = (value: unknown, fallback = false) => typeof value === 'boolean' ? value : fallback;
 const finite = (value: unknown, fallback = 0) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T => typeof value === 'string' && allowed.includes(value as T) ? value as T : fallback;
@@ -80,6 +84,16 @@ function normalizeStatusLogs(value: unknown): StatusLog[] {
   })).filter(item => item.id && item.text);
 }
 
+const statusHistoriesEqual = (left: StatusLog[], right: StatusLog[]): boolean =>
+  left.length === right.length && left.every((item, index) => {
+    const other = right[index];
+    return item.id === other.id
+      && item.at === other.at
+      && item.by === other.by
+      && item.byUserId === other.byUserId
+      && item.text === other.text;
+  });
+
 function normalizeTaskVesselProgress(value: unknown): TaskVesselProgress[] {
   const seen=new Set<string>();
   return objects(value).map(item=>({
@@ -95,6 +109,53 @@ function normalizeTaskVesselProgress(value: unknown): TaskVesselProgress[] {
     if(!item.vesselId||seen.has(item.vesselId))return false;
     seen.add(item.vesselId);
     return true;
+  });
+}
+
+function canonicalStatusHistory(statusValue: string, logs: StatusLog[], entityId: string, at: string, byUserId: string): { status: string; statusLogs: StatusLog[] } {
+  const status = statusValue.trim() || logs[0]?.text.trim() || '待處理';
+  if (logs[0]?.text.trim() === status) return { status, statusLogs: logs };
+  let id = `normalized-${entityId}-status`;
+  while (logs.some(log => log.id === id)) id += '-repair';
+  return { status, statusLogs: [{ id, at, by: '系統資料修復', byUserId: byUserId || undefined, text: status }, ...logs] };
+}
+
+function normalizeInternalControlCases(value: unknown, timestamp: string): InternalControlCase[] {
+  return objects(value).map(item => {
+    const id = text(item.id);
+    const createdAt = text(item.createdAt, timestamp);
+    const updatedAt = text(item.updatedAt, createdAt);
+    const createdBy = text(item.createdBy);
+    const updatedBy = text(item.updatedBy);
+    const reportDate = normalizeDateText(item.reportDate) || normalizeDateText(createdAt.slice(0, 10)) || timestamp.slice(0, 10);
+    const isClosed = bool(item.isClosed);
+    const requestedClosedDate = normalizeDateText(item.closedDate);
+    const category = text(item.category) || strings(item.categories)[0] || '其他';
+    const history = canonicalStatusHistory(text(item.status), normalizeStatusLogs(item.statusLogs), id, updatedAt, updatedBy || createdBy);
+    return {
+      id,
+      vesselId: text(item.vesselId),
+      reportDate,
+      reportSource: oneOf(item.reportSource, internalControlReportSources, '日常'),
+      description: text(item.description),
+      priority: oneOf(item.priority, priorities, '低'),
+      category,
+      equipmentSubcategory: category === '設備故障' ? text(item.equipmentSubcategory) || DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES[0] : undefined,
+      isAware: bool(item.isAware),
+      status: history.status,
+      departments: strings(item.departments),
+      syncToTask: bool(item.syncToTask) || Boolean(text(item.linkedTaskId)),
+      linkedTaskId: text(item.linkedTaskId) || undefined,
+      origin: oneOf(item.origin, ['internal-control', 'task'] as const, 'internal-control'),
+      isClosed,
+      closedDate: isClosed ? requestedClosedDate && requestedClosedDate >= reportDate ? requestedClosedDate : reportDate : undefined,
+      closedBy: isClosed ? text(item.closedBy) || updatedBy || createdBy || 'system' : undefined,
+      createdBy,
+      updatedBy,
+      createdAt,
+      updatedAt,
+      statusLogs: history.statusLogs,
+    };
   });
 }
 
@@ -187,6 +248,10 @@ function normalizeMeetings(value: unknown, timestamp: string, meetingTaskCategor
 export function normalizeAppData(value: unknown): AppData | null {
   const raw = object(value);
   if (!raw || !Array.isArray(raw.users) || !Array.isArray(raw.vessels) || !Array.isArray(raw.tasks)) return null;
+  if (Object.prototype.hasOwnProperty.call(raw, 'internalControlCases') && (
+    !Array.isArray(raw.internalControlCases)
+    || raw.internalControlCases.some(item => !object(item))
+  )) return null;
   const settings = object(raw.settings);
   if (!settings) return null;
   const timestamp = text(raw.updatedAt, nowIso());
@@ -198,6 +263,12 @@ export function normalizeAppData(value: unknown): AppData | null {
   const normalizedMeetingTaskCategories = finite(settings.meetingTaskCategorySchemaVersion) === 2
     ? sanitizeEditableMeetingTaskCategories(settings.meetingTaskCategories)
     : normalizeConfiguredMeetingTaskCategories(settings.meetingTaskCategories);
+  const configuredEquipmentFailureSubcategories = Object.prototype.hasOwnProperty.call(settings, 'equipmentFailureSubcategories')
+    ? sanitizeEquipmentFailureSubcategories(settings.equipmentFailureSubcategories)
+    : [...DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES];
+  const normalizedEquipmentFailureSubcategories = configuredEquipmentFailureSubcategories.length
+    ? configuredEquipmentFailureSubcategories
+    : [...DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES];
 
   const resetVersion = finite(settings.nonOwnerPasswordResetVersion, 0);
   const shouldResetOperatorPasswords = resetVersion < OPERATOR_PASSWORD_RESET_VERSION;
@@ -213,6 +284,8 @@ export function normalizeAppData(value: unknown): AppData | null {
       taskCategorySchemaVersion: 2,
       meetingTaskCategories: normalizedMeetingTaskCategories,
       meetingTaskCategorySchemaVersion: 2,
+      equipmentFailureSubcategories: normalizedEquipmentFailureSubcategories,
+      equipmentFailureSubcategorySchemaVersion: 1,
       vesselStatuses: [...shipStatuses],
       priorities: [...priorities],
       rolePermissions: normalizeRolePermissions(settings.rolePermissions),
@@ -328,12 +401,14 @@ export function normalizeAppData(value: unknown): AppData | null {
       isInternalControl: bool(item.isInternalControl),
       internalControlCancelledAt: text(item.internalControlCancelledAt) || undefined,
       internalControlCancelledBy: text(item.internalControlCancelledBy) || undefined,
+      internalControlCaseId: text(item.internalControlCaseId) || undefined,
       category: categories[0] || '',
       categories,
+      equipmentSubcategory: categories[0] === '設備故障' ? text(item.equipmentSubcategory) || undefined : undefined,
       description: text(item.description),
       status,
       expectedDate: text(item.expectedDate),
-      reportDate: normalizeDateText(item.reportDate) || text(item.createdAt, timestamp).slice(0, 10),
+      reportDate: normalizeDateText(item.reportDate) || normalizeDateText(text(item.createdAt, timestamp).slice(0, 10)) || timestamp.slice(0, 10),
       departments: strings(item.departments),
       ownerUserIds: strings(item.ownerUserIds),
       isClosed,
@@ -351,14 +426,90 @@ export function normalizeAppData(value: unknown): AppData | null {
       vesselProgress,
     });
     }).filter(item => item.id && item.vesselId),
+    internalControlCases: normalizeInternalControlCases(raw.internalControlCases, timestamp),
     meetings: normalizeMeetings(raw.meetings, timestamp, normalizedMeetingTaskCategories),
     agendaReports: normalizeAgendaReports(raw.agendaReports),
     auditLogs: normalizeAuditLogs(raw.auditLogs),
     notifications: normalizeNotifications(raw.notifications),
   };
-  const topLevelCollections=[normalized.users,normalized.vessels,normalized.tasks,normalized.meetings,normalized.agendaReports,normalized.auditLogs,normalized.notifications];
+
+  // Backfill a single canonical case for every ordinary task already marked as internal control.
+  // Existing custom report-source/equipment metadata is preserved while shared fields follow the task.
+  const claimedInternalControlCaseIds = new Set<string>();
+  let invalidExistingInternalControlLink = false;
+  normalized.tasks.forEach(task => {
+    const ordinaryInternalTask = task.isInternalControl && !isMeetingTaskSource(task);
+    if (!ordinaryInternalTask) {
+      delete task.internalControlCaseId;
+      return;
+    }
+    delete task.vesselIds;
+    task.vesselScopeMode = 'vessels';
+    task.vesselTypeScopes = [];
+    task.distributeToVessels = false;
+    task.vesselProgress = [];
+    if (!task.category) {
+      task.category = '其他';
+      task.categories = ['其他'];
+    }
+    const taskHistory = canonicalStatusHistory(task.status, task.statusLogs, task.id, task.updatedAt || timestamp, task.updatedBy || task.createdBy);
+    task.status = taskHistory.status;
+    task.statusLogs = taskHistory.statusLogs;
+    if (task.isClosed) {
+      task.closedDate = isValidInternalControlDate(task.closedDate) && task.closedDate! >= task.reportDate ? task.closedDate : task.reportDate;
+      task.closedBy ||= task.updatedBy || task.createdBy || 'system';
+    } else {
+      delete task.closedDate;
+      delete task.closedBy;
+    }
+    const canonicalVessel = normalized.vessels.find(vessel => vessel.id === task.vesselId && vessel.isActive);
+    task.ownerUserIds = (canonicalVessel?.assignedUserIds || []).filter(id => normalized.users.some(user => user.id === id && user.isActive && user.role !== 'vessel'));
+    let linked = normalized.internalControlCases.find(item => (
+      item.id === task.internalControlCaseId
+      && !claimedInternalControlCaseIds.has(item.id)
+      && (!item.linkedTaskId || item.linkedTaskId === task.id)
+    )) || normalized.internalControlCases.find(item => item.linkedTaskId === task.id && !claimedInternalControlCaseIds.has(item.id));
+    if (task.category === '設備故障' && !task.equipmentSubcategory) task.equipmentSubcategory = linked?.equipmentSubcategory || normalized.settings.equipmentFailureSubcategories[0] || DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES[0];
+    if (!linked) {
+      let id = `internal-${task.id}`;
+      let suffix = 2;
+      while (normalized.internalControlCases.some(item => item.id === id)) id = `internal-${task.id}-${suffix++}`;
+      task.internalControlCaseId = id;
+      linked = taskToInternalControlCase(task, undefined, { actorId: task.updatedBy || task.createdBy, at: task.updatedAt || timestamp });
+      linked.id = id;
+      normalized.internalControlCases.push(linked);
+    } else {
+      if (linked.vesselId !== task.vesselId || !statusHistoriesEqual(linked.statusLogs, task.statusLogs)) {
+        invalidExistingInternalControlLink = true;
+        return;
+      }
+      task.internalControlCaseId = linked.id;
+      const synced = taskToInternalControlCase(task, linked, { actorId: task.updatedBy || task.createdBy, at: task.updatedAt || timestamp });
+      Object.assign(linked, synced);
+    }
+    claimedInternalControlCaseIds.add(linked.id);
+  });
+  if (invalidExistingInternalControlLink) return null;
+  normalized.internalControlCases.forEach(item => {
+    const linkedTask = item.linkedTaskId ? normalized.tasks.find(task => (
+      task.id === item.linkedTaskId
+      && task.isInternalControl
+      && !isMeetingTaskSource(task)
+      && task.internalControlCaseId === item.id
+      && claimedInternalControlCaseIds.has(item.id)
+    )) : undefined;
+    if (linkedTask) {
+      item.syncToTask = true;
+    } else {
+      item.syncToTask = false;
+      delete item.linkedTaskId;
+    }
+  });
+
+  const topLevelCollections=[normalized.users,normalized.vessels,normalized.tasks,normalized.internalControlCases,normalized.meetings,normalized.agendaReports,normalized.auditLogs,normalized.notifications];
   if(topLevelCollections.some(collection=>!idsAreUnique(collection)))return null;
   const duplicateStatusHistory=normalized.tasks.some(task=>!idsAreUnique(task.statusLogs)||task.vesselProgress.some(progress=>!idsAreUnique(progress.statusLogs)))
+    ||normalized.internalControlCases.some(item=>!idsAreUnique(item.statusLogs))
     ||normalized.meetings.some(meeting=>!idsAreUnique(meeting.statusLogs));
   if(duplicateStatusHistory)return null;
   const rawMeetingById=new Map(objects(raw.meetings).map(item=>[text(item.id),item]));
@@ -389,6 +540,7 @@ export function normalizeAppData(value: unknown): AppData | null {
     }
   });
   const activeVesselIds = new Set(normalized.vessels.filter(vessel => vessel.isActive).map(vessel => vessel.id));
+  if (normalized.internalControlCases.some(item => !activeVesselIds.has(item.vesselId) || validateInternalControlCase(item).length || item.statusLogs[0]?.text.trim() !== item.status.trim())) return null;
   if (!normalized.users.some(user => user.role === 'owner')) {
     const designatedOwner = normalized.users.find(user => user.name === '朱世毅');
     if (designatedOwner) designatedOwner.role = 'owner';

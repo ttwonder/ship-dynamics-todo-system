@@ -192,6 +192,8 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     const saved=clone(draft);
     saved.categories = selectedCategories;
     saved.category = saved.categories[0] || '';
+    if(saved.isInternalControl&&selectedCategories.includes('設備故障')&&!saved.equipmentSubcategory)return alert('請選擇設備故障細項');
+    if(!selectedCategories.includes('設備故障'))delete saved.equipmentSubcategory;
     if (saved.isClosed) { saved.closedDate ||= todayDate(); saved.closedBy ||= currentUser.id; }
     else { delete saved.closedDate; delete saved.closedBy; }
     if (onSave(saved, creating, expectedUpdatedAtRef.current, expectedRevisionRef.current)) close();
@@ -220,9 +222,10 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
       <div className="field"><label>報告日期</label><input type="date" value={draft.reportDate} onChange={event=>{const value=event.target.value;change(target=>{target.reportDate=value;});}}/></div>
       <label className="aware-toggle"><input type="checkbox" checked={draft.isAware} onChange={event=>{const value=event.target.checked;change(target=>{target.isAware=value;});}}/><span>標記為知曉事項</span></label>
       <label className="aware-toggle abnormal-toggle"><input type="checkbox" checked={draft.isAbnormal} onChange={event=>{const value=event.target.checked;change(target=>{target.isAbnormal=value;});}}/><span>異常（看板顯示「異常存在」）</span></label>
-      <label className="aware-toggle internal-control-toggle"><input type="checkbox" checked={draft.isInternalControl} disabled={!creating&&Boolean(task?.isInternalControl)&&!canCancelInternalControl} onChange={event=>{const value=event.target.checked;if(draft.isInternalControl&&!value)alert(FLOW_INTERNAL_CONTROL_REMINDER);change(target=>{target.isInternalControl=value;if(value)target.isAbnormal=true;});}}/><span>內部管控（台面下異常管控）</span></label>
+      {currentUser.role!=='vessel'&&<label className="aware-toggle internal-control-toggle"><input type="checkbox" checked={draft.isInternalControl} disabled={!creating&&Boolean(task?.isInternalControl)&&!canCancelInternalControl} onChange={event=>{const value=event.target.checked;if(draft.isInternalControl&&!value)alert(FLOW_INTERNAL_CONTROL_REMINDER);change(target=>{target.isInternalControl=value;if(value)target.isAbnormal=true;});}}/><span>內部管控（台面下異常管控）</span></label>}
     </div>
     <CheckboxMultiPicker label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating} values={draft.categories || (draft.category ? [draft.category] : [])} choices={taskCategoryChoices.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
+    {draft.isInternalControl&&(draft.categories||[]).includes('設備故障')&&<div className="field"><label>設備故障細項<span className="danger-note" aria-hidden="true">＊</span></label><select required value={draft.equipmentSubcategory||''} onChange={event=>{const value=event.target.value;change(target=>{target.equipmentSubcategory=value||undefined;});}}><option value="">請選擇</option>{data.settings.equipmentFailureSubcategories.map(item=><option key={item}>{item}</option>)}</select></div>}
     <CheckboxMultiPicker label="涉及部門" required={creating} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
     {currentUser.role!=='vessel'&&<MeetingPeoplePicker label="追蹤窗口" users={eligibleOwnerUsers} departments={data.settings.departments} selectedIds={draft.ownerUserIds} onChange={values=>change(target=>{target.ownerUserIds=values;})} disabled={globalReadOnly}/>}</fieldset>
     {!creating&&<div className="grid cols-3 task-completion-date-row"><div className="field"><label>完成日期</label><input type="date" disabled={readOnly||!canClose} value={selectedProgress.closedDate||''} onChange={event=>setCompletionDate(event.target.value)}/><small>{selectedProgress.isClosed?'已結案日期；與「標記結案」彈出的日期同步':'選擇日期會同步標記為已結案'}</small></div></div>}

@@ -2,6 +2,7 @@ import type { AppData, UserRole, ShipStatus, TaskPriority } from '../types';
 import { localDate } from '../utils';
 import { DEFAULT_ROLE_PERMISSIONS } from '../permissions';
 import { REQUIRED_MEETING_TASK_CATEGORIES, REQUIRED_TASK_CATEGORIES } from '../taskCategories';
+import { DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES } from '../internalControlWorkflow';
 
 const rawPersonnel = [
   {
@@ -807,6 +808,8 @@ export function createInitialData(): AppData {
       taskCategorySchemaVersion: 2,
       meetingTaskCategories: [...MEETING_TASK_CATEGORIES],
       meetingTaskCategorySchemaVersion: 2,
+      equipmentFailureSubcategories: [...DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES],
+      equipmentFailureSubcategorySchemaVersion: 1,
       vesselStatuses: [...VESSEL_STATUSES],
       priorities: [...PRIORITIES],
       rolePermissions: structuredClone(DEFAULT_ROLE_PERMISSIONS),
@@ -816,6 +819,7 @@ export function createInitialData(): AppData {
     users,
     vessels,
     tasks,
+    internalControlCases: [],
     meetings: [],
     agendaReports: [],
     auditLogs: [],

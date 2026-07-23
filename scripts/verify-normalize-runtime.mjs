@@ -84,6 +84,60 @@ try {
   assert.equal(data.auditLogs[0].actorRole, 'system');
   assert.equal(data.notifications[0].kind, 'task_archived', '会议取消待办通知经 normalize 后不得降级为一般更新');
   assert.doesNotThrow(() => JSON.stringify(data));
+  assert.equal(normalizeAppData({ ...malformed, internalControlCases: [42] }), null, '內控集合含非物件項目時必須 fail-closed，不得靜默丟棄');
+  assert.equal(normalizeAppData({ ...malformed, internalControlCases: { id: 'not-an-array' } }), null, '內控集合不是陣列時必須 fail-closed，不得轉成空集合');
+  const emptyEquipmentSettings = normalizeAppData({ ...malformed, settings: { ...malformed.settings, equipmentFailureSubcategories: [] } });
+  assert.deepEqual(emptyEquipmentSettings.settings.equipmentFailureSubcategories, data.settings.equipmentFailureSubcategories, '空設備故障細項設定必須回復安全 defaults');
+  const staleEquipmentMetadata = normalizeAppData({
+    ...malformed,
+    internalControlCases: [{
+      id: 'ic-stale-equipment', vesselId: 'v1', reportDate: '2026-07-17', reportSource: '日常', description: '非設備案件',
+      priority: '低', category: '船舶管理', equipmentSubcategory: '机舱设备', status: '待處理', departments: [], syncToTask: false,
+      isClosed: false, createdBy: 'u1', updatedBy: 'u1', createdAt: '2026-07-17T00:00:00.000Z', updatedAt: '2026-07-17T00:00:00.000Z', statusLogs: [],
+    }],
+  });
+  assert.ok(staleEquipmentMetadata);
+  assert.equal(staleEquipmentMetadata.internalControlCases[0].equipmentSubcategory, undefined, '非設備故障案件 normalization 必須清除 stale設備細項');
+  const staleTaskEquipmentMetadata = normalizeAppData({
+    ...malformed,
+    tasks: [{
+      id: 'task-stale-equipment', vesselId: 'v1', category: '船舶管理', equipmentSubcategory: '机舱设备',
+      description: '非設備任務', createdAt: '2026-07-17T00:00:00.000Z',
+    }],
+  });
+  assert.ok(staleTaskEquipmentMetadata);
+  assert.equal(staleTaskEquipmentMetadata.tasks[0].equipmentSubcategory, undefined, '非設備故障任務 normalization 必須清除 stale設備細項');
+  const linkedStatusLog = { id: 'linked-log-1', at: '2026-07-17T00:00:00.000Z', by: '甲', byUserId: 'u1', text: '待處理' };
+  const linkedIntegrityPayload = {
+    ...malformed,
+    tasks: [{
+      id: 'linked-task', vesselId: 'v1', isInternalControl: true, internalControlCaseId: 'linked-case',
+      category: '船舶管理', description: 'linked integrity', status: '待處理', reportDate: '2026-07-17',
+      createdBy: 'u1', updatedBy: 'u1', createdAt: '2026-07-17T00:00:00.000Z', updatedAt: '2026-07-17T00:00:00.000Z', statusLogs: [linkedStatusLog],
+    }],
+    internalControlCases: [{
+      id: 'linked-case', vesselId: 'v1', reportDate: '2026-07-17', reportSource: '日常', description: 'linked integrity',
+      priority: '低', category: '船舶管理', status: '待處理', departments: [], syncToTask: true, linkedTaskId: 'linked-task',
+      isClosed: false, createdBy: 'u1', updatedBy: 'u1', createdAt: '2026-07-17T00:00:00.000Z', updatedAt: '2026-07-17T00:00:00.000Z', statusLogs: [linkedStatusLog],
+    }],
+  };
+  assert.ok(normalizeAppData(linkedIntegrityPayload), 'consistent linked task/case payload must normalize');
+  assert.equal(
+    normalizeAppData({ ...linkedIntegrityPayload, internalControlCases: [{ ...linkedIntegrityPayload.internalControlCases[0], vesselId: 'other-vessel' }] }),
+    null,
+    'linked task/case vessel mismatch must fail closed during normalization',
+  );
+  assert.equal(
+    normalizeAppData({
+      ...linkedIntegrityPayload,
+      internalControlCases: [{
+        ...linkedIntegrityPayload.internalControlCases[0],
+        statusLogs: [linkedStatusLog, { id: 'case-only-history', at: '2026-07-16T00:00:00.000Z', by: '乙', byUserId: 'u2', text: '舊狀態' }],
+      }],
+    }),
+    null,
+    'normalization must fail closed instead of overwriting divergent linked-case status history',
+  );
 
   const duplicateHistoryPayload = {
     ...malformed,

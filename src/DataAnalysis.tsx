@@ -116,19 +116,20 @@ export default function DataAnalysisView({ data, vessels }: { data: AppData; ves
   const vesselRows = vessels.map(vessel => {
     const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id));
     const attentionTasks = vesselAttentionTasks(vesselTasks);
+    const standaloneInternalCases = data.internalControlCases.filter(item => !item.linkedTaskId && item.vesselId === vessel.id);
     const open = attentionTasks.filter(task => !taskIsClosedForVessel(task,vessel.id));
     const abnormalMeetingIds=data.meetings.filter(meeting=>meetingCreatesVesselAbnormalAlert(meeting,vessel.id)).map(meeting=>meeting.id);
     const hasMeetingAbnormal = abnormalMeetingIds.length>0;
-    const attentionResult = deriveVesselAttention(vessel, open, hasMeetingAbnormal);
+    const attentionResult = deriveVesselAttention(vessel, open, hasMeetingAbnormal, data.internalControlCases);
     return {
       vessel,
-      counts: Object.fromEntries(['急', '高', '中', '低'].map(priority => [priority, attentionTasks.filter(task => task.priority === priority).length])) as Record<string, number>,
+      counts: Object.fromEntries(['急', '高', '中', '低'].map(priority => [priority, attentionTasks.filter(task => task.priority === priority).length + standaloneInternalCases.filter(item => item.priority === priority).length])) as Record<string, number>,
       abnormal: dataAnalysisVesselAbnormalCount(tasks,abnormalMeetingIds,vessel.id),
       lights: vessel.weeklyAttention.length,
       attention: attentionResult.manual
         ? `${attentionResult.effective}（手動 ${attentionResult.manual}／自動下限 ${attentionResult.automatic}）`
         : `${attentionResult.effective}（自動）`,
-      trend: months.map(month => attentionTasks.filter(task => localMonthKey(task.createdAt) === month).length),
+      trend: months.map(month => attentionTasks.filter(task => localMonthKey(task.createdAt) === month).length + standaloneInternalCases.filter(item => localMonthKey(item.createdAt) === month).length),
     };
   });
 
@@ -156,7 +157,7 @@ export default function DataAnalysisView({ data, vessels }: { data: AppData; ves
     </div>
     <ComparePanel title="部門橫向比較與排名" rows={departmentRows} />
     <ComparePanel title="人員橫向比較與排名" rows={personRows} />
-    <div className="panel analysis-panel"><div className="panel-title"><h3>船舶優先級／異常／關注度／點亮項目／趨勢</h3><small>趨勢為近六個月新增事項件數</small></div><div className="table-wrap analysis-vessel-table"><table><thead><tr><th>船舶</th><th>急／高／中／低累計</th><th>異常</th><th>目前關注度</th><th>點亮項目</th><th>{months.join('　')}</th></tr></thead><tbody>{vesselRows.map(row => { const max = Math.max(1, ...row.trend); return <tr key={row.vessel.id}><td><b>{vesselDisplayName(row.vessel)}</b></td><td><div className="priority-counts"><span>急 {row.counts['急']}</span><span>高 {row.counts['高']}</span><span>中 {row.counts['中']}</span><span>低 {row.counts['低']}</span></div></td><td>{row.abnormal}</td><td><span className="attention-level">{row.attention}</span></td><td>{row.lights}／7</td><td><div className="analysis-trend" title={row.trend.join('、')}>{row.trend.map((count, index) => <i key={months[index]} style={{ height: `${Math.max(4, count / max * 100)}%` }} />)}</div></td></tr>; })}</tbody></table></div></div>
+    <div className="panel analysis-panel"><div className="panel-title"><h3>船舶優先級／異常／關注度／點亮項目／趨勢</h3><small>優先級與趨勢包含未同步內控；趨勢為近六個月新增件數</small></div><div className="table-wrap analysis-vessel-table"><table><thead><tr><th>船舶</th><th>急／高／中／低累計</th><th>異常</th><th>目前關注度</th><th>點亮項目</th><th>{months.join('　')}</th></tr></thead><tbody>{vesselRows.map(row => { const max = Math.max(1, ...row.trend); return <tr key={row.vessel.id}><td><b>{vesselDisplayName(row.vessel)}</b></td><td><div className="priority-counts"><span>急 {row.counts['急']}</span><span>高 {row.counts['高']}</span><span>中 {row.counts['中']}</span><span>低 {row.counts['低']}</span></div></td><td>{row.abnormal}</td><td><span className="attention-level">{row.attention}</span></td><td>{row.lights}／7</td><td><div className="analysis-trend" title={row.trend.join('、')}>{row.trend.map((count, index) => <i key={months[index]} style={{ height: `${Math.max(4, count / max * 100)}%` }} />)}</div></td></tr>; })}</tbody></table></div></div>
     <div className="panel analysis-panel"><div className="panel-title"><h3>統計口徑</h3></div><ul className="analysis-method"><li>完成率：已結案事項 ÷ 責任範圍內全部事項。</li><li>逾期率：尚未結案且預計完成日已過 ÷ 責任範圍內全部事項。</li><li>提出率：所選人員建立的事項 ÷ 目前可見船隊全部事項；同時顯示實際件數。</li><li>個人責任範圍：事項追蹤窗口或所屬船舶分管人員；部門範圍另包含事項部門。</li><li>高風險為「急／高」事項；需知曉、內控、異常按事項勾選欄位統計。</li></ul></div>
   </section>;
 }

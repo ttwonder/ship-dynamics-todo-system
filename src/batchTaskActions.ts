@@ -43,6 +43,7 @@ export function completeSelectedTasks(tasks: TaskItem[], selectedIds: string[], 
     return {
       ...task,
       isClosed: true,
+      status: '批量完成待辦',
       closedDate: context.closedDate,
       closedBy: context.actorId,
       updatedAt: context.at,

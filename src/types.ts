@@ -9,6 +9,7 @@ export type NavigationStatus = '航行' | '拋錨' | '進港中' | '出港中' |
 export type LoadStatus = '空載' | '非空載' | '滿載';
 export type ScheduleKind = 'ETA' | 'ETB' | 'ETD';
 export type TaskSource = 'morning' | 'temporary';
+export type InternalControlReportSource = '日常' | '訪船' | '隨船' | '外部';
 export type WeeklyAttentionKey = 'crew-operation' | 'bunkering-water' | 'materials-parts' | 'maintenance' | 'survey' | 'audit-inspection' | 'psc-window';
 export type TemporaryMeetingStatus = '待召開' | '追蹤中' | '已完成';
 export type MeetingVesselScopeMode = 'all' | 'types' | 'vessels';
@@ -118,8 +119,10 @@ export interface TaskItem {
   isInternalControl: boolean;
   internalControlCancelledAt?: string;
   internalControlCancelledBy?: string;
+  internalControlCaseId?: string;
   category: string;
   categories: string[];
+  equipmentSubcategory?: string;
   description: string;
   status: string;
   expectedDate: string;
@@ -139,6 +142,31 @@ export interface TaskItem {
   updatedAt: string;
   statusLogs: StatusLog[];
   vesselProgress?: TaskVesselProgress[];
+}
+
+export interface InternalControlCase {
+  id: string;
+  vesselId: string;
+  reportDate: string;
+  reportSource: InternalControlReportSource;
+  description: string;
+  priority: TaskPriority;
+  category: string;
+  equipmentSubcategory?: string;
+  isAware: boolean;
+  status: string;
+  departments: string[];
+  syncToTask: boolean;
+  linkedTaskId?: string;
+  origin: 'internal-control' | 'task';
+  isClosed: boolean;
+  closedDate?: string;
+  closedBy?: string;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+  statusLogs: StatusLog[];
 }
 
 export type NotificationKind = 'task_created' | 'task_updated' | 'task_archived' | 'internal_control_cancelled' | 'task_deleted';
@@ -223,6 +251,8 @@ export interface AppSettings {
   taskCategorySchemaVersion: number;
   meetingTaskCategories: string[];
   meetingTaskCategorySchemaVersion: number;
+  equipmentFailureSubcategories: string[];
+  equipmentFailureSubcategorySchemaVersion: number;
   vesselStatuses: ShipStatus[];
   priorities: TaskPriority[];
   rolePermissions: RolePermissions;
@@ -237,11 +267,27 @@ export interface AppData {
   users: UserAccount[];
   vessels: Vessel[];
   tasks: TaskItem[];
+  internalControlCases: InternalControlCase[];
   meetings: TemporaryMeeting[];
   agendaReports: AgendaReport[];
   auditLogs: AuditLog[];
   notifications: UserNotification[];
   updatedAt: string;
+}
+
+export interface InternalControlFilters {
+  keyword: string;
+  vesselIds: string[];
+  shipTypes: string[];
+  priorities: TaskPriority[];
+  categories: string[];
+  departments: string[];
+  reportSources: InternalControlReportSource[];
+  equipmentSubcategories: string[];
+  fromDate: string;
+  toDate: string;
+  awareMode: 'all' | 'aware' | 'not-aware';
+  closureMode: 'all' | 'open' | 'closed';
 }
 
 export interface FilterState {
