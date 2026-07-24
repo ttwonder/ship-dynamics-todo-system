@@ -361,6 +361,18 @@ try {
     /狀態變更必須新增歷程/,
   );
   assert.deepEqual(taskStatusDraft, taskStatusBefore, 'rejected task-to-case status changes must be atomic');
+  const emptyDepartmentSaved = { ...structuredClone(task), departments: [] };
+  const emptyDepartmentDraft = {
+    users: [], vessels: structuredClone(vessels), tasks: [emptyDepartmentSaved],
+    internalControlCases: [{ ...structuredClone(baseCase), syncToTask: true, linkedTaskId: task.id, statusLogs: structuredClone(task.statusLogs) }],
+  };
+  const emptyDepartmentBefore = structuredClone(emptyDepartmentDraft);
+  assert.throws(
+    () => dataLayer.reconcileInternalControlAfterTaskSave(emptyDepartmentDraft,task,emptyDepartmentSaved,{ id:'u1',name:'甲' },'2026-07-23T02:42:00.000Z'),
+    /至少需要一個涉及部門/,
+    'editing an existing linked internal-control task may not clear every department',
+  );
+  assert.deepEqual(emptyDepartmentDraft,emptyDepartmentBefore,'rejected reverse department synchronization must be atomic');
   const equipmentRepairPrevious = structuredClone(task);
   const equipmentRepairSaved = structuredClone(task);
   delete equipmentRepairSaved.equipmentSubcategory;

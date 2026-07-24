@@ -32,6 +32,8 @@ interface DashboardProps {
   meetings: DashboardMeetingAlert[];
   selected: string[];
   setSelected: (ids: string[]) => void;
+  batchSelected: string[];
+  setBatchSelected: (ids: string[]) => void;
   onOpenVessel: (id: string) => void;
   onEdit: (id: string) => void;
   onAddTask: (id: string) => void;
@@ -47,7 +49,7 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, vessels, tasks, internalControlCases, meetings, selected, setSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ user, vessels, tasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [fleetFilter, setFleetFilter] = useState('all');
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
@@ -91,7 +93,7 @@ export default function Dashboard({ user, vessels, tasks, internalControlCases, 
   return <section className="dashboard-view">
     <div className="page-heading">
       <div><h1>船舶看板</h1><p>集中查看上下港、位置、載況、時間、貨物、未來一週關注與重要要事。</p></div>
-      {(canEdit||canUseMeetings||canUseReports)&&<div className="heading-actions no-print">{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新自管船舶</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>}
+      {(canEdit||canUseMeetings||canUseReports)&&<div className="heading-actions no-print">{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新船舶（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>}
     </div>
     <div className="metric-grid">
       <div className="metric-card blue"><small>今日船舶</small><b>{vessels.length}</b><span>艘</span></div>
@@ -145,7 +147,7 @@ export default function Dashboard({ user, vessels, tasks, internalControlCases, 
           return <button type="button" key={option.key} disabled={!canEdit} className={`${active ? 'active' : ''} ${option.key === 'psc-window' ? 'psc' : ''}`} aria-pressed={active} onClick={() => onToggleAttention(vessel.id, option.key)}><i />{option.label}</button>;
         })}</div>
         <div className="ship-summary"><b>重要摘要：</b><div className="ship-summary-content">{vessel.position.manualRemark&&<p><strong>人工備註</strong>{vessel.position.manualRemark}</p>}{vessel.note.recentDynamics&&<p><strong>近期／後續動態</strong>{vessel.note.recentDynamics}</p>}{abnormalMeetings.length>0&&<p className="meeting-abnormal-summary"><strong>臨會/專題異常</strong>{canUseMeetings?abnormalMeetings.map(meeting=>meeting.subject||'未命名會議').join('、'):`存在需關注之臨會/專題異常 ${abnormalMeetings.length} 件`}</p>}{standaloneInternalCases.length>0&&<p className="internal-control-summary"><strong>未同步內控</strong>{standaloneInternalCases.length} 件</p>}{sortedTasks.length ? <ul>{sortedTasks.slice(0, 3).map(task => <li key={task.id}>{task.isAbnormal && <span>異常</span>}<strong>{task.priority}</strong><RichTextContent compact value={task.description} fallback="尚未輸入要事內容"/></li>)}</ul> : !abnormalMeetings.length&&!standaloneInternalCases.length&&<p>目前無未結要事</p>}</div></div>
-        <div className="ship-card-foot"><span className="task-mini"><i className="urgent">急 {urgent}</i><i className="high">高 {high}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print">{canEdit && <button className="btn small" onClick={() => onEdit(vessel.id)}>快速更新</button>}{canCreateTasks && <button className="btn small ghost" onClick={() => onAddTask(vessel.id)}>新增要事</button>}{canUseMeetings&&<button className={`btn small ${selectedForMeeting ? 'pink' : 'ghost'}`} onClick={() => toggleMeeting(vessel.id)}>{selectedForMeeting ? '已選入會議' : '選入會議'}</button>}</div></div>
+        <div className="ship-card-foot"><span className="task-mini"><i className="urgent">急 {urgent}</i><i className="high">高 {high}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print">{canEdit&&<button type="button" className={`btn small ${batchSelected.includes(vessel.id)?'green':'ghost'}`} aria-pressed={batchSelected.includes(vessel.id)} onClick={()=>setBatchSelected(batchSelected.includes(vessel.id)?batchSelected.filter(id=>id!==vessel.id):[...batchSelected,vessel.id])}>{batchSelected.includes(vessel.id)?'取消批量選取':'批量選取'}</button>}{canEdit && <button className="btn small" onClick={() => onEdit(vessel.id)}>快速更新</button>}{canCreateTasks && <button className="btn small ghost" onClick={() => onAddTask(vessel.id)}>新增要事</button>}{canUseMeetings&&<button className={`btn small ${selectedForMeeting ? 'pink' : 'ghost'}`} onClick={() => toggleMeeting(vessel.id)}>{selectedForMeeting ? '已選入會議' : '選入會議'}</button>}</div></div>
       </article>;
     })}</div>
     {!visible.length && <div className="empty-state">沒有符合條件的船舶</div>}

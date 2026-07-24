@@ -166,6 +166,7 @@ const taskProjection = (
   input?: InternalControlTaskProjection,
   existing?: TaskItem,
 ): InternalControlTaskProjection => {
+  if (!item.departments.length) throw new Error('同步要事至少需要一個涉及部門');
   const categories = [...new Set((input?.categories || existing?.categories || (item.category ? [item.category] : [])).map(value => value.trim()).filter(Boolean))];
   if (!categories.length) throw new Error('同步要事時必須選擇要事分類');
   const equipmentSubcategory = (input?.equipmentSubcategory ?? existing?.equipmentSubcategory ?? item.equipmentSubcategory)?.trim() || undefined;
@@ -374,6 +375,7 @@ export function reconcileInternalControlAfterTaskSave(
   assertUnrelatedInternalControlLinkIntegrity(draft, saved, previous);
   const wasInternal = Boolean(previous?.isInternalControl);
   if (saved.isInternalControl) {
+    if (!saved.departments.length) throw new Error('同步要事至少需要一個涉及部門');
     const vesselIds = taskVesselIds(saved);
     if (vesselIds.length !== 1 || vesselIds[0] !== saved.vesselId) throw new Error('內控要事僅能關聯單一船舶');
     if (!isValidInternalControlDate(saved.reportDate)) throw new Error('內控案件缺少必填欄位：報告日期');

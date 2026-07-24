@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { createServer } from 'vite';
+import { readFile } from 'node:fs/promises';
 
 const deferred = () => {
   let resolve;
@@ -93,6 +94,20 @@ try {
   assert.deepEqual(opens.peek(), { vesselId:'return-b', batchManaged:false });
   assert.deepEqual(opens.consumeIfCurrent(tokenB), { vesselId:'return-b', batchManaged:false }, 'close/save/delete consumes the exact latest destination once');
   assert.equal(opens.peek(), undefined);
+  const closeGate = deferred();
+  const closingToken = opens.begin({ vesselId:'must-not-reopen', batchManaged:false });
+  const lateOpenStillCurrent = closeGate.promise.then(() => opens.isCurrent(closingToken));
+  opens.invalidate();
+  closeGate.resolve();
+  assert.equal(await lateOpenStillCurrent, false, 'closing a read-only editor must invalidate an in-flight snapshot fetch so its late completion cannot reopen stale data');
+  assert.equal(opens.peek(), undefined, 'closing/invalidation must clear the stale snapshot return destination');
+
+  const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const readOnlyStart = appSource.indexOf('const openTaskReadOnly = async');
+  const readOnlyEnd = appSource.indexOf('\n  const openTaskEditor = async', readOnlyStart);
+  const readOnlyBranch = appSource.slice(readOnlyStart, readOnlyEnd);
+  assert.ok(readOnlyBranch.lastIndexOf("if(!requestIsCurrent())return 'cancelled';") < readOnlyBranch.indexOf('setTaskReadOnlyData(projectedData)') && readOnlyBranch.lastIndexOf("if(!requestIsCurrent())return 'cancelled';") >= 0, 'App must perform a final current-token check immediately before publishing the read-only snapshot');
+  assert.ok(appSource.includes('taskOpenRequests.current.invalidate();') && appSource.includes('setTaskReadOnlyData(null);'), 'navigation, identity changes, and explicit invalidation must clear the read-only snapshot lifecycle');
 
   const configA = { supabaseUrl:'https://a.example', supabaseAnonKey:'key-a', workspaceKey:'workspace-a', tableName:'state' };
   const configB = { supabaseUrl:'https://b.example', supabaseAnonKey:'key-b', workspaceKey:'workspace-b', tableName:'state' };

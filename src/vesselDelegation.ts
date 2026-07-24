@@ -27,6 +27,5 @@ export function hasAnyVesselDelegation(vessel: DelegationVessel | null | undefin
 
 export function userCanManageVesselByAssignmentOrDelegation(vessel: Pick<Vessel, 'id' | 'assignedUserIds' | 'delegateManagers'>, user: DelegationUser | null | undefined): boolean {
   if (!user) return false;
-  if (user.role === 'owner' || user.role === 'admin') return true;
   return vessel.assignedUserIds.includes(user.id) || user.managedVesselIds.includes(vessel.id) || hasActiveVesselDelegation(vessel, user.id);
 }

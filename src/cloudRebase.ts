@@ -30,6 +30,59 @@ function validateCollectionIds(key: CollectionKey, snapshot: SnapshotName, items
   }
 }
 
+const changedIds = (baseItems: Identified[], sideItems: Identified[]) => {
+  const baseById = new Map(baseItems.map(item => [item.id, item]));
+  const sideById = new Map(sideItems.map(item => [item.id, item]));
+  return new Set([...new Set([...baseById.keys(), ...sideById.keys()])].filter(id => !equal(baseById.get(id), sideById.get(id))));
+};
+
+const settingsKeyChanged = (base: AppData, side: AppData, key: keyof AppData['settings']) => !equal(base.settings[key], side.settings[key]);
+const SENSITIVE_SETTINGS: (keyof AppData['settings'])[] = ['sitePasswordHash', 'rolePermissions', 'nonOwnerPasswordResetVersion'];
+const vesselAuthorizationShape = (data: AppData) => data.vessels.map(vessel=>({
+  id:vessel.id,
+  isActive:vessel.isActive,
+  assignedUserIds:[...(vessel.assignedUserIds||[])].sort(),
+  delegateManagers:[...(vessel.delegateManagers||[])].map(item=>({userId:item.userId,isActive:item.isActive})).sort((left,right)=>left.userId.localeCompare(right.userId)),
+})).sort((left,right)=>left.id.localeCompare(right.id));
+const vesselAuthorizationChanged = (base: AppData, side: AppData) => !equal(vesselAuthorizationShape(base),vesselAuthorizationShape(side));
+
+function meaningfulChange(base: AppData, side: AppData) {
+  if (!equal(base.settings, side.settings)) return true;
+  return COLLECTION_KEYS.some(key => key !== 'auditLogs' && !equal(base[key], side[key]));
+}
+
+function relationshipValues(baseItems: any[], sideItems: any[], ids: Set<string>, read: (item: any) => string[]) {
+  const values = new Set<string>();
+  for (const item of [...baseItems, ...sideItems]) if (ids.has(item.id)) read(item).filter(Boolean).forEach(value => values.add(value));
+  return values;
+}
+
+const intersects = (left: Set<string>, right: Set<string>) => [...left].some(value => right.has(value));
+
+function detectDependencyConflicts(base: AppData, local: AppData, remote: AppData, conflicts: string[]) {
+  const localSensitive = !equal(base.users, local.users) || vesselAuthorizationChanged(base,local) || SENSITIVE_SETTINGS.some(key => settingsKeyChanged(base, local, key));
+  const remoteSensitive = !equal(base.users, remote.users) || vesselAuthorizationChanged(base,remote) || SENSITIVE_SETTINGS.some(key => settingsKeyChanged(base, remote, key));
+  if ((localSensitive && meaningfulChange(base, remote)) || (remoteSensitive && meaningfulChange(base, local))) conflicts.push('authorization-domain');
+  const changed = (side: AppData, key: CollectionKey) => changedIds(base[key] as Identified[], side[key] as Identified[]);
+  const localTaskIds = changed(local, 'tasks');
+  const remoteTaskIds = changed(remote, 'tasks');
+  const localCaseIds = changed(local, 'internalControlCases');
+  const remoteCaseIds = changed(remote, 'internalControlCases');
+  const localMeetingIds = changed(local, 'meetings');
+  const remoteMeetingIds = changed(remote, 'meetings');
+  const localVesselIds = changed(local, 'vessels');
+  const remoteVesselIds = changed(remote, 'vessels');
+  const taskCases = (side: AppData, ids: Set<string>) => relationshipValues(base.tasks, side.tasks, ids, item => [item.internalControlCaseId || '']);
+  const taskMeetings = (side: AppData, ids: Set<string>) => relationshipValues(base.tasks, side.tasks, ids, item => [item.sourceMeetingId || '']);
+  const taskVessels = (side: AppData, ids: Set<string>) => relationshipValues(base.tasks, side.tasks, ids, item => [item.vesselId || '', ...(item.vesselIds || [])]);
+  const caseTasks = (side: AppData, ids: Set<string>) => relationshipValues(base.internalControlCases, side.internalControlCases, ids, item => [item.linkedTaskId || '']);
+  const caseVessels = (side: AppData, ids: Set<string>) => relationshipValues(base.internalControlCases, side.internalControlCases, ids, item => [item.vesselId || '']);
+  if (intersects(taskCases(local, localTaskIds), remoteCaseIds) || intersects(taskCases(remote, remoteTaskIds), localCaseIds)) conflicts.push('dependency:internal-control');
+  if (intersects(caseTasks(local, localCaseIds), remoteTaskIds) || intersects(caseTasks(remote, remoteCaseIds), localTaskIds)) conflicts.push('dependency:internal-control-task');
+  if (intersects(taskMeetings(local, localTaskIds), remoteMeetingIds) || intersects(taskMeetings(remote, remoteTaskIds), localMeetingIds)) conflicts.push('dependency:meeting-task');
+  if (intersects(taskVessels(local, localTaskIds), remoteVesselIds) || intersects(taskVessels(remote, remoteTaskIds), localVesselIds) || intersects(caseVessels(local, localCaseIds), remoteVesselIds) || intersects(caseVessels(remote, remoteCaseIds), localVesselIds)) conflicts.push('dependency:vessel-scope');
+}
+
 function mergeSettingsValue(base: unknown, local: unknown, remote: unknown, path: string, conflicts: string[]): unknown {
   if (equal(local, base)) return clone(remote);
   if (equal(remote, base)) return clone(local);
@@ -79,6 +132,8 @@ export function rebaseDisjointAppData(base: AppData, local: AppData, remote: App
     validateCollectionIds(key, 'local', local[key] as Identified[], conflicts);
     validateCollectionIds(key, 'remote', remote[key] as Identified[], conflicts);
   }
+  if (conflicts.length) throw new CloudRebaseConflictError([...new Set(conflicts)]);
+  detectDependencyConflicts(base, local, remote, conflicts);
   if (conflicts.length) throw new CloudRebaseConflictError([...new Set(conflicts)]);
   const settings = mergeSettingsValue(base.settings, local.settings, remote.settings, 'settings', conflicts) as AppData['settings'];
   const merged = { ...clone(remote), settings } as AppData;

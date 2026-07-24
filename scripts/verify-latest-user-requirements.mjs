@@ -88,9 +88,9 @@ try {
   assert.ok(editor.includes("if (creating && !draft.priority) return alert('請選擇關注程度')"), '新增要事的关注程度必须由保存 handler 验证');
   assert.ok(editor.includes("if (creating && !selectedCategories.length) return alert('請選擇分類')"), '新增要事的分类必须由保存 handler 验证');
   assert.ok(app.includes("category:'', categories:[]"), '新增要事分类必须初始为空并由使用者主动选择');
-  assert.ok(editor.includes("if (creating && !draft.departments.length) return alert('請選擇涉及部門')"), '新增要事的涉及部门必须由保存 handler 验证');
-  assert.ok(editor.includes('required={creating}') && editor.includes("label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating}") && editor.includes('label="涉及部門" required={creating}'), '新增要事的五个必选／必填字段必须显示原生或语义 required 标记');
-  assert.ok(editor.includes('label="涉及部門" required={creating}') && editor.includes('label="追蹤窗口"'), '新增要事必须使用「追蹤窗口」标签');
+  assert.ok(editor.includes("if ((creating||draft.isInternalControl) && !draft.departments.length) return alert('請選擇涉及部門')"), '新增要事及既有linked內控要事的涉及部門必須由保存 handler 驗證');
+  assert.ok(editor.includes('required={creating}') && editor.includes("label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating}") && editor.includes('label="涉及部門" required={creating||draft.isInternalControl}'), '新增要事的五個必選／必填欄位及linked內控部門必須顯示原生或語義 required 標記');
+  assert.ok(editor.includes('label="涉及部門" required={creating||draft.isInternalControl}') && editor.includes('label="追蹤窗口"'), '新增要事必須使用「追蹤窗口」標籤');
   const vesselEditor = editor.slice(editor.indexOf('export function VesselEditModal'), editor.indexOf('export function TaskEditModal'));
   const taskEditor = editor.slice(editor.indexOf('export function TaskEditModal'));
   assert.ok(!vesselEditor.includes('經管／負責人'), '船舶快速更新不得显示或修改管理页经管／负责人');

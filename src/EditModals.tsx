@@ -188,7 +188,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     if (creating && !draft.priority) return alert('請選擇關注程度');
     if (isRichTextEmpty(draft.description)) return alert('請填寫事項內容');
     if (creating && !selectedCategories.length) return alert('請選擇分類');
-    if (creating && !draft.departments.length) return alert('請選擇涉及部門');
+    if ((creating||draft.isInternalControl) && !draft.departments.length) return alert('請選擇涉及部門');
     const saved=clone(draft);
     saved.categories = selectedCategories;
     saved.category = saved.categories[0] || '';
@@ -227,7 +227,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     </div>
     <CheckboxMultiPicker label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating} values={draft.categories || (draft.category ? [draft.category] : [])} choices={taskCategoryChoices.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
     {draft.isInternalControl&&(draft.categories||[]).includes('設備故障')&&<div className="field"><label>設備故障細項<span className="danger-note" aria-hidden="true">＊</span></label><select required value={draft.equipmentSubcategory||''} onChange={event=>{const value=event.target.value;change(target=>{target.equipmentSubcategory=value||undefined;});}}><option value="">請選擇</option>{data.settings.equipmentFailureSubcategories.map(item=><option key={item}>{item}</option>)}</select></div>}
-    <CheckboxMultiPicker label="涉及部門" required={creating} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
+    <CheckboxMultiPicker label="涉及部門" required={creating||draft.isInternalControl} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
     {currentUser.role!=='vessel'&&<MeetingPeoplePicker label="追蹤窗口" users={eligibleOwnerUsers} departments={data.settings.departments} selectedIds={draft.ownerUserIds} onChange={values=>change(target=>{target.ownerUserIds=values;})} disabled={globalReadOnly}/>}</fieldset>
     {!creating&&<div className="grid cols-3 task-completion-date-row"><div className="field"><label>完成日期</label><input type="date" disabled={readOnly||!canClose} value={selectedProgress.closedDate||''} onChange={event=>setCompletionDate(event.target.value)}/><small>{selectedProgress.isClosed?'已結案日期；與「標記結案」彈出的日期同步':'選擇日期會同步標記為已結案'}</small></div></div>}
     {editingSingleVessel&&<div className="field vessel-progress-status"><label>單船目前狀態／決議｜{selectedVessel?vesselDisplayName(selectedVessel):progressScope}</label><RichTextEditor ariaLabel="單船目前狀態" readOnly={readOnly} value={selectedProgress.status} onChange={value=>changeProgress(target=>{target.status=value;})}/></div>}

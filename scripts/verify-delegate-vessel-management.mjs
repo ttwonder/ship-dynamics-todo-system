@@ -7,7 +7,7 @@ import { createServer } from 'vite';
 const types = fs.readFileSync('src/types.ts', 'utf8');
 const management = fs.readFileSync('src/Management.tsx', 'utf8');
 const app = fs.readFileSync('src/App.tsx', 'utf8');
-const batch = fs.readFileSync('src/BatchManagedVesselModal.tsx', 'utf8');
+const delegationSource = fs.readFileSync('src/vesselDelegation.ts', 'utf8');
 const workCenter = fs.readFileSync('src/workCenterScope.ts', 'utf8');
 const styles = fs.readFileSync('src/styles.css', 'utf8');
 
@@ -32,7 +32,7 @@ const stateDotStyle = cssDeclarations(styles, '.delegate-state-dot');
 assert.deepEqual([stateDotStyle.width, stateDotStyle.height], ['10px', '10px'], '代管狀態視覺需為小圓點');
 assert.ok(app.includes('vesselMatchesUser') && app.includes('hasActiveVesselDelegation'), '可見船舶範圍需包含激活代管船舶');
 assert.ok(workCenter.includes('hasActiveVesselDelegation'), '我的待辦需把激活代管船舶視為本人相關船舶');
-assert.ok(batch.includes('managedVessels') && batch.includes('hasActiveVesselDelegation'), '批量更新自管船舶需包含激活代管船舶');
+assert.ok(app.includes('batchTargetVesselsFor') && app.includes('userCanManageVesselByAssignmentOrDelegation(vessel,user)') && delegationSource.includes('hasActiveVesselDelegation(vessel, user.id)'), 'App批量目標解析需透過共用範圍函式包含激活代管船舶');
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {

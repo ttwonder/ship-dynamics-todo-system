@@ -49,6 +49,68 @@ try {
   assert.equal(settingsRebased.settings.systemTitle, 'LOCAL TITLE');
   assert.ok(settingsRebased.settings.departments.includes('REMOTE DEPT'), 'disjoint settings keys may merge');
 
+  const authorizationLocal = clone(base);
+  authorizationLocal.vessels[0].position.location = 'LOCAL-AUTH-RACE';
+  const authorizationRemote = clone(base);
+  authorizationRemote.users[0].isActive = false;
+  assert.throws(
+    () => rebaseDisjointAppData(base, authorizationLocal, authorizationRemote, '2026-07-24T00:04:10.000Z'),
+    error => error instanceof CloudRebaseConflictError && error.conflicts.includes('authorization-domain'),
+    'remote identity or authorization changes must prevent automatic reapplication of a local business mutation',
+  );
+
+  const vesselAuthorizationBase = clone(base);
+  const assignedUserId = vesselAuthorizationBase.users.find(user=>user.isActive)?.id || 'qa-assigned-user';
+  vesselAuthorizationBase.vessels[0].assignedUserIds=[assignedUserId];
+  const vesselAuthorizationLocal = clone(vesselAuthorizationBase);
+  vesselAuthorizationLocal.meetings.push({ id:'local-meeting-after-assignment', vesselIds:[vesselAuthorizationBase.vessels[0].id], marker:'local' });
+  vesselAuthorizationLocal.agendaReports.push({ id:'local-report-after-assignment', vesselIds:[vesselAuthorizationBase.vessels[0].id], marker:'local' });
+  const vesselAuthorizationRemote = clone(vesselAuthorizationBase);
+  vesselAuthorizationRemote.vessels[0].assignedUserIds=[];
+  assert.throws(
+    () => rebaseDisjointAppData(vesselAuthorizationBase,vesselAuthorizationLocal,vesselAuthorizationRemote,'2026-07-24T00:04:15.000Z'),
+    error => error instanceof CloudRebaseConflictError && error.conflicts.includes('authorization-domain'),
+    'remote vessel assignment/delegation revocation must prevent automatic reapplication of local meeting/report mutations',
+  );
+
+  const dependencyBase = clone(base);
+  dependencyBase.tasks.push({ id:'dep-task', internalControlCaseId:'dep-case', vesselId:base.vessels[0].id, sourceMeetingId:'dep-meeting', marker:'base' });
+  dependencyBase.internalControlCases.push({ id:'dep-case', linkedTaskId:'dep-task', vesselId:base.vessels[0].id, marker:'base' });
+  dependencyBase.meetings.push({ id:'dep-meeting', marker:'base' });
+  const taskLocal = clone(dependencyBase);
+  taskLocal.tasks.find(item => item.id === 'dep-task').marker = 'local-task';
+  const caseRemote = clone(dependencyBase);
+  caseRemote.internalControlCases.find(item => item.id === 'dep-case').marker = 'remote-case';
+  assert.throws(
+    () => rebaseDisjointAppData(dependencyBase, taskLocal, caseRemote, '2026-07-24T00:04:20.000Z'),
+    error => error instanceof CloudRebaseConflictError && error.conflicts.some(item => item.startsWith('dependency:internal-control')),
+    'linked task and internal-control case changes are one dependency domain even across collections',
+  );
+  const meetingRemote = clone(dependencyBase);
+  meetingRemote.meetings.find(item => item.id === 'dep-meeting').marker = 'remote-meeting';
+  assert.throws(
+    () => rebaseDisjointAppData(dependencyBase, taskLocal, meetingRemote, '2026-07-24T00:04:30.000Z'),
+    error => error instanceof CloudRebaseConflictError && error.conflicts.includes('dependency:meeting-task'),
+    'meeting-derived task changes must conflict with concurrent source-meeting changes',
+  );
+  const vesselRemote = clone(dependencyBase);
+  vesselRemote.vessels[0].isActive = false;
+  assert.throws(
+    () => rebaseDisjointAppData(dependencyBase, taskLocal, vesselRemote, '2026-07-24T00:04:40.000Z'),
+    error => error instanceof CloudRebaseConflictError && error.conflicts.includes('dependency:vessel-scope'),
+    'task changes must not be reapplied when their vessel scope changes remotely',
+  );
+
+  const disjointTaskBase = clone(base);
+  disjointTaskBase.tasks.push({ id:'task-vessel-a', vesselId:base.vessels[0].id, marker:'base' }, { id:'task-vessel-b', vesselId:base.vessels[1].id, marker:'base' });
+  const disjointTaskLocal = clone(disjointTaskBase);
+  disjointTaskLocal.tasks.find(item => item.id === 'task-vessel-a').marker = 'local';
+  const disjointTaskRemote = clone(disjointTaskBase);
+  disjointTaskRemote.tasks.find(item => item.id === 'task-vessel-b').marker = 'remote';
+  const disjointTasksRebased = rebaseDisjointAppData(disjointTaskBase, disjointTaskLocal, disjointTaskRemote, '2026-07-24T00:04:50.000Z');
+  assert.equal(disjointTasksRebased.tasks.find(item => item.id === 'task-vessel-a').marker, 'local');
+  assert.equal(disjointTasksRebased.tasks.find(item => item.id === 'task-vessel-b').marker, 'remote');
+
   const collectionKeys = ['users', 'vessels', 'tasks', 'internalControlCases', 'meetings', 'agendaReports', 'auditLogs', 'notifications'];
   const snapshotNames = ['base', 'local', 'remote'];
   for (const collectionKey of collectionKeys) {
