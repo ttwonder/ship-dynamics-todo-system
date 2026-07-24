@@ -55,11 +55,10 @@ const lockFromRpc = (value: any, fallbackSectionKey: string): CloudEditingLock =
   expiresAt: value?.expires_at ? String(value.expires_at) : undefined,
 });
 
-export async function fetchCloudData(): Promise<AppData | null> {
-  const supabase = getSupabaseClient();
-  if (!supabase) return null;
-  const cfg = getSupabaseConfig();
-  if (!cfg) return null;
+export async function fetchCloudData(config?: ResolvedSupabaseConfig | null): Promise<AppData | null> {
+  const cfg = config === undefined ? getSupabaseConfig() : config;
+  const supabase = getSupabaseClient(cfg);
+  if (!supabase || !cfg) return null;
   const { data, error } = await supabase
     .from(cfg.tableName)
     .select('payload,revision,updated_at,updated_by')
@@ -75,11 +74,10 @@ export async function fetchCloudData(): Promise<AppData | null> {
 }
 
 /** Compare-and-swap save. Every caller must provide the revision it last observed. */
-export async function saveCloudData(payload: AppData, expectedRevision: number, savedByName = 'unknown'): Promise<number> {
-  const supabase = getSupabaseClient();
-  if (!supabase) throw new Error('尚未配置 Supabase；資料只保存在此瀏覽器。');
-  const cfg = getSupabaseConfig();
-  if (!cfg) throw new Error('尚未配置 Supabase；資料只保存在此瀏覽器。');
+export async function saveCloudData(payload: AppData, expectedRevision: number, savedByName = 'unknown', config?: ResolvedSupabaseConfig | null): Promise<number> {
+  const cfg = config === undefined ? getSupabaseConfig() : config;
+  const supabase = getSupabaseClient(cfg);
+  if (!supabase || !cfg) throw new Error('尚未配置 Supabase；資料只保存在此瀏覽器。');
   const cleanPayload = sanitizeAppDataForStorage(payload);
   const row = {
     workspace_key: cfg.workspaceKey,

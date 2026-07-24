@@ -54,6 +54,8 @@ assert.ok(normalizer.includes("const priorities: TaskPriority[] = ['急', '高',
 assert.ok(normalizer.includes('isAbnormal: bool(item.isAbnormal)'), '正規化器需迁移异常选项');
 assert.ok(normalizer.includes('weeklyAttention') && normalizer.includes('cargoItems'), '正規化器需迁移关注灯与多笔货物');
 
+assert.ok(!styles.includes('.metric-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr))') && styles.includes('.metric-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}'), '首頁6張統計卡需在桌面版固定一行6欄，後置樣式不得覆蓋回5欄');
+
 assert.ok(api.includes('interface SmartShipApiClient'), '需提供智慧船舶 API client 预留接口');
 assert.ok(api.includes('TODO(SMART_SHIP_API)'), '智慧船舶预留接口需有明确源码备注');
 assert.ok(api.includes('mergeSmartShipSnapshot'), '需提供智慧船舶资料合并入口并保留手动修改能力');

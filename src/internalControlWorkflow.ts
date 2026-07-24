@@ -76,13 +76,7 @@ export const managedInternalControlVesselIds = (user: InternalControlUser, vesse
   )).map(vessel => vessel.id);
 
 export const defaultInternalControlVesselIds = (user: InternalControlUser, vessels: InternalControlVessel[]): string[] => {
-  const activeIds = new Set(vessels.filter(vessel => vessel.isActive !== false).map(vessel => vessel.id));
-  const firstExplicit = user.managedVesselIds.find(id => activeIds.has(id));
-  if (firstExplicit) return [firstExplicit];
-  const firstManaged = managedInternalControlVesselIds(user, vessels)[0];
-  if (firstManaged) return [firstManaged];
-  const firstVisible = vessels.find(vessel => vessel.isActive !== false);
-  return firstVisible ? [firstVisible.id] : [];
+  return managedInternalControlVesselIds(user, vessels);
 };
 
 export const emptyInternalControlFilters = (vesselIds: string[] = []): InternalControlFilters => ({
@@ -201,6 +195,9 @@ export function buildInternalControlStats(cases: InternalControlCase[], vessels:
 interface CaseToTaskOptions {
   id: string;
   ownerUserIds: string[];
+  categories?: string[];
+  equipmentSubcategory?: string;
+  expectedDate?: string;
   actorId: string;
   at: string;
 }
@@ -208,6 +205,7 @@ interface CaseToTaskOptions {
 const clonedLogs = (logs: StatusLog[]) => logs.map(log => ({ ...log }));
 
 export function internalControlCaseToTask(item: InternalControlCase, options: CaseToTaskOptions): TaskItem {
+  const categories = options.categories?.length ? [...options.categories] : (item.category ? [item.category] : []);
   return {
     id: options.id,
     vesselId: item.vesselId,
@@ -217,12 +215,12 @@ export function internalControlCaseToTask(item: InternalControlCase, options: Ca
     isAbnormal: true,
     isInternalControl: true,
     internalControlCaseId: item.id,
-    category: item.category,
-    categories: item.category ? [item.category] : [],
-    equipmentSubcategory: item.category === '設備故障' ? item.equipmentSubcategory : undefined,
+    category: categories[0] || item.category,
+    categories,
+    equipmentSubcategory: categories.includes('設備故障') ? (options.equipmentSubcategory || item.equipmentSubcategory) : undefined,
     description: item.description,
     status: item.status,
-    expectedDate: '',
+    expectedDate: options.expectedDate || '',
     reportDate: item.reportDate,
     departments: [...item.departments],
     ownerUserIds: [...options.ownerUserIds],

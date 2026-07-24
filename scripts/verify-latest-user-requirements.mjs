@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createServer } from 'vite';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
@@ -8,6 +10,7 @@ try {
   const names = await server.ssrLoadModule('/src/vesselDisplay.ts');
   const normalizer = await server.ssrLoadModule('/src/normalize.ts');
   const utils = await server.ssrLoadModule('/src/utils.ts');
+  const editModals = await server.ssrLoadModule('/src/EditModals.tsx');
 
   assert.deepEqual(categories.REQUIRED_TASK_CATEGORIES, [
     '換員操作', '加油加水', '物料配件', '維修', 'Survey', '稽核檢查', 'PSC窗口', '事故',
@@ -39,6 +42,14 @@ try {
   assert.deepEqual(normalized.vessels[0].note.statusList, ['drydock/repiar']);
   assert.equal(normalized.vessels[0].note.recentDynamics, '近期資訊\n舊後續資訊');
   assert.equal(normalized.vessels[0].note.subsequentDynamics, '');
+  const readOnlyModalHtml=renderToStaticMarkup(React.createElement(editModals.TaskEditModal,{
+    task:normalized.tasks[0], data:normalized, visibleVessels:normalized.vessels,
+    currentUser:{id:'reviewer',department:'管理層',name:'檢視者',username:'reviewer',role:'admin',passwordHash:'',isActive:true,managedVesselIds:[]},
+    canClose:false,canDelete:false,canCancelInternalControl:false,canEditOverall:false,readOnly:true,
+    readOnlyReason:'其他使用者正在編輯此事項｜已讀取伺服器最新資料',close:()=>{},onSave:()=>false,onSaveVesselProgress:()=>false,onDelete:()=>{},
+  }));
+  assert.ok(readOnlyModalHtml.includes('只讀詳情')&&readOnlyModalHtml.includes('已讀取伺服器最新資料')&&readOnlyModalHtml.includes('aria-readonly="true"'),'被鎖事項詳情需清楚標示伺服器最新只讀狀態');
+  assert.ok(!readOnlyModalHtml.includes('>保存變更</button>')&&!readOnlyModalHtml.includes('>刪除待辦</button>')&&!readOnlyModalHtml.includes('>標記結案</button>'),'只讀詳情不得渲染任何寫入操作按鈕');
 
   const ownerHash='b'.repeat(64);
   const userHash='c'.repeat(64);
@@ -87,7 +98,7 @@ try {
   assert.ok(taskEditor.includes("currentUser.role!=='vessel'&&<MeetingPeoplePicker") && taskEditor.includes('disabled={globalReadOnly}'), '追蹤窗口需在新增與更新要事显示，并在只读模式明确禁用');
   assert.ok(app.includes('assignedOwnerUserIds') && app.includes('vessel.assignedUserIds'), '新增要事必须自动带入管理页已分配的船舶经管人员');
   assert.ok(!taskEditor.includes('assignedUserIds=') && !taskEditor.includes('managedVesselIds='), '事项涉及人员不得修改管理页船舶／人员分管');
-  assert.ok(app.includes('taskReturnVesselId') && app.includes('closeTaskEditor') && app.includes('addTaskForVessel(id,true)'), '从快速更新进入新增要事后，取消或保存必须返回快速更新弹窗');
+  assert.ok(app.includes('createTaskOpenRequestCoordinator') && app.includes("taskOpenRequests.current.begin({vesselId:returnToVessel?vesselId:'',batchManaged:returnToBatchManaged})") && app.includes('const returnDestination=taskOpenRequests.current.consume()') && app.includes('returnDestination?.batchManaged') && app.includes('openVesselEditor(returnDestination.vesselId)') && app.includes('addTaskForVessel(id,true)'), '從快速更新進入新增要事後，取消或保存必須只消耗最新返回目的地並返回快速更新彈窗');
   assert.ok(app.includes('mergeAttentionFromCategories') && app.includes('saved.categories'), '保存要事必須同步點亮看板狀態');
   assert.ok(app.includes('closedFilters') && app.includes("tasks={closedTasks}"), '已結案頁需使用獨立篩選與已結案資料源');
   assert.ok(morning.includes('onAddTask') && morning.includes('＋ 新增待辦'), '早會討論區需提供新增待辦');
@@ -118,6 +129,10 @@ try {
   assert.ok(app.includes("['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['internalControl','內控異常'],['reports','報告中心'],['stats','數據分析']"), '主導航應依序為待辦總表、已結案、內控異常、報告中心、數據分析');
   assert.ok(app.includes('priorityTone') && app.includes('filter-chip-meeting') && app.includes('filter-chip-internal') && app.includes('filter-reset-btn'), '待辦總清單篩選 chip 必須依關注/分類/內控提供語義色 class');
   assert.ok(app.includes('<th>追蹤窗口</th>') && app.includes('const managerIds=[...new Set(t.ownerUserIds)]') && !app.includes('<th>經管人</th>'), '待辦總表需將經管人欄改為追蹤窗口，且只顯示待辦追蹤窗口 ownerUserIds');
+  assert.ok(app.includes('className="task-vessel-column"') && app.includes('className="task-item-column"') && app.includes('className="task-status-column"'), '報告總清單需以語義 class 控制船名、分類事項與狀態列寬');
+  assert.ok(styles.includes('.task-vessel-column{width:9%;min-width:0!important') && styles.includes('.task-item-column{width:22%;min-width:0!important') && styles.includes('.task-status-column{width:17%;min-width:0!important'), '列印報告需縮小船名與狀態欄、把主要空間給分類／事項，並解除三欄舊最小寬度干擾');
+  assert.ok(app.includes('openTaskReadOnly') && app.includes("claimResult==='blocked'") && app.includes('configIoCoordinator.current.run(configToken,getSupabaseConfig,fetchCloudData)') && app.includes('taskOpenRequests.current.isCurrent(requestGeneration)') && app.includes('selectTasksVisibleToUser(sourceData.tasks,snapshotUser') && app.includes('buildTaskReadOnlyEditorData(sourceData,snapshotTask,projectedVesselId)') && app.includes('setTaskReadOnlyReason'), '被其他人鎖定的事項需以 immutable config 讀取伺服器最新資料、重新套用角色與最小化投影，且只有目前仍有效的請求可開啟只讀詳情');
+  assert.ok(app.includes('const taskEditorReadOnly=') && app.includes('const taskEditorData=taskReadOnlyData?') && app.includes('const taskEditorUser=currentUser') && app.includes('currentUser={taskEditorUser}') && app.includes('readOnly={taskEditorReadOnly}'), '只讀詳情必須使用最小化資料狀態並強制禁用保存與修改，不得把完整伺服器 users 帶入 editor');
   assert.ok(styles.includes('.batch-task-table th:nth-child(7)') && styles.includes('.batch-task-table th:nth-child(8)') && styles.includes('.batch-task-table th:nth-child(10)') && styles.includes('min-width:260px'), '待辦總表部門/追蹤窗口/狀態欄寬需明確調整');
   assert.ok(app.includes('autoDepartmentFilterKey') && app.includes('setFilters(previous => ({ ...previous, departments: [currentUser.department] }))') && app.includes('setClosedFilters(previous => ({ ...previous, departments: [currentUser.department] }))'), '待辦清單需依登入用戶部門自動預選部門篩選，且只在用戶切換時套用');
   assert.ok(app.includes("toggleGroup=(key:'categories'|'meetingCategories'") && app.includes('filter-group-task') && app.includes('filter-group-meeting') && app.includes('全選／取消全部要事分類') && app.includes('全選／取消全部臨會/專題分類'), '要事分類與臨會/專題分類標題需可點擊全選/取消整組分類');

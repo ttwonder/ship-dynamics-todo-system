@@ -33,6 +33,8 @@ try {
   assert.ok(workCenterSource.includes('目前篩選 {filteredTasks.length+filteredInternalCases.length} / 全部 {allTasks.length+allInternalCases.length} 件'), 'work-center print total must include standalone internal-control cases');
   assert.ok(workCenterSource.includes('<tbody>{filteredInternalCases.map(item=>'), 'work-center print rows must include standalone internal-control cases');
   assert.ok(!internalControlPageSource.includes('vesselDisplayName(vessels.find(vessel => vessel.id === id)!)'), 'internal-control filter summary must not dereference stale vessel IDs');
+  assert.ok(internalControlPageSource.includes("useState<InternalControlFilters>(() => emptyFilters(defaultInternalControlVesselIds(user, vessels)))") && internalControlPageSource.includes("const reset = () => setFilters(emptyFilters(defaultInternalControlVesselIds(user, vessels)))"), '內控船舶篩選初始值與重設都必須使用全部個人經管船舶的default helper');
+  assert.ok(internalControlPageSource.includes('重設（全部經管船）') && !internalControlPageSource.includes('第一艘自管船'), '內控篩選文案不得再暗示只選第一艘船');
   assert.ok(appSource.includes("previous.isInternalControl&&!candidate.isInternalControl&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')"), 'ordinary task saves must require close permission before cancelling internal control');
   assert.ok(appSource.includes("!previous.isInternalControl&&candidate.isInternalControl&&!hasPermission(prev.settings.rolePermissions,liveUser,'createTasks')"), 'turning an existing task into internal control must require create permission');
   assert.ok(appSource.includes("creating&&candidate.isInternalControl&&liveUser.role==='vessel'"), 'vessel accounts must not create internal control indirectly through ordinary task creation');
@@ -43,7 +45,7 @@ try {
   assert.match(appSource, /dashboardMeetingAlerts\(\s*roleVisibleMeetings,/, 'dashboard alert projection must not preserve the existence of internal-control meetings for vessel users');
   assert.ok(appSource.includes('tasks={roleVisibleTasks} internalControlCases={roleVisibleData.internalControlCases}'), 'vessel dashboard metrics, attention, and summaries must consume only role-visible task and internal-control data');
   assert.ok(appSource.includes("tab==='total' && <ListPanel") && appSource.includes('tasks={filteredTasks} data={roleVisibleData}'), 'vessel total-list props must not retain hidden internal-control records in the backing data object');
-  assert.ok(appSource.includes('const editingTask=taskEditorAuthorizationEpoch===authorizationEpoch?(creatingTask&&canCreateTasks?selectTasksVisibleToUser([creatingTask],currentUser,taskVisibilityRelationships)[0]:roleVisibleTasks.find'), 'identity, permission, and vessel-scope changes must synchronously suppress stale task editors and drafts');
+  assert.ok(appSource.includes('const readOnlyTask=taskEditorAuthorizationEpoch===authorizationEpoch?taskReadOnlyData?.tasks.find') && appSource.includes('const editingTask=taskEditorAuthorizationEpoch===authorizationEpoch?(readOnlyTask||') && appSource.includes('setTaskReadOnlyData(null);'), 'identity, permission, and vessel-scope changes must synchronously suppress stale writable and read-only task editors and drafts');
   assert.ok(appSource.includes("activeEditLock.authorizationEpoch===authorizationEpoch&&activeEditLock.ownerUserId===currentUser.id"), 'collaboration-lock labels must be bound to the exact live authorization epoch and owner');
   assert.ok(appSource.includes("if(lock.status==='blocked')") && appSource.includes('releaseEditLock(leaseRecord.sectionKey,lock.leaseOwnerId,leaseRecord.config)') && appSource.includes('try{await releaseEditLock(sectionKey,leaseOwnerId,leaseConfig)') && appSource.includes('leaseCloudConfigs.current'), 'owned and possibly-owned error leases must retain their opaque owner and immutable cloud config until serialized release succeeds');
   assert.ok(cloudSource.includes('config?: ResolvedSupabaseConfig|null') && cloudSource.includes('getSupabaseClient(cfg)'), 'lock RPCs must accept and use the immutable cloud configuration captured at claim time');
@@ -60,7 +62,27 @@ try {
   assert.ok(appSource.includes("if(!creating&&!requireMutationLease(`task:${candidate.id}`))return false") && appSource.includes("if(!requireMutationLease(`task:${candidate.id}`))return false") && appSource.includes("if(!requireMutationLease(`task:${task.id}`))return"), 'task save, per-vessel save, and delete mutation boundaries must require the exact live lease');
   assert.ok(appSource.includes('commit={vesselEditorCommit}') && appSource.includes("requireMutationLease(`vessel:${editingVesselId}`)"), 'immediate vessel commits must pass through the same live lease boundary');
   assert.ok(appSource.includes('validatedUntilMs:conservativeLeaseDeadline(') && appSource.includes('editLockAllowsMutation('), 'claim and renew must maintain a conservative server-expiry-bounded lease validity window enforced at mutation time');
-  assert.ok(appSource.includes('editingTask&&(!editingTaskCanMutate||mutationLeaseIsOwned') && appSource.includes('readOnly={!creatingVisibleTask&&!editingTaskCanMutate}'), 'cloud read-only viewers must retain task detail access without receiving writable controls or a lease');
+  assert.ok(appSource.includes('editingTask&&(taskEditorReadOnly||mutationLeaseIsOwned') && appSource.includes('readOnly={taskEditorReadOnly}') && appSource.includes("if(claimResult==='blocked'){") && appSource.includes("return openTaskReadOnly(task.id,'其他使用者正在編輯此事項'"), 'cloud read-only viewers and lock-blocked users must retain projected task detail access without receiving writable controls or a lease');
+  assert.ok(appSource.includes('const invalidatePendingTaskOpen = () => {') && appSource.includes('taskOpenRequests.current.invalidate();') && appSource.includes('clearBlockedTaskLock();'), 'every synchronous navigation boundary must invalidate the generation-aware task-open coordinator and clear blocked records');
+  const invalidateStart=appSource.indexOf('const invalidatePendingTaskOpen = () => {');
+  const invalidateEnd=appSource.indexOf('\n  };',invalidateStart);
+  const invalidateBranch=appSource.slice(invalidateStart,invalidateEnd);
+  assert.ok(invalidateBranch.includes('taskOpenRequests.current.invalidate();'), 'explicit navigation must atomically clear stale task return destinations through the coordinator');
+  assert.ok(appSource.includes("if(lock&&lock.status==='blocked')") && appSource.includes('雲端設定已變更：已關閉舊工作區的只讀事項'), 'cloud configuration transitions must close an already-open blocked read-only task');
+  assert.ok(/const openTaskEditor[\s\S]*?clearBlockedTaskLock\(\);[\s\S]*?if\(!taskLockIsAuthorized\(task\)\)/.test(appSource), 'every new task open, including ordinary role-based read-only opens, must clear the previous blocked task record before branching');
+  const renewalBlockedStart=appSource.indexOf('if(!renewed.ok){');
+  const renewalBlockedEnd=appSource.indexOf('}else{',renewalBlockedStart);
+  const renewalBlockedBranch=appSource.slice(renewalBlockedStart,renewalBlockedEnd);
+  assert.ok(renewalBlockedStart>=0 && renewalBlockedBranch.includes("sectionKey.startsWith('task:')") && renewalBlockedBranch.includes('openTaskReadOnly('), 'an owned task lease that becomes blocked during renewal must reopen from the latest projected cloud snapshot');
+  assert.ok(renewalBlockedBranch.includes("result==='failed'&&taskOpenRequests.current.isCurrent(requestGeneration)") && renewalBlockedBranch.includes('closeTaskEditor();'), 'a failed renewal-to-read-only transition may consume and restore only the still-current return destination');
+  assert.ok(appSource.includes('editingTask.id===creatingTask.id&&!taskReadOnlyData') && /const addTaskForVessel[\s\S]*?invalidatePendingTaskOpen\(\);[\s\S]*?setEditingTaskId\(''\);[\s\S]*?setCreatingTask\(/.test(appSource), 'task creation must invalidate pending blocked reads and can only enter creation mode for the exact draft identity');
+  assert.ok(appSource.includes('navigateToTab(k);') && appSource.includes('onBack={closeVesselDetail}') && appSource.includes('onOpenVessel={openVesselDetail}') && appSource.includes("onOpenInternalControl={()=>navigateToTab('internalControl')}"), 'tab and vessel-detail navigation handlers must synchronously invalidate pending task opens');
+  assert.ok(appSource.includes('openTask(task,vesselId,vesselId)') && appSource.includes('const returnDestination=taskOpenRequests.current.consume()') && appSource.includes('returnDestination?.vesselId') && appSource.includes('openVesselEditor(returnDestination.vesselId)'), 'existing tasks opened from a vessel editor must consume the current destination and return to that vessel editor');
+  const deleteTaskStart=appSource.indexOf('const deleteTask =');
+  const deleteTaskEnd=appSource.indexOf('\n  const batchCompleteTasks',deleteTaskStart);
+  assert.ok(appSource.slice(deleteTaskStart,deleteTaskEnd).includes('closeTaskEditor();'), 'successful deletion must consume and restore task return context through the shared close path');
+  assert.ok(appSource.includes("type TaskOpenResult='opened'|'failed'|'cancelled'") && appSource.includes("if(result==='failed')void openVesselEditor(vesselId)") && appSource.includes("if(result!=='opened')taskOpenRequests.current.clearIfCurrent(requestGeneration)") , 'failed vessel-origin task opens must restore the vessel while cancelled or failed opens clear only their own stale return context');
+  assert.ok(styles.includes('.batch-task-table .task-link,.batch-task-table .task-link .rich-text-content{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;overflow-wrap:anywhere}'), 'print media must expand clickable rich task content instead of clipping it to one line');
   assert.ok(appSource.includes("${cfg.workspaceKey}|${cfg.supabaseAnonKey}") && appSource.includes('sameCloudConfig(currentConfig,record.config)'), 'cloud identity and mutation boundaries must exactly include anon key, URL, workspace, and table snapshot equality');
   assert.ok(appSource.includes("window.addEventListener('storage',onStorage)") && appSource.includes('window.setInterval(checkConfig,1000)') && appSource.includes('停止舊工作區續期'), 'cross-tab and same-tab cloud configuration changes must close editors and stop old-workspace renewal promptly');
   assert.ok(appSource.includes('if(!sameCloudConfig(getSupabaseConfig(),leaseRecord.config))') && appSource.includes('releaseCurrentEditLock();'), 'renewal must recheck the captured cloud configuration and serialize release through the old snapshot on mismatch');
@@ -76,6 +98,11 @@ try {
   assert.ok(vesselDetailSource.includes('canViewInternalControl ? data.internalControlCases.filter'), 'vessel detail rows and metrics must fail closed when internal-control access is denied');
   assert.ok(editModalsSource.includes("currentUser.role!=='vessel'&&<label className=\"aware-toggle internal-control-toggle\""), 'vessel task editor must not expose the internal-control creation toggle');
   assert.ok(appSource.includes("internalControlDeletion&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')"), 'deletion-driven internal-control closure must require close permission');
+  const removeInternalCaseStart=appSource.indexOf('const removeInternalCase =');
+  const removeInternalCaseEnd=appSource.indexOf('\n  const saveTask =',removeInternalCaseStart);
+  const removeInternalCaseBranch=appSource.slice(removeInternalCaseStart,removeInternalCaseEnd);
+  assert.ok(removeInternalCaseBranch.includes('if(!internalControlDeletionAuthorized({') && !removeInternalCaseBranch.includes('if(!previous.isClosed&&!internalControlDeletionAuthorized'), 'open and already-closed internal-control case deletion must both require delete, close, and scope-cancellation authorization');
+  assert.ok(appSource.includes('try{deleteTaskBatchFromDraft(draft,liveSelection.tasks,liveUser,nowIso());}') && !appSource.includes('liveSelection.tasks.forEach(task=>closeLinkedInternalControlCaseAfterTaskDelete'), 'batch deletion must remove each linked task before checking the next global linkage invariant');
   assert.ok(appSource.includes("normalizedProgress.status!==previousProgress.status&&newProgressLogCount<1") && appSource.includes("newProgressLogCount>0&&normalizedProgress.statusLogs[0]?.text.trim()!==normalizedProgress.status.trim()"), 'per-vessel status changes must require matching newest history');
 
   const ordinaryVisibleTask = { id: 'ordinary', isInternalControl: false, vesselId: 'vessel-a', sourceType: 'morning', attentionDimension: 'task', ownerUserIds: [] };
@@ -283,8 +310,10 @@ try {
     { id: 'v3', name: '三號', fullName: 'THREE', shortName: '3', shipType: '散貨船', assignedUserIds: [], delegateManagers: [], isActive: true },
   ];
   const user = { id: 'u1', role: 'operator', managedVesselIds: ['v2', 'v1'], isActive: true };
-  assert.deepEqual(workflow.defaultInternalControlVesselIds(user, vessels), ['v2']);
+  assert.deepEqual(workflow.defaultInternalControlVesselIds(user, vessels), ['v1', 'v2']);
   assert.deepEqual(workflow.managedInternalControlVesselIds(user, vessels), ['v1', 'v2']);
+  assert.deepEqual(workflow.defaultInternalControlVesselIds({ id: 'u2', role: 'operator', managedVesselIds: [], isActive: true }, vessels), [], '沒有經管船舶時預設不得退回第一艘可見船，空陣列代表不限條件');
+  assert.deepEqual(workflow.defaultInternalControlVesselIds({ id: 'owner', role: 'owner', managedVesselIds: ['v3'], isActive: true }, vessels), ['v3'], 'Owner仍只預選個人明確經管船舶，不得因角色而預選全部可見船舶');
 
   const baseCase = {
     id: 'ic1', vesselId: 'v1', reportDate: '2026-07-23', reportSource: '訪船', description: '主機異常', priority: '高', category: '設備故障', equipmentSubcategory: '机舱设备', isAware: true, status: '安排檢修', departments: ['輪機'], syncToTask: false, isClosed: false, createdBy: 'u1', updatedBy: 'u1', createdAt: '2026-07-23T01:00:00.000Z', updatedAt: '2026-07-23T01:00:00.000Z', statusLogs: [],
@@ -416,7 +445,7 @@ try {
   delete taskReopenOnlyDraft.tasks[0].closedBy;
   const taskReopened = dataLayer.reconcileInternalControlAfterTaskSave(taskReopenOnlyDraft, closedTask, taskReopenOnlyDraft.tasks[0], { id: 'u1', name: '甲' }, '2026-07-23T02:51:30.000Z');
   assert.equal(taskReopened.isClosed, false, 'a dedicated task-origin reopen-only transaction must remain valid');
-  const directReopenDraft = { users: [], vessels: structuredClone(vessels), tasks: [structuredClone(closedTask)], internalControlCases: [structuredClone(closedCase)] };
+  const directReopenDraft = { users: [{ id:'u1', name:'甲', isActive:true, role:'operator' }], vessels: structuredClone(vessels), tasks: [structuredClone(closedTask)], internalControlCases: [structuredClone(closedCase)] };
   const directReopenChanged = { ...structuredClone(closedCase), isClosed: false, description: '<p>same-call direct reopen mutation</p>' };
   delete directReopenChanged.closedDate;
   delete directReopenChanged.closedBy;
