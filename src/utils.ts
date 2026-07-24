@@ -4,6 +4,8 @@ export const STORAGE_KEY = 'ship-dynamics-app-data-v1';
 export const SESSION_SITE_UNLOCK = 'ship-dynamics-site-unlocked-v1';
 export const CURRENT_USER_KEY = 'ship-dynamics-current-user-v1';
 export const CLOUD_CACHE_IDENTITY_KEY = 'ship-dynamics-cloud-cache-identity-v1';
+export const CLOUD_CONFIRMED_BASE_KEY = 'ship-dynamics-cloud-confirmed-base-v1';
+export const CLOUD_REVISION_FLOORS_KEY = 'ship-dynamics-cloud-revision-floors-v1';
 
 export async function sha256(text: string): Promise<string> {
   const bytes = new TextEncoder().encode(text);

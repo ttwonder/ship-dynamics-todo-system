@@ -78,6 +78,16 @@ try {
   assert.equal(await releaseTrackedLeases(retryState, pendingTrackedLeases(retryState), releaseAfterFailure), true);
   assert.deepEqual(pendingTrackedLeases(retryState), []);
 
+  const longSessionState = createLeaseReleaseState();
+  const longSessionLeases = Array.from({length:2050},(_,index)=>({sectionKey:`vessel:long-${index}`,leaseOwnerId:`long-lease-${index}`}));
+  for(const lease of longSessionLeases)registerTrackedLease(longSessionState,lease,{workspace:'long-session'});
+  let longSessionReleaseCalls=0;
+  const releaseLongSession=async()=>{longSessionReleaseCalls+=1;};
+  assert.equal(await releaseTrackedLeases(longSessionState,[...longSessionLeases].reverse(),releaseLongSession),true);
+  assert.equal(await releaseTrackedLeases(longSessionState,[longSessionLeases[0]],releaseLongSession),true,'old successful release must remain idempotent after more than 2048 later releases');
+  assert.equal(longSessionReleaseCalls,2050,'stale callback must not issue a second RPC for an old successful lease');
+  assert.deepEqual(pendingTrackedLeases(longSessionState),[],'old successful lease must never become a false pending release');
+
   console.log('Edit-lock bundle runtime contracts passed.');
 } finally {
   await server.close();

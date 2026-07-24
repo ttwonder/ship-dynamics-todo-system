@@ -43,7 +43,6 @@ export async function releaseTrackedLeases<C>(
       state.records.delete(lease.leaseOwnerId);
       state.pending.delete(lease.leaseOwnerId);
       state.released.add(lease.leaseOwnerId);
-      if (state.released.size > 2048) state.released.delete(state.released.values().next().value as string);
     } catch {
       failed = true;
       state.pending.set(lease.leaseOwnerId, lease);
