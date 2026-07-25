@@ -202,7 +202,7 @@ Every mutable UI entry point maps to exactly one command or explicit command seq
 - Import is a privileged explicit migration, never an ordinary save.
 - Export/report generation reads an RLS-authorized projection and cannot widen visibility.
 
-The compatibility adapter may assemble authorized normalized rows into the existing `AppData` shape for views while migration proceeds, but there is no `saveAppData` API and no whole-workspace write/rebase path.
+The compatibility adapter may assemble authorized normalized rows into the existing `AppData` shape for views while migration proceeds, but there is no `saveAppData` API and no whole-workspace write/rebase path. Mutation code calls typed command methods directly; it must not infer commands from localized action labels or a generic before/after JSON diff.
 
 ## 9. Client state and Realtime
 
@@ -216,6 +216,8 @@ Local durable envelope is keyed by stable workspace + authenticated actor + enti
 Offline creates/edits are drafts only. Reconnection requires authentication, authorized refetch, a fresh lease and base-version validation. Same-version divergent content is a conflict; no unconditional merge.
 
 Realtime payload is treated as `{table, workspace, entity identity, event hint}` only. After validating current workspace/auth generation, refetch the authoritative entity/projection. An invalidation cannot clear or overwrite a draft/pending operation.
+
+Command success replaces or refetches only affected entities. Sign-out, role change, workspace change, and vessel-account change close writable editors and clear authority caches; unsent drafts remain quarantined under the original actor/workspace identity. No generic `saveCloudData(AppData)` or action-label compatibility writer may remain in the cutover build.
 
 ## 10. Migration and cutover invariants
 
