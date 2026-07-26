@@ -321,6 +321,7 @@ begin
   if current_setting('role', true) is distinct from 'service_role' then
     raise exception using errcode = '42501', message = 'not-authorized';
   end if;
+  perform set_config('ship_dynamics.legacy_import_authorized', '1', true);
   if p_workspace_id is null
      or btrim(coalesce(p_workspace_key, '')) = ''
      or btrim(coalesce(p_workspace_name, '')) = ''

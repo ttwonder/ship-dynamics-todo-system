@@ -13,6 +13,7 @@ const manifest = [
   'supabase/normalized-internal-control.sql',
   'supabase/normalized-security-dispatch.sql',
   'supabase/normalized-auth-orchestration.sql',
+  'supabase/normalized-app-contract.sql',
   'supabase/normalized-legacy-import.sql',
 ];
 

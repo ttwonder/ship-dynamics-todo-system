@@ -245,6 +245,11 @@ declare
 begin
   -- Auth Admin orchestration owns a separate prepared/external-effect state
   -- machine. Core, meeting, internal, and app commands must be reserved.
+  if new.command = 'legacy_import'
+     and auth.uid() is null
+     and current_setting('ship_dynamics.legacy_import_authorized', true) = '1' then
+    return new;
+  end if;
   if new.status in ('prepared', 'recovery_required')
      or new.command like 'manage_user:%'
      or new.command = 'update_site_gate' then
