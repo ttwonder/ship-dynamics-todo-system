@@ -181,7 +181,7 @@ export function internalCaseCommandPayload(item: InternalControlCase): JsonObjec
     status: item.status,
     origin: item.origin,
     isClosed: item.isClosed,
-    closedDate: item.isClosed ? item.closedDate || null : null,
+    ...(item.isClosed ? { closedDate: item.closedDate || null } : {}),
     departments: item.departments,
   };
 }

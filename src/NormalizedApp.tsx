@@ -718,13 +718,8 @@ export default function NormalizedApp() {
       : tab === 'internal' ? <InternalControlPage data={data} user={user} vessels={visibleVessels}
         canCreate={canCreate} canEdit={canEdit} canClose={canClose} canDelete={canDelete}
         canExport={permission('exportReports')} authorizationEpoch={authorizationEpoch}
-        onCreate={async (items, _revision, projections) => {
-          for (const item of items) {
-            const outcome = await run(() => controller.createInternalCase(item, projections[item.id]));
-            if (!outcome) return false;
-          }
-          return true;
-        }}
+        onCreate={async (items, _revision, projections) =>
+          Boolean(await run(() => controller.createInternalCaseBatch(items, projections)))}
         onUpdate={async (item, _updatedAt, _revision, taskProjection) =>
           Boolean(await run(() => controller.updateInternalCase(item, taskProjection)))}
         onDelete={item => runBoolean(() => controller.deleteInternalCase(item))}

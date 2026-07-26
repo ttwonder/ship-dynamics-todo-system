@@ -613,6 +613,105 @@ export class NormalizedUiController {
     return 'committed';
   }
 
+  async createInternalCaseBatch(
+    items: InternalControlCase[],
+    projections: Record<string, {
+      categories: string[];
+      equipmentSubcategory?: string;
+      expectedDate: string;
+      ownerUserIds: string[];
+    }> = {},
+  ): Promise<'committed' | 'drafted'> {
+    if (!items.length) throw new Error('The internal-case batch is empty.');
+    const prepared = items.map(item => {
+      const projection = projections[item.id];
+      const linkedTask = item.syncToTask
+        ? {
+            id: item.linkedTaskId || crypto.randomUUID(),
+            expectedDate: projection?.expectedDate || item.reportDate,
+            categories: projection?.categories?.length ? projection.categories : [item.category],
+            ownerUserIds: projection?.ownerUserIds || [],
+          }
+        : undefined;
+      const taskPayload = linkedInternalTaskCommandPayload(item, linkedTask);
+      return {
+        item,
+        caseKey: `internal-case:${item.id}`,
+        taskPayload,
+        taskId: typeof taskPayload?.id === 'string' ? taskPayload.id : '',
+      };
+    });
+    if (!isOnline()) {
+      for (const entry of prepared) {
+        this.#saveOfflineDraft(
+          entry.caseKey,
+          {
+            kind: 'internal-case',
+            mode: 'create',
+            candidate: jsonDraft(entry.item),
+            linkedTask: entry.taskPayload ? jsonDraft(entry.taskPayload) : null,
+          },
+          [],
+        );
+      }
+      return 'drafted';
+    }
+
+    const leaseRequests = new Map<string, {
+      leaseKey: string;
+      entityType: string;
+      entityId: string;
+    }>();
+    for (const entry of prepared) {
+      leaseRequests.set(entry.caseKey, {
+        leaseKey: entry.caseKey,
+        entityType: 'internal-case',
+        entityId: entry.item.id,
+      });
+      if (entry.taskId) {
+        const taskLeaseKey = `task-create:${entry.item.vesselId}`;
+        leaseRequests.set(taskLeaseKey, {
+          leaseKey: taskLeaseKey,
+          entityType: 'task-create',
+          entityId: entry.item.vesselId,
+        });
+      }
+    }
+    const leases = await this.runtime.commands.claimLeaseSet([...leaseRequests.values()]);
+    try {
+      const leaseMap = new Map(leases.map(lease => [lease.leaseKey, lease]));
+      await this.runtime.commands.batchCreateInternalCases(prepared.map(entry => {
+        const caseLease = leaseMap.get(entry.caseKey);
+        if (!caseLease) throw new Error('The internal-case batch lease set is incomplete.');
+        const taskLease = entry.taskId
+          ? leaseMap.get(`task-create:${entry.item.vesselId}`)
+          : null;
+        if (entry.taskId && !taskLease) {
+          throw new Error('The internal task-create lease set is incomplete.');
+        }
+        return {
+          caseId: entry.item.id,
+          caseLeaseKey: caseLease.leaseKey,
+          caseOwnerSession: caseLease.ownerSession,
+          caseFencingToken: caseLease.fencingToken,
+          case: internalCaseCommandPayload(entry.item),
+          task: entry.taskPayload,
+          taskLeaseKey: taskLease?.leaseKey || null,
+          taskOwnerSession: taskLease?.ownerSession || null,
+          taskFencingToken: taskLease?.fencingToken || null,
+        };
+      }));
+    } finally {
+      await this.runtime.commands.releaseLeaseSet(leases);
+    }
+    await this.runtime.refreshEntities(prepared.flatMap(entry => [
+      entry.caseKey,
+      ...(entry.taskId ? [`task:${entry.taskId}`] : []),
+    ]));
+    for (const entry of prepared) this.#clearDraft(entry.caseKey);
+    return 'committed';
+  }
+
   async updateInternalCase(
     item: InternalControlCase,
     taskProjection?: {
@@ -628,6 +727,10 @@ export class NormalizedUiController {
     const addingTask = !existingTaskId && item.syncToTask && Boolean(taskProjection);
     const removingTask = Boolean(existingTaskId) && !item.syncToTask;
     const taskId = existingTaskId || (addingTask ? crypto.randomUUID() : '');
+    const linkAction = addingTask ? 'materialize' : removingTask ? 'unlink' : 'preserve';
+    const taskLeaseKey = addingTask
+      ? `task-create:${item.vesselId}`
+      : taskId ? `task:${taskId}` : '';
     if (!isOnline()) {
       this.#saveOfflineDraft(
         caseKey,
@@ -642,9 +745,9 @@ export class NormalizedUiController {
     const leases = await this.runtime.commands.claimLeaseSet([
       { leaseKey: caseKey, entityType: 'internal-case', entityId: item.id },
       ...(taskId ? [{
-        leaseKey: `task:${taskId}`,
-        entityType: addingTask ? 'internal-task' : 'task',
-        entityId: taskId,
+        leaseKey: taskLeaseKey,
+        entityType: addingTask ? 'task-create' : 'task',
+        entityId: addingTask ? item.vesselId : taskId,
       }] : []),
     ]);
     try {
@@ -656,48 +759,20 @@ export class NormalizedUiController {
         baseCaseVersion: projection.versions.get(caseKey),
         caseLease,
         casePayload: internalCaseCommandPayload(item),
+        linkAction,
         baseTaskVersion: existingTaskId
           ? projection.versions.get(`task:${existingTaskId}`)
           : null,
-        taskLease: existingTaskId ? map.get(`task:${existingTaskId}`) : null,
-        taskPayload: existingTaskId && taskProjection
+        taskLease: taskId ? map.get(taskLeaseKey) : null,
+        taskPayload: taskProjection && linkAction !== 'unlink'
           ? linkedInternalTaskCommandPayload(item, {
-              id: existingTaskId,
+              id: taskId,
               expectedDate: taskProjection.expectedDate,
               categories: taskProjection.categories,
               ownerUserIds: taskProjection.ownerUserIds,
             })
           : null,
       });
-      if (addingTask && taskProjection) {
-        const refreshed = await this.runtime.refreshEntities([caseKey]);
-        const taskLease = map.get(`task:${taskId}`);
-        if (!refreshed || !taskLease) throw new Error('內控轉換租約不完整。');
-        await this.runtime.commands.convertInternalCaseToTask({
-          caseId: item.id,
-          baseCaseVersion: refreshed.versions.get(caseKey),
-          taskId,
-          caseLease,
-          taskLease,
-          taskPayload: {
-            id: taskId,
-            expectedDate: taskProjection.expectedDate || null,
-            categories: taskProjection.categories,
-            ownerUserIds: taskProjection.ownerUserIds,
-          },
-        });
-      } else if (removingTask) {
-        const refreshed = await this.runtime.refreshEntities([caseKey, `task:${existingTaskId}`]);
-        const taskLease = map.get(`task:${existingTaskId}`);
-        if (!refreshed || !taskLease) throw new Error('內控解除關聯租約不完整。');
-        await this.runtime.commands.unlinkInternalCaseTask({
-          caseId: item.id,
-          baseCaseVersion: refreshed.versions.get(caseKey),
-          caseLease,
-          baseTaskVersion: refreshed.versions.get(`task:${existingTaskId}`),
-          taskLease,
-        });
-      }
     } finally {
       await this.runtime.commands.releaseLeaseSet(leases);
     }

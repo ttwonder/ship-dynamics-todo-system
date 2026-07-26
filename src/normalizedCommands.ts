@@ -146,7 +146,10 @@ export function md5Hex(input: string): string {
     .join('');
 }
 
-export function batchTargetKey(kind: 'vessel' | 'task', items: unknown[]): string {
+export function batchTargetKey(
+  kind: 'vessel' | 'task' | 'internal-case',
+  items: unknown[],
+): string {
   return `${kind}-batch:${md5Hex(postgresJsonbText(items))}`;
 }
 
@@ -755,11 +758,36 @@ export class NormalizedCommandClient {
     });
   }
 
+  batchCreateInternalCases(items: Array<{
+    caseId: string;
+    caseLeaseKey: string;
+    caseOwnerSession: string;
+    caseFencingToken: number;
+    case: JsonObject;
+    task: JsonObject | null;
+    taskLeaseKey: string | null;
+    taskOwnerSession: string | null;
+    taskFencingToken: number | null;
+  }>, operationId = uuid()) {
+    const request = { items };
+    const targetKey = batchTargetKey('internal-case', items);
+    return this.#repository.executeCommand({
+      rpc: 'command_ship_dynamics_batch_create_internal_cases',
+      command: 'batch_create_internal_cases',
+      operationId,
+      entityKey: targetKey,
+      targetKey,
+      request,
+      args: { p_items: items },
+    });
+  }
+
   updateInternalCase(input: {
     caseId: string;
     baseCaseVersion: number;
     caseLease: LeaseProof;
     casePayload: JsonObject;
+    linkAction: 'preserve' | 'materialize' | 'unlink';
     baseTaskVersion?: number | null;
     taskLease?: LeaseProof | null;
     taskPayload?: JsonObject | null;
@@ -777,6 +805,7 @@ export class NormalizedCommandClient {
       taskOwnerSession: input.taskLease?.ownerSession || null,
       taskFencingToken: input.taskLease?.fencingToken || null,
       task: input.taskPayload || null,
+      linkAction: input.linkAction,
     };
     return this.#repository.executeCommand({
       rpc: 'command_ship_dynamics_update_internal_case',
@@ -796,6 +825,7 @@ export class NormalizedCommandClient {
         p_task_owner_session: input.taskLease?.ownerSession || null,
         p_task_fencing_token: input.taskLease?.fencingToken || null,
         p_task: input.taskPayload || null,
+        p_link_action: input.linkAction,
       },
     });
   }

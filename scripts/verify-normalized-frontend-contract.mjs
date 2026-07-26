@@ -466,6 +466,64 @@ try {
     ownerUserIds: [actorId],
   }, 'linked internal-case edits must carry the editable task projection into the cross-aggregate RPC');
 
+  const materializingCase = {
+    ...linkedCase,
+    id: 'case-materialize',
+    description: 'Materialize atomically',
+    linkedTaskId: undefined,
+    syncToTask: true,
+  };
+  const materializingProjection = {
+    data: { tasks: [], vessels: [], internalControlCases: [{ ...materializingCase, syncToTask: false }] },
+    versions: new Map([['internal-case:case-materialize', 4]]),
+  };
+  let persistedMaterializingDescription = 'Persisted before materialization';
+  let atomicMaterializationCalls = 0;
+  let legacyConversionCalls = 0;
+  const materializingRuntime = {
+    projection: materializingProjection,
+    refreshEntities: async () => materializingProjection,
+    loadDraft: () => null,
+    removeDraft: () => undefined,
+    commands: {
+      claimLeaseSet: async requests => requests.map((request, index) => ({
+        leaseKey: request.leaseKey,
+        ownerSession: lease.ownerSession,
+        fencingToken: lease.fencingToken + index,
+      })),
+      releaseLeaseSet: async () => undefined,
+      updateInternalCase: async input => {
+        if (input.linkAction === 'materialize' && input.taskPayload) {
+          atomicMaterializationCalls += 1;
+          throw new Error('injected-atomic-materialization-failure');
+        }
+        persistedMaterializingDescription = input.casePayload.description;
+      },
+      convertInternalCaseToTask: async () => {
+        legacyConversionCalls += 1;
+        throw new Error('injected-legacy-conversion-failure');
+      },
+    },
+  };
+  await assert.rejects(
+    () => new NormalizedUiController(materializingRuntime).updateInternalCase(materializingCase, {
+      expectedDate: '2026-09-15',
+      categories: ['Safety'],
+      equipmentSubcategory: undefined,
+      ownerUserIds: [actorId],
+    }),
+    /injected-(?:atomic-materialization|legacy-conversion)-failure/,
+  );
+  assert.equal(
+    persistedMaterializingDescription,
+    'Persisted before materialization',
+    'a failed task materialization must not leave the case update committed',
+  );
+  assert.equal(atomicMaterializationCalls, 1,
+    'case update plus task materialization must use one atomic command');
+  assert.equal(legacyConversionCalls, 0,
+    'the controller must not materialize a linked task through a second RPC');
+
   const appSource = await readFile(resolve(root, 'src/NormalizedApp.tsx'), 'utf8');
   const runtimeSource = await readFile(resolve(root, 'src/normalizedRuntime.ts'), 'utf8');
   const projectionSource = await readFile(resolve(root, 'src/normalizedProjection.ts'), 'utf8');

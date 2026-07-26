@@ -53,6 +53,8 @@ const operations = {
   vesselExistingProbe: 'b1000000-0000-4000-8000-000000000021',
   vesselMissingProbe: 'b1000000-0000-4000-8000-000000000022',
   closedCaseUpdate: 'b1000000-0000-4000-8000-000000000023',
+  materializeRollback: 'b1000000-0000-4000-8000-000000000024',
+  materializeSuccess: 'b1000000-0000-4000-8000-000000000025',
 };
 
 await db.exec(`
@@ -380,6 +382,108 @@ await assert.rejects(
   /lease-(?:fencing|owner|expired)-mismatch/i,
   'stale case fencing token must fail',
 );
+
+const materializedTaskId = 'task-materialized-from-update';
+const materializeTaskLease = await claim(
+  ids.owner,
+  'task-create:vessel-a',
+  'task-create',
+  'vessel-a',
+  sessions.ownerSecond,
+);
+await db.exec(`
+  create function public.test_fail_materialized_task_phase()
+  returns trigger language plpgsql as $$
+  begin
+    if new.task_id = '${materializedTaskId}' then
+      raise exception 'injected-materialized-task-phase';
+    end if;
+    return new;
+  end;
+  $$;
+  create trigger test_fail_materialized_task_phase
+    before insert on public.sd_task_status_events
+    for each row execute function public.test_fail_materialized_task_phase();
+`);
+const beforeMaterializeRollback = await db.query(`
+  select c.description, c.status, c.version,
+    (select count(*)::integer from public.sd_internal_case_status_events e
+      where e.workspace_id=c.workspace_id and e.case_id=c.id) as event_count,
+    (select count(*)::integer from public.sd_internal_case_task_links l
+      where l.workspace_id=c.workspace_id and l.case_id=c.id) as link_count
+  from public.sd_internal_cases c
+  where c.workspace_id='${ids.workspace}' and c.id='${standaloneCaseId}'
+`);
+const materializingPayload = {
+  ...standalonePayload,
+  description: 'Case and projected task must commit together',
+  status: 'Materializing',
+};
+const invokeMaterializingUpdate = operationId => asUser(ids.owner, async () => {
+  const result = await db.query(
+    `select public.command_ship_dynamics_update_internal_case(
+      $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint,$8::jsonb,
+      $9::bigint,$10,$11::uuid,$12::bigint,$13::jsonb,$14
+    ) as result`,
+    [
+      operationId,
+      ids.workspace,
+      standaloneCaseId,
+      1,
+      `internal-case:${standaloneCaseId}`,
+      sessions.ownerSecond,
+      standaloneSecondLease.fencingToken,
+      JSON.stringify(materializingPayload),
+      null,
+      'task-create:vessel-a',
+      sessions.ownerSecond,
+      materializeTaskLease.fencingToken,
+      JSON.stringify(taskPayload(materializedTaskId)),
+      'materialize',
+    ],
+  );
+  return result.rows[0].result;
+});
+await assert.rejects(
+  () => invokeMaterializingUpdate(operations.materializeRollback),
+  /injected-materialized-task-phase/i,
+  'a late projected-task failure must abort the preceding case update',
+);
+const afterMaterializeRollback = await db.query(`
+  select c.description, c.status, c.version,
+    (select count(*)::integer from public.sd_internal_case_status_events e
+      where e.workspace_id=c.workspace_id and e.case_id=c.id) as event_count,
+    (select count(*)::integer from public.sd_internal_case_task_links l
+      where l.workspace_id=c.workspace_id and l.case_id=c.id) as link_count
+  from public.sd_internal_cases c
+  where c.workspace_id='${ids.workspace}' and c.id='${standaloneCaseId}'
+`);
+assert.deepEqual(afterMaterializeRollback.rows[0], beforeMaterializeRollback.rows[0]);
+assert.equal((await db.query(`
+  select count(*)::integer as count from public.sd_tasks
+  where workspace_id='${ids.workspace}' and id='${materializedTaskId}'
+`)).rows[0].count, 0, 'a failed materialization must leave no projected task');
+await db.exec(`
+  drop trigger test_fail_materialized_task_phase on public.sd_task_status_events;
+  drop function public.test_fail_materialized_task_phase();
+`);
+const materialized = await invokeMaterializingUpdate(operations.materializeSuccess);
+assert.deepEqual(
+  {
+    status: materialized.status,
+    replayed: materialized.replayed,
+    caseVersion: Number(materialized.caseVersion),
+    taskId: materialized.taskId,
+    taskVersion: Number(materialized.taskVersion),
+  },
+  {
+    status: 'committed', replayed: false, caseVersion: 2,
+    taskId: materializedTaskId, taskVersion: 1,
+  },
+);
+const materializedReplay = await invokeMaterializingUpdate(operations.materializeSuccess);
+assert.equal(materializedReplay.replayed, true,
+  'materialization replay must return the stable outer operation result');
 
 const linkedCaseId = 'case-linked';
 const linkedTaskId = 'task-linked';
