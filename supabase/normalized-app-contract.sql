@@ -1534,16 +1534,36 @@ begin
     end if;
   end if;
   if p_action = 'transfer-owner' then
-    if v_actor_role <> 'owner' then
-      raise exception using errcode = 'P0001', message = 'not-authorized';
-    end if;
-    if not exists (
-      select 1 from public.sd_memberships m
-      where m.workspace_id = p_workspace_id
-        and m.user_id = p_target_user_id
-        and m.role <> 'owner'
-        and m.is_active
-    ) then
+    if v_actor_role = 'owner' then
+      if not exists (
+        select 1 from public.sd_memberships m
+        where m.workspace_id = p_workspace_id
+          and m.user_id = p_target_user_id
+          and m.role <> 'owner'
+          and m.is_active
+      ) then
+        raise exception using errcode = 'P0001', message = 'not-authorized';
+      end if;
+    elsif v_actor_role = 'admin' then
+      if not exists (
+        select 1
+        from public.sd_operations o
+        join public.sd_memberships m
+          on m.workspace_id = o.workspace_id
+         and m.user_id = p_target_user_id
+         and m.role = 'owner'
+         and m.is_active
+        where o.workspace_id = p_workspace_id
+          and o.operation_id = p_operation_id
+          and o.actor_id = v_actor
+          and o.command = v_command
+          and o.target_key = v_target
+          and o.request_payload = p_request
+          and o.status in ('prepared', 'recovery_required', 'committed')
+      ) then
+        raise exception using errcode = 'P0001', message = 'not-authorized';
+      end if;
+    else
       raise exception using errcode = 'P0001', message = 'not-authorized';
     end if;
   elsif p_action <> 'create'

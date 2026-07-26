@@ -13,7 +13,10 @@ import {
   NormalizedApplicationRuntime,
   type NormalizedRuntimeView,
 } from './normalizedRuntime';
-import { NormalizedUiController } from './normalizedUiController';
+import {
+  NormalizedUiController,
+  reconcileNormalizedDraftEnvelopes,
+} from './normalizedUiController';
 import DashboardView from './Dashboard';
 import MorningWorkspaceView from './MorningWorkspace';
 import WorkCenter from './WorkCenter';
@@ -492,13 +495,15 @@ export default function NormalizedApp() {
       if (recoveringDrafts.current || navigator.onLine === false) return;
       recoveringDrafts.current = true;
       try {
-        for (const envelope of runtime.listDrafts()) {
-          await controller.recoverDraft(envelope);
+        const result = await reconcileNormalizedDraftEnvelopes(
+          runtime.listDrafts(),
+          envelope => controller.recoverDraft(envelope),
+        );
+        if (result.failureCount > 0) {
+          setGlobalError(projection.vesselAccount
+            ? '部分本機復原項目尚未完成，請重新整理後再試。'
+            : `${result.failureCount} 筆本機復原項目尚未完成；其餘項目已獨立處理。`);
         }
-      } catch (error) {
-        setGlobalError(projection.vesselAccount
-          ? '離線草稿與伺服器版本不一致，請重新檢視後再提交。'
-          : messageOf(error));
       } finally {
         recoveringDrafts.current = false;
       }
@@ -741,6 +746,9 @@ export default function NormalizedApp() {
         canManagePermissions={permission('manageRolePermissions')}
         canManageSettings={permission('manageSystemSettings')}
         canViewAudit={permission('viewAuditLogs')}
+        userRecoveries={permission('manageUsers') ? runtime.listManageUserRecoveries() : []}
+        onResumeUserRecovery={(entityKey, password) =>
+          run(() => runtime.resumeManageUserRecovery(entityKey, password)).then(() => undefined)}
         onManageUser={input => run(() => runtime.manageUser(input)).then(() => undefined)}
         onUpdateUser={account => run(() => controller.updateUser(account)).then(() => undefined)}
         onCreateVessel={vessel => run(() => controller.createVessel(vessel)).then(() => undefined)}

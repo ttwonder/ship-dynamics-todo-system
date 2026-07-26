@@ -7,6 +7,7 @@ import type {
   UserRole,
   Vessel,
 } from './types';
+import type { ManageUserRecoverySummary } from './normalizedRuntime';
 import { vesselDisplayName } from './vesselDisplay';
 
 type SettingsSection = 'departments' | 'task-categories' | 'meeting-task-categories'
@@ -20,6 +21,8 @@ type Props = {
   canManagePermissions: boolean;
   canManageSettings: boolean;
   canViewAudit: boolean;
+  userRecoveries: ManageUserRecoverySummary[];
+  onResumeUserRecovery: (entityKey: string, password?: string) => Promise<void>;
   onManageUser: (input: Record<string, unknown> & {
     action: 'create' | 'disable' | 'change-role' | 'transfer-owner' | 'reset-password';
     targetUserId?: string;
@@ -40,6 +43,13 @@ const roleNames: Record<UserRole, string> = {
   admin: '管理員',
   operator: '一般人員',
   vessel: '船端帳號',
+};
+const manageUserRecoveryActionNames: Record<ManageUserRecoverySummary['action'], string> = {
+  create: '新增使用者',
+  disable: '停用使用者',
+  'change-role': '調整角色',
+  'transfer-owner': '移交 Owner',
+  'reset-password': '重設密碼',
 };
 const permissionNames: Record<PermissionKey, string> = {
   viewAllVessels: '查看全部船舶',
@@ -148,7 +158,9 @@ export default function NormalizedManagement(props: Props) {
       users={data.users}
       currentUser={user}
       disabled={busy || !canManageUsers}
+      userRecoveries={canManageUsers ? props.userRecoveries : []}
       run={run}
+      onResumeUserRecovery={props.onResumeUserRecovery}
       onManage={props.onManageUser}
       onUpdate={props.onUpdateUser}
     />}
@@ -192,14 +204,18 @@ function UsersPanel({
   users,
   currentUser,
   disabled,
+  userRecoveries,
   run,
+  onResumeUserRecovery,
   onManage,
   onUpdate,
 }: {
   users: UserAccount[];
   currentUser: UserAccount;
   disabled: boolean;
+  userRecoveries: ManageUserRecoverySummary[];
   run: (action: () => Promise<void>) => Promise<void>;
+  onResumeUserRecovery: Props['onResumeUserRecovery'];
   onManage: Props['onManageUser'];
   onUpdate: Props['onUpdateUser'];
 }) {
@@ -223,7 +239,31 @@ function UsersPanel({
       password,
     }));
   };
+  const resumeRecovery = (recovery: ManageUserRecoverySummary) => {
+    let password: string | undefined;
+    if (recovery.requiresPassword) {
+      const entered = prompt('重新輸入原操作密碼（至少 12 字元）');
+      if (!entered || entered.length < 12 || entered.length > 256) {
+        return alert('密碼必須為 12 至 256 字元。');
+      }
+      password = entered;
+    }
+    void run(() => onResumeUserRecovery(recovery.entityKey, password));
+  };
   return <section className="panel">
+    {userRecoveries.length > 0 && <section className="recovery-banner" role="status">
+      <b>有 {userRecoveries.length} 筆帳號操作需要確認</b>
+      <p>外部帳號效果可能已發生，不能取消；請以原操作資料完成復原。</p>
+      <div className="table-actions">{userRecoveries.map(recovery => {
+        const target = recovery.targetUserId
+          ? users.find(account => account.id === recovery.targetUserId)?.name || '指定使用者'
+          : '新使用者';
+        return <button key={recovery.entityKey} className="btn small"
+          disabled={disabled} onClick={() => resumeRecovery(recovery)}>
+          復原：{manageUserRecoveryActionNames[recovery.action]}｜{target}
+        </button>;
+      })}</div>
+    </section>}
     <div className="panel-title"><h2>使用者與原生 Supabase Auth</h2>
       <button className="btn primary" disabled={disabled} onClick={create}>＋新增使用者</button></div>
     <div className="table-wrap"><table className="compact"><thead><tr>

@@ -1271,6 +1271,60 @@ await assert.rejects(
   'generic Auth role changes cannot assign Owner',
 );
 
+const transferOperation = operationId();
+const transferRequest = {
+  action: 'transfer-owner',
+  targetUserId: ids.operator2,
+};
+await asUser(ids.owner, () => scalar(
+  `select public.begin_ship_dynamics_user_operation(
+    $1::uuid,$2::uuid,'transfer-owner',$3::uuid,$4::jsonb
+  )`,
+  [ids.workspace, transferOperation, ids.operator2, JSON.stringify(transferRequest)],
+));
+const transferredOwner = await asUser(ids.owner, () => scalar(
+  `select public.transfer_ship_dynamics_owner($1::uuid,$2::uuid,$3::uuid)`,
+  [ids.workspace, ids.operator2, transferOperation],
+));
+await asUser(ids.owner, () => scalar(
+  `select public.mark_ship_dynamics_user_operation_recovery_required(
+    $1::uuid,$2::uuid,'response-lost-after-owner-transfer'
+  )`,
+  [ids.workspace, transferOperation],
+));
+const resumedTransfer = await asUser(ids.owner, () => scalar(
+  `select public.begin_ship_dynamics_user_operation(
+    $1::uuid,$2::uuid,'transfer-owner',$3::uuid,$4::jsonb
+  )`,
+  [ids.workspace, transferOperation, ids.operator2, JSON.stringify(transferRequest)],
+));
+assert.equal(resumedTransfer.status, 'recovery_required',
+  'the demoted original Owner must be able to resume only the exact prior transfer');
+assert.deepEqual(
+  await asUser(ids.owner, () => scalar(
+    `select public.transfer_ship_dynamics_owner($1::uuid,$2::uuid,$3::uuid)`,
+    [ids.workspace, ids.operator2, transferOperation],
+  )),
+  transferredOwner,
+  'owner transfer recovery must adopt the already-applied ownership state',
+);
+await asUser(ids.owner, () => scalar(
+  `select public.complete_ship_dynamics_user_operation($1::uuid,$2::uuid,$3::jsonb)`,
+  [ids.workspace, transferOperation, JSON.stringify(transferredOwner)],
+));
+await assert.rejects(
+  () => asUser(ids.owner, () => db.query(
+    `select public.begin_ship_dynamics_user_operation(
+      $1::uuid,$2::uuid,'transfer-owner',$3::uuid,$4::jsonb
+    )`,
+    [ids.workspace, operationId(), ids.admin, JSON.stringify({
+      action: 'transfer-owner', targetUserId: ids.admin,
+    })],
+  )),
+  /not-authorized/i,
+  'a demoted prior Owner cannot start a different owner transfer',
+);
+
 const transferArguments = await scalar(`
   select pg_get_function_arguments(p.oid)
   from pg_proc p

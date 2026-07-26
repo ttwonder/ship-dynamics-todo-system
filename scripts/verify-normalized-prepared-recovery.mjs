@@ -97,6 +97,88 @@ class MockClient {
   removeChannel() { return Promise.resolve('ok'); }
 }
 
+class ManageUserClient extends MockClient {
+  constructor() {
+    super();
+    this.session = {
+      access_token: 'owner-access-token',
+      refresh_token: 'owner-refresh-token',
+      user: { id: actorId },
+    };
+    this.status = null;
+    this.invocations = [];
+    this.auth = {
+      getSession: async () => ({ data: { session: this.session }, error: null }),
+      getUser: async () => ({ data: { user: this.session.user }, error: null }),
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+      signOut: async () => ({ error: null }),
+      updateUser: async () => ({ data: {}, error: null }),
+      signInWithPassword: async () => ({
+        data: { session: this.session, user: this.session.user },
+        error: null,
+      }),
+    };
+    this.functions = {
+      invoke: async (name, options) => {
+        this.invocations.push({ name, body: structuredClone(options.body) });
+        this.status = {
+          status: 'committed',
+          command: `manage_user:${options.body.action}`,
+          target: `user:${options.body.targetUserId}`,
+          result: { userId: options.body.targetUserId, disabled: true },
+          errorCode: null,
+          completedAt: '2026-07-26T00:20:00Z',
+        };
+        return { data: structuredClone(this.status.result), error: null };
+      },
+    };
+  }
+}
+
+const ownerProjection = {
+  data: {
+    users: [{
+      id: 'target-user', name: 'Target', username: 'target', department: 'Operations',
+      role: 'operator', isActive: true, managedVesselIds: [], createdAt: '', updatedAt: '',
+    }],
+    vessels: [], tasks: [], meetings: [], internalControlCases: [],
+    notifications: [], agendaReports: [], auditLogs: [],
+    settings: { rolePermissions: { owner: { manageUsers: true } } },
+  },
+  versions: new Map(),
+  actor: { id: actorId, role: 'owner', name: 'Owner', department: 'Operations' },
+  workspaceId,
+  vesselAccount: false,
+  allowedEntityKeys: new Set(),
+};
+
+async function createManageUserRuntime(NormalizedApplicationRuntime, storage, client) {
+  const previousStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
+  try {
+    const runtime = new NormalizedApplicationRuntime({
+      supabaseUrl: 'https://example.invalid',
+      supabaseAnonKey: 'browser-anon-key',
+      workspaceKey: 'workspace-legacy-key',
+    }, client);
+    runtime.repository.resolveWorkspaceByLegacyKey = async () => {
+      runtime.scope.setWorkspace(workspaceId);
+      return { id: workspaceId, legacy_key: 'workspace-legacy-key', name: 'Workspace', is_active: true };
+    };
+    runtime.auth.passwordActivationRequired = async () => false;
+    runtime.projectionReader.fetchApplicationProjection = async () => ownerProjection;
+    runtime.projectionReader.refetchInvalidatedProjection = async () => ownerProjection;
+    runtime.commands.createOperationId = () => operationId;
+    await runtime.initialize();
+    return runtime;
+  } finally {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: previousStorage,
+    });
+  }
+}
+
 function createScope(NormalizedRequestScope) {
   const scope = new NormalizedRequestScope(workspaceId);
   scope.acceptSession({ user: { id: actorId } });
@@ -134,15 +216,41 @@ try {
   const repositoryModule = await server.ssrLoadModule('/src/normalizedRepository.ts');
   const scopeModule = await server.ssrLoadModule('/src/normalizedSupabaseClient.ts');
   const controllerModule = await server.ssrLoadModule('/src/normalizedUiController.ts');
-  const { NormalizedUiController } = controllerModule;
+  const runtimeModule = await server.ssrLoadModule('/src/normalizedRuntime.ts');
+  const {
+    NormalizedUiController,
+    reconcileNormalizedDraftEnvelopes,
+  } = controllerModule;
   const {
     NormalizedCommandError,
     NormalizedDurableStateStore,
     NormalizedRepository,
   } = repositoryModule;
   const { NormalizedRequestScope } = scopeModule;
+  const { NormalizedApplicationRuntime } = runtimeModule;
 
-  // Safe payload: process A loses the response; process B must refetch, reclaim
+  // Durable manage-user recovery metadata is a closed schema: credentials cannot
+  // be smuggled beside the sanitized input object.
+  {
+    const store = new NormalizedDurableStateStore(new MemoryStorage());
+    assert.throws(() => store.markPendingOperation({
+      workspaceId,
+      actorId,
+      entityKey: 'user:target-user',
+      operationId,
+      command: 'manage_user:reset-password',
+      targetKey: 'user:target-user',
+      manageUserResume: {
+        version: 1,
+        action: 'reset-password',
+        input: { action: 'reset-password', targetUserId: 'target-user' },
+        requiresPassword: true,
+        password: ['must', 'never', 'persist'].join('-'),
+      },
+    }), /metadata fields are invalid/i);
+  }
+
+  // Safe payload
   // the exact lease identity, and replay the exact operation ID and request.
   {
     const storage = new MemoryStorage();
@@ -335,6 +443,180 @@ try {
     );
     assert.equal(repository.loadLocalState('settings:site-gate')?.pendingOperation, undefined);
     assert.doesNotMatch(storage.serialized(), /discarded-after-call/);
+  }
+
+  // Draft recovery is independent per envelope: an early failure cannot strand a
+  // later operation, and the aggregate result exposes no entity identity.
+  {
+    const attempted = [];
+    const result = await reconcileNormalizedDraftEnvelopes([
+      { entityKey: 'hidden-a' },
+      { entityKey: 'hidden-b' },
+    ], async envelope => {
+      attempted.push(envelope.entityKey);
+      if (envelope.entityKey === 'hidden-a') throw new Error('secret target hidden-a failed');
+    });
+    assert.deepEqual(attempted, ['hidden-a', 'hidden-b']);
+    assert.deepEqual(result, { failureCount: 1 });
+    assert.doesNotMatch(JSON.stringify(result), /hidden-a|secret target/i);
+  }
+
+  // A fresh authorized process can explicitly resume a no-secret manage-user
+  // recovery with the exact operation ID and sanitized action fields.
+  {
+    const storage = new MemoryStorage();
+    const firstClient = new ManageUserClient();
+    const firstRuntime = await createManageUserRuntime(
+      NormalizedApplicationRuntime,
+      storage,
+      firstClient,
+    );
+    firstClient.functions.invoke = async (name, options) => {
+      firstClient.invocations.push({ name, body: structuredClone(options.body) });
+      firstClient.status = {
+        status: 'recovery_required',
+        command: 'manage_user:disable',
+        target: 'user:target-user',
+        result: null,
+        errorCode: 'operation-recovery-required',
+        completedAt: null,
+      };
+      return { data: null, error: { message: 'response lost after Auth effect' } };
+    };
+    await assert.rejects(
+      () => firstRuntime.manageUser({ action: 'disable', targetUserId: 'target-user' }),
+      error => error instanceof NormalizedCommandError && error.kind === 'recovery',
+    );
+    const stored = firstRuntime.loadDraft('user:target-user');
+    assert.deepEqual(stored?.pendingOperation?.manageUserResume, {
+      version: 1,
+      action: 'disable',
+      input: { action: 'disable', targetUserId: 'target-user' },
+      requiresPassword: false,
+    });
+    assert.deepEqual(firstRuntime.listManageUserRecoveries(), [{
+      entityKey: 'user:target-user',
+      action: 'disable',
+      requiresPassword: false,
+      targetUserId: 'target-user',
+    }]);
+    assert.doesNotMatch(
+      JSON.stringify(firstRuntime.listManageUserRecoveries()),
+      new RegExp(operationId),
+      'the management UI summary must not expose the durable operation identity',
+    );
+    assert.doesNotMatch(
+      storage.serialized(),
+      /p_password|credentialFingerprint|owner-access-token|owner-refresh-token/i,
+    );
+
+    const secondClient = new ManageUserClient();
+    secondClient.status = structuredClone(firstClient.status);
+    const secondRuntime = await createManageUserRuntime(
+      NormalizedApplicationRuntime,
+      storage,
+      secondClient,
+    );
+    const resumed = await secondRuntime.resumeManageUserRecovery('user:target-user');
+    assert.equal(resumed?.status, 'committed');
+    assert.deepEqual(secondClient.invocations, [{
+      name: 'manage-user',
+      body: {
+        action: 'disable',
+        targetUserId: 'target-user',
+        workspaceId,
+        operationId,
+      },
+    }]);
+    assert.equal(secondRuntime.loadDraft('user:target-user')?.pendingOperation, undefined);
+  }
+
+  // Credential recovery persists only safe action fields. A wrong re-entry must
+  // fail closed against the server ledger and preserve the exact operation for
+  // a later retry with the original password.
+  {
+    const secret = 'original-secret-123';
+    const wrongSecret = 'different-secret-456';
+    const invalidCredential = 'short'.padEnd(9, 'x');
+    const storage = new MemoryStorage();
+    const firstClient = new ManageUserClient();
+    const firstRuntime = await createManageUserRuntime(
+      NormalizedApplicationRuntime,
+      storage,
+      firstClient,
+    );
+    await assert.rejects(
+      () => firstRuntime.manageUser({
+        action: 'reset-password', targetUserId: 'target-user', password: invalidCredential,
+      }),
+      error => error instanceof NormalizedCommandError && error.kind === 'invalid',
+    );
+    assert.equal(firstRuntime.loadDraft('user:target-user'), null,
+      'invalid credentials must fail before a durable operation is created');
+    assert.equal(firstClient.invocations.length, 0);
+    firstClient.functions.invoke = async (name, options) => {
+      firstClient.invocations.push({ name, body: structuredClone(options.body) });
+      firstClient.status = {
+        status: 'recovery_required',
+        command: 'manage_user:reset-password',
+        target: 'user:target-user',
+        result: null,
+        errorCode: 'operation-recovery-required',
+        completedAt: null,
+      };
+      return { data: null, error: { message: 'response lost after credential update' } };
+    };
+    await assert.rejects(
+      () => firstRuntime.manageUser({
+        action: 'reset-password', targetUserId: 'target-user', password: secret,
+      }),
+      error => error instanceof NormalizedCommandError && error.kind === 'recovery',
+    );
+    const secretPending = firstRuntime.loadDraft('user:target-user')?.pendingOperation;
+    assert.deepEqual(secretPending?.manageUserResume, {
+      version: 1,
+      action: 'reset-password',
+      input: { action: 'reset-password', targetUserId: 'target-user' },
+      requiresPassword: true,
+    });
+    assert.doesNotMatch(storage.serialized(), new RegExp(`${secret}|${wrongSecret}`));
+
+    const secondClient = new ManageUserClient();
+    secondClient.status = structuredClone(firstClient.status);
+    secondClient.functions.invoke = async (name, options) => {
+      secondClient.invocations.push({ name, body: structuredClone(options.body) });
+      if (options.body.password !== secret) {
+        return { data: null, error: { message: 'operation-mismatch' } };
+      }
+      secondClient.status = {
+        status: 'committed',
+        command: 'manage_user:reset-password',
+        target: 'user:target-user',
+        result: { userId: 'target-user', credentialReset: true },
+        errorCode: null,
+        completedAt: '2026-07-26T00:30:00Z',
+      };
+      return { data: structuredClone(secondClient.status.result), error: null };
+    };
+    const secondRuntime = await createManageUserRuntime(
+      NormalizedApplicationRuntime,
+      storage,
+      secondClient,
+    );
+    await assert.rejects(
+      () => secondRuntime.resumeManageUserRecovery('user:target-user', wrongSecret),
+      error => error instanceof NormalizedCommandError && error.kind === 'recovery',
+    );
+    assert.ok(secondRuntime.loadDraft('user:target-user')?.pendingOperation,
+      'a fingerprint mismatch must preserve the pending operation');
+    assert.doesNotMatch(storage.serialized(), new RegExp(`${secret}|${wrongSecret}`));
+
+    const recovered = await secondRuntime.resumeManageUserRecovery('user:target-user', secret);
+    assert.equal(recovered?.status, 'committed');
+    assert.equal(secondRuntime.loadDraft('user:target-user')?.pendingOperation, undefined);
+    assert.equal(secondClient.invocations.length, 2);
+    assert.equal(secondClient.invocations[0].body.operationId, operationId);
+    assert.equal(secondClient.invocations[1].body.operationId, operationId);
   }
 } finally {
   await server.close();

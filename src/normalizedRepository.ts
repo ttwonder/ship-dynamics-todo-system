@@ -216,8 +216,85 @@ export interface DurableDraftEnvelope<TDraft = JsonObject> {
     targetKey: string;
     dispatchedAt: string;
     replay?: DurableCommandReplay;
+    manageUserResume?: DurableManageUserResume;
   };
   updatedAt: string;
+}
+
+export type ManageUserAction = 'create' | 'disable' | 'change-role'
+  | 'transfer-owner' | 'reset-password';
+
+export interface DurableManageUserResume {
+  version: 1;
+  action: ManageUserAction;
+  input: JsonObject & { action: ManageUserAction; targetUserId?: string };
+  requiresPassword: boolean;
+}
+
+const MANAGE_USER_RESUME_FIELDS: Record<ManageUserAction, string[]> = {
+  create: ['action', 'department', 'displayName', 'role', 'usernameLabel'],
+  disable: ['action', 'targetUserId'],
+  'change-role': ['action', 'role', 'targetUserId'],
+  'transfer-owner': ['action', 'targetUserId'],
+  'reset-password': ['action', 'targetUserId'],
+};
+
+export function parseDurableManageUserResume(
+  value: unknown,
+  command?: string,
+  targetKey?: string,
+): DurableManageUserResume {
+  if (!isRecord(value) || value.version !== 1 || !isRecord(value.input)) {
+    throw new Error('The manage-user recovery metadata is invalid.');
+  }
+  const topLevelFields = Object.keys(value).sort();
+  if (topLevelFields.length !== 4
+      || topLevelFields.some((field, index) => (
+        field !== ['action', 'input', 'requiresPassword', 'version'][index]
+      ))) {
+    throw new Error('The manage-user recovery metadata fields are invalid.');
+  }
+  const action = String(value.action || '') as ManageUserAction;
+  if (!Object.prototype.hasOwnProperty.call(MANAGE_USER_RESUME_FIELDS, action)
+      || value.input.action !== action) {
+    throw new Error('The manage-user recovery action is invalid.');
+  }
+  const expectedFields = MANAGE_USER_RESUME_FIELDS[action];
+  const actualFields = Object.keys(value.input).sort();
+  if (actualFields.length !== expectedFields.length
+      || actualFields.some((field, index) => field !== expectedFields[index])) {
+    throw new Error('The manage-user recovery fields are invalid.');
+  }
+  const requiresPassword = action === 'create' || action === 'reset-password';
+  if (value.requiresPassword !== requiresPassword) {
+    throw new Error('The manage-user recovery credential mode is invalid.');
+  }
+  if (command && command !== `manage_user:${action}`) {
+    throw new Error('The manage-user recovery command is invalid.');
+  }
+  if (action === 'create') {
+    for (const field of ['displayName', 'usernameLabel', 'department', 'role']) {
+      assertIdentity(value.input[field], `Manage-user ${field}`, 128);
+    }
+    if (!['admin', 'operator', 'vessel'].includes(String(value.input.role))
+        || (targetKey && targetKey !== 'user:new')) {
+      throw new Error('The manage-user create recovery metadata is invalid.');
+    }
+  } else {
+    const targetUserId = assertIdentity(value.input.targetUserId, 'Manage-user target');
+    if (targetKey && targetKey !== `user:${targetUserId}`) {
+      throw new Error('The manage-user recovery target is invalid.');
+    }
+    if (action === 'change-role'
+        && !['admin', 'operator', 'vessel'].includes(String(value.input.role))) {
+      throw new Error('The manage-user recovery role is invalid.');
+    }
+  }
+  return structuredClone(value) as unknown as DurableManageUserResume;
+}
+
+function assertSafeManageUserResume(value: unknown) {
+  parseDurableManageUserResume(value);
 }
 
 export interface DurableReplayLease {
@@ -324,7 +401,9 @@ export class NormalizedDurableStateStore {
     command: string;
     targetKey: string;
     replay?: DurableCommandReplay;
+    manageUserResume?: DurableManageUserResume;
   }): DurableDraftEnvelope {
+    if (input.manageUserResume) assertSafeManageUserResume(input.manageUserResume);
     const previous = this.load(input.workspaceId, input.actorId, input.entityKey);
     const next: DurableDraftEnvelope = {
       version: 1,
@@ -339,6 +418,7 @@ export class NormalizedDurableStateStore {
         targetKey: input.targetKey,
         dispatchedAt: new Date().toISOString(),
         replay: input.replay,
+        manageUserResume: input.manageUserResume,
       },
       updatedAt: new Date().toISOString(),
     };
@@ -1082,15 +1162,21 @@ export class NormalizedRepository {
     operationId: string;
     command: string;
     targetKey?: string;
+    manageUserResume?: DurableManageUserResume;
   }) {
     const token = this.#scope.capture();
+    const targetKey = assertIdentity(input.targetKey || input.entityKey, 'Target key');
+    if (input.manageUserResume) {
+      parseDurableManageUserResume(input.manageUserResume, input.command, targetKey);
+    }
     return this.#durableState.markPendingOperation({
       workspaceId: token.workspaceId,
       actorId: token.actorId,
       entityKey: assertIdentity(input.entityKey, 'Entity key'),
       operationId: assertIdentity(input.operationId, 'Operation identity'),
       command: assertIdentity(input.command, 'Command', 128),
-      targetKey: assertIdentity(input.targetKey || input.entityKey, 'Target key'),
+      targetKey,
+      manageUserResume: input.manageUserResume,
     });
   }
 

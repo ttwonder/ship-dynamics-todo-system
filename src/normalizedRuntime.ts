@@ -9,7 +9,10 @@ import { NormalizedCommandClient, leaseProof, type LeaseProof } from './normaliz
 import {
   NormalizedCommandError,
   NormalizedRepository,
+  parseDurableManageUserResume,
   type DurableDraftEnvelope,
+  type DurableManageUserResume,
+  type ManageUserAction,
   type OperationStatus,
 } from './normalizedRepository';
 import {
@@ -17,6 +20,7 @@ import {
   type NormalizedApplicationProjection,
 } from './normalizedProjection';
 import type { NormalizedDraftOwner } from './normalizedAuthorizationUi';
+import { hasPermission } from './permissions';
 import {
   createNormalizedSupabaseClient,
   NormalizedRequestScope,
@@ -47,6 +51,78 @@ export interface SubmitDraftContext {
 export interface MutationOutcome {
   committed: boolean;
   drafted: boolean;
+}
+
+export interface ManageUserRecoverySummary {
+  entityKey: string;
+  action: ManageUserAction;
+  requiresPassword: boolean;
+  targetUserId?: string;
+}
+
+export type ManageUserInput = JsonObject & {
+  action: ManageUserAction;
+  targetUserId?: string;
+};
+
+function requiredManageUserText(value: unknown, field: string, maximum = 128) {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  if (!normalized || normalized.length > maximum) {
+    throw new NormalizedCommandError('invalid', `invalid-${field}`, '帳號管理內容不完整。');
+  }
+  return normalized;
+}
+
+function requiredManageUserPassword(value: unknown) {
+  const password = typeof value === 'string' ? value : '';
+  if (password.length < 12 || password.length > 256) {
+    throw new NormalizedCommandError('invalid', 'invalid-password', '密碼必須為 12 至 256 字元。');
+  }
+  return password;
+}
+
+function durableManageUserResume(input: ManageUserInput): DurableManageUserResume {
+  const action = input.action;
+  if (action === 'create') {
+    const role = requiredManageUserText(input.role, 'role', 32);
+    if (!['admin', 'operator', 'vessel'].includes(role)) {
+      throw new NormalizedCommandError('invalid', 'invalid-role', '帳號角色不正確。');
+    }
+    return {
+      version: 1,
+      action,
+      input: {
+        action,
+        displayName: requiredManageUserText(input.displayName, 'display-name'),
+        usernameLabel: requiredManageUserText(input.usernameLabel, 'username-label'),
+        department: requiredManageUserText(input.department, 'department'),
+        role,
+      },
+      requiresPassword: true,
+    };
+  }
+  const targetUserId = requiredManageUserText(input.targetUserId, 'target-user-id', 256);
+  if (action === 'change-role') {
+    const role = requiredManageUserText(input.role, 'role', 32);
+    if (!['admin', 'operator', 'vessel'].includes(role)) {
+      throw new NormalizedCommandError('invalid', 'invalid-role', '帳號角色不正確。');
+    }
+    return {
+      version: 1,
+      action,
+      input: { action, targetUserId, role },
+      requiresPassword: false,
+    };
+  }
+  if (!['disable', 'transfer-owner', 'reset-password'].includes(action)) {
+    throw new NormalizedCommandError('invalid', 'invalid-action', '帳號管理操作不正確。');
+  }
+  return {
+    version: 1,
+    action,
+    input: { action, targetUserId },
+    requiresPassword: action === 'reset-password',
+  };
 }
 
 export interface NormalizedRuntimeView {
@@ -315,6 +391,41 @@ export class NormalizedApplicationRuntime {
     );
   }
 
+  listManageUserRecoveries(): ManageUserRecoverySummary[] {
+    const projection = this.#projection;
+    if (!projection || projection.vesselAccount
+        || !hasPermission(projection.data.settings.rolePermissions, projection.actor, 'manageUsers')) {
+      return [];
+    }
+    const recoveries: ManageUserRecoverySummary[] = [];
+    for (const envelope of this.repository.listLocalStates()) {
+      const pending = envelope.pendingOperation;
+      if (!pending?.manageUserResume) continue;
+      try {
+        const resume = parseDurableManageUserResume(
+          pending.manageUserResume,
+          pending.command,
+          pending.targetKey,
+        );
+        const targetUserId = typeof resume.input.targetUserId === 'string'
+          ? resume.input.targetUserId
+          : undefined;
+        if (targetUserId && !projection.data.users.some(account => account.id === targetUserId)) {
+          continue;
+        }
+        recoveries.push({
+          entityKey: envelope.entityKey,
+          action: resume.action,
+          requiresPassword: resume.requiresPassword,
+          ...(targetUserId ? { targetUserId } : {}),
+        });
+      } catch {
+        // Invalid local metadata remains fail-closed and is not rendered as an actionable recovery.
+      }
+    }
+    return recoveries;
+  }
+
   removeDraft(entityKey: string) {
     this.repository.removeDraft(entityKey);
   }
@@ -376,82 +487,190 @@ export class NormalizedApplicationRuntime {
     }
   }
 
-  async manageUser(input: JsonObject & {
-    action: 'create' | 'disable' | 'change-role' | 'transfer-owner' | 'reset-password';
-    targetUserId?: string;
-  }) {
-    if (!this.#projection) throw new Error('The normalized projection is unavailable.');
+  async manageUser(input: ManageUserInput) {
+    const resume = durableManageUserResume(input);
+    const password = resume.requiresPassword ? requiredManageUserPassword(input.password) : undefined;
+    this.#assertManageUserRecoveryAuthority(resume);
     const operationId = this.commands.createOperationId();
-    const command = `manage_user:${input.action}`;
-    const targetKey = input.targetUserId
-      ? `user:${input.targetUserId}`
+    const command = `manage_user:${resume.action}`;
+    const targetKey = typeof resume.input.targetUserId === 'string'
+      ? `user:${resume.input.targetUserId}`
       : 'user:new';
-    const reservationRequest = {
-      ...Object.fromEntries(
-        Object.entries(input).filter(([key]) => key !== 'password'),
-      ),
-      targetUserId: input.targetUserId || null,
-    };
-    const reservation = await this.repository.reserveOperation({
-      operationId,
-      command,
-      targetKey,
-      request: reservationRequest,
-    });
-    if (reservation.status === 'rejected') {
-      throw new NormalizedCommandError(
-        'rejected',
-        reservation.errorCode || 'operation-rejected',
-        '帳號管理操作已被伺服器拒絕。',
-        operationId,
-      );
-    }
-    if (reservation.status === 'committed') {
-      await this.refreshAll();
-      return reservation.result;
-    }
     this.repository.rememberPendingOperation({
       entityKey: targetKey,
       operationId,
       command,
       targetKey,
+      manageUserResume: resume,
     });
-    const response = await this.client.functions.invoke('manage-user', {
-      body: {
-        ...input,
-        workspaceId: this.scope.workspaceId,
-        operationId,
-      },
-    });
-    if (response.error) {
-      const recovered = await this.repository.getOperationStatus(operationId).catch(() => null);
-      if (recovered?.status === 'committed') {
-        this.repository.resolvePendingOperation(targetKey, recovered);
-        await this.refreshAll();
-        return recovered.result;
-      }
-      if (recovered?.status === 'rejected') {
-        this.repository.resolvePendingOperation(targetKey, recovered);
+    return this.#dispatchManageUserResume(targetKey, operationId, resume, password);
+  }
+
+  async resumeManageUserRecovery(
+    entityKey: string,
+    password?: string,
+  ): Promise<OperationStatus | null> {
+    const local = this.loadDraft(entityKey);
+    const pending = local?.pendingOperation;
+    if (!pending?.manageUserResume) return null;
+    let resume: DurableManageUserResume;
+    try {
+      resume = parseDurableManageUserResume(
+        pending.manageUserResume,
+        pending.command,
+        pending.targetKey,
+      );
+    } catch {
+      throw new NormalizedCommandError(
+        'invalid',
+        'manage-user-recovery-envelope-invalid',
+        '本機帳號復原資料無效；未重播也未取消伺服器操作。',
+        pending.operationId,
+      );
+    }
+    this.#assertManageUserRecoveryAuthority(resume);
+    let status = await this.repository.getOperationStatus(pending.operationId);
+    this.#assertManageUserStatusIdentity(pending, status);
+    if (status?.status === 'committed' || status?.status === 'rejected') {
+      this.repository.resolvePendingOperation(entityKey, status);
+      await this.refreshAll();
+      return status;
+    }
+    if (status?.status !== 'prepared' && status?.status !== 'recovery_required') {
+      throw new NormalizedCommandError(
+        'permission',
+        'operation-status-unavailable',
+        '目前登入身分無法確認先前帳號操作；未重播也未取消。',
+        pending.operationId,
+      );
+    }
+    if (resume.requiresPassword && (!password || password.length < 12 || password.length > 256)) {
+      throw new NormalizedCommandError(
+        'invalid',
+        'manage-user-password-reentry-required',
+        '請重新輸入原操作密碼以完成復原。',
+        pending.operationId,
+      );
+    }
+    await this.refreshAll();
+    this.#assertManageUserRecoveryAuthority(resume);
+    status = await this.repository.getOperationStatus(pending.operationId);
+    this.#assertManageUserStatusIdentity(pending, status);
+    if (status?.status === 'committed' || status?.status === 'rejected') {
+      this.repository.resolvePendingOperation(entityKey, status);
+      return status;
+    }
+    if (status?.status !== 'prepared' && status?.status !== 'recovery_required') {
+      throw new NormalizedCommandError(
+        'permission',
+        'operation-status-unavailable',
+        '目前登入身分無法確認先前帳號操作；未重播也未取消。',
+        pending.operationId,
+      );
+    }
+    return this.#dispatchManageUserResume(entityKey, pending.operationId, resume, password);
+  }
+
+  #assertManageUserRecoveryAuthority(resume: DurableManageUserResume) {
+    const projection = this.#projection;
+    let token;
+    try {
+      token = this.scope.capture();
+    } catch {
+      throw new NormalizedCommandError(
+        'permission',
+        'manage-user-recovery-not-authorized',
+        '目前登入身分沒有帳號復原權限。',
+      );
+    }
+    if (!projection
+        || projection.workspaceId !== token.workspaceId
+        || projection.actor.id !== token.actorId
+        || projection.vesselAccount
+        || !hasPermission(projection.data.settings.rolePermissions, projection.actor, 'manageUsers')) {
+      throw new NormalizedCommandError(
+        'permission',
+        'manage-user-recovery-not-authorized',
+        '目前登入身分沒有帳號復原權限。',
+      );
+    }
+    const targetUserId = resume.input.targetUserId;
+    if (typeof targetUserId === 'string'
+        && !projection.data.users.some(account => account.id === targetUserId)) {
+      throw new NormalizedCommandError(
+        'permission',
+        'manage-user-recovery-target-unavailable',
+        '目前授權投影無法確認帳號復原目標。',
+      );
+    }
+  }
+
+  #assertManageUserStatusIdentity(
+    pending: NonNullable<DurableDraftEnvelope['pendingOperation']>,
+    status: OperationStatus | null,
+  ) {
+    if (!status) return;
+    if (status.command !== pending.command || status.targetKey !== pending.targetKey) {
+      throw new NormalizedCommandError(
+        'invalid',
+        'operation-recovery-mismatch',
+        '本機復原資料與伺服器操作識別不一致，已停止復原且未取消伺服器操作。',
+        pending.operationId,
+      );
+    }
+  }
+
+  async #dispatchManageUserResume(
+    entityKey: string,
+    operationId: string,
+    resume: DurableManageUserResume,
+    password?: unknown,
+  ): Promise<OperationStatus> {
+    const body: JsonObject = {
+      ...resume.input,
+      ...(resume.requiresPassword ? { password } : {}),
+      workspaceId: this.scope.workspaceId,
+      operationId,
+    };
+    const response = await this.client.functions.invoke('manage-user', { body });
+    let terminal = await this.repository.getOperationStatus(operationId).catch(() => null);
+    if (terminal) {
+      const pending = this.loadDraft(entityKey)?.pendingOperation;
+      if (pending) this.#assertManageUserStatusIdentity(pending, terminal);
+    }
+    if (terminal?.status === 'committed' || terminal?.status === 'rejected') {
+      this.repository.resolvePendingOperation(entityKey, terminal);
+      await this.refreshAll();
+      if (terminal.status === 'rejected') {
         throw new NormalizedCommandError(
           'rejected',
-          recovered.errorCode || 'operation-rejected',
+          terminal.errorCode || 'operation-rejected',
           '帳號管理操作已被伺服器拒絕。',
           operationId,
         );
       }
+      return terminal;
+    }
+    if (response.error) {
       throw new NormalizedCommandError(
         'recovery',
-        recovered?.errorCode || 'manage-user-recovery-required',
-        '帳號服務結果尚未確認，請以相同操作編號進行復原。',
+        terminal?.errorCode || 'manage-user-recovery-required',
+        '帳號服務結果尚未確認，請使用保留的操作編號完成復原。',
         operationId,
       );
     }
-    const terminal = await this.repository.getOperationStatus(operationId).catch(() => null);
+    terminal = await this.repository.getOperationStatus(operationId).catch(() => null);
     if (terminal?.status === 'committed' || terminal?.status === 'rejected') {
-      this.repository.resolvePendingOperation(targetKey, terminal);
+      this.repository.resolvePendingOperation(entityKey, terminal);
+      await this.refreshAll();
+      return terminal;
     }
-    await this.refreshAll();
-    return response.data;
+    throw new NormalizedCommandError(
+      'recovery',
+      terminal?.errorCode || 'manage-user-terminal-status-required',
+      '帳號服務尚未提供可確認的最終狀態；已保留操作編號。',
+      operationId,
+    );
   }
 
   #handleAuthTransition(transition: NormalizedAuthTransition) {

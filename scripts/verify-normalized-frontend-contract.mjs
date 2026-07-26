@@ -525,6 +525,7 @@ try {
     'the controller must not materialize a linked task through a second RPC');
 
   const appSource = await readFile(resolve(root, 'src/NormalizedApp.tsx'), 'utf8');
+  const managementSource = await readFile(resolve(root, 'src/NormalizedManagement.tsx'), 'utf8');
   const runtimeSource = await readFile(resolve(root, 'src/normalizedRuntime.ts'), 'utf8');
   const projectionSource = await readFile(resolve(root, 'src/normalizedProjection.ts'), 'utf8');
   assert.match(appSource, /if\s*\(activationLocked\)\s*return\s*<ActivationLock/,
@@ -535,6 +536,16 @@ try {
     'stale auth/workspace generations must be dropped');
   assert.match(runtimeSource, /refreshEntities\(pending\)/,
     'Realtime processing must refetch invalidated entities');
+  assert.match(appSource, /listManageUserRecoveries\(\)/,
+    'authorized recoveries must be discovered after a fresh application start');
+  assert.match(appSource, /onResumeUserRecovery=\{[^}]*resumeManageUserRecovery/s,
+    'the recovery surface must invoke the exact durable manage-user resume contract');
+  assert.match(managementSource, /requiresPassword[\s\S]*prompt\(/,
+    'credential recovery must explicitly ask for password re-entry');
+  assert.match(managementSource, /不能取消|不可取消/,
+    'the recovery surface must explain that recovery-required effects cannot be cancelled');
+  assert.doesNotMatch(managementSource, /userRecoveries[\s\S]{0,500}operationId/,
+    'the UI must not expose durable operation identifiers');
   assert.doesNotMatch(runtimeSource, /payload\.(?:new|old).*#projection|setProjection\([^)]*payload/s,
     'Realtime row payloads must never become application state');
   assert.match(projectionSource, /vesselAccount[\s\S]*meetings\s*=\s*\[\]/,

@@ -165,10 +165,13 @@ Deno.serve(async request => {
       membershipError
       || !membership
       || (membership.role !== 'owner' && membership.role !== 'admin')
-      || (action === 'transfer-owner' && membership.role !== 'owner')
     ) {
       throw new HttpError(403, 'manage-user-required');
     }
+    // Admin reachability is required only to resume an exact prior owner-transfer after
+    // the original owner was atomically demoted. begin_ship_dynamics_user_operation
+    // still requires Owner for every new transfer operation and binds any replay to
+    // the same actor, command, target, operation ID, and sanitized request.
 
     const { data: begun, error: beginError } = await actorDatabase.rpc(
       'begin_ship_dynamics_user_operation',

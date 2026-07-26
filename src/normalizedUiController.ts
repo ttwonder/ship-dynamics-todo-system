@@ -40,6 +40,21 @@ function jsonDraft(value: unknown): JsonObject {
   return structuredClone(value) as JsonObject;
 }
 
+export async function reconcileNormalizedDraftEnvelopes(
+  envelopes: DurableDraftEnvelope[],
+  recover: (envelope: DurableDraftEnvelope) => Promise<void>,
+): Promise<{ failureCount: number }> {
+  let failureCount = 0;
+  for (const envelope of envelopes) {
+    try {
+      await recover(envelope);
+    } catch {
+      failureCount += 1;
+    }
+  }
+  return { failureCount };
+}
+
 export class NormalizedUiController {
   readonly runtime: NormalizedApplicationRuntime;
 
