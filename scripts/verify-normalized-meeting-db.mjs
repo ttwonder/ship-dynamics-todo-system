@@ -7,6 +7,7 @@ import { PGlite } from '@electric-sql/pglite';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const baseSchemaPath = resolve(root, 'supabase', 'normalized-schema.sql');
+const coreSchemaPath = resolve(root, 'supabase', 'normalized-core-domain.sql');
 const meetingSchemaPath = resolve(root, 'supabase', 'normalized-meeting.sql');
 const db = new PGlite();
 
@@ -51,6 +52,7 @@ await db.exec(`
 `);
 
 await db.exec(await readFile(baseSchemaPath, 'utf8'));
+await db.exec(await readFile(coreSchemaPath, 'utf8'));
 let meetingSchema;
 try {
   meetingSchema = await readFile(meetingSchemaPath, 'utf8');

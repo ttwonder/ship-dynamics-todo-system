@@ -1,6 +1,7 @@
 import {
   corsHeadersFor,
   createServiceClient,
+  createSessionClient,
   enforceRateLimit,
   errorResponse,
   HttpError,
@@ -96,6 +97,7 @@ Deno.serve(async request => {
   let corsHeaders: Record<string, string> = {};
   let operationContext: { operationId: string; workspaceId: string } | null = null;
   let service: ServiceClient | null = null;
+  let actorDatabase: ServiceClient | null = null;
   let operationBegan = false;
   let externalSideEffectMayHaveOccurred = false;
   try {
@@ -106,7 +108,7 @@ Deno.serve(async request => {
     const supabaseUrl = requiredEnv('SUPABASE_URL', SUPABASE_URL);
     const browserCredential = requiredEnv('SUPABASE_ANON_KEY', SUPABASE_ANON_KEY);
     const serverCredential = requiredEnv('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
-    const { user: actor } = await requireJwtUser(request, supabaseUrl, browserCredential);
+    const { user: actor, accessToken } = await requireJwtUser(request, supabaseUrl, browserCredential);
     const body = await readJsonObject(request, 8192);
     const action = requiredString(body.action, 'action', 32);
     if (!actions.has(action)) throw new HttpError(400, 'invalid-action');
@@ -114,6 +116,7 @@ Deno.serve(async request => {
     const workspaceId = requiredUuid(body.workspaceId, 'workspace-id');
     operationContext = { operationId, workspaceId };
     service = createServiceClient(supabaseUrl, serverCredential);
+    actorDatabase = createSessionClient(supabaseUrl, browserCredential, accessToken);
     await enforceRateLimit(service, {
       scope: 'manage-user-actor',
       keyMaterial: `${workspaceId}\u0000${actor.id}`,
@@ -162,7 +165,7 @@ Deno.serve(async request => {
       throw new HttpError(403, 'owner-required');
     }
 
-    const { data: begun, error: beginError } = await service.rpc(
+    const { data: begun, error: beginError } = await actorDatabase.rpc(
       'begin_ship_dynamics_user_operation',
       {
         p_workspace_id: workspaceId,
@@ -215,14 +218,15 @@ Deno.serve(async request => {
       } else {
         externalSideEffectMayHaveOccurred = true;
       }
-      await markExternalEffect(service, workspaceId, operationId, authUser.id);
-      const { error: provisionError } = await service.rpc('provision_ship_dynamics_user', {
+      await markExternalEffect(actorDatabase, workspaceId, operationId, authUser.id);
+      const { error: provisionError } = await actorDatabase.rpc('provision_ship_dynamics_user', {
         p_workspace_id: workspaceId,
         p_user_id: authUser.id,
         p_display_name: validated.displayName,
         p_username_label: validated.usernameLabel,
         p_department: validated.department,
         p_role: validated.role,
+        p_auth_alias: email,
         p_operation_id: operationId,
       });
       if (provisionError) throw new HttpError(503, 'operation-recovery-required');
@@ -240,7 +244,7 @@ Deno.serve(async request => {
       if (action === 'disable') {
         if (target.role === 'owner') throw new HttpError(409, 'owner-transfer-required');
         externalSideEffectMayHaveOccurred = true;
-        const { error: disableMembershipError } = await service.rpc(
+        const { error: disableMembershipError } = await actorDatabase.rpc(
           'disable_ship_dynamics_user',
           {
             p_workspace_id: workspaceId,
@@ -253,7 +257,7 @@ Deno.serve(async request => {
           ban_duration: '876000h',
         });
         if (banError) throw new HttpError(503, 'operation-recovery-required');
-        await markExternalEffect(service, workspaceId, operationId, targetId);
+        await markExternalEffect(actorDatabase, workspaceId, operationId, targetId);
         result = { userId: targetId, disabled: true };
       } else if (action === 'reset-password') {
         externalSideEffectMayHaveOccurred = true;
@@ -261,12 +265,12 @@ Deno.serve(async request => {
           password: password as string,
         });
         if (resetError) throw new HttpError(503, 'operation-recovery-required');
-        await markExternalEffect(service, workspaceId, operationId, targetId);
+        await markExternalEffect(actorDatabase, workspaceId, operationId, targetId);
         result = { userId: targetId, credentialReset: true };
       } else if (action === 'transfer-owner' || validated.role === 'owner') {
         if (!target.is_active) throw new HttpError(409, 'target-inactive');
         externalSideEffectMayHaveOccurred = true;
-        const { data: transferred, error: transferError } = await service.rpc(
+        const { data: transferred, error: transferError } = await actorDatabase.rpc(
           'transfer_ship_dynamics_owner',
           {
             p_workspace_id: workspaceId,
@@ -280,7 +284,7 @@ Deno.serve(async request => {
         const role = validated.role as string;
         if (target.role === 'owner') throw new HttpError(409, 'owner-transfer-required');
         externalSideEffectMayHaveOccurred = true;
-        const { error: roleError } = await service.rpc('change_ship_dynamics_user_role', {
+        const { error: roleError } = await actorDatabase.rpc('change_ship_dynamics_user_role', {
           p_workspace_id: workspaceId,
           p_user_id: targetId,
           p_role: role,
@@ -291,7 +295,7 @@ Deno.serve(async request => {
       }
     }
 
-    const { error: completeError } = await service.rpc(
+    const { error: completeError } = await actorDatabase.rpc(
       'complete_ship_dynamics_user_operation',
       {
         p_workspace_id: workspaceId,
@@ -302,12 +306,12 @@ Deno.serve(async request => {
     if (completeError) throw new HttpError(503, 'operation-recovery-required');
     return jsonResponse(result, 200, corsHeaders);
   } catch (error) {
-    if (service && operationContext && operationBegan) {
+    if (actorDatabase && operationContext && operationBegan) {
       const rpc = externalSideEffectMayHaveOccurred
         ? 'mark_ship_dynamics_user_operation_recovery_required'
         : 'reject_ship_dynamics_user_operation';
       try {
-        await service.rpc(rpc, {
+        await actorDatabase.rpc(rpc, {
           p_workspace_id: operationContext.workspaceId,
           p_operation_id: operationContext.operationId,
           p_error_code: error instanceof HttpError ? error.code : 'internal-error',

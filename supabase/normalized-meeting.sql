@@ -135,38 +135,8 @@ create table if not exists public.sd_meeting_status_events (
 create index if not exists sd_meeting_status_events_meeting_created
   on public.sd_meeting_status_events(workspace_id, meeting_id, created_at, id);
 
--- These task set relations are required to reconcile meeting-derived task
--- categories, departments, and owners under the task aggregate version.
-create table if not exists public.sd_task_categories (
-  workspace_id uuid not null,
-  task_id text not null,
-  category text not null,
-  primary key (workspace_id, task_id, category),
-  foreign key (workspace_id, task_id)
-    references public.sd_tasks(workspace_id, id) on delete restrict,
-  constraint sd_task_categories_not_blank check (btrim(category) <> '')
-);
-
-create table if not exists public.sd_task_departments (
-  workspace_id uuid not null,
-  task_id text not null,
-  department text not null,
-  primary key (workspace_id, task_id, department),
-  foreign key (workspace_id, task_id)
-    references public.sd_tasks(workspace_id, id) on delete restrict,
-  constraint sd_task_departments_not_blank check (btrim(department) <> '')
-);
-
-create table if not exists public.sd_task_owners (
-  workspace_id uuid not null,
-  task_id text not null,
-  user_id uuid not null,
-  primary key (workspace_id, task_id, user_id),
-  foreign key (workspace_id, task_id)
-    references public.sd_tasks(workspace_id, id) on delete restrict,
-  foreign key (workspace_id, user_id)
-    references public.sd_memberships(workspace_id, user_id) on delete restrict
-);
+-- Task categories, departments, and owners are owned by normalized-core-domain.sql.
+-- This aggregate only updates those shared relations inside meeting commands.
 
 alter table public.sd_tasks
   add column if not exists source_meeting_item_id text;
@@ -262,9 +232,6 @@ alter table public.sd_meeting_participants enable row level security;
 alter table public.sd_meeting_items enable row level security;
 alter table public.sd_meeting_item_categories enable row level security;
 alter table public.sd_meeting_status_events enable row level security;
-alter table public.sd_task_categories enable row level security;
-alter table public.sd_task_departments enable row level security;
-alter table public.sd_task_owners enable row level security;
 
 revoke all on table public.sd_meetings from anon, authenticated;
 revoke all on table public.sd_meeting_vessels from anon, authenticated;
@@ -274,9 +241,6 @@ revoke all on table public.sd_meeting_participants from anon, authenticated;
 revoke all on table public.sd_meeting_items from anon, authenticated;
 revoke all on table public.sd_meeting_item_categories from anon, authenticated;
 revoke all on table public.sd_meeting_status_events from anon, authenticated;
-revoke all on table public.sd_task_categories from anon, authenticated;
-revoke all on table public.sd_task_departments from anon, authenticated;
-revoke all on table public.sd_task_owners from anon, authenticated;
 
 grant select on table public.sd_meetings to authenticated;
 grant select on table public.sd_meeting_vessels to authenticated;
@@ -286,9 +250,6 @@ grant select on table public.sd_meeting_participants to authenticated;
 grant select on table public.sd_meeting_items to authenticated;
 grant select on table public.sd_meeting_item_categories to authenticated;
 grant select on table public.sd_meeting_status_events to authenticated;
-grant select on table public.sd_task_categories to authenticated;
-grant select on table public.sd_task_departments to authenticated;
-grant select on table public.sd_task_owners to authenticated;
 
 create or replace function public.sd_can_manage_meetings(p_workspace_id uuid)
 returns boolean
@@ -465,6 +426,7 @@ begin
   from public.sd_tasks t
   where t.workspace_id = p_workspace_id and t.id = p_task_id;
   if not found then return false; end if;
+  if v_task.is_deleted then return false; end if;
 
   if v_role = 'vessel' then
     if v_task.is_internal_control then return false; end if;
@@ -617,21 +579,6 @@ create policy sd_meeting_item_categories_read on public.sd_meeting_item_categori
 create policy sd_meeting_status_events_read on public.sd_meeting_status_events
   for select to authenticated
   using (public.sd_can_read_meeting(workspace_id, meeting_id));
-
-create policy sd_task_categories_read on public.sd_task_categories
-  for select to authenticated
-  using (public.sd_can_read_task(workspace_id, task_id));
-
-create policy sd_task_departments_read on public.sd_task_departments
-  for select to authenticated
-  using (public.sd_can_read_task(workspace_id, task_id));
-
-create policy sd_task_owners_read on public.sd_task_owners
-  for select to authenticated
-  using (
-    public.sd_membership_role(workspace_id) <> 'vessel'
-    and public.sd_can_read_task(workspace_id, task_id)
-  );
 
 create or replace function public.sd_validate_meeting_payload(
   p_workspace_id uuid,
@@ -1222,17 +1169,18 @@ begin
         false, 1, v_actor
       from unnest(p_vessel_ids) vessel_id;
 
-      insert into public.sd_task_categories(workspace_id, task_id, category)
-      select p_workspace_id, v_task_id, category #>> '{}'
-      from jsonb_array_elements(v_item.item -> 'categories') category;
+      insert into public.sd_task_categories(workspace_id, task_id, category, ordinal)
+      select p_workspace_id, v_task_id, value #>> '{}', ordinal - 1
+      from jsonb_array_elements(v_item.item -> 'categories')
+        with ordinality as category(value, ordinal);
 
-      insert into public.sd_task_departments(workspace_id, task_id, department)
-      select p_workspace_id, v_task_id, department
-      from unnest(p_departments) department;
+      insert into public.sd_task_departments(workspace_id, task_id, department, ordinal)
+      select p_workspace_id, v_task_id, department, ordinal - 1
+      from unnest(p_departments) with ordinality as departments(department, ordinal);
 
-      insert into public.sd_task_owners(workspace_id, task_id, user_id)
-      select p_workspace_id, v_task_id, user_id
-      from unnest(p_tracking_user_ids) user_id;
+      insert into public.sd_task_owners(workspace_id, task_id, owner_id, ordinal)
+      select p_workspace_id, v_task_id, user_id, ordinal - 1
+      from unnest(p_tracking_user_ids) with ordinality as owners(user_id, ordinal);
 
       insert into public.sd_task_status_events(
         workspace_id, id, task_id, status, actor_id
@@ -1608,7 +1556,7 @@ begin
           where td.workspace_id = p_workspace_id and td.task_id = v_task.id
         )
         or exists (
-          select user_id
+          select owner_id
           from public.sd_task_owners owner_row
           where owner_row.workspace_id = p_workspace_id
             and owner_row.task_id = v_task.id
@@ -1618,7 +1566,7 @@ begin
         or exists (
           select value from unnest(p_tracking_user_ids) value
           except
-          select user_id
+          select owner_id
           from public.sd_task_owners owner_row
           where owner_row.workspace_id = p_workspace_id
             and owner_row.task_id = v_task.id
@@ -1700,22 +1648,23 @@ begin
 
         delete from public.sd_task_categories tc
         where tc.workspace_id = p_workspace_id and tc.task_id = v_task.id;
-        insert into public.sd_task_categories(workspace_id, task_id, category)
-        select p_workspace_id, v_task.id, category #>> '{}'
-        from jsonb_array_elements(v_item_json -> 'categories') category;
+        insert into public.sd_task_categories(workspace_id, task_id, category, ordinal)
+        select p_workspace_id, v_task.id, value #>> '{}', ordinal - 1
+        from jsonb_array_elements(v_item_json -> 'categories')
+          with ordinality as category(value, ordinal);
 
         delete from public.sd_task_departments td
         where td.workspace_id = p_workspace_id and td.task_id = v_task.id;
-        insert into public.sd_task_departments(workspace_id, task_id, department)
-        select p_workspace_id, v_task.id, department
-        from unnest(p_departments) department;
+        insert into public.sd_task_departments(workspace_id, task_id, department, ordinal)
+        select p_workspace_id, v_task.id, department, ordinal - 1
+        from unnest(p_departments) with ordinality as departments(department, ordinal);
 
         delete from public.sd_task_owners owner_row
         where owner_row.workspace_id = p_workspace_id
           and owner_row.task_id = v_task.id;
-        insert into public.sd_task_owners(workspace_id, task_id, user_id)
-        select p_workspace_id, v_task.id, user_id
-        from unnest(p_tracking_user_ids) user_id;
+        insert into public.sd_task_owners(workspace_id, task_id, owner_id, ordinal)
+        select p_workspace_id, v_task.id, user_id, ordinal - 1
+        from unnest(p_tracking_user_ids) with ordinality as owners(user_id, ordinal);
       end if;
 
       v_task_versions := v_task_versions
@@ -1803,15 +1752,16 @@ begin
           false, 1, v_actor
         from unnest(p_vessel_ids) vessel_id;
 
-        insert into public.sd_task_categories(workspace_id, task_id, category)
-        select p_workspace_id, v_task_id, category #>> '{}'
-        from jsonb_array_elements(v_item.item -> 'categories') category;
-        insert into public.sd_task_departments(workspace_id, task_id, department)
-        select p_workspace_id, v_task_id, department
-        from unnest(p_departments) department;
-        insert into public.sd_task_owners(workspace_id, task_id, user_id)
-        select p_workspace_id, v_task_id, user_id
-        from unnest(p_tracking_user_ids) user_id;
+        insert into public.sd_task_categories(workspace_id, task_id, category, ordinal)
+        select p_workspace_id, v_task_id, value #>> '{}', ordinal - 1
+        from jsonb_array_elements(v_item.item -> 'categories')
+          with ordinality as category(value, ordinal);
+        insert into public.sd_task_departments(workspace_id, task_id, department, ordinal)
+        select p_workspace_id, v_task_id, department, ordinal - 1
+        from unnest(p_departments) with ordinality as departments(department, ordinal);
+        insert into public.sd_task_owners(workspace_id, task_id, owner_id, ordinal)
+        select p_workspace_id, v_task_id, user_id, ordinal - 1
+        from unnest(p_tracking_user_ids) with ordinality as owners(user_id, ordinal);
         insert into public.sd_task_status_events(
           workspace_id, id, task_id, status, actor_id
         ) values (

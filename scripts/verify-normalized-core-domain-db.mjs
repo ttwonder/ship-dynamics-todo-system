@@ -770,10 +770,10 @@ assert.equal(
   await scalar(`select password_hash from public.sd_public_site_gate where workspace_id=$1::uuid`, [ids.workspace]),
   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 );
-assert.equal(
-  Number(await asAnon(() => scalar(`select count(*) from public.sd_public_site_gate`))),
-  1,
-  'anon can read only the cosmetic site-gate material',
+await assert.rejects(
+  () => asAnon(() => scalar(`select count(*) from public.sd_public_site_gate`)),
+  /permission denied/i,
+  'site-gate password hashes must never be readable by anon or authenticated clients',
 );
 
 const report = await asUser(ids.owner, async () => scalar(

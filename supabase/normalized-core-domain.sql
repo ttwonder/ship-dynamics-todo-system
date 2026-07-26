@@ -15,7 +15,7 @@ alter table public.sd_tasks
   add column if not exists source_type text not null default 'morning',
   add column if not exists source_meeting_id text,
   add column if not exists source_meeting_item_id text,
-  add column if not exists equipment_subcategory text not null default '',
+  add column if not exists equipment_subcategory text,
   add column if not exists vessel_scope_mode text not null default 'vessels',
   add column if not exists distribute_to_vessels boolean not null default false,
   add column if not exists status_before_close text,
@@ -306,7 +306,6 @@ grant select on table public.sd_task_owners to authenticated;
 grant select on table public.sd_task_type_scopes to authenticated;
 grant select on table public.sd_task_vessel_status_events to authenticated;
 grant select on table public.sd_settings to authenticated;
-grant select on table public.sd_public_site_gate to anon, authenticated;
 grant select on table public.sd_departments to authenticated;
 grant select on table public.sd_category_options to authenticated;
 grant select on table public.sd_priority_options to authenticated;
@@ -603,10 +602,6 @@ create policy sd_settings_read on public.sd_settings
       or public.sd_membership_role(workspace_id) = 'owner'
     )
   );
-
-create policy sd_public_site_gate_read on public.sd_public_site_gate
-  for select to anon, authenticated
-  using (true);
 
 create policy sd_departments_read on public.sd_departments
   for select to authenticated

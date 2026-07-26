@@ -6,9 +6,9 @@ Status: client/Edge boundary building blocks. `App.tsx` and `Management.tsx` are
 
 Supabase Auth `auth.uid()` is the only actor identity. The browser may remember a Supabase session and the current UI selection, but a roster ID, display name, role, `currentUserId`, and localStorage value are never authority. Every database policy and command must derive the actor from the verified JWT.
 
-The existing department → person → password UX remains. A directory response contains only department, display name, and the user-facing `usernameLabel`. It never returns the Supabase Auth UUID, synthetic email, password state, or credential metadata. The login Edge Function resolves the selected active membership to its hidden immutable synthetic Auth email on the server and exchanges that email plus the submitted password with Supabase Auth. Only the resulting session tokens cross back to the browser.
+The existing department → person → password UX remains. A gated directory response contains department, display name, user-facing `usernameLabel`, and an opaque synthetic Auth alias. It never returns the Supabase Auth UUID, password state, or credential metadata. The browser passes that alias and password directly to `supabase.auth.signInWithPassword`; no custom Edge Function receives the personal password or brokers access/refresh tokens, so Supabase Auth's native throttling, CAPTCHA, and session controls remain in force.
 
-Synthetic Auth email values belong only to `auth.users`. New accounts receive an immutable operation-correlated synthetic email under `AUTH_SYNTHETIC_EMAIL_DOMAIN`; an HMAC of workspace and operation identity makes retries recover the same Auth user without exposing a human identifier. The public profile/roster stores the human labels, not that Auth identifier.
+Synthetic Auth aliases belong to `auth.users` and the service-only `sd_login_options` directory table. New accounts receive an immutable operation-correlated alias under `AUTH_SYNTHETIC_EMAIL_DOMAIN`; an HMAC of workspace and operation identity makes retries recover the same Auth user without exposing a human identifier. Public profile/roster rows store human labels but never the alias.
 
 ## Site gate
 
@@ -83,6 +83,6 @@ Set these Edge runtime secrets:
 - `USER_OPERATION_HMAC_SECRET`
 - `RATE_LIMIT_HMAC_SECRET`
 
-`site-unlock`, directory/login, and Owner account management consume server-side rate-limit buckets before sensitive verification or mutation. Bucket keys are HMAC fingerprints; raw network/account identifiers are not stored in the rate table.
+`site-unlock`, the gated directory, and Owner account management consume server-side rate-limit buckets before sensitive verification or mutation. Bucket keys are HMAC fingerprints; raw network/account identifiers are not stored in the rate table. Personal password login itself goes directly through Supabase Auth and therefore retains its native rate-limit/CAPTCHA path.
 
 No function uses wildcard CORS. Errors are generic, responses are `no-store`, and no password, token, synthetic email, or server credential may be logged. Production rollout still requires the architecture packet's staging tests for JWT → `auth.uid()`, RLS, Auth Admin, two-session concurrency, Realtime refetch, and migration rollback.

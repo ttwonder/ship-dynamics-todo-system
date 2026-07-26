@@ -7,6 +7,7 @@ import { PGlite } from '@electric-sql/pglite';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const baseSchemaPath = resolve(root, 'supabase', 'normalized-schema.sql');
+const coreSchemaPath = resolve(root, 'supabase', 'normalized-core-domain.sql');
 const migrationPath = resolve(root, 'supabase', 'normalized-internal-control.sql');
 const db = new PGlite();
 
@@ -65,6 +66,7 @@ await db.exec(`
 `);
 
 await db.exec(await readFile(baseSchemaPath, 'utf8'));
+await db.exec(await readFile(coreSchemaPath, 'utf8'));
 await db.exec(await readFile(migrationPath, 'utf8'));
 
 await db.exec(`
@@ -781,7 +783,11 @@ assert.equal(Number(deleteTaskResult.caseVersion), 2);
 const preservedAfterTaskDelete = await db.query(`
   select c.is_closed, c.status, c.version,
          (select count(*)::integer from public.sd_tasks t
-           where t.workspace_id=c.workspace_id and t.id='${deleteTaskId}') as task_count,
+           where t.workspace_id=c.workspace_id and t.id='${deleteTaskId}' and not t.is_deleted) as active_task_count,
+         (select count(*)::integer from public.sd_tasks t
+           where t.workspace_id=c.workspace_id and t.id='${deleteTaskId}') as stored_task_count,
+         (select count(*)::integer from public.sd_task_status_events e
+           where e.workspace_id=c.workspace_id and e.task_id='${deleteTaskId}') as task_history_count,
          (select count(*)::integer from public.sd_internal_case_task_links l
            where l.workspace_id=c.workspace_id and l.case_id=c.id) as link_count
   from public.sd_internal_cases c
@@ -790,7 +796,9 @@ const preservedAfterTaskDelete = await db.query(`
 assert.equal(preservedAfterTaskDelete.rows[0].is_closed, true);
 assert.match(preservedAfterTaskDelete.rows[0].status, /FLOW/i);
 assert.equal(preservedAfterTaskDelete.rows[0].version, 2);
-assert.equal(preservedAfterTaskDelete.rows[0].task_count, 0);
+assert.equal(preservedAfterTaskDelete.rows[0].active_task_count, 0);
+assert.equal(preservedAfterTaskDelete.rows[0].stored_task_count, 1);
+assert.ok(preservedAfterTaskDelete.rows[0].task_history_count >= 1);
 assert.equal(preservedAfterTaskDelete.rows[0].link_count, 0);
 
 const hardDeleteCaseId = 'case-hard-delete';
@@ -846,13 +854,27 @@ assert.equal(hardDeleteResult.taskId, hardDeleteTaskId);
 const hardDeleteCounts = await db.query(`
   select
     (select count(*)::integer from public.sd_internal_cases
-      where workspace_id='${ids.workspace}' and id='${hardDeleteCaseId}') as case_count,
+      where workspace_id='${ids.workspace}' and id='${hardDeleteCaseId}' and not is_deleted) as active_case_count,
+    (select count(*)::integer from public.sd_internal_cases
+      where workspace_id='${ids.workspace}' and id='${hardDeleteCaseId}') as stored_case_count,
+    (select count(*)::integer from public.sd_internal_case_status_events
+      where workspace_id='${ids.workspace}' and case_id='${hardDeleteCaseId}') as case_history_count,
     (select count(*)::integer from public.sd_tasks
-      where workspace_id='${ids.workspace}' and id='${hardDeleteTaskId}') as task_count,
+      where workspace_id='${ids.workspace}' and id='${hardDeleteTaskId}' and not is_deleted) as active_task_count,
+    (select count(*)::integer from public.sd_tasks
+      where workspace_id='${ids.workspace}' and id='${hardDeleteTaskId}') as stored_task_count,
+    (select count(*)::integer from public.sd_task_status_events
+      where workspace_id='${ids.workspace}' and task_id='${hardDeleteTaskId}') as task_history_count,
     (select count(*)::integer from public.sd_internal_case_task_links
       where workspace_id='${ids.workspace}' and case_id='${hardDeleteCaseId}') as link_count
 `);
-assert.deepEqual(hardDeleteCounts.rows[0], { case_count: 0, task_count: 0, link_count: 0 });
+assert.equal(hardDeleteCounts.rows[0].active_case_count, 0);
+assert.equal(hardDeleteCounts.rows[0].stored_case_count, 1);
+assert.ok(hardDeleteCounts.rows[0].case_history_count >= 1);
+assert.equal(hardDeleteCounts.rows[0].active_task_count, 0);
+assert.equal(hardDeleteCounts.rows[0].stored_task_count, 1);
+assert.ok(hardDeleteCounts.rows[0].task_history_count >= 1);
+assert.equal(hardDeleteCounts.rows[0].link_count, 0);
 const hardDeleteReplay = await asUser(ids.owner, async () => {
   const result = await db.query(
     `select public.command_ship_dynamics_delete_internal_case(

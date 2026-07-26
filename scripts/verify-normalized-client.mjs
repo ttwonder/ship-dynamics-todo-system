@@ -8,14 +8,7 @@ import { createServer } from 'vite';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
-const protectedPaths = [
-  'src/App.tsx',
-  'src/Management.tsx',
-  'src/cloud.ts',
-  'public/supabase-config.js',
-  'package.json',
-  'package-lock.json',
-];
+const protectedPaths = ['public/supabase-config.js'];
 
 class MemoryStorage {
   #values = new Map();
@@ -130,8 +123,9 @@ class MockSupabase {
         this.authListener = callback;
         return { data: { subscription: { unsubscribe() {} } } };
       },
-      setSession: async (session) => {
-        this.session = { ...session, user: { id: 'actor-login' } };
+      signInWithPassword: async (credentials) => {
+        this.signInCredentials = credentials;
+        this.session = { access_token: 'login-access-token', refresh_token: 'login-refresh-token', user: { id: 'actor-login' } };
         return { data: { session: this.session, user: this.session.user }, error: null };
       },
       signOut: async () => {
@@ -155,7 +149,7 @@ class MockSupabase {
         }
         if (options?.body?.action === 'directory') {
           return {
-            data: { people: [{ department: 'Operations', usernameLabel: 'Alice', displayName: 'Alice' }] },
+            data: { people: [{ department: 'Operations', usernameLabel: 'Alice', displayName: 'Alice', authAlias: 'opaque@internal.invalid' }] },
             error: null,
           };
         }
@@ -268,18 +262,21 @@ try {
     gateToken: gate.gateToken,
   });
   assert.equal(directory[0].displayName, 'Alice');
+  assert.equal(directory[0].authAlias, 'opaque@internal.invalid');
   await auth.signInWithDirectoryPassword({
-    workspaceKey: 'ship-dynamics-main',
-    department: 'Operations',
-    usernameLabel: 'Alice',
+    authAlias: directory[0].authAlias,
     password: 'personal-secret',
     gateToken: gate.gateToken,
   });
-  const loginCall = client.functionCalls.at(-1);
-  assert.equal(loginCall.name, 'login-directory');
-  assert.equal('email' in loginCall.options.body, false, 'the browser must not receive or submit synthetic Auth email');
-  assert.equal('userId' in loginCall.options.body, false, 'the login directory must not expose auth.uid');
-  assert.equal(auth.actorId, 'actor-login', 'setSession output must become the only actor');
+  assert.deepEqual(client.signInCredentials, {
+    email: 'opaque@internal.invalid',
+    password: 'personal-secret',
+  }, 'password authentication must use the native Supabase Auth client');
+  const directoryCall = client.functionCalls.at(-1);
+  assert.equal(directoryCall.name, 'login-directory');
+  assert.equal('password' in directoryCall.options.body, false, 'the Edge directory must never receive the password');
+  assert.equal('userId' in directoryCall.options.body, false, 'the login directory must not expose auth.uid');
+  assert.equal(auth.actorId, 'actor-login', 'native Auth session output must become the only actor');
   await auth.changePersonalPassword('new-personal-secret');
   assert.deepEqual(client.updatedUserAttributes, { password: 'new-personal-secret' });
 
@@ -513,10 +510,10 @@ assert.match(siteUnlockEdge, /enforceRateLimit/);
 assert.match(siteUnlockEdge, /gateToken/);
 assert.doesNotMatch(siteUnlockEdge, /\.from\([^)]*sd_public_site_gate/i, 'site password hashes stay behind a verifier RPC');
 const loginDirectoryEdge = await readFile(resolve(root, edgeFiles[2]), 'utf8');
-assert.match(loginDirectoryEdge, /usernameLabel/);
+assert.match(loginDirectoryEdge, /auth_alias/);
 assert.match(loginDirectoryEdge, /enforceRateLimit/);
-assert.match(loginDirectoryEdge, /grant_type=password/);
-assert.doesNotMatch(loginDirectoryEdge, /people[\s\S]{0,300}\bemail\b/i, 'synthetic Auth email must not enter directory output');
+assert.doesNotMatch(loginDirectoryEdge, /grant_type=password|access_token|refresh_token/);
+assert.doesNotMatch(loginDirectoryEdge, /body\.password|password\s*:/, 'the directory Edge Function must never receive a login password');
 const manageUserEdge = await readFile(resolve(root, edgeFiles[3]), 'utf8');
 assert.match(manageUserEdge, /role\s*!==\s*["']owner["']/i);
 assert.match(manageUserEdge, /auth\.admin\.(createUser|updateUserById|deleteUser)/);

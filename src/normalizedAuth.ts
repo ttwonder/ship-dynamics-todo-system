@@ -13,7 +13,7 @@ interface NormalizedAuthClient {
     onAuthStateChange(
       callback: (event: string, session: Session | null) => void,
     ): { data: { subscription: { unsubscribe(): void } } };
-    setSession(tokens: { access_token: string; refresh_token: string }): Promise<AuthResult<{
+    signInWithPassword(credentials: { email: string; password: string }): Promise<AuthResult<{
       session: Session | null;
       user: { id: string } | null;
     }>>;
@@ -37,6 +37,7 @@ export interface LoginDirectoryPerson {
   department: string;
   usernameLabel: string;
   displayName: string;
+  authAlias: string;
 }
 
 export interface PasswordlessCutoverCandidate {
@@ -180,41 +181,27 @@ export class NormalizedAuth {
       department: requiredText(person.department, 'Department', 128),
       usernameLabel: requiredText(person.usernameLabel, 'Person label', 128),
       displayName: requiredText(person.displayName, 'Display name', 128),
+      authAlias: requiredText(person.authAlias, 'Authentication alias', 320),
     }));
   }
 
   async signInWithDirectoryPassword(input: {
-    workspaceKey: string;
-    department: string;
-    usernameLabel: string;
+    authAlias: string;
     password: string;
     gateToken?: string;
   }): Promise<Session> {
-    const gateToken = requiredText(
+    requiredText(
       input.gateToken || this.readGateToken(),
       'Gate token',
       4096,
     );
     if (!input.password || input.password.length > 256) throw new Error('Password is invalid.');
-    const { data, error } = await this.#client.functions.invoke<{
-      session: { access_token: string; refresh_token: string };
-    }>('login-directory', {
-      body: {
-        action: 'login',
-        workspaceKey: requiredText(input.workspaceKey, 'Workspace key', 128),
-        department: requiredText(input.department, 'Department', 128),
-        usernameLabel: requiredText(input.usernameLabel, 'Person label', 128),
-        password: input.password,
-      },
-      headers: { 'x-site-gate-token': gateToken },
+    const accepted = await this.#client.auth.signInWithPassword({
+      email: requiredText(input.authAlias, 'Authentication alias', 320),
+      password: input.password,
     });
-    if (error) throwFunctionError(error);
-    const access_token = data?.session?.access_token;
-    const refresh_token = data?.session?.refresh_token;
-    if (!access_token || !refresh_token) throw new Error('The login response did not contain a session.');
-    const accepted = await this.#client.auth.setSession({ access_token, refresh_token });
     if (accepted.error) throwFunctionError(accepted.error);
-    if (!accepted.data.session) throw new Error('Supabase rejected the returned session.');
+    if (!accepted.data.session) throw new Error('Supabase rejected the login.');
     this.#scope.acceptSession(accepted.data.session, true);
     return accepted.data.session;
   }

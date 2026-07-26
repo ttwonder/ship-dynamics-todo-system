@@ -104,10 +104,10 @@ export interface OperationStatus<TResult = JsonObject> {
   actor_id: string;
   command: string;
   target_key: string;
-  status: 'committed' | 'rejected';
+  status: 'prepared' | 'recovery_required' | 'committed' | 'rejected';
   result: TResult | null;
   error_code: string | null;
-  completed_at: string;
+  completed_at: string | null;
 }
 
 export interface LeaseGrant {

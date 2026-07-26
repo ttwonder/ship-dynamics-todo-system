@@ -195,6 +195,17 @@ export function createServiceClient(
   });
 }
 
+export function createSessionClient(
+  supabaseUrl: string,
+  browserCredential: string,
+  accessToken: string,
+): SupabaseClient {
+  return createClient(supabaseUrl, browserCredential, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { authorization: `Bearer ${accessToken}` } },
+  });
+}
+
 export async function requireJwtUser(
   request: Request,
   supabaseUrl: string,

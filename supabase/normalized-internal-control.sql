@@ -39,6 +39,9 @@ create table public.sd_internal_cases (
   is_closed boolean not null default false,
   closed_date date,
   closed_by uuid references auth.users(id),
+  is_deleted boolean not null default false,
+  deleted_at timestamptz,
+  deleted_by uuid references auth.users(id),
   version bigint not null default 1 check (version > 0),
   created_at timestamptz not null default clock_timestamp(),
   created_by uuid not null references auth.users(id),
@@ -58,6 +61,10 @@ create table public.sd_internal_cases (
   constraint sd_internal_cases_closure_consistent check (
     (is_closed and closed_date is not null and closed_by is not null)
     or (not is_closed and closed_date is null and closed_by is null)
+  ),
+  constraint sd_internal_cases_deletion_consistent check (
+    (is_deleted and deleted_at is not null and deleted_by is not null)
+    or (not is_deleted and deleted_at is null and deleted_by is null)
   ),
   constraint sd_internal_cases_closure_after_report check (
     closed_date is null or closed_date >= report_date
@@ -83,7 +90,7 @@ create table public.sd_internal_case_status_events (
   event_kind text not null check (
     event_kind in (
       'created', 'updated', 'closed', 'reopened', 'linked', 'unlinked',
-      'cancelled', 'linked_task_deleted'
+      'cancelled', 'linked_task_deleted', 'deleted'
     )
   ),
   status text not null,
@@ -112,46 +119,8 @@ create table public.sd_internal_case_task_links (
   constraint sd_internal_case_task_links_task_not_blank check (btrim(task_id) <> '')
 );
 
--- Linked ordinary tasks use normalized set-valued metadata. These tables are
--- intentionally task-owned and can be reused by later task slices.
-create table public.sd_task_categories (
-  workspace_id uuid not null,
-  task_id text not null,
-  category text not null,
-  ordinal integer not null check (ordinal >= 0),
-  primary key (workspace_id, task_id, category),
-  unique (workspace_id, task_id, ordinal),
-  foreign key (workspace_id, task_id)
-    references public.sd_tasks(workspace_id, id) on delete cascade,
-  constraint sd_task_categories_not_blank check (btrim(category) <> '')
-);
-
-create table public.sd_task_departments (
-  workspace_id uuid not null,
-  task_id text not null,
-  department text not null,
-  ordinal integer not null check (ordinal >= 0),
-  primary key (workspace_id, task_id, department),
-  unique (workspace_id, task_id, ordinal),
-  foreign key (workspace_id, task_id)
-    references public.sd_tasks(workspace_id, id) on delete cascade,
-  constraint sd_task_departments_not_blank check (btrim(department) <> '')
-);
-
-create table public.sd_task_owners (
-  workspace_id uuid not null,
-  task_id text not null,
-  user_id uuid not null,
-  ordinal integer not null check (ordinal >= 0),
-  primary key (workspace_id, task_id, user_id),
-  unique (workspace_id, task_id, ordinal),
-  foreign key (workspace_id, task_id)
-    references public.sd_tasks(workspace_id, id) on delete cascade,
-  foreign key (workspace_id, user_id)
-    references public.sd_memberships(workspace_id, user_id),
-  foreign key (user_id) references auth.users(id),
-  constraint sd_task_owners_user_required check (user_id is not null)
-);
+-- Shared task categories, departments, and owners are owned by
+-- normalized-core-domain.sql; internal-case commands only update them.
 
 create index sd_internal_cases_vessel_idx
   on public.sd_internal_cases(workspace_id, vessel_id, is_closed);
@@ -164,25 +133,16 @@ alter table public.sd_internal_cases enable row level security;
 alter table public.sd_internal_case_departments enable row level security;
 alter table public.sd_internal_case_status_events enable row level security;
 alter table public.sd_internal_case_task_links enable row level security;
-alter table public.sd_task_categories enable row level security;
-alter table public.sd_task_departments enable row level security;
-alter table public.sd_task_owners enable row level security;
 
 revoke all on table public.sd_internal_cases from anon, authenticated;
 revoke all on table public.sd_internal_case_departments from anon, authenticated;
 revoke all on table public.sd_internal_case_status_events from anon, authenticated;
 revoke all on table public.sd_internal_case_task_links from anon, authenticated;
-revoke all on table public.sd_task_categories from anon, authenticated;
-revoke all on table public.sd_task_departments from anon, authenticated;
-revoke all on table public.sd_task_owners from anon, authenticated;
 
 grant select on table public.sd_internal_cases to authenticated;
 grant select on table public.sd_internal_case_departments to authenticated;
 grant select on table public.sd_internal_case_status_events to authenticated;
 grant select on table public.sd_internal_case_task_links to authenticated;
-grant select on table public.sd_task_categories to authenticated;
-grant select on table public.sd_task_departments to authenticated;
-grant select on table public.sd_task_owners to authenticated;
 
 create or replace function public.sd_can_read_task(
   p_workspace_id uuid,
@@ -206,6 +166,7 @@ begin
   from public.sd_tasks t
   where t.workspace_id = p_workspace_id and t.id = p_task_id;
   if not found then return false; end if;
+  if v_task.is_deleted then return false; end if;
 
   if v_role = 'vessel' then
     if v_task.is_internal_control
@@ -275,7 +236,9 @@ begin
 
   select c.vessel_id into v_vessel_id
   from public.sd_internal_cases c
-  where c.workspace_id = p_workspace_id and c.id = p_case_id;
+  where c.workspace_id = p_workspace_id
+    and c.id = p_case_id
+    and not c.is_deleted;
   if not found then return false; end if;
 
   if v_role in ('owner', 'admin') then return true; end if;
@@ -338,13 +301,15 @@ as $$
 declare
   v_role text;
   v_vessel_id text;
+  v_is_deleted boolean;
 begin
   v_role := public.sd_membership_role(p_workspace_id);
   if v_role is null or v_role = 'vessel' then return false; end if;
-  select c.vessel_id into v_vessel_id
+  select c.vessel_id, c.is_deleted into v_vessel_id, v_is_deleted
   from public.sd_internal_cases c
   where c.workspace_id = p_workspace_id and c.id = p_case_id;
   if found then
+    if v_is_deleted then return false; end if;
     return public.sd_can_mutate_internal_vessel(
       p_workspace_id,
       v_vessel_id,
@@ -376,18 +341,6 @@ create policy sd_internal_case_task_links_read
     public.sd_can_read_internal_case(workspace_id, case_id)
     and public.sd_can_read_task(workspace_id, task_id)
   );
-
-create policy sd_task_categories_read on public.sd_task_categories
-  for select to authenticated
-  using (public.sd_can_read_task(workspace_id, task_id));
-
-create policy sd_task_departments_read on public.sd_task_departments
-  for select to authenticated
-  using (public.sd_can_read_task(workspace_id, task_id));
-
-create policy sd_task_owners_read on public.sd_task_owners
-  for select to authenticated
-  using (public.sd_can_read_task(workspace_id, task_id));
 
 create function public.sd_internal_assert_actor(
   p_workspace_id uuid,
@@ -872,7 +825,7 @@ begin
   delete from public.sd_task_owners o
   where o.workspace_id = p_workspace_id and o.task_id = p_task_id;
   insert into public.sd_task_owners(
-    workspace_id, task_id, user_id, ordinal
+    workspace_id, task_id, owner_id, ordinal
   )
   select p_workspace_id, p_task_id, owner_id, ordinal::integer - 1
   from unnest(p_owner_ids) with ordinality item(owner_id, ordinal);
@@ -2516,6 +2469,8 @@ declare
   v_case public.sd_internal_cases%rowtype;
   v_task public.sd_tasks%rowtype;
   v_task_id text;
+  v_deleted_case_version bigint;
+  v_deleted_task_version bigint;
 begin
   v_role := public.sd_internal_assert_actor(p_workspace_id, 'deleteTasks');
   perform public.sd_internal_assert_actor(p_workspace_id, 'closeTasks');
@@ -2600,18 +2555,44 @@ begin
     if not found then
       raise exception using errcode = 'P0001', message = 'link-conflict';
     end if;
-    delete from public.sd_tasks t
+    update public.sd_tasks t
+    set is_deleted = true,
+        deleted_at = clock_timestamp(),
+        deleted_by = auth.uid(),
+        version = t.version + 1,
+        updated_at = clock_timestamp(),
+        updated_by = auth.uid()
     where t.workspace_id = p_workspace_id
       and t.id = v_task_id
-      and t.version = p_base_task_version;
+      and t.version = p_base_task_version
+      and not t.is_deleted
+    returning t.version into v_deleted_task_version;
     if not found then
       raise exception using errcode = '40001', message = 'version-conflict';
     end if;
   end if;
-  delete from public.sd_internal_cases c
+  insert into public.sd_internal_case_status_events(
+    workspace_id, id, case_id, event_kind, status, actor_id
+  ) values (
+    p_workspace_id,
+    p_operation_id,
+    p_case_id,
+    'deleted',
+    v_case.status,
+    auth.uid()
+  );
+  update public.sd_internal_cases c
+  set is_deleted = true,
+      deleted_at = clock_timestamp(),
+      deleted_by = auth.uid(),
+      version = c.version + 1,
+      updated_at = clock_timestamp(),
+      updated_by = auth.uid()
   where c.workspace_id = p_workspace_id
     and c.id = p_case_id
-    and c.version = p_base_case_version;
+    and c.version = p_base_case_version
+    and not c.is_deleted
+  returning c.version into v_deleted_case_version;
   if not found then
     raise exception using errcode = '40001', message = 'version-conflict';
   end if;
@@ -2621,7 +2602,9 @@ begin
     'replayed', false,
     'deleted', true,
     'caseId', p_case_id,
-    'taskId', v_task_id
+    'caseVersion', v_deleted_case_version,
+    'taskId', v_task_id,
+    'taskVersion', v_deleted_task_version
   );
   perform public.sd_internal_record_operation(
     p_workspace_id,
@@ -2653,7 +2636,9 @@ begin
     p_case_id,
     jsonb_build_object(
       'deleted', true,
-      'taskId', v_task_id
+      'caseVersion', v_deleted_case_version,
+      'taskId', v_task_id,
+      'taskVersion', v_deleted_task_version
     )
   );
   return v_result;
@@ -2691,6 +2676,7 @@ declare
   v_linked_case_id text;
   v_case_version bigint;
   v_case_status text;
+  v_task_version bigint;
   v_reminder constant text :=
     'FLOW reminder: linked task deleted; internal-control evidence is preserved and closed.';
 begin
@@ -2831,10 +2817,18 @@ begin
     end if;
   end if;
 
-  delete from public.sd_tasks t
+  update public.sd_tasks t
+  set is_deleted = true,
+      deleted_at = clock_timestamp(),
+      deleted_by = v_actor,
+      version = t.version + 1,
+      updated_at = clock_timestamp(),
+      updated_by = v_actor
   where t.workspace_id = p_workspace_id
     and t.id = p_task_id
-    and t.version = p_base_task_version;
+    and t.version = p_base_task_version
+    and not t.is_deleted
+  returning t.version into v_task_version;
   if not found then
     raise exception using errcode = '40001', message = 'version-conflict';
   end if;
@@ -2843,6 +2837,7 @@ begin
     'status', 'committed',
     'replayed', false,
     'taskId', p_task_id,
+    'taskVersion', v_task_version,
     'deleted', true,
     'casePreserved', v_linked_case_id is not null,
     'caseId', v_linked_case_id,
@@ -2878,6 +2873,7 @@ begin
     p_task_id,
     jsonb_build_object(
       'deleted', true,
+      'taskVersion', v_task_version,
       'casePreserved', v_linked_case_id is not null,
       'caseId', v_linked_case_id,
       'caseVersion', v_case_version,
