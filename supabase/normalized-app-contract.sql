@@ -1859,4 +1859,8 @@ grant execute on function public.claim_ship_dynamics_entity_lease(
   uuid, text, text, text, uuid, integer
 ) to authenticated;
 
+-- Operation lifecycle is exposed only through actor-scoped RPCs. Browser roles
+-- do not need direct table reads or operation-row Realtime payloads.
+revoke select on table public.sd_operations from authenticated;
+
 commit;

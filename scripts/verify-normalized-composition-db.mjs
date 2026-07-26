@@ -65,6 +65,15 @@ assert.equal(functions.rows.filter(row => row.proname === 'reserve_ship_dynamics
 assert.equal(functions.rows.filter(row => row.proname === 'claim_ship_dynamics_entity_lease').length, 1);
 assert.equal(functions.rows.filter(row => row.proname === 'sd_can_read_task').length, 1);
 
+const sensitiveOperationSelect = await db.query(`
+  select has_table_privilege('authenticated','public.sd_operations','select') as allowed
+`);
+assert.equal(
+  sensitiveOperationSelect.rows[0]?.allowed,
+  false,
+  'browser roles must use the actor-scoped operation status RPC instead of direct operation reads',
+);
+
 const taskReader = await db.query(`
   select pg_get_functiondef(p.oid) as definition
   from pg_proc p
