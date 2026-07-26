@@ -598,6 +598,7 @@ assert.match(loginDirectoryEdge, /enforceRateLimit/);
 assert.doesNotMatch(loginDirectoryEdge, /grant_type=password|access_token|refresh_token/);
 assert.doesNotMatch(loginDirectoryEdge, /body\.password|password\s*:/, 'the directory Edge Function must never receive a login password');
 const manageUserEdge = await readFile(resolve(root, edgeFiles[3]), 'utf8');
+assert.match(manageUserEdge, /requireJwtUser\(/, 'manage-user must verify the caller JWT inside the function');
 assert.match(manageUserEdge, /role\s*!==\s*["']owner["']/i);
 assert.match(manageUserEdge, /role\s*!==\s*["']admin["']/i);
 assert.match(manageUserEdge, /auth\.admin\.(createUser|updateUserById|deleteUser)/);
@@ -615,7 +616,7 @@ assert.doesNotMatch(manageUserEdge, /const\s+syntheticEmail\s*=\s*`\$\{crypto\.r
 const edgeConfig = await readFile(resolve(root, 'supabase/config.toml'), 'utf8');
 assert.match(edgeConfig, /\[functions\.site-unlock\]\s+verify_jwt\s*=\s*false/);
 assert.match(edgeConfig, /\[functions\.login-directory\]\s+verify_jwt\s*=\s*false/);
-assert.match(edgeConfig, /\[functions\.manage-user\]\s+verify_jwt\s*=\s*true/);
+assert.match(edgeConfig, /\[functions\.manage-user\]\s+verify_jwt\s*=\s*false/);
 
 const contractDoc = await readFile(resolve(root, 'docs/normalized-auth-contract.md'), 'utf8');
 for (const phrase of [
