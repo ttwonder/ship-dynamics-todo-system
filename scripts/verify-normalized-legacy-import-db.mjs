@@ -44,6 +44,7 @@ await upgradeDb.exec(`
        or btrim(coalesce(v_item ->> 'description', '')) = ''
        or btrim(coalesce(v_item ->> 'status', '')) = ''
        or v_item ->> 'priority' <> all(v_priorities)
+       or v_item ->> 'sourceType' not in ('morning', 'temporary')
     then
       return '{}'::jsonb;
     end if;
