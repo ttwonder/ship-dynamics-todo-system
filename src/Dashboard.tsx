@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { InternalControlCase, ScheduleKind, TaskItem, UserAccount, Vessel, WeeklyAttentionKey } from './types';
-import { daysDiff, todayDate } from './utils';
+import { daysDiff, todayDate } from './runtimeUtils';
 import { dashboardVesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention, unlinkedInternalControlCasesForVessel, vesselAttentionClass, vesselAttentionLabel, vesselAttentionPriorityCount } from './vesselAttention';

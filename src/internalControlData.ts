@@ -1,5 +1,5 @@
 import type { AppData, InternalControlCase, StatusLog, TaskItem, UserAccount } from './types';
-import { uid } from './utils';
+import { uid } from './runtimeUtils';
 import {
   internalControlCaseToTask,
   isValidInternalControlDate,

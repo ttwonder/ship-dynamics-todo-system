@@ -99,15 +99,12 @@ export interface TaskProgressProjection {
 }
 
 export interface OperationStatus<TResult = JsonObject> {
-  workspace_id: string;
-  operation_id: string;
-  actor_id: string;
   command: string;
-  target_key: string;
+  targetKey: string;
   status: 'prepared' | 'recovery_required' | 'committed' | 'rejected';
   result: TResult | null;
-  error_code: string | null;
-  completed_at: string | null;
+  errorCode: string | null;
+  completedAt: string | null;
 }
 
 export interface LeaseGrant {
@@ -122,7 +119,41 @@ export interface LeaseGrant {
 export interface InvalidatedEntityResult {
   entityKey: string;
   data: WorkspaceProjection | RosterProjection | VesselProjection | TaskProjection
-    | TaskProgressProjection | OperationStatus | null;
+    | TaskProgressProjection | OperationStatus | JsonObject | null;
+}
+
+export interface OperationReservation<TResult = JsonObject> {
+  status: 'prepared' | 'recovery_required' | 'committed' | 'rejected';
+  replayed: boolean;
+  result?: TResult | null;
+  errorCode?: string | null;
+}
+
+export type NormalizedCommandFailureKind =
+  | 'busy'
+  | 'version'
+  | 'permission'
+  | 'recovery'
+  | 'rejected'
+  | 'invalid';
+
+export class NormalizedCommandError extends Error {
+  readonly kind: NormalizedCommandFailureKind;
+  readonly code: string;
+  readonly operationId?: string;
+
+  constructor(
+    kind: NormalizedCommandFailureKind,
+    code: string,
+    message: string,
+    operationId?: string,
+  ) {
+    super(message);
+    this.name = 'NormalizedCommandError';
+    this.kind = kind;
+    this.code = code;
+    this.operationId = operationId;
+  }
 }
 
 export interface ProjectionTypes {
@@ -249,6 +280,10 @@ export class NormalizedDurableStateStore {
     draft: TDraft;
     baseVersions: Record<string, number>;
   }): DurableDraftEnvelope<TDraft> {
+    assertSafeDraftValue(input.draft);
+    if (JSON.stringify(input.draft).length > 512_000) {
+      throw new Error('Draft content is too large.');
+    }
     const previous = this.load<TDraft>(input.workspaceId, input.actorId, input.entityKey);
     const next: DurableDraftEnvelope<TDraft> = {
       version: 1,
@@ -315,6 +350,30 @@ export class NormalizedDurableStateStore {
     this.#storage?.removeItem(storageKey(workspaceId, actorId, entityKey));
   }
 
+  list(workspaceId: string, actorId: string): DurableDraftEnvelope[] {
+    if (!this.#storage) return [];
+    const prefix = storageKey(workspaceId, actorId, '');
+    const envelopes: DurableDraftEnvelope[] = [];
+    for (let index = 0; index < this.#storage.length; index += 1) {
+      const key = this.#storage.key(index);
+      if (!key?.startsWith(prefix)) continue;
+      const raw = this.#storage.getItem(key);
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw) as DurableDraftEnvelope;
+        if (
+          parsed.version === 1
+          && parsed.workspaceId === workspaceId
+          && parsed.actorId === actorId
+          && parsed.entityKey
+        ) envelopes.push(parsed);
+      } catch {
+        // Ignore malformed local metadata; it never becomes authority.
+      }
+    }
+    return envelopes.sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+  }
+
   #write<TDraft>(envelope: DurableDraftEnvelope<TDraft>) {
     this.#storage?.setItem(
       storageKey(envelope.workspaceId, envelope.actorId, envelope.entityKey),
@@ -327,6 +386,119 @@ function errorFromUnknown(error: unknown): Error {
   if (error instanceof Error) return error;
   if (isRecord(error) && typeof error.message === 'string') return new Error(error.message);
   return new Error('The normalized data request failed.');
+}
+
+function errorCodeFromUnknown(error: unknown): string {
+  if (isRecord(error)) {
+    for (const key of ['message', 'code', 'details', 'hint']) {
+      const value = error[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+  }
+  if (error instanceof Error && error.message.trim()) return error.message.trim();
+  return 'normalized-command-failed';
+}
+
+function commandFailure(
+  errorCode: string,
+  operationId?: string,
+): NormalizedCommandError {
+  const normalized = errorCode.toLowerCase();
+  if (/version-conflict|stale-version|40001/.test(normalized)) {
+    return new NormalizedCommandError(
+      'version',
+      errorCode,
+      '資料已由其他使用者更新，請重新整理後再提交。',
+      operationId,
+    );
+  }
+  if (/lease|busy|locked|fencing/.test(normalized)) {
+    return new NormalizedCommandError(
+      'busy',
+      errorCode,
+      '此項目正由其他使用者編輯，或編輯租約已失效。',
+      operationId,
+    );
+  }
+  if (/not-authorized|permission|row-level|42501|401|403/.test(normalized)) {
+    return new NormalizedCommandError(
+      'permission',
+      errorCode,
+      '目前登入身分沒有執行此操作的權限。',
+      operationId,
+    );
+  }
+  if (/invalid|mismatch|unsupported|duplicate/.test(normalized)) {
+    return new NormalizedCommandError(
+      'invalid',
+      errorCode,
+      '提交內容未通過伺服器驗證。',
+      operationId,
+    );
+  }
+  return new NormalizedCommandError(
+    'rejected',
+    errorCode,
+    '伺服器拒絕此操作，資料未變更。',
+    operationId,
+  );
+}
+
+function parseOperationStatus<TResult = JsonObject>(
+  value: unknown,
+): OperationStatus<TResult> | null {
+  if (value === null || value === undefined) return null;
+  if (!isRecord(value)) throw new Error('The operation status response is invalid.');
+  const status = String(value.status || '');
+  if (!['prepared', 'recovery_required', 'committed', 'rejected'].includes(status)) {
+    throw new Error('The operation status response is invalid.');
+  }
+  return {
+    command: String(value.command || ''),
+    targetKey: String(value.target ?? value.targetKey ?? value.target_key ?? ''),
+    status: status as OperationStatus<TResult>['status'],
+    result: (value.result ?? null) as TResult | null,
+    errorCode: value.errorCode || value.error_code
+      ? String(value.errorCode ?? value.error_code)
+      : null,
+    completedAt: value.completedAt || value.completed_at
+      ? String(value.completedAt ?? value.completed_at)
+      : null,
+  };
+}
+
+function assertSafeDraftValue(value: unknown, depth = 0): void {
+  if (depth > 32) throw new Error('Draft content is too deeply nested.');
+  if (value === null || value === undefined) return;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return;
+  if (Array.isArray(value)) {
+    for (const item of value) assertSafeDraftValue(item, depth + 1);
+    return;
+  }
+  if (!isRecord(value)) throw new Error('Draft content must be JSON-compatible.');
+  const forbiddenKeys = new Set([
+    'revision',
+    'settings',
+    'users',
+    'vessels',
+    'tasks',
+    'meetings',
+    'internalControlCases',
+    'agendaReports',
+    'auditLogs',
+    'notifications',
+    ['password', 'Hash'].join(''),
+    'rolePermissions',
+    'authAlias',
+    'requestPayload',
+    'cloudPayload',
+  ]);
+  for (const [key, item] of Object.entries(value)) {
+    if (forbiddenKeys.has(key)) {
+      throw new Error(`Draft content may not persist ${key}.`);
+    }
+    assertSafeDraftValue(item, depth + 1);
+  }
 }
 
 function parseLease(value: unknown, fallbackKey: string): LeaseGrant {
@@ -353,6 +525,9 @@ export function realtimeEntityKeys(table: string, identity: JsonObject): string[
   const taskId = typeof identity.task_id === 'string' ? identity.task_id : '';
   const vesselId = typeof identity.vessel_id === 'string' ? identity.vessel_id : '';
   const userId = typeof identity.user_id === 'string' ? identity.user_id : '';
+  const meetingId = typeof identity.meeting_id === 'string' ? identity.meeting_id : '';
+  const caseId = typeof identity.case_id === 'string' ? identity.case_id : '';
+  const sectionKey = typeof identity.section_key === 'string' ? identity.section_key : '';
   switch (table) {
     case 'sd_vessels': return id ? [`vessel:${id}`] : [];
     case 'sd_tasks': return id ? [`task:${id}`] : [];
@@ -360,26 +535,97 @@ export function realtimeEntityKeys(table: string, identity: JsonObject): string[
       return taskId && vesselId
         ? [`task:${taskId}`, `task-progress:${taskId}:${vesselId}`]
         : taskId ? [`task:${taskId}`] : [];
-    case 'sd_task_status_events': return taskId ? [`task:${taskId}`] : [];
+    case 'sd_task_status_events':
+    case 'sd_task_categories':
+    case 'sd_task_departments':
+    case 'sd_task_owners':
+    case 'sd_task_type_scopes':
+      return taskId ? [`task:${taskId}`] : [];
+    case 'sd_task_vessel_status_events':
+      return taskId && vesselId
+        ? [`task:${taskId}`, `task-progress:${taskId}:${vesselId}`]
+        : taskId ? [`task:${taskId}`] : [];
     case 'sd_memberships': return userId ? [`user:${userId}`] : [];
+    case 'sd_profiles': return id ? [`user:${id}`] : [];
     case 'sd_vessel_assignments':
       return [...(vesselId ? [`vessel:${vesselId}`] : []), ...(userId ? [`user:${userId}`] : [])];
-    case 'sd_operations': {
-      const operationId = typeof identity.operation_id === 'string' ? identity.operation_id : '';
-      return operationId ? [`operation:${operationId}`] : [];
+    case 'sd_meetings': return id ? [`meeting:${id}`] : [];
+    case 'sd_meeting_vessels':
+    case 'sd_meeting_type_scopes':
+    case 'sd_meeting_departments':
+    case 'sd_meeting_participants':
+    case 'sd_meeting_status_events':
+    case 'sd_meeting_status_event_corrections':
+      return meetingId ? [`meeting:${meetingId}`] : [];
+    case 'sd_meeting_items':
+      return meetingId ? [`meeting:${meetingId}`] : [];
+    case 'sd_internal_cases': return id ? [`internal-case:${id}`] : [];
+    case 'sd_internal_case_departments':
+    case 'sd_internal_case_status_events':
+      return caseId ? [`internal-case:${caseId}`] : [];
+    case 'sd_internal_case_task_links':
+      return [
+        ...(caseId ? [`internal-case:${caseId}`] : []),
+        ...(taskId ? [`task:${taskId}`] : []),
+      ];
+    case 'sd_settings': return sectionKey ? [`settings:${sectionKey}`] : [];
+    case 'sd_role_permissions': return ['settings:role-permissions'];
+    case 'sd_departments': return ['settings:departments'];
+    case 'sd_category_options': {
+      const categoryScope = typeof identity.category_scope === 'string'
+        ? identity.category_scope
+        : '';
+      return categoryScope === 'meeting'
+        ? ['settings:meeting-task-categories']
+        : categoryScope === 'ordinary' ? ['settings:task-categories'] : [];
+    }
+    case 'sd_priority_options': return ['settings:priorities'];
+    case 'sd_equipment_options': return ['settings:equipment-options'];
+    case 'sd_notifications': return id ? [`notification:${id}`] : [];
+    case 'sd_saved_reports': return id ? [`report:${id}`] : [];
+    case 'sd_saved_report_vessels': {
+      const reportId = typeof identity.report_id === 'string' ? identity.report_id : '';
+      return reportId ? [`report:${reportId}`] : [];
     }
     default: return [];
   }
 }
 
 const INVALIDATION_TABLES = [
+  'sd_profiles',
   'sd_memberships',
   'sd_vessels',
   'sd_vessel_assignments',
   'sd_tasks',
   'sd_task_vessels',
   'sd_task_status_events',
-  'sd_operations',
+  'sd_task_vessel_status_events',
+  'sd_task_categories',
+  'sd_task_departments',
+  'sd_task_owners',
+  'sd_task_type_scopes',
+  'sd_meetings',
+  'sd_meeting_vessels',
+  'sd_meeting_type_scopes',
+  'sd_meeting_departments',
+  'sd_meeting_participants',
+  'sd_meeting_items',
+  'sd_meeting_item_categories',
+  'sd_meeting_status_events',
+  'sd_meeting_status_event_corrections',
+  'sd_internal_cases',
+  'sd_internal_case_departments',
+  'sd_internal_case_status_events',
+  'sd_internal_case_task_links',
+  'sd_settings',
+  'sd_role_permissions',
+  'sd_departments',
+  'sd_category_options',
+  'sd_priority_options',
+  'sd_equipment_options',
+  'sd_notifications',
+  'sd_saved_reports',
+  'sd_saved_report_vessels',
 ] as const;
 
 export class NormalizedRepository {
@@ -395,6 +641,22 @@ export class NormalizedRepository {
     this.#client = client;
     this.#scope = scope;
     this.#durableState = options.durableState || new NormalizedDurableStateStore();
+  }
+
+  async resolveWorkspaceByLegacyKey(legacyKey: string): Promise<WorkspaceProjection> {
+    const token = this.#scope.capture();
+    const response = await this.#client
+      .from<WorkspaceProjection>('sd_workspaces')
+      .select(PROJECTIONS.workspace.selection)
+      .eq('legacy_key', assertIdentity(legacyKey, 'Workspace key', 128))
+      .maybeSingle();
+    this.#scope.assertCurrent(token);
+    if (response.error) throw errorFromUnknown(response.error);
+    if (!response.data?.id || !response.data.is_active) {
+      throw new Error('The authenticated workspace is unavailable.');
+    }
+    this.#scope.setWorkspace(response.data.id);
+    return response.data;
   }
 
   async fetchProjection<TName extends ProjectionName>(
@@ -478,10 +740,40 @@ export class NormalizedRepository {
     return response.data === true;
   }
 
+  async reserveOperation<TResult = JsonObject>(input: {
+    operationId: string;
+    command: string;
+    targetKey: string;
+    request: JsonObject;
+  }): Promise<OperationReservation<TResult>> {
+    const token = this.#scope.capture();
+    const response = await this.#client.rpc<OperationReservation<TResult>>(
+      'reserve_ship_dynamics_operation',
+      {
+        p_workspace_id: token.workspaceId,
+        p_operation_id: assertIdentity(input.operationId, 'Operation identity'),
+        p_command: assertIdentity(input.command, 'Command', 128),
+        p_target_key: assertIdentity(input.targetKey, 'Target key'),
+        p_request: input.request,
+      },
+    );
+    this.#scope.assertCurrent(token);
+    if (response.error) {
+      throw commandFailure(errorCodeFromUnknown(response.error), input.operationId);
+    }
+    if (!isRecord(response.data)) {
+      throw new Error('The operation reservation response is invalid.');
+    }
+    return response.data;
+  }
+
   async executeCommand<TResult extends JsonObject = JsonObject>(input: {
     rpc: string;
+    command: string;
     operationId: string;
     entityKey: string;
+    targetKey?: string;
+    request: JsonObject;
     args: JsonObject;
   }): Promise<TResult> {
     if (!/^command_ship_dynamics_[a-z0-9_]+$/.test(input.rpc)) {
@@ -490,22 +782,81 @@ export class NormalizedRepository {
     const token = this.#scope.capture();
     const operationId = assertIdentity(input.operationId, 'Operation identity');
     const entityKey = assertIdentity(input.entityKey, 'Entity key');
-    const request = this.#client.rpc<TResult>(input.rpc, {
-      ...input.args,
-      p_workspace_id: token.workspaceId,
-      p_operation_id: operationId,
-    }).then(response => response);
+    const command = assertIdentity(input.command, 'Command', 128);
+    if (input.rpc !== `command_ship_dynamics_${command}`) {
+      throw new Error('The command and RPC identity do not match.');
+    }
+    const targetKey = assertIdentity(input.targetKey || entityKey, 'Target key');
+    if (!isRecord(input.request)) {
+      throw new Error('The command reservation request is invalid.');
+    }
+
+    const reservationResponse = await this.#client.rpc<OperationReservation<TResult>>(
+      'reserve_ship_dynamics_operation',
+      {
+        p_workspace_id: token.workspaceId,
+        p_operation_id: operationId,
+        p_command: command,
+        p_target_key: targetKey,
+        p_request: input.request,
+      },
+    );
+    this.#scope.assertCurrent(token);
+    if (reservationResponse.error) {
+      throw commandFailure(errorCodeFromUnknown(reservationResponse.error), operationId);
+    }
+    const reservation = reservationResponse.data;
+    if (!isRecord(reservation)) {
+      throw new Error('The operation reservation response is invalid.');
+    }
+    if (reservation.status === 'committed') {
+      return (reservation.result || {}) as TResult;
+    }
+    if (reservation.status === 'rejected') {
+      throw commandFailure(String(reservation.errorCode || 'operation-rejected'), operationId);
+    }
+    if (reservation.status !== 'prepared' && reservation.status !== 'recovery_required') {
+      throw new Error('The operation reservation response is invalid.');
+    }
+
     this.#durableState.markPendingOperation({
       workspaceId: token.workspaceId,
       actorId: token.actorId,
       entityKey,
       operationId,
-      command: input.rpc.replace(/^command_ship_dynamics_/, ''),
-      targetKey: entityKey,
+      command,
+      targetKey,
     });
-    const response = await request;
+
+    const response = await this.#client.rpc<TResult>(input.rpc, {
+      ...input.args,
+      p_workspace_id: token.workspaceId,
+      p_operation_id: operationId,
+    });
     this.#scope.assertCurrent(token);
-    if (response.error) throw errorFromUnknown(response.error);
+    if (response.error) {
+      let recovered: OperationStatus<TResult> | null = null;
+      try {
+        recovered = await this.getOperationStatus<TResult>(operationId);
+      } catch {
+        // The durable reservation remains available for a later recovery pass.
+      }
+      this.#scope.assertCurrent(token);
+      if (recovered?.status === 'committed' && recovered.result) {
+        this.#durableState.clearPendingOperation(token.workspaceId, token.actorId, entityKey);
+        return recovered.result;
+      }
+      if (recovered?.status === 'rejected') {
+        this.#durableState.clearPendingOperation(token.workspaceId, token.actorId, entityKey);
+        throw commandFailure(recovered.errorCode || 'operation-rejected', operationId);
+      }
+      throw new NormalizedCommandError(
+        'recovery',
+        errorCodeFromUnknown(response.error),
+        '操作結果尚未能確認；系統已保留操作編號，請連線後查詢並重播同一操作。',
+        operationId,
+      );
+    }
     this.#durableState.clearPendingOperation(token.workspaceId, token.actorId, entityKey);
     return response.data;
   }
@@ -514,15 +865,16 @@ export class NormalizedRepository {
     operationId: string,
   ): Promise<OperationStatus<TResult> | null> {
     const token = this.#scope.capture();
-    const response = await this.#client
-      .from<OperationStatus<TResult>>('sd_operations')
-      .select('workspace_id,operation_id,actor_id,command,target_key,status,result,error_code,completed_at')
-      .eq('workspace_id', token.workspaceId)
-      .eq('operation_id', assertIdentity(operationId, 'Operation identity'))
-      .maybeSingle();
+    const response = await this.#client.rpc<unknown>(
+      'get_ship_dynamics_operation_status',
+      {
+        p_workspace_id: token.workspaceId,
+        p_operation_id: assertIdentity(operationId, 'Operation identity'),
+      },
+    );
     this.#scope.assertCurrent(token);
     if (response.error) throw errorFromUnknown(response.error);
-    return response.data;
+    return parseOperationStatus<TResult>(response.data);
   }
 
   async refetchInvalidatedEntities(entityKeys: string[]): Promise<InvalidatedEntityResult[]> {
@@ -554,6 +906,20 @@ export class NormalizedRepository {
   loadLocalState<TDraft = JsonObject>(entityKey: string) {
     const token = this.#scope.capture();
     return this.#durableState.load<TDraft>(
+      token.workspaceId,
+      token.actorId,
+      assertIdentity(entityKey, 'Entity key'),
+    );
+  }
+
+  listLocalStates() {
+    const token = this.#scope.capture();
+    return this.#durableState.list(token.workspaceId, token.actorId);
+  }
+
+  removeDraft(entityKey: string) {
+    const token = this.#scope.capture();
+    this.#durableState.removeDraft(
       token.workspaceId,
       token.actorId,
       assertIdentity(entityKey, 'Entity key'),

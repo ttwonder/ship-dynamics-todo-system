@@ -75,7 +75,15 @@ begin
     if v_operation.actor_id is distinct from v_actor
        or v_operation.command is distinct from p_command
        or v_operation.target_key is distinct from p_target_key
-       or v_operation.request_payload is distinct from p_request then
+       or (
+         case
+           when p_command = 'update_site_gate'
+             then v_operation.request_payload - 'credentialHash'
+           when p_command like 'manage_user:%'
+             then v_operation.request_payload - 'credentialFingerprint'
+           else v_operation.request_payload
+         end
+       ) is distinct from p_request then
       raise exception using errcode = 'P0001', message = 'operation-mismatch';
     end if;
     return jsonb_build_object(

@@ -15,7 +15,7 @@ type TaskSort='priority'|'due-asc'|'due-desc'|'updated-desc'|'vessel';
 const priorityRank:Record<TaskPriority,number>={'急':0,'高':1,'中':2,'低':3};
 const compareOptionalDate=(left:string,right:string,direction:1|-1)=>!left&&!right?0:!left?1:!right?-1:left.localeCompare(right)*direction;
 
-type Props={data:AppData;user:UserAccount;vessels:Vessel[];onOpenTask:(task:TaskItem)=>void;onOpenInternalControl:()=>void;onOpenVessel:(vesselId:string)=>void;markAllRead:()=>void;canComplete:boolean;canDelete:boolean;canPrint:boolean;onPrint:()=>void;onBatchComplete:(ids:string[])=>boolean;onBatchDelete:(ids:string[])=>boolean};
+type Props={data:AppData;user:UserAccount;vessels:Vessel[];onOpenTask:(task:TaskItem)=>void;onOpenInternalControl:()=>void;onOpenVessel:(vesselId:string)=>void;markAllRead:()=>void|Promise<void>;canComplete:boolean;canDelete:boolean;canPrint:boolean;onPrint:()=>void;onBatchComplete:(ids:string[])=>boolean|Promise<boolean>;onBatchDelete:(ids:string[])=>boolean|Promise<boolean>};
 
 export default function WorkCenter({data,user,vessels,onOpenTask,onOpenInternalControl,onOpenVessel,markAllRead,canComplete,canDelete,canPrint,onPrint,onBatchComplete,onBatchDelete}:Props){
   const [taskQuery,setTaskQuery]=useState('');
@@ -68,8 +68,8 @@ export default function WorkCenter({data,user,vessels,onOpenTask,onOpenInternalC
   const allSelected=actionableTasks.length>0&&actionableTasks.every(task=>selectedSet.has(task.id));
   const toggleAll=()=>setSelectedIds(allSelected?[]:actionableTasks.map(task=>task.id));
   const toggleOne=(id:string)=>setSelectedIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);
-  const completeSelected=()=>{if(onBatchComplete(selectedTasks.map(task=>task.id)))setSelectedIds([]);};
-  const deleteSelected=()=>{if(onBatchDelete(selectedTasks.map(task=>task.id)))setSelectedIds([]);};
+  const completeSelected=async()=>{if(await onBatchComplete(selectedTasks.map(task=>task.id)))setSelectedIds([]);};
+  const deleteSelected=async()=>{if(await onBatchDelete(selectedTasks.map(task=>task.id)))setSelectedIds([]);};
   const visibleTaskIds=new Set(allTasks.map(task=>task.id));
   const unreadByTask=unreadTaskUpdateCounts(data.notifications.filter(notice=>Boolean(notice.taskId&&visibleTaskIds.has(notice.taskId))),user.id);
   const unreadTaskCount=Object.keys(unreadByTask).length;

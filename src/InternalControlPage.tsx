@@ -28,9 +28,9 @@ type Props = {
   canDelete: boolean;
   canExport: boolean;
   authorizationEpoch: string;
-  onCreate: (items: InternalControlCase[], expectedRevision: number, projections: Record<string, InternalControlTaskProjection>) => boolean;
-  onUpdate: (item: InternalControlCase, expectedUpdatedAt: string, expectedRevision: number, projection?: InternalControlTaskProjection) => boolean;
-  onDelete: (item: InternalControlCase, expectedRevision: number) => boolean;
+  onCreate: (items: InternalControlCase[], expectedRevision: number, projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean>;
+  onUpdate: (item: InternalControlCase, expectedUpdatedAt: string, expectedRevision: number, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>;
+  onDelete: (item: InternalControlCase, expectedRevision: number) => boolean | Promise<boolean>;
   onOpenTask: (taskId: string) => void;
 };
 
@@ -105,8 +105,8 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
 
     <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單' : subpage === 'closed' ? '結案清單' : '統計報告'}</h1><p>{summary}｜共 {filtered.length} 件｜匯出人 {user.name}｜{new Date().toLocaleString('zh-TW')}</p>{subpage === 'stats' ? <InternalControlStatsView stats={stats}/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{filtered.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? vesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
 
-    {visibleBatch && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={(items, projections) => { if (onCreate(items, data.revision, projections)) { setBatchOpen(false); return true; } return false; }}/>}
-    {visibleEditing && editing && <CaseEditModal item={editing} data={data} vessels={vessels} canEdit={canEdit} canClose={canClose} canDelete={canDelete} close={() => setEditing(null)} save={(candidate, projection) => { if (onUpdate(candidate, editing.updatedAt, data.revision, projection)) { setEditing(null); return true; } return false; }} onDelete={candidate => { if (onDelete(candidate, data.revision)) { setEditing(null); return true; } return false; }}/>}
+    {visibleBatch && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={async (items, projections) => { if (await onCreate(items, data.revision, projections)) { setBatchOpen(false); return true; } return false; }}/>}
+    {visibleEditing && editing && <CaseEditModal item={editing} data={data} vessels={vessels} canEdit={canEdit} canClose={canClose} canDelete={canDelete} close={() => setEditing(null)} save={async (candidate, projection) => { if (await onUpdate(candidate, editing.updatedAt, data.revision, projection)) { setEditing(null); return true; } return false; }} onDelete={async candidate => { if (await onDelete(candidate, data.revision)) { setEditing(null); return true; } return false; }}/>}
   </section>;
 }
 

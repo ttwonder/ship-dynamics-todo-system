@@ -4,7 +4,7 @@ import type { InternalControlTaskProjection } from './internalControlData';
 import { validateInternalControlCase } from './internalControlWorkflow';
 import { isEligibleTaskOwner } from './permissions';
 import MeetingPeoplePicker from './MeetingPeoplePicker';
-import { uid, todayDate } from './utils';
+import { uid, todayDate } from './runtimeUtils';
 import { vesselDisplayName } from './vesselDisplay';
 
 const REPORT_SOURCES: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
@@ -58,7 +58,7 @@ function TaskProjectionFields({ data, vesselId, projection, onChange }: { data: 
   </section>;
 }
 
-export function BatchCreateModal({ data, user, vessels, close, save }: { data: AppData; user: UserAccount; vessels: Vessel[]; close: () => void; save: (items: InternalControlCase[], projections: Record<string, InternalControlTaskProjection>) => boolean }) {
+export function BatchCreateModal({ data, user, vessels, close, save }: { data: AppData; user: UserAccount; vessels: Vessel[]; close: () => void; save: (items: InternalControlCase[], projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean> }) {
   const categories = unique([...data.settings.taskCategories, '設備故障']);
   const [vesselId, setVesselId] = useState(vessels[0]?.id || '');
   const [reportDate, setReportDate] = useState(todayDate());
@@ -66,7 +66,7 @@ export function BatchCreateModal({ data, user, vessels, close, save }: { data: A
   const [rows, setRows] = useState<BatchRow[]>([newRow(categories[0] || '設備故障')]);
   const update = (key: string, patch: Partial<BatchRow>) => setRows(previous => previous.map(row => row.key === key ? { ...row, ...patch } : row));
   const projectionFor = (row: BatchRow): InternalControlTaskProjection => ({ categories: row.taskCategories, equipmentSubcategory: row.taskEquipmentSubcategory || row.equipmentSubcategory || undefined, expectedDate: row.taskExpectedDate, ownerUserIds: row.taskOwnerUserIds });
-  const submit = () => {
+  const submit = async () => {
     const at = new Date().toISOString();
     const candidates: InternalControlCase[] = rows.map(row => ({
       id: uid('internal'), vesselId, reportDate, reportSource, description: row.description.trim(), priority: row.priority, category: row.category,
@@ -82,7 +82,7 @@ export function BatchCreateModal({ data, user, vessels, close, save }: { data: A
     });
     if (errors.length) return alert(errors.join('\n'));
     const projections = Object.fromEntries(candidates.map((item, index) => [item.id, projectionFor(rows[index])]).filter((_, index) => rows[index].syncToTask));
-    save(candidates, projections);
+    if (await save(candidates, projections)) close();
   };
   const changeVessel = (nextVesselId: string) => {
     setVesselId(nextVesselId);
@@ -103,7 +103,7 @@ export function BatchCreateModal({ data, user, vessels, close, save }: { data: A
   </div></div>;
 }
 
-export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelete, close, save, onDelete }: { item: InternalControlCase; data: AppData; vessels: Vessel[]; canEdit: boolean; canClose: boolean; canDelete: boolean; close: () => void; save: (item: InternalControlCase, projection?: InternalControlTaskProjection) => boolean; onDelete: (item: InternalControlCase) => boolean }) {
+export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelete, close, save, onDelete }: { item: InternalControlCase; data: AppData; vessels: Vessel[]; canEdit: boolean; canClose: boolean; canDelete: boolean; close: () => void; save: (item: InternalControlCase, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>; onDelete: (item: InternalControlCase) => boolean | Promise<boolean> }) {
   const linkedTask: TaskItem | undefined = item.linkedTaskId ? data.tasks.find(task => task.id === item.linkedTaskId) : undefined;
   const [draft, setDraft] = useState(item);
   const [projection, setProjection] = useState<InternalControlTaskProjection>({
@@ -116,12 +116,12 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
   const categories = unique([...data.settings.taskCategories, draft.category, '設備故障']);
   const change = (patch: Partial<InternalControlCase>) => setDraft(previous => ({ ...previous, ...patch }));
   const addLog = () => { const text = logText.trim(); if (!text) return; setDraft(previous => ({ ...previous, status: text, statusLogs: [{ id: uid('client-log'), at: '', by: '', text }, ...previous.statusLogs] })); setLogText(''); };
-  const submit = () => {
+  const submit = async () => {
     const errors = validateInternalControlCase(draft);
     if (draft.syncToTask && !projection.categories.length) errors.push('要事分類');
     if (draft.syncToTask && projection.categories.includes('設備故障') && !projection.equipmentSubcategory) errors.push('要事設備故障細項');
     if (errors.length) return alert(`請完成：${errors.join('、')}`);
-    save(draft, draft.syncToTask ? projection : undefined);
+    if (await save(draft, draft.syncToTask ? projection : undefined)) close();
   };
   const vessel = vessels.find(entry => entry.id === draft.vesselId);
   return <div className="modal-backdrop"><div className="modal ic-edit-modal" role="dialog" aria-modal="true">
@@ -137,6 +137,6 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
       <label className="ic-close-toggle"><input type="checkbox" disabled={!canClose} checked={draft.isClosed} onChange={event => change({ isClosed: event.target.checked, closedDate: event.target.checked ? (draft.closedDate || todayDate()) : undefined })}/>點擊結案</label>
     </fieldset>
     <section className="status-history"><h3>狀態歷程</h3>{draft.statusLogs.length ? draft.statusLogs.map(log => <article key={log.id}><b>{log.text}</b><small>{log.at ? new Date(log.at).toLocaleString('zh-TW') : '尚未保存'}｜{log.by || '目前使用者'}</small></article>) : <p className="muted">尚無狀態紀錄</p>}</section>
-    <div className="modal-actions ic-edit-actions">{canDelete && <button className="btn danger" onClick={() => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`)) onDelete(item); }}>刪除案件</button>}<span/><button className="btn ghost" onClick={close}>取消</button>{canEdit && <button className="btn primary" onClick={submit}>保存更新</button>}</div>
+    <div className="modal-actions ic-edit-actions">{canDelete && <button className="btn danger" onClick={async () => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`) && await onDelete(item)) close(); }}>刪除案件</button>}<span/><button className="btn ghost" onClick={close}>取消</button>{canEdit && <button className="btn primary" onClick={submit}>保存更新</button>}</div>
   </div></div>;
 }

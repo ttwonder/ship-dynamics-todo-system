@@ -1,5 +1,5 @@
 import type { TaskItem } from './types';
-import { uid } from './utils';
+import { uid } from './runtimeUtils';
 import { taskVesselIds } from './taskVesselScope';
 import { usesPerVesselProgress } from './taskVesselProgress';
 

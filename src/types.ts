@@ -77,6 +77,7 @@ export interface Vessel {
   fleetTags: string[];
   assignedUserIds: string[];
   delegateManagers: VesselDelegateAssignment[];
+  vesselAccountUserIds?: string[];
   isActive: boolean;
   position: VesselPosition;
   cargo: VesselCargo;

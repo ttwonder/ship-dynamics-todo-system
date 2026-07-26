@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AppData, TaskItem, TaskPriority, UserAccount, Vessel } from './types';
-import { daysDiff, nowIso, todayDate, uid, yesterdayDate } from './utils';
+import { daysDiff, nowIso, todayDate, uid, yesterdayDate } from './runtimeUtils';
 import { taskCategoryLabel } from './taskCategories';
 import { vesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds, taskVesselLabel } from './taskVesselScope';

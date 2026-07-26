@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { AppData, TaskItem, Vessel } from './types';
-import { daysDiff } from './utils';
+import { daysDiff } from './runtimeUtils';
 import { vesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention } from './vesselAttention';

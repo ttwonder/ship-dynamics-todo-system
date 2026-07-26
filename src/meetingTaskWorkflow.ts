@@ -1,5 +1,5 @@
 import type { MeetingTaskItem, MeetingVesselScopeMode, NotificationKind, TaskItem, TaskPriority, TemporaryMeeting } from './types';
-import { uid } from './utils';
+import { uid } from './runtimeUtils';
 import { reconcileTaskVesselScope, taskIsClosedForScope } from './taskVesselProgress';
 import { normalizeMeetingTaskCategoryList } from './taskCategories';
 import { canonicalizeMeetingTaskItemIds } from './meetingTaskItemIds';

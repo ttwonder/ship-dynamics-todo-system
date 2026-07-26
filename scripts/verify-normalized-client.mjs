@@ -93,6 +93,32 @@ class MockSupabase {
       return { data: [], error: null };
     };
     this.rpcHandler = (name) => {
+      if (name === 'reserve_ship_dynamics_operation') {
+        return {
+          data: {
+            operationId: 'operation-a',
+            command: 'update_task',
+            targetKey: 'task:task-a',
+            status: 'prepared',
+            result: null,
+            errorCode: null,
+          },
+          error: null,
+        };
+      }
+      if (name === 'get_ship_dynamics_operation_status') {
+        return {
+          data: {
+            command: 'update_task',
+            targetKey: 'task:task-a',
+            status: 'committed',
+            result: { entityId: 'task-a', version: 2, replayed: true },
+            errorCode: null,
+            completedAt: '2026-07-26T00:00:00.000Z',
+          },
+          error: null,
+        };
+      }
       if (name === 'command_ship_dynamics_update_task') {
         return {
           data: { status: 'committed', entityId: 'task-a', version: 2, replayed: true },
@@ -340,6 +366,17 @@ try {
     draft: { description: 'local unsaved draft' },
     baseVersions: { task: 1 },
   });
+  assert.throws(
+    () => durable.saveDraft({
+      workspaceId: 'workspace-a',
+      actorId: 'actor-a',
+      entityKey: 'task:unsafe',
+      draft: { tasks: [], users: [], settings: {} },
+      baseVersions: {},
+    }),
+    /may not persist/i,
+    'durable local state must reject whole AppData/server projections',
+  );
 
   const originalRpc = repositoryClient.rpc.bind(repositoryClient);
   repositoryClient.rpc = (name, args) => {
@@ -354,8 +391,15 @@ try {
   };
   const commandResult = await repository.executeCommand({
     rpc: 'command_ship_dynamics_update_task',
+    command: 'update_task',
     operationId: 'operation-a',
     entityKey: 'task:task-a',
+    targetKey: 'task:task-a',
+    request: {
+      taskId: 'task-a',
+      baseVersion: 1,
+      description: 'updated',
+    },
     args: {
       p_task_id: 'task-a',
       p_base_version: 1,
@@ -366,7 +410,25 @@ try {
     },
   });
   assert.equal(commandResult.replayed, true, 'an idempotent replay returns its original operation result');
-  assert.equal(commandMarkerSawDispatch, true, 'pending operation state is written only after RPC dispatch starts');
+  assert.equal(commandMarkerSawDispatch, false, 'pending operation state must be durable after reservation and before command dispatch');
+  const reservationIndex = repositoryClient.rpcCalls.findIndex(call => call.name === 'reserve_ship_dynamics_operation');
+  const commandIndex = repositoryClient.rpcCalls.findIndex(call => call.name === 'command_ship_dynamics_update_task');
+  assert.ok(reservationIndex >= 0 && commandIndex > reservationIndex, 'reservation must precede command dispatch');
+  assert.deepEqual(
+    repositoryClient.rpcCalls[reservationIndex].args,
+    {
+      p_workspace_id: 'workspace-a',
+      p_operation_id: 'operation-a',
+      p_command: 'update_task',
+      p_target_key: 'task:task-a',
+      p_request: {
+        taskId: 'task-a',
+        baseVersion: 1,
+        description: 'updated',
+      },
+    },
+    'reservation must use the exact command, target, and request payload',
+  );
   assert.equal(repositoryClient.rpcCalls.at(-1).args.p_workspace_id, 'workspace-a');
   assert.equal(repositoryClient.rpcCalls.at(-1).args.p_operation_id, 'operation-a');
   assert.equal(
@@ -386,10 +448,16 @@ try {
   const recovered = await repository.getOperationStatus('operation-a');
   assert.equal(recovered?.status, 'committed');
   assert.equal(recovered?.result.replayed, true);
-  assertWorkspacePinned(repositoryClient.queryCalls.at(-1));
   assert.deepEqual(
-    repositoryClient.queryCalls.at(-1).filters.find(([column]) => column === 'operation_id'),
-    ['operation_id', 'operation-a'],
+    repositoryClient.rpcCalls.at(-1),
+    {
+      name: 'get_ship_dynamics_operation_status',
+      args: {
+        p_workspace_id: 'workspace-a',
+        p_operation_id: 'operation-a',
+      },
+    },
+    'operation recovery must use the server status RPC',
   );
   repository.resolvePendingOperation('task:task-a', recovered);
   assert.equal(
@@ -425,6 +493,15 @@ try {
     realtimeEntityKeys('sd_task_vessels', { task_id: 'task-a', vessel_id: 'vessel-a' }),
     ['task:task-a', 'task-progress:task-a:vessel-a'],
   );
+  assert.deepEqual(
+    realtimeEntityKeys('sd_profiles', { id: 'actor-a' }),
+    ['user:actor-a'],
+    'profile invalidation must refetch the membership/profile projection',
+  );
+  const subscribedTables = new Set(repositoryClient.channelCallbacks.map(({ filter }) => filter.table));
+  assert.equal(subscribedTables.has('sd_profiles'), true);
+  assert.equal(subscribedTables.has('sd_audit_events'), false);
+  assert.equal(subscribedTables.has('sd_operations'), false);
   assert.equal(
     durable.load('workspace-a', 'actor-a', 'task:task-a')?.draft.description,
     'local unsaved draft',

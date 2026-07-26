@@ -1121,6 +1121,25 @@ const authCreateRequest = {
   role: 'operator',
   credentialFingerprint: 'fingerprint-create',
 };
+const authCreateReservationRequest = {
+  action: 'create',
+  targetUserId: null,
+  displayName: 'Managed User',
+  usernameLabel: 'managed-user',
+  department: 'Operations',
+  role: 'operator',
+};
+assert.equal(
+  (await reserve(
+    ids.admin,
+    authCreateOperation,
+    'manage_user:create',
+    'user:new',
+    authCreateReservationRequest,
+  )).status,
+  'prepared',
+  'Auth Admin mutations require a durable sanitized reservation first',
+);
 const authBegun = await asUser(ids.admin, () => scalar(
   `select public.begin_ship_dynamics_user_operation(
     $1::uuid,$2::uuid,'create',null,$3::jsonb
@@ -1151,6 +1170,27 @@ await asUser(ids.admin, () => scalar(
     JSON.stringify({ userId: managedUser, role: 'operator' }),
   ],
 ));
+assert.equal(
+  (await reserve(
+    ids.admin,
+    authCreateOperation,
+    'manage_user:create',
+    'user:new',
+    authCreateReservationRequest,
+  )).status,
+  'committed',
+  'a committed sensitive operation replays against its exact sanitized request',
+);
+await assert.rejects(
+  () => reserve(
+    ids.admin,
+    authCreateOperation,
+    'manage_user:create',
+    'user:new',
+    { ...authCreateReservationRequest, displayName: 'Different User' },
+  ),
+  /operation-mismatch/i,
+);
 
 const authResetOperation = operationId();
 await asUser(ids.admin, () => scalar(

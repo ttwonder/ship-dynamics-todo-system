@@ -3,7 +3,7 @@ import { canAccessAllVessels, hasPermission } from './permissions';
 import { meetingTaskLinkIsValidForMutation } from './meetingTaskWorkflow';
 import { taskVesselIds } from './taskVesselScope';
 import { usesPerVesselProgress } from './taskVesselProgress';
-import { nowIso, uid } from './utils';
+import { nowIso, uid } from './runtimeUtils';
 import { hasActiveVesselDelegation } from './vesselDelegation';
 
 export const FLOW_INTERNAL_CONTROL_REMINDER = '請務必在FLOW系統中申報異常並處理！避免遺漏處理！';
