@@ -214,7 +214,6 @@ export async function requireJwtUser(
   const accessToken = bearerToken(request);
   const sessionClient = createClient(supabaseUrl, browserCredential, {
     auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { authorization: `Bearer ${accessToken}` } },
   });
   const { data, error } = await sessionClient.auth.getUser(accessToken);
   if (error || !data.user) throw new HttpError(401, 'invalid-session');

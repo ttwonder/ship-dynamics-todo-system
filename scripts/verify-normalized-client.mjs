@@ -587,6 +587,15 @@ assert.match(sharedEdge, /constantTime|timingSafe/i);
 assert.match(sharedEdge, /authorization/i);
 assert.match(sharedEdge, /consume_ship_dynamics_rate_limit/);
 assert.match(sharedEdge, /enforceRateLimit/);
+const requireJwtUserSource = sharedEdge.match(
+  /export async function requireJwtUser[\s\S]*?\n}\r?\n\r?\nexport interface GateClaims/,
+)?.[0] || '';
+assert.match(requireJwtUserSource, /auth\.getUser\(accessToken\)/);
+assert.doesNotMatch(
+  requireJwtUserSource,
+  /global:\s*\{\s*headers:/,
+  'JWT validation must not duplicate the Authorization header already supplied to getUser',
+);
 const siteUnlockEdge = await readFile(resolve(root, edgeFiles[1]), 'utf8');
 assert.match(siteUnlockEdge, /verify_ship_dynamics_site_password/);
 assert.match(siteUnlockEdge, /enforceRateLimit/);
