@@ -261,7 +261,7 @@ const fixture = {
       categories: ['Safety'],
       equipmentSubcategory: '',
       description: 'Ordinary fixture task',
-      status: 'Open',
+      status: '',
       expectedDate: '2026-08-01',
       reportDate: '2026-07-25',
       departments: ['Operations'],
@@ -593,6 +593,11 @@ assert.equal(applied.rows[0].result.quarantineCount, 3);
 
 const stableIds = await db.query(`select id from public.sd_tasks where workspace_id='${ids.workspace}' order by id`);
 assert.deepEqual(stableIds.rows.map(row => row.id), ['task-internal', 'task-meeting', 'task-ordinary']);
+const blankHistoricalStatus = await db.query(
+  `select status from public.sd_tasks where workspace_id=$1 and id='task-ordinary'`,
+  [ids.workspace],
+);
+assert.deepEqual(blankHistoricalStatus.rows, [{ status: '' }], 'blank legacy task status must be preserved without invention');
 const quarantine = await db.query(`
   select entity_id, reason, legacy_revision, payload->>'description' as description
   from public.sd_migration_quarantine

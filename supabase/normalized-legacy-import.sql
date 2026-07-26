@@ -1347,7 +1347,6 @@ begin
     if jsonb_typeof(v_item) <> 'object'
        or btrim(coalesce(v_item ->> 'id', '')) = ''
        or btrim(coalesce(v_item ->> 'description', '')) = ''
-       or btrim(coalesce(v_item ->> 'status', '')) = ''
        or v_item ->> 'priority' <> all(v_priorities)
        or v_item ->> 'sourceType' not in ('morning', 'temporary')
        or coalesce(v_item ->> 'attentionDimension', 'task')
