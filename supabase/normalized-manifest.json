@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "migrations": [
+    "supabase/normalized-schema.sql",
+    "supabase/normalized-core-domain.sql",
+    "supabase/normalized-meeting.sql",
+    "supabase/normalized-internal-control.sql",
+    "supabase/normalized-security-dispatch.sql",
+    "supabase/normalized-auth-orchestration.sql",
+    "supabase/normalized-app-contract.sql",
+    "supabase/normalized-realtime.sql",
+    "supabase/normalized-legacy-import.sql"
+  ]
+}

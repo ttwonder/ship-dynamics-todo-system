@@ -12,6 +12,7 @@ await db.exec(`
   create role anon noinherit;
   create role authenticated noinherit;
   create role service_role noinherit bypassrls;
+  create publication supabase_realtime;
   create table auth.users(id uuid primary key, email text unique);
   create function auth.uid() returns uuid language sql stable as $$
     select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
@@ -32,6 +33,7 @@ for (const relative of [
   'supabase/normalized-security-dispatch.sql',
   'supabase/normalized-auth-orchestration.sql',
   'supabase/normalized-app-contract.sql',
+  'supabase/normalized-realtime.sql',
 ]) {
   const sql = await readFile(resolve(root, relative), 'utf8');
   await db.exec(sql);
