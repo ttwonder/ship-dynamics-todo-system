@@ -11,6 +11,7 @@
     "supabase/normalized-realtime.sql",
     "supabase/normalized-legacy-cutover.sql",
     "supabase/normalized-legacy-import.sql",
-    "supabase/normalized-legacy-import-blank-status.sql"
+    "supabase/normalized-legacy-import-blank-status.sql",
+    "supabase/normalized-legacy-import-orphan-notifications.sql"
   ]
 }

@@ -18,6 +18,7 @@ const manifest = [
   'supabase/normalized-legacy-cutover.sql',
   'supabase/normalized-legacy-import.sql',
   'supabase/normalized-legacy-import-blank-status.sql',
+  'supabase/normalized-legacy-import-orphan-notifications.sql',
 ];
 
 const blankStatusPatchSql = await readFile(
@@ -65,6 +66,64 @@ assert.doesNotMatch(
   'deployed legacy function must stop rejecting blank historical task status',
 );
 await upgradeDb.close();
+
+const orphanNotificationPatchSql = await readFile(
+  resolve(root, 'supabase/normalized-legacy-import-orphan-notifications.sql'),
+  'utf8',
+);
+const notificationUpgradeDb = new PGlite();
+await notificationUpgradeDb.exec(`
+  set check_function_bodies = off;
+  create function public.import_ship_dynamics_legacy(
+    p_workspace_id uuid,
+    p_workspace_key text,
+    p_workspace_name text,
+    p_expected_legacy_revision bigint,
+    p_legacy_payload jsonb,
+    p_identity_mapping jsonb,
+    p_expected_counts jsonb,
+    p_expected_quarantine_count integer
+  ) returns jsonb language plpgsql as $$
+  declare
+    v_item jsonb;
+    v_auth_id uuid;
+    v_quarantine_count integer := 0;
+  begin
+  if v_quarantine_count <> p_expected_quarantine_count then
+    raise exception using errcode = 'P0001', message = 'quarantine-count-mismatch';
+  end if;
+
+  -- Internal-control cases and exact reciprocal one-to-one links.
+    if v_auth_id is null
+       or not exists (
+         select 1 from public.sd_vessels v
+         where v.workspace_id = p_workspace_id
+           and v.id = v_item ->> 'vesselId'
+       )
+       or not exists (
+         select 1 from public.sd_tasks t
+         where t.workspace_id = p_workspace_id
+           and t.id = v_item ->> 'taskId'
+       ) then
+      raise exception using errcode = 'P0001', message = 'unknown-notification-relation';
+    end if;
+    return '{}'::jsonb;
+  end;
+  $$;
+`);
+await notificationUpgradeDb.exec(orphanNotificationPatchSql);
+await notificationUpgradeDb.exec(orphanNotificationPatchSql);
+const notificationUpgradeDefinition = await notificationUpgradeDb.query(`
+  select pg_get_functiondef(
+    'public.import_ship_dynamics_legacy(uuid,text,text,bigint,jsonb,jsonb,jsonb,integer)'::regprocedure
+  ) as definition
+`);
+assert.match(
+  notificationUpgradeDefinition.rows[0].definition,
+  /normalized-migration:orphan-notification-quarantine/,
+  'deployed legacy function must quarantine orphan notifications and replay idempotently',
+);
+await notificationUpgradeDb.close();
 
 const db = new PGlite();
 await db.exec(`
@@ -488,18 +547,32 @@ const fixture = {
     entityId: 'task-ordinary',
     detail: 'Fixture detail',
   }],
-  notifications: [{
-    id: 'notice-1',
-    userId: 'legacy-operator',
-    vesselId: 'vessel-a',
-    taskId: 'task-ordinary',
-    kind: 'task_updated',
-    title: 'Fixture notification',
-    message: 'Fixture notification body',
-    actorId: 'legacy-admin',
-    createdAt: '2026-07-26T00:00:00.000Z',
-    readAt: '2026-07-26T00:30:00.000Z',
-  }],
+  notifications: [
+    {
+      id: 'notice-1',
+      userId: 'legacy-operator',
+      vesselId: 'vessel-a',
+      taskId: 'task-ordinary',
+      kind: 'task_updated',
+      title: 'Fixture notification',
+      message: 'Fixture notification body',
+      actorId: 'legacy-admin',
+      createdAt: '2026-07-26T00:00:00.000Z',
+      readAt: '2026-07-26T00:30:00.000Z',
+    },
+    {
+      id: 'notice-orphan',
+      userId: 'legacy-operator',
+      vesselId: 'vessel-a',
+      taskId: 'deleted-task',
+      kind: 'task_updated',
+      title: 'Orphan fixture notification',
+      message: 'Must be owner-only migration quarantine',
+      actorId: 'legacy-admin',
+      createdAt: '2026-07-26T00:00:00.000Z',
+      readAt: '',
+    },
+  ],
 };
 
 const mappings = [
@@ -515,7 +588,7 @@ const callImport = async ({
   payload = fixture,
   identityMappings = mappings,
   counts = expectedCounts,
-  quarantineCount = 3,
+  quarantineCount = expectedCounts.quarantine,
 } = {}) => db.query(
   `select public.import_ship_dynamics_legacy(
     $1::uuid,$2,$3,$4::bigint,$5::jsonb,$6::jsonb,$7::jsonb,$8::integer
@@ -592,7 +665,7 @@ await asRole('service_role', null, async () => {
   await db.exec('begin');
   try {
     const trial = await callImport();
-    assert.equal(trial.rows[0].result.quarantineCount, 3);
+    assert.equal(trial.rows[0].result.quarantineCount, expectedCounts.quarantine);
     await db.exec('reset role');
     const inside = await db.query(`select count(*)::integer as count from public.sd_tasks where workspace_id='${ids.workspace}'`);
     assert.equal(inside.rows[0].count, expectedCounts.importedTasks);
@@ -607,15 +680,15 @@ const rolledBack = await db.query(`select count(*)::integer as count from public
 assert.equal(rolledBack.rows[0].count, 0, 'the complete import participates in the caller transaction');
 
 const badCases = [
-  ['missing-user-mapping', fixture, mappings.slice(0, -1), expectedCounts, 3, /mapping/i],
-  ['duplicate-user-mapping', fixture, [...mappings.slice(0, -1), { ...mappings[0] }], expectedCounts, 3, /mapping/i],
-  ['owner-cardinality', { ...fixture, users: fixture.users.map(user => ({ ...user, role: user.id === 'legacy-admin' ? 'owner' : user.role })) }, mappings, expectedCounts, 3, /owner/i],
-  ['duplicate-task-id', { ...fixture, tasks: [...fixture.tasks, { ...fixture.tasks[0] }] }, mappings, expectedCounts, 3, /duplicate/i],
-  ['unknown-vessel-relation', { ...fixture, tasks: fixture.tasks.map((task, index) => index ? task : { ...task, vesselId: 'missing-vessel', vesselIds: ['missing-vessel'] }) }, mappings, expectedCounts, 3, /vessel|relation/i],
-  ['unknown-enum', { ...fixture, tasks: fixture.tasks.map((task, index) => index ? task : { ...task, priority: 'UNKNOWN' }) }, mappings, expectedCounts, 3, /enum|domain|priority/i],
-  ['count-drift', fixture, mappings, { ...expectedCounts, importedTasks: expectedCounts.importedTasks + 1 }, 3, /count/i],
-  ['quarantine-drift', fixture, mappings, expectedCounts, 2, /quarantine/i],
-  ['ambiguous-internal-link', { ...fixture, internalControlCases: [...fixture.internalControlCases, { ...fixture.internalControlCases[0], id: 'case-2' }] }, mappings, expectedCounts, 3, /internal|link|duplicate/i],
+  ['missing-user-mapping', fixture, mappings.slice(0, -1), expectedCounts, expectedCounts.quarantine, /mapping/i],
+  ['duplicate-user-mapping', fixture, [...mappings.slice(0, -1), { ...mappings[0] }], expectedCounts, expectedCounts.quarantine, /mapping/i],
+  ['owner-cardinality', { ...fixture, users: fixture.users.map(user => ({ ...user, role: user.id === 'legacy-admin' ? 'owner' : user.role })) }, mappings, expectedCounts, expectedCounts.quarantine, /owner/i],
+  ['duplicate-task-id', { ...fixture, tasks: [...fixture.tasks, { ...fixture.tasks[0] }] }, mappings, expectedCounts, expectedCounts.quarantine, /duplicate/i],
+  ['unknown-vessel-relation', { ...fixture, tasks: fixture.tasks.map((task, index) => index ? task : { ...task, vesselId: 'missing-vessel', vesselIds: ['missing-vessel'] }) }, mappings, expectedCounts, expectedCounts.quarantine, /vessel|relation/i],
+  ['unknown-enum', { ...fixture, tasks: fixture.tasks.map((task, index) => index ? task : { ...task, priority: 'UNKNOWN' }) }, mappings, expectedCounts, expectedCounts.quarantine, /enum|domain|priority/i],
+  ['count-drift', fixture, mappings, { ...expectedCounts, importedTasks: expectedCounts.importedTasks + 1 }, expectedCounts.quarantine, /count/i],
+  ['quarantine-drift', fixture, mappings, expectedCounts, expectedCounts.quarantine - 1, /quarantine/i],
+  ['ambiguous-internal-link', { ...fixture, internalControlCases: [...fixture.internalControlCases, { ...fixture.internalControlCases[0], id: 'case-2' }] }, mappings, expectedCounts, expectedCounts.quarantine, /internal|link|duplicate/i],
 ];
 
 let badIndex = 0;
@@ -636,7 +709,7 @@ const applied = await asRole('service_role', ids.owner, () => callImport());
 assert.equal(applied.rows[0].result.status, 'committed');
 assert.equal(applied.rows[0].result.legacyRevision, 42);
 assert.deepEqual(applied.rows[0].result.counts, expectedCounts);
-assert.equal(applied.rows[0].result.quarantineCount, 3);
+assert.equal(applied.rows[0].result.quarantineCount, expectedCounts.quarantine);
 
 const stableIds = await db.query(`select id from public.sd_tasks where workspace_id='${ids.workspace}' order by id`);
 assert.deepEqual(stableIds.rows.map(row => row.id), ['task-internal', 'task-meeting', 'task-ordinary']);
@@ -646,14 +719,19 @@ const blankHistoricalStatus = await db.query(
 );
 assert.deepEqual(blankHistoricalStatus.rows, [{ status: '' }], 'blank legacy task status must be preserved without invention');
 const quarantine = await db.query(`
-  select entity_id, reason, legacy_revision, payload->>'description' as description
+  select entity_type, entity_id, reason, legacy_revision, payload->>'description' as description
   from public.sd_migration_quarantine
   where workspace_id='${ids.workspace}'
   order by entity_id
 `);
-assert.deepEqual(quarantine.rows.map(row => row.entity_id), ['task-quarantine-1', 'task-quarantine-2', 'task-quarantine-3']);
-assert.ok(quarantine.rows.every(row => row.reason === 'meeting_parent_item_missing' && Number(row.legacy_revision) === 42));
-assert.ok(quarantine.rows.every(row => row.description.startsWith('Parentless meeting semantic')));
+assert.deepEqual(quarantine.rows.map(row => row.entity_id), ['notice-orphan', 'task-quarantine-1', 'task-quarantine-2', 'task-quarantine-3']);
+const taskQuarantine = quarantine.rows.filter(row => row.entity_type === 'task');
+assert.ok(taskQuarantine.every(row => row.reason === 'meeting_parent_item_missing' && Number(row.legacy_revision) === 42));
+assert.ok(taskQuarantine.every(row => row.description.startsWith('Parentless meeting semantic')));
+assert.deepEqual(
+  quarantine.rows.filter(row => row.entity_type === 'notification').map(row => row.reason),
+  ['notification_task_missing'],
+);
 
 const actualCountQueries = {
   users: 'sd_memberships',
@@ -699,7 +777,7 @@ const gate = await db.query(`select password_hash from public.sd_public_site_gat
 assert.equal(gate.rows[0].password_hash, 'a'.repeat(64), 'legacy SHA remains a transition hash');
 
 for (const [role, actorId, expected] of [
-  ['authenticated', ids.owner, 3],
+  ['authenticated', ids.owner, expectedCounts.quarantine],
   ['authenticated', ids.operator, 0],
   ['authenticated', ids.vessel, 0],
 ]) {
@@ -723,7 +801,7 @@ for (const [name, actorId, options] of [
   ['payload-mismatch', ids.owner, { payload: { ...fixture, updatedAt: '2026-07-26T01:00:01.000Z' } }],
   ['mapping-mismatch', ids.owner, { identityMappings: mappings.map((item, index) => index ? item : { ...item, authAlias: 'changed@migration.invalid' }) }],
   ['count-mismatch', ids.owner, { counts: { ...expectedCounts, importedTasks: expectedCounts.importedTasks + 1 } }],
-  ['quarantine-mismatch', ids.owner, { quarantineCount: 2 }],
+  ['quarantine-mismatch', ids.owner, { quarantineCount: expectedCounts.quarantine - 1 }],
 ]) {
   await assert.rejects(
     () => asRole('service_role', actorId, () => callImport(options)),

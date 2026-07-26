@@ -101,9 +101,17 @@ export function computeLegacyImportCounts(payload) {
   const vessels = objectArray(payload?.vessels);
   const sourceTasks = objectArray(payload?.tasks);
   const tasks = sourceTasks.filter(task => !isMeetingParentlessQuarantineTask(task));
+  const importedTaskIds = new Set(tasks.map(task => text(task.id)).filter(Boolean));
   const meetings = objectArray(payload?.meetings);
   const internalCases = objectArray(payload?.internalControlCases);
   const notifications = objectArray(payload?.notifications);
+  const userIds = new Set(users.map(user => text(user.id)).filter(Boolean));
+  const vesselIds = new Set(vessels.map(vessel => text(vessel.id)).filter(Boolean));
+  const importedNotifications = notifications.filter(notification => (
+    userIds.has(text(notification.userId))
+    && vesselIds.has(text(notification.vesselId))
+    && importedTaskIds.has(text(notification.taskId))
+  ));
   const auditLogs = objectArray(payload?.auditLogs);
   const reports = legacySavedReports(payload) || [];
   const settings = object(payload?.settings) || {};
@@ -126,7 +134,7 @@ export function computeLegacyImportCounts(payload) {
     vesselAccountAssignments: users.filter(user => user.role === 'vessel').length,
     sourceTasks: sourceTasks.length,
     importedTasks: tasks.length,
-    quarantine: sourceTasks.length - tasks.length,
+    quarantine: (sourceTasks.length - tasks.length) + (notifications.length - importedNotifications.length),
     taskVessels: tasks.reduce((sum, task) => sum + legacyTaskVesselIds(task).length, 0),
     taskCategories: tasks.reduce((sum, task) => sum + unique(textArray(task.categories).length ? textArray(task.categories) : [text(task.category)].filter(Boolean)).length, 0),
     taskDepartments: tasks.reduce((sum, task) => sum + unique(textArray(task.departments)).length, 0),
@@ -147,7 +155,7 @@ export function computeLegacyImportCounts(payload) {
     internalCaseDepartments: internalCases.reduce((sum, item) => sum + unique(textArray(item.departments)).length, 0),
     internalCaseStatusEvents: internalCases.reduce((sum, item) => sum + objectArray(item.statusLogs).length, 0),
     internalLinks: internalCases.filter(item => text(item.linkedTaskId)).length,
-    notifications: notifications.length,
+    notifications: importedNotifications.length,
     legacyAuditEvents: auditLogs.length,
     migrationAuditEvents: 1,
     savedReports: reports.length,

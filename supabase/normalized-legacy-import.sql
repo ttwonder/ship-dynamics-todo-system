@@ -1683,10 +1683,6 @@ begin
     end loop;
   end loop;
 
-  if v_quarantine_count <> p_expected_quarantine_count then
-    raise exception using errcode = 'P0001', message = 'quarantine-count-mismatch';
-  end if;
-
   -- Internal-control cases and exact reciprocal one-to-one links.
   if exists (
     select linked_task_id
@@ -1898,7 +1894,28 @@ begin
          where t.workspace_id = p_workspace_id
            and t.id = v_item ->> 'taskId'
        ) then
-      raise exception using errcode = 'P0001', message = 'unknown-notification-relation';
+      -- normalized-migration:orphan-notification-quarantine
+      v_quarantine_count := v_quarantine_count + 1;
+      insert into public.sd_migration_quarantine(
+        workspace_id, id, reason, legacy_revision,
+        entity_type, entity_id, payload, version, created_at
+      ) values (
+        p_workspace_id,
+        'legacy-notification:' || (v_item ->> 'id') || ':r' ||
+          p_expected_legacy_revision::text,
+        case
+          when v_auth_id is null then 'notification_recipient_missing'
+          when not exists (
+            select 1 from public.sd_vessels v
+            where v.workspace_id = p_workspace_id
+              and v.id = v_item ->> 'vesselId'
+          ) then 'notification_vessel_missing'
+          else 'notification_task_missing'
+        end,
+        p_expected_legacy_revision,
+        'notification', v_item ->> 'id', v_item, 1, v_imported_at
+      );
+      continue;
     end if;
     insert into public.sd_notifications(
       workspace_id, id, recipient_id, vessel_id, task_id,
