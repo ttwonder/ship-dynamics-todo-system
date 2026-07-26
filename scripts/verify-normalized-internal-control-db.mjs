@@ -229,12 +229,13 @@ async function updateInternalCase({
   taskId = null,
   baseTaskVersion = null,
   taskLease = null,
+  task = taskId ? taskPayload(taskId) : null,
 }) {
   return asUser(userId, async () => {
     const result = await db.query(
       `select public.command_ship_dynamics_update_internal_case(
         $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint,$8::jsonb,
-        $9::bigint,$10,$11::uuid,$12::bigint
+        $9::bigint,$10,$11::uuid,$12::bigint,$13::jsonb
       ) as result`,
       [
         operationId,
@@ -249,6 +250,7 @@ async function updateInternalCase({
         taskId ? `task:${taskId}` : null,
         taskId ? ownerSession : null,
         taskLease?.fencingToken ?? null,
+        task ? JSON.stringify(task) : null,
       ],
     );
     return result.rows[0].result;
@@ -457,9 +459,29 @@ const linkedUpdate = await updateInternalCase({
   taskId: linkedTaskId,
   baseTaskVersion: 1,
   taskLease: linkedTaskLease,
+  task: {
+    id: linkedTaskId,
+    expectedDate: '2026-09-05',
+    categories: ['Fleet', 'Safety'],
+    ownerUserIds: [ids.owner, ids.operator],
+  },
 });
 assert.equal(Number(linkedUpdate.caseVersion), 2);
 assert.equal(Number(linkedUpdate.taskVersion), 2);
+const linkedTaskProjection = await db.query(`
+  select t.expected_date::text as expected_date,
+    array(select c.category from public.sd_task_categories c
+      where c.workspace_id=t.workspace_id and c.task_id=t.id order by c.ordinal) as categories,
+    array(select o.owner_id::text from public.sd_task_owners o
+      where o.workspace_id=t.workspace_id and o.task_id=t.id order by o.ordinal) as owners
+  from public.sd_tasks t
+  where t.workspace_id='${ids.workspace}' and t.id='${linkedTaskId}'
+`);
+assert.deepEqual(linkedTaskProjection.rows[0], {
+  expected_date: '2026-09-05',
+  categories: ['Fleet', 'Safety'],
+  owners: [ids.owner, ids.operator],
+}, 'the cross-aggregate update must atomically preserve all editable linked-task projection fields');
 
 const beforeRollback = await db.query(`
   select c.description, c.status, c.version,

@@ -1271,7 +1271,8 @@ create function public.command_ship_dynamics_update_internal_case(
   p_base_task_version bigint default null,
   p_task_lease_key text default null,
   p_task_owner_session uuid default null,
-  p_task_fencing_token bigint default null
+  p_task_fencing_token bigint default null,
+  p_task jsonb default null
 )
 returns jsonb
 language plpgsql
@@ -1288,6 +1289,8 @@ declare
   v_task public.sd_tasks%rowtype;
   v_task_id text;
   v_departments text[];
+  v_categories text[];
+  v_owner_ids uuid[];
   v_is_closed boolean;
   v_closed_date date;
   v_case_version bigint;
@@ -1312,7 +1315,8 @@ begin
     'baseTaskVersion', p_base_task_version,
     'taskLeaseKey', p_task_lease_key,
     'taskOwnerSession', p_task_owner_session,
-    'taskFencingToken', p_task_fencing_token
+    'taskFencingToken', p_task_fencing_token,
+    'task', p_task
   );
   v_replay := public.sd_internal_operation_replay(
     p_workspace_id,
@@ -1364,8 +1368,31 @@ begin
   select l.task_id into v_task_id
   from public.sd_internal_case_task_links l
   where l.workspace_id = p_workspace_id and l.case_id = p_case_id;
-  if v_task_id is not null and cardinality(v_departments) = 0 then
-    raise exception using errcode = 'P0001', message = 'invalid-case';
+  if v_task_id is null then
+    if p_task is not null then
+      raise exception using errcode = 'P0001', message = 'link-conflict';
+    end if;
+  else
+    if cardinality(v_departments) = 0 or p_task is null then
+      raise exception using errcode = 'P0001', message = 'invalid-task-metadata';
+    end if;
+    if not public.sd_can_edit_task(p_workspace_id, v_task_id) then
+      raise exception using errcode = 'P0001', message = 'not-authorized';
+    end if;
+    perform public.sd_internal_validate_task_payload(
+      p_workspace_id,
+      p_case ->> 'vesselId',
+      p_task
+    );
+    if p_task ->> 'id' is distinct from v_task_id then
+      raise exception using errcode = 'P0001', message = 'link-conflict';
+    end if;
+    v_categories := public.sd_internal_json_text_array(
+      p_task,
+      'categories',
+      true
+    );
+    v_owner_ids := public.sd_internal_json_uuid_array(p_task, 'ownerUserIds');
   end if;
 
   perform public.sd_internal_assert_ordered_leases(
@@ -1479,7 +1506,14 @@ begin
         is_closed = v_is_closed,
         closed_date = v_closed_date,
         closed_by = case when v_is_closed then v_actor else null end,
+        expected_date = public.sd_internal_iso_date(p_task ->> 'expectedDate', false),
         report_date = public.sd_internal_iso_date(p_case ->> 'reportDate', true),
+        category = v_categories[1],
+        equipment_subcategory = case
+          when '設備故障' = any(v_categories)
+          then nullif(btrim(coalesce(p_case ->> 'equipmentSubcategory', '')), '')
+          else null
+        end,
         version = t.version + 1,
         updated_at = clock_timestamp(),
         updated_by = v_actor
@@ -1506,10 +1540,20 @@ begin
     if not found then
       raise exception using errcode = 'P0001', message = 'link-conflict';
     end if;
+    perform public.sd_internal_replace_task_categories(
+      p_workspace_id,
+      v_task_id,
+      v_categories
+    );
     perform public.sd_internal_replace_task_departments(
       p_workspace_id,
       v_task_id,
       v_departments
+    );
+    perform public.sd_internal_replace_task_owners(
+      p_workspace_id,
+      v_task_id,
+      v_owner_ids
     );
     insert into public.sd_task_status_events(
       workspace_id, id, task_id, status, actor_id
@@ -2922,7 +2966,7 @@ revoke all on function public.command_ship_dynamics_create_internal_case(
   uuid, uuid, text, text, uuid, bigint, jsonb, jsonb, text, uuid, bigint
 ) from public;
 revoke all on function public.command_ship_dynamics_update_internal_case(
-  uuid, uuid, text, bigint, text, uuid, bigint, jsonb, bigint, text, uuid, bigint
+  uuid, uuid, text, bigint, text, uuid, bigint, jsonb, bigint, text, uuid, bigint, jsonb
 ) from public;
 revoke all on function public.command_ship_dynamics_link_internal_case_task(
   uuid, uuid, text, bigint, text, uuid, bigint, text, bigint, text, uuid, bigint
@@ -2952,7 +2996,7 @@ grant execute on function public.command_ship_dynamics_create_internal_case(
   uuid, uuid, text, text, uuid, bigint, jsonb, jsonb, text, uuid, bigint
 ) to authenticated;
 grant execute on function public.command_ship_dynamics_update_internal_case(
-  uuid, uuid, text, bigint, text, uuid, bigint, jsonb, bigint, text, uuid, bigint
+  uuid, uuid, text, bigint, text, uuid, bigint, jsonb, bigint, text, uuid, bigint, jsonb
 ) to authenticated;
 grant execute on function public.command_ship_dynamics_link_internal_case_task(
   uuid, uuid, text, bigint, text, uuid, bigint, text, bigint, text, uuid, bigint

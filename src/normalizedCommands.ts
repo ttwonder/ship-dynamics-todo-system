@@ -482,6 +482,39 @@ export class NormalizedCommandClient {
     });
   }
 
+  saveOrdinaryTask(input: {
+    taskId: string;
+    baseVersion: number;
+    lease: LeaseProof;
+    content: JsonObject;
+    transition?: 'close' | 'reopen' | null;
+    operationId?: string;
+  }) {
+    const request = {
+      taskId: input.taskId,
+      baseVersion: input.baseVersion,
+      ...leaseRequest(input.lease),
+      content: input.content,
+      transition: input.transition || null,
+    };
+    return this.#repository.executeCommand({
+      rpc: 'command_ship_dynamics_save_ordinary_task',
+      command: 'save_ordinary_task',
+      operationId: input.operationId || uuid(),
+      entityKey: `task:${input.taskId}`,
+      request,
+      args: {
+        p_task_id: input.taskId,
+        p_base_version: input.baseVersion,
+        p_lease_key: input.lease.leaseKey,
+        p_owner_session: input.lease.ownerSession,
+        p_fencing_token: input.lease.fencingToken,
+        p_content: input.content,
+        p_transition: input.transition || null,
+      },
+    });
+  }
+
   transitionOrdinaryTask(input: {
     taskId: string;
     baseVersion: number;
@@ -729,6 +762,7 @@ export class NormalizedCommandClient {
     casePayload: JsonObject;
     baseTaskVersion?: number | null;
     taskLease?: LeaseProof | null;
+    taskPayload?: JsonObject | null;
     operationId?: string;
   }) {
     const request = {
@@ -742,6 +776,7 @@ export class NormalizedCommandClient {
       taskLeaseKey: input.taskLease?.leaseKey || null,
       taskOwnerSession: input.taskLease?.ownerSession || null,
       taskFencingToken: input.taskLease?.fencingToken || null,
+      task: input.taskPayload || null,
     };
     return this.#repository.executeCommand({
       rpc: 'command_ship_dynamics_update_internal_case',
@@ -760,6 +795,7 @@ export class NormalizedCommandClient {
         p_task_lease_key: input.taskLease?.leaseKey || null,
         p_task_owner_session: input.taskLease?.ownerSession || null,
         p_task_fencing_token: input.taskLease?.fencingToken || null,
+        p_task: input.taskPayload || null,
       },
     });
   }

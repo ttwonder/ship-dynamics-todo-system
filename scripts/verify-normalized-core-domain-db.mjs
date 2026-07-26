@@ -286,7 +286,6 @@ assert.equal(
 
 const taskLease = await claim(ids.operator, 'task', 'ordinary-1', ids.operatorSession);
 assert.equal(taskLease.ok, true);
-const updateOperation = operationId();
 const updatedContent = {
   ...baseTaskContent,
   description: 'Relations replaced atomically',
@@ -298,13 +297,49 @@ const updatedContent = {
   ownerUserIds: [ids.operator, ids.admin],
   typeScopes: ['bulk', 'tanker'],
 };
+const beforeDeniedAtomicSave = (await db.query(`
+  select description, status, is_closed as "isClosed", version,
+    (select count(*)::integer from public.sd_task_status_events e
+      where e.workspace_id=t.workspace_id and e.task_id=t.id) as "eventCount"
+  from public.sd_tasks t
+  where t.workspace_id='${ids.workspace}' and t.id='ordinary-1'
+`)).rows[0];
+await db.query(`
+  insert into public.sd_role_permissions(workspace_id,role,permission_key,enabled)
+  values ($1::uuid,'operator','closeTasks',false)
+  on conflict (workspace_id,role,permission_key) do update set enabled=false
+`, [ids.workspace]);
+await assert.rejects(
+  () => asUser(ids.operator, () => db.query(
+    `select public.command_ship_dynamics_save_ordinary_task(
+      $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint,$8::jsonb,$9
+    )`,
+    [
+      operationId(), ids.workspace, 'ordinary-1', 1, 'task:ordinary-1',
+      ids.operatorSession, taskLease.fencingToken,
+      JSON.stringify({ ...updatedContent, description: 'Partial save forbidden' }), 'close',
+    ],
+  )),
+  /not-authorized/i,
+  'a denied lifecycle transition must not pre-commit the content edit',
+);
+assert.deepEqual((await db.query(`
+  select description, status, is_closed as "isClosed", version,
+    (select count(*)::integer from public.sd_task_status_events e
+      where e.workspace_id=t.workspace_id and e.task_id=t.id) as "eventCount"
+  from public.sd_tasks t
+  where t.workspace_id='${ids.workspace}' and t.id='ordinary-1'
+`)).rows[0], beforeDeniedAtomicSave, 'failed atomic save must leave task content, lifecycle, and history untouched');
+await db.query(`delete from public.sd_role_permissions
+  where workspace_id=$1::uuid and role='operator' and permission_key='closeTasks'`, [ids.workspace]);
+const updateOperation = operationId();
 const updated = await asUser(ids.operator, async () => scalar(
-  `select public.command_ship_dynamics_update_ordinary_task(
-    $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint,$8::jsonb
+  `select public.command_ship_dynamics_save_ordinary_task(
+    $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint,$8::jsonb,$9
   )`,
   [
     updateOperation, ids.workspace, 'ordinary-1', 1, 'task:ordinary-1',
-    ids.operatorSession, taskLease.fencingToken, JSON.stringify(updatedContent),
+    ids.operatorSession, taskLease.fencingToken, JSON.stringify(updatedContent), null,
   ],
 ));
 assert.equal(Number(updated.version), 2);
@@ -370,18 +405,51 @@ await assert.rejects(
   /lease-fencing-mismatch/i,
 );
 
+const closeOperation = operationId();
+const closedContent = { ...updatedContent, description: 'Content and closure committed atomically' };
 const closed = await asUser(ids.operator, async () => scalar(
-  `select public.command_ship_dynamics_close_ordinary_task(
-    $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint
+  `select public.command_ship_dynamics_save_ordinary_task(
+    $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint,$8::jsonb,$9
   )`,
-  [operationId(), ids.workspace, 'ordinary-1', 2, 'task:ordinary-1', ids.operatorSession, taskLease.fencingToken],
+  [
+    closeOperation, ids.workspace, 'ordinary-1', 2, 'task:ordinary-1',
+    ids.operatorSession, taskLease.fencingToken, JSON.stringify(closedContent), 'close',
+  ],
 ));
 assert.equal(Number(closed.version), 3);
-const reopened = await asUser(ids.operator, async () => scalar(
-  `select public.command_ship_dynamics_reopen_ordinary_task(
-    $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint
+assert.equal(closed.isClosed, true);
+assert.deepEqual((await db.query(`
+  select description, status, is_closed as "isClosed", closed_by as "closedBy", version
+  from public.sd_tasks where workspace_id='${ids.workspace}' and id='ordinary-1'
+`)).rows[0], {
+  description: 'Content and closure committed atomically',
+  status: '已結案',
+  isClosed: true,
+  closedBy: ids.operator,
+  version: 3,
+});
+const closedReplay = await asUser(ids.operator, async () => scalar(
+  `select public.command_ship_dynamics_save_ordinary_task(
+    $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint,$8::jsonb,$9
   )`,
-  [operationId(), ids.workspace, 'ordinary-1', 3, 'task:ordinary-1', ids.operatorSession, taskLease.fencingToken],
+  [
+    closeOperation, ids.workspace, 'ordinary-1', 2, 'task:ordinary-1',
+    ids.operatorSession, taskLease.fencingToken, JSON.stringify(closedContent), 'close',
+  ],
+));
+assert.equal(closedReplay.replayed, true);
+assert.equal(Number(closedReplay.version), 3);
+assert.equal(Number(await scalar(`select count(*) from public.sd_audit_events
+  where workspace_id=$1::uuid and command='save_ordinary_task' and entity_id='ordinary-1'`, [ids.workspace])), 2,
+  'content-only and content-plus-close saves each emit one authoritative audit event');
+const reopened = await asUser(ids.operator, async () => scalar(
+  `select public.command_ship_dynamics_save_ordinary_task(
+    $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint,$8::jsonb,$9
+  )`,
+  [
+    operationId(), ids.workspace, 'ordinary-1', 3, 'task:ordinary-1',
+    ids.operatorSession, taskLease.fencingToken, JSON.stringify(closedContent), 'reopen',
+  ],
 ));
 assert.equal(Number(reopened.version), 4);
 assert.deepEqual(
@@ -417,12 +485,12 @@ const progressResult = await asUser(ids.operator, async () => scalar(
     $1::uuid,$2::uuid,$3,$4,$5::bigint,$6::bigint,$7,$8::uuid,$9::bigint,$10,$11::boolean
   )`,
   [
-    operationId(), ids.workspace, 'ordinary-1', 'v1', 4, 1,
+    operationId(), ids.workspace, 'ordinary-1', 'v1', 4, 3,
     'task-progress:ordinary-1:v1', ids.operatorSession2, progressLease.fencingToken,
     '本船完成', true,
   ],
 ));
-assert.equal(Number(progressResult.progressVersion), 2);
+assert.equal(Number(progressResult.progressVersion), 4);
 assert.equal(
   Number(await scalar(`select count(*) from public.sd_task_vessel_status_events where workspace_id=$1::uuid and task_id=$2 and vessel_id=$3`, [ids.workspace, 'ordinary-1', 'v1'])),
   1,

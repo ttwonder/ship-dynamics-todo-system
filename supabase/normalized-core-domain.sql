@@ -1582,6 +1582,234 @@ begin
 end;
 $$;
 
+create or replace function public.command_ship_dynamics_save_ordinary_task(
+  p_operation_id uuid,
+  p_workspace_id uuid,
+  p_task_id text,
+  p_base_version bigint,
+  p_lease_key text,
+  p_owner_session uuid,
+  p_fencing_token bigint,
+  p_content jsonb,
+  p_transition text default null
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_actor uuid := auth.uid();
+  v_role text;
+  v_task public.sd_tasks%rowtype;
+  v_old_vessels text[];
+  v_new_vessels text[];
+  v_request jsonb;
+  v_replay jsonb;
+  v_result jsonb;
+  v_version bigint;
+  v_content_status text;
+  v_final_status text;
+  v_status_before_close text;
+  v_status_changed boolean;
+  v_relation_content jsonb;
+begin
+  v_role := public.sd_membership_role(p_workspace_id);
+  if v_actor is null or v_role is null or v_role = 'vessel' then
+    raise exception using errcode = 'P0001', message = 'not-authorized';
+  end if;
+  if p_transition is not null and p_transition not in ('close', 'reopen') then
+    raise exception using errcode = 'P0001', message = 'unsupported-transition';
+  end if;
+  perform public.sd_core_validate_task_content(p_content);
+  if p_lease_key <> 'task:' || p_task_id then
+    raise exception using errcode = 'P0001', message = 'lease-key-mismatch';
+  end if;
+  v_request := jsonb_build_object(
+    'taskId', p_task_id, 'baseVersion', p_base_version,
+    'leaseKey', p_lease_key, 'ownerSession', p_owner_session,
+    'fencingToken', p_fencing_token, 'content', p_content,
+    'transition', p_transition
+  );
+  v_replay := public.sd_core_operation_replay(
+    p_operation_id, p_workspace_id, v_actor,
+    'save_ordinary_task', 'task:' || p_task_id, v_request
+  );
+  if v_replay is not null then return v_replay; end if;
+
+  if not public.sd_has_permission(p_workspace_id, 'editBusinessContent')
+     or not public.sd_can_edit_task(p_workspace_id, p_task_id) then
+    raise exception using errcode = 'P0001', message = 'not-authorized';
+  end if;
+  if p_transition is not null
+     and not public.sd_has_permission(p_workspace_id, 'closeTasks') then
+    raise exception using errcode = 'P0001', message = 'not-authorized';
+  end if;
+  perform public.sd_assert_live_lease(
+    p_workspace_id, p_lease_key, p_owner_session, p_fencing_token
+  );
+  select * into v_task
+  from public.sd_tasks t
+  where t.workspace_id = p_workspace_id and t.id = p_task_id
+  for update;
+  if not found or v_task.is_deleted then
+    raise exception using errcode = 'P0001', message = 'entity-not-found';
+  end if;
+  if v_task.source_kind <> 'ordinary'
+     or v_task.source_type <> 'morning'
+     or v_task.is_internal_control
+     or v_task.source_meeting_id is not null
+     or v_task.source_meeting_item_id is not null then
+    raise exception using
+      errcode = 'P0001', message = 'ordinary-provenance-required';
+  end if;
+  if v_task.version <> p_base_version then
+    raise exception using errcode = '40001', message = 'version-conflict';
+  end if;
+  if (p_transition = 'close' and v_task.is_closed)
+     or (p_transition = 'reopen' and not v_task.is_closed) then
+    raise exception using errcode = 'P0001', message = 'invalid-task-transition';
+  end if;
+
+  select coalesce(array_agg(tv.vessel_id order by tv.vessel_id), '{}'::text[])
+  into v_old_vessels
+  from public.sd_task_vessels tv
+  where tv.workspace_id = p_workspace_id
+    and tv.task_id = p_task_id
+    and tv.is_active_scope;
+  v_new_vessels := public.sd_core_text_array(p_content, 'vesselIds', false);
+  perform public.sd_core_assert_task_scope(
+    p_workspace_id,
+    (
+      select array_agg(distinct value order by value)
+      from unnest(v_old_vessels || v_new_vessels) value
+    ),
+    'editBusinessContent'
+  );
+
+  v_content_status := btrim(p_content ->> 'status');
+  if p_transition = 'close' then
+    v_final_status := '已結案';
+    v_status_before_close := case
+      when v_content_status = '已結案'
+      then coalesce(nullif(v_task.status_before_close, ''), v_task.status)
+      else v_content_status
+    end;
+  elsif p_transition = 'reopen' then
+    v_final_status := case
+      when v_content_status <> '已結案' then v_content_status
+      else coalesce(nullif(v_task.status_before_close, ''), '待處理')
+    end;
+    v_status_before_close := null;
+  else
+    v_final_status := v_content_status;
+    v_status_before_close := v_task.status_before_close;
+  end if;
+  v_status_changed := v_task.status <> v_final_status;
+  v_relation_content := jsonb_set(p_content, '{status}', to_jsonb(v_final_status));
+
+  update public.sd_tasks t
+  set description = btrim(p_content ->> 'description'),
+      status = v_final_status,
+      status_before_close = v_status_before_close,
+      priority = p_content ->> 'priority',
+      expected_date = nullif(p_content ->> 'expectedDate', '')::date,
+      report_date = nullif(p_content ->> 'reportDate', '')::date,
+      equipment_subcategory = btrim(p_content ->> 'equipmentSubcategory'),
+      is_aware = (p_content ->> 'isAware')::boolean,
+      is_abnormal = (p_content ->> 'isAbnormal')::boolean,
+      is_closed = case
+        when p_transition = 'close' then true
+        when p_transition = 'reopen' then false
+        else t.is_closed
+      end,
+      closed_date = case
+        when p_transition = 'close' then current_date
+        when p_transition = 'reopen' then null
+        else t.closed_date
+      end,
+      closed_by = case
+        when p_transition = 'close' then v_actor
+        when p_transition = 'reopen' then null
+        else t.closed_by
+      end,
+      version = t.version + 1,
+      updated_at = clock_timestamp(),
+      updated_by = v_actor
+  where t.workspace_id = p_workspace_id
+    and t.id = p_task_id
+    and t.version = p_base_version
+  returning t.version into v_version;
+  if not found then
+    raise exception using errcode = '40001', message = 'version-conflict';
+  end if;
+  perform public.sd_core_replace_task_relations(
+    p_workspace_id, p_task_id, v_relation_content, v_actor
+  );
+  if p_transition is not null then
+    update public.sd_task_vessels tv
+    set status = v_final_status,
+        is_closed = p_transition = 'close',
+        closed_date = case when p_transition = 'close' then current_date else null end,
+        closed_by = case when p_transition = 'close' then v_actor else null end,
+        version = tv.version + 1,
+        updated_at = clock_timestamp(),
+        updated_by = v_actor
+    where tv.workspace_id = p_workspace_id
+      and tv.task_id = p_task_id
+      and tv.is_active_scope;
+  end if;
+  if v_status_changed then
+    insert into public.sd_task_status_events(
+      workspace_id, id, task_id, status, actor_id, created_at
+    ) values (
+      p_workspace_id, public.sd_core_event_id(p_operation_id, 'task-status'),
+      p_task_id, v_final_status, v_actor, clock_timestamp()
+    );
+  end if;
+  perform public.sd_core_emit_task_notifications(
+    p_workspace_id, p_task_id, v_actor, p_operation_id, 'task_updated'
+  );
+
+  v_result := jsonb_build_object(
+    'status', 'committed', 'replayed', false,
+    'entityType', 'task', 'entityId', p_task_id,
+    'version', v_version,
+    'transition', p_transition,
+    'isClosed', case
+      when p_transition = 'close' then true
+      when p_transition = 'reopen' then false
+      else v_task.is_closed
+    end
+  );
+  perform public.sd_core_commit_operation(
+    p_operation_id, p_workspace_id, v_actor,
+    'save_ordinary_task', 'task:' || p_task_id, v_request,
+    jsonb_build_object('task', p_base_version),
+    jsonb_build_object(
+      'leaseKey', p_lease_key,
+      'ownerSession', p_owner_session,
+      'fencingToken', p_fencing_token
+    ),
+    v_result
+  );
+  insert into public.sd_audit_events(
+    workspace_id, id, actor_id, command, entity_type, entity_id, detail
+  ) values (
+    p_workspace_id, public.sd_core_event_id(p_operation_id, 'audit'),
+    v_actor, 'save_ordinary_task', 'task', p_task_id,
+    jsonb_build_object(
+      'version', v_version,
+      'transition', p_transition,
+      'oldVesselIds', to_jsonb(v_old_vessels),
+      'newVesselIds', to_jsonb(v_new_vessels)
+    )
+  );
+  return v_result;
+end;
+$$;
+
 create or replace function public.sd_core_transition_ordinary_task(
   p_operation_id uuid,
   p_workspace_id uuid,

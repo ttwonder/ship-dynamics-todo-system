@@ -150,22 +150,15 @@ export class NormalizedUiController {
             content: taskCommandContent(task),
           });
         } else {
-          await this.runtime.commands.updateOrdinaryTask({
+          await this.runtime.commands.saveOrdinaryTask({
             taskId: task.id,
             baseVersion: projection.versions.get(taskKey),
             lease,
             content: taskCommandContent(task),
+            transition: previousTask && previousTask.isClosed !== task.isClosed
+              ? (task.isClosed ? 'close' : 'reopen')
+              : null,
           });
-          if (previousTask && previousTask.isClosed !== task.isClosed) {
-            const refreshed = await this.runtime.refreshEntities([taskKey]);
-            if (!refreshed) throw new Error('無法重新讀取待辦版本。');
-            await this.runtime.commands.transitionOrdinaryTask({
-              taskId: task.id,
-              baseVersion: refreshed.versions.get(taskKey),
-              lease,
-              action: task.isClosed ? 'close' : 'reopen',
-            });
-          }
         }
       },
     );
@@ -667,6 +660,14 @@ export class NormalizedUiController {
           ? projection.versions.get(`task:${existingTaskId}`)
           : null,
         taskLease: existingTaskId ? map.get(`task:${existingTaskId}`) : null,
+        taskPayload: existingTaskId && taskProjection
+          ? linkedInternalTaskCommandPayload(item, {
+              id: existingTaskId,
+              expectedDate: taskProjection.expectedDate,
+              categories: taskProjection.categories,
+              ownerUserIds: taskProjection.ownerUserIds,
+            })
+          : null,
       });
       if (addingTask && taskProjection) {
         const refreshed = await this.runtime.refreshEntities([caseKey]);

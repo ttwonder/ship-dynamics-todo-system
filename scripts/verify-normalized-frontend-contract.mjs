@@ -334,6 +334,138 @@ try {
     });
   }
 
+  const ordinaryTask = {
+    id: 'task-atomic-save',
+    vesselId: 'v1',
+    vesselIds: ['v1'],
+    priority: '高',
+    isAware: false,
+    isAbnormal: false,
+    isInternalControl: false,
+    sourceType: 'morning',
+    category: 'Safety',
+    categories: ['Safety'],
+    description: 'Atomic content update',
+    status: '已結案',
+    expectedDate: '2026-08-01',
+    reportDate: '2026-07-26',
+    departments: ['Operations'],
+    ownerUserIds: [actorId],
+    isClosed: true,
+    closedDate: '2026-07-26',
+    createdBy: actorId,
+    updatedBy: actorId,
+    createdAt: '2026-07-26T00:00:00Z',
+    updatedAt: '2026-07-26T00:00:00Z',
+    statusLogs: [],
+  };
+  const atomicProjection = {
+    data: {
+      tasks: [{ ...ordinaryTask, description: 'Persisted before save', status: '待處理', isClosed: false }],
+      vessels: [],
+      internalControlCases: [],
+    },
+    versions: new Map([['task:task-atomic-save', 7]]),
+  };
+  let persistedDescription = 'Persisted before save';
+  let legacyUpdateCalls = 0;
+  let legacyTransitionCalls = 0;
+  let atomicSaveCalls = 0;
+  const atomicRuntime = {
+    projection: atomicProjection,
+    refreshEntities: async () => atomicProjection,
+    loadDraft: () => null,
+    removeDraft: () => undefined,
+    commands: {
+      claimLease: async ({ leaseKey }) => ({
+        ok: true,
+        leaseKey,
+        ownerSession: lease.ownerSession,
+        fencingToken: lease.fencingToken,
+      }),
+      releaseLease: async () => true,
+      updateOrdinaryTask: async input => {
+        legacyUpdateCalls += 1;
+        persistedDescription = input.content.description;
+      },
+      transitionOrdinaryTask: async () => {
+        legacyTransitionCalls += 1;
+        throw new Error('injected-transition-failure');
+      },
+      saveOrdinaryTask: async () => {
+        atomicSaveCalls += 1;
+        throw new Error('injected-atomic-save-failure');
+      },
+    },
+  };
+  await assert.rejects(
+    () => new NormalizedUiController(atomicRuntime).saveTask(ordinaryTask, false),
+    /injected-atomic-save-failure/,
+    'an edit plus close must surface one authoritative atomic command failure',
+  );
+  assert.equal(persistedDescription, 'Persisted before save',
+    'a failed edit plus close must not leave content committed');
+  assert.equal(atomicSaveCalls, 1, 'the complete user save must use one atomic command');
+  assert.equal(legacyUpdateCalls, 0, 'the controller must not pre-commit content in a separate command');
+  assert.equal(legacyTransitionCalls, 0, 'the controller must not emulate a transaction with a second command');
+
+  const linkedCase = {
+    id: 'case-projection',
+    vesselId: 'v1',
+    reportDate: '2026-07-26',
+    reportSource: '日常',
+    description: 'Linked case edited',
+    priority: '中',
+    category: 'Safety',
+    isAware: false,
+    status: '追蹤中',
+    departments: ['Operations'],
+    syncToTask: true,
+    linkedTaskId: 'task-projection',
+    origin: 'internal-control',
+    isClosed: false,
+    createdBy: actorId,
+    updatedBy: actorId,
+    createdAt: '2026-07-26T00:00:00Z',
+    updatedAt: '2026-07-26T00:00:00Z',
+    statusLogs: [],
+  };
+  const linkedProjection = {
+    data: { tasks: [], vessels: [], internalControlCases: [linkedCase] },
+    versions: new Map([
+      ['internal-case:case-projection', 3],
+      ['task:task-projection', 5],
+    ]),
+  };
+  let linkedUpdateInput;
+  const linkedRuntime = {
+    projection: linkedProjection,
+    refreshEntities: async () => linkedProjection,
+    loadDraft: () => null,
+    removeDraft: () => undefined,
+    commands: {
+      claimLeaseSet: async requests => requests.map((request, index) => ({
+        leaseKey: request.leaseKey,
+        ownerSession: lease.ownerSession,
+        fencingToken: lease.fencingToken + index,
+      })),
+      releaseLeaseSet: async () => undefined,
+      updateInternalCase: async input => { linkedUpdateInput = input; },
+    },
+  };
+  await new NormalizedUiController(linkedRuntime).updateInternalCase(linkedCase, {
+    expectedDate: '2026-09-05',
+    categories: ['Safety', 'Fleet'],
+    equipmentSubcategory: undefined,
+    ownerUserIds: [actorId],
+  });
+  assert.deepEqual(linkedUpdateInput.taskPayload, {
+    id: 'task-projection',
+    expectedDate: '2026-09-05',
+    categories: ['Safety', 'Fleet'],
+    ownerUserIds: [actorId],
+  }, 'linked internal-case edits must carry the editable task projection into the cross-aggregate RPC');
+
   const appSource = await readFile(resolve(root, 'src/NormalizedApp.tsx'), 'utf8');
   const runtimeSource = await readFile(resolve(root, 'src/normalizedRuntime.ts'), 'utf8');
   const projectionSource = await readFile(resolve(root, 'src/normalizedProjection.ts'), 'utf8');
