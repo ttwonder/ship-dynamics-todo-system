@@ -20,18 +20,32 @@ This runbook deliberately avoids dual-writing the legacy JSON payload and normal
 6. An encrypted offline legacy JSON backup plus a database-native Supabase backup.
 7. A rollback script that re-enables the legacy client/table without deleting normalized evidence.
 
+### Executable artifact gates
+
+```bash
+node scripts/verify-normalized-manifest.mjs
+node scripts/verify-normalized-manifest-apply.mjs
+node scripts/apply-normalized-manifest.mjs
+node scripts/verify-legacy-auth-mapping.mjs
+node scripts/verify-legacy-migration-cli.mjs
+node scripts/verify-normalized-legacy-import-db.mjs
+```
+
+The first `apply-normalized-manifest` invocation is a no-write dry run and prints only the manifest version, file count, and bundle SHA-256. A staging write additionally requires `NORMALIZED_TARGET=staging`, `NORMALIZED_DATABASE_URL=[REDACTED]`, `PSQL_PATH`, `--apply`, and the exact `--confirm staging:HOST:VERSION` string. The tool rejects the production project reference and sends database credentials only through child-process environment variables, never command arguments or logs.
+
+Auth mapping apply requires `MIGRATION_SUPABASE_URL`, `MIGRATION_SUPABASE_SERVICE_ROLE_KEY`, `MIGRATION_ALIAS_HMAC_SECRET`, and `MIGRATION_PACKAGE_PASSPHRASE`, all supplied by the staging secret environment. Legacy import apply separately requires the reviewed mapping, exact source revision/counts, explicit staging confirmation, and a fresh empty target.
+
 ## 3. Authentication activation
 
 Legacy SHA-256 browser password hashes cannot be imported as Supabase Auth passwords. Passwordless identities cannot become trusted actors automatically.
 
-- Provision one disabled/pending Auth identity for every active legacy user using an immutable synthetic identifier derived server-side from workspace and legacy user ID.
+- Provision one Supabase Auth identity for every active legacy user using an opaque deterministic alias derived with a migration-only HMAC secret from workspace and legacy user ID.
 - Preserve display name, department, role, and vessel assignments only in normalized profile/membership tables.
-- Owner receives a separate activation administration workflow.
-- Each pending account receives a random one-time activation code; only a hash is stored server-side.
-- The code is distributed out-of-band and exchanged once for a user-chosen Auth password.
-- The browser never receives the synthetic Auth identifier list or service-role credentials.
-- Accounts without completed activation cannot receive a write-capable session.
-- Existing Owner must be activated and verified first; owner transfer remains a dedicated atomic command.
+- `scripts/prepare-legacy-auth-mapping.mjs` is dry-run by default. Its `--apply` mode refuses the production project, recovers interrupted runs by the deterministic alias, and resets a fresh temporary password on the same pre-created identity.
+- Temporary passwords exist only inside an AES-256-GCM activation package protected by `MIGRATION_PACKAGE_PASSPHRASE`; the plaintext mapping contains Auth IDs and aliases but no credentials.
+- The gated login directory may return opaque aliases to the browser only after a valid short-lived site-gate token. It never receives a login password and never returns an Auth access or refresh token.
+- The browser signs in directly through Supabase Auth. A pre-created or administratively reset account remains `must_change_password=true` until the authenticated user changes the password and completes `complete_my_ship_dynamics_password_activation`.
+- Owner must be activated and verified first; owner transfer remains a dedicated atomic command. Owner/admin may manage only non-owner accounts; only Owner may transfer ownership.
 - No email confirmation is required for this internal workflow.
 
 ## 4. Staging rehearsal
