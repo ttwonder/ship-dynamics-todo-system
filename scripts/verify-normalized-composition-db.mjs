@@ -186,4 +186,42 @@ for (const [entityType, entityId, leaseKey] of [
   assert.equal(grant.rows[0].result.ok, true);
 }
 
+const publicExecute = await db.query(`
+  select routine_name
+  from information_schema.routine_privileges
+  where routine_schema='public' and grantee='PUBLIC' and privilege_type='EXECUTE'
+  order by routine_name
+`);
+assert.deepEqual(publicExecute.rows, [], 'normalized public functions must revoke default PUBLIC execute');
+const unsafeDefiners = await db.query(`
+  select p.proname
+  from pg_proc p
+  join pg_namespace n on n.oid=p.pronamespace
+  where n.nspname='public'
+    and p.prosecdef
+    and not ('search_path=pg_catalog, public'=any(coalesce(p.proconfig,'{}'::text[])))
+  order by p.proname
+`);
+assert.deepEqual(unsafeDefiners.rows, [], 'every SECURITY DEFINER function must pin search_path');
+const directDml = await db.query(`
+  select grantee,table_name,privilege_type
+  from information_schema.role_table_grants
+  where table_schema='public'
+    and table_name like 'sd_%'
+    and grantee in ('anon','authenticated')
+    and privilege_type in ('INSERT','UPDATE','DELETE','TRUNCATE')
+  order by grantee,table_name,privilege_type
+`);
+assert.deepEqual(directDml.rows, [], 'browser roles must have no direct normalized-table DML');
+const sensitiveReads = await db.query(`
+  select grantee,table_name
+  from information_schema.role_table_grants
+  where table_schema='public'
+    and table_name in ('sd_public_site_gate','sd_login_options','sd_rate_limit_buckets','sd_edit_leases')
+    and grantee in ('anon','authenticated')
+    and privilege_type='SELECT'
+  order by grantee,table_name
+`);
+assert.deepEqual(sensitiveReads.rows, [], 'browser roles must not read security-sensitive normalized tables');
+
 console.log('normalized_schema_composition=PASS');
