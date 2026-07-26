@@ -17,7 +17,53 @@ const manifest = [
   'supabase/normalized-realtime.sql',
   'supabase/normalized-legacy-cutover.sql',
   'supabase/normalized-legacy-import.sql',
+  'supabase/normalized-legacy-import-blank-status.sql',
 ];
+
+const blankStatusPatchSql = await readFile(
+  resolve(root, 'supabase/normalized-legacy-import-blank-status.sql'),
+  'utf8',
+);
+const upgradeDb = new PGlite();
+await upgradeDb.exec(`
+  create function public.import_ship_dynamics_legacy(
+    p_workspace_id uuid,
+    p_workspace_key text,
+    p_workspace_name text,
+    p_expected_legacy_revision bigint,
+    p_legacy_payload jsonb,
+    p_identity_mapping jsonb,
+    p_expected_counts jsonb,
+    p_expected_quarantine_count integer
+  ) returns jsonb language plpgsql as $$
+  declare
+    v_item jsonb;
+    v_priorities text[] := array['急', '高', '中', '低'];
+  begin
+    if jsonb_typeof(v_item) <> 'object'
+       or btrim(coalesce(v_item ->> 'description', '')) = ''
+       or btrim(coalesce(v_item ->> 'status', '')) = ''
+       or v_item ->> 'priority' <> all(v_priorities)
+    then
+      return '{}'::jsonb;
+    end if;
+    return '{}'::jsonb;
+  end;
+  $$;
+`);
+await upgradeDb.exec(blankStatusPatchSql);
+await upgradeDb.exec(blankStatusPatchSql);
+const upgradedDefinition = await upgradeDb.query(`
+  select pg_get_functiondef(
+    'public.import_ship_dynamics_legacy(uuid,text,text,bigint,jsonb,jsonb,jsonb,integer)'::regprocedure
+  ) as definition
+`);
+assert.doesNotMatch(
+  upgradedDefinition.rows[0].definition,
+  /btrim\(coalesce\(v_item ->> 'status', ''\)\) = ''/,
+  'deployed legacy function must stop rejecting blank historical task status',
+);
+await upgradeDb.close();
 
 const db = new PGlite();
 await db.exec(`
