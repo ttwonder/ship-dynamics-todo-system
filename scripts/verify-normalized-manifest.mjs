@@ -33,7 +33,8 @@ for (const relative of manifest.migrations) {
   if (!relative.endsWith('normalized-realtime.sql')) schema += `\n${sql}`;
 }
 const realtime = await readFile(resolve(root, 'supabase/normalized-realtime.sql'), 'utf8');
-const publishedTables = [...new Set(realtime.match(/sd_[a-z0-9_]+/g) || [])].sort();
+const realtimeList = realtime.match(/v_tables\s+text\[\]\s*:=\s*array\[([\s\S]*?)\];/i)?.[1] || '';
+const publishedTables = [...new Set(realtimeList.match(/sd_[a-z0-9_]+/g) || [])].sort();
 const created = new Set([...schema.matchAll(/create\s+table(?:\s+if\s+not\s+exists)?\s+public\.([a-z0-9_]+)/gi)].map(match => match[1]));
 const rls = new Set([...schema.matchAll(/alter\s+table\s+public\.([a-z0-9_]+)\s+enable\s+row\s+level\s+security/gi)].map(match => match[1]));
 for (const table of publishedTables) {

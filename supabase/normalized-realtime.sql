@@ -6,7 +6,6 @@ do $$
 declare
   v_table text;
   v_tables text[] := array[
-    'sd_workspaces',
     'sd_profiles',
     'sd_memberships',
     'sd_vessels',
@@ -57,6 +56,14 @@ begin
       execute format('alter publication supabase_realtime add table public.%I',v_table);
     end if;
   end loop;
+  if exists(
+    select 1 from pg_catalog.pg_publication_tables
+    where pubname='supabase_realtime'
+      and schemaname='public'
+      and tablename='sd_workspaces'
+  ) then
+    alter publication supabase_realtime drop table public.sd_workspaces;
+  end if;
 end;
 $$;
 
