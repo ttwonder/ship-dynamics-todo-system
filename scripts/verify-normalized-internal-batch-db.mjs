@@ -14,6 +14,8 @@ const ids = {
 const ownerSession = 'a2000000-0000-4000-8000-000000000001';
 const rollbackOperation = 'b2000000-0000-4000-8000-000000000001';
 const successOperation = 'b2000000-0000-4000-8000-000000000002';
+const duplicateCaseOperation = 'b2000000-0000-4000-8000-000000000003';
+const duplicateTaskOperation = 'b2000000-0000-4000-8000-000000000004';
 
 await db.exec(`
   create schema auth;
@@ -85,16 +87,17 @@ const casePayload = description => ({
 });
 const caseIds = ['case-batch-b', 'case-batch-a'];
 const taskIds = ['task-batch-b', 'task-batch-a'];
-const caseLeases = new Map();
-for (const caseId of caseIds) {
-  caseLeases.set(caseId, await claim(`internal-case:${caseId}`, 'internal-case', caseId));
-}
+const caseCreateLease = await claim(
+  'internal-case-create:vessel-a',
+  'internal-case-create',
+  'vessel-a',
+);
 const taskCreateLease = await claim('task-create:vessel-a', 'task-create', 'vessel-a');
 const items = caseIds.map((caseId, index) => ({
   caseId,
-  caseLeaseKey: `internal-case:${caseId}`,
+  caseLeaseKey: 'internal-case-create:vessel-a',
   caseOwnerSession: ownerSession,
-  caseFencingToken: Number(caseLeases.get(caseId).fencingToken),
+  caseFencingToken: Number(caseCreateLease.fencingToken),
   case: casePayload(index === 0 ? 'First submitted case' : 'Injected second submitted case'),
   task: {
     id: taskIds[index],
@@ -106,12 +109,12 @@ const items = caseIds.map((caseId, index) => ({
   taskOwnerSession: ownerSession,
   taskFencingToken: Number(taskCreateLease.fencingToken),
 }));
-const invoke = operationId => asOwner(async () => {
+const invoke = (operationId, submittedItems = items) => asOwner(async () => {
   const result = await db.query(
     `select public.command_ship_dynamics_batch_create_internal_cases(
       $1::uuid,$2::uuid,$3::jsonb
     ) as result`,
-    [operationId, ids.workspace, JSON.stringify(items)],
+    [operationId, ids.workspace, JSON.stringify(submittedItems)],
   );
   return result.rows[0].result;
 });
@@ -144,6 +147,31 @@ const rollbackCounts = await db.query(`
     (select count(*)::integer from public.sd_notifications where workspace_id='${ids.workspace}') as notices
 `);
 assert.deepEqual(rollbackCounts.rows[0], { cases: 0, tasks: 0, links: 0, audits: 0, notices: 0 });
+await assert.rejects(
+  () => invoke(duplicateCaseOperation, [
+    items[0],
+    { ...items[1], caseId: items[0].caseId },
+  ]),
+  /duplicate-case-identity/i,
+  'duplicate case IDs must reject before any submitted item commits',
+);
+await assert.rejects(
+  () => invoke(duplicateTaskOperation, [
+    items[0],
+    { ...items[1], task: { ...items[1].task, id: items[0].task.id } },
+  ]),
+  /duplicate-task-identity/i,
+  'duplicate task IDs must reject before any submitted item commits',
+);
+const duplicateCounts = await db.query(`
+  select
+    (select count(*)::integer from public.sd_internal_cases where workspace_id='${ids.workspace}') as cases,
+    (select count(*)::integer from public.sd_tasks where workspace_id='${ids.workspace}') as tasks,
+    (select count(*)::integer from public.sd_internal_case_task_links where workspace_id='${ids.workspace}') as links,
+    (select count(*)::integer from public.sd_operations where workspace_id='${ids.workspace}') as operations
+`);
+assert.deepEqual(duplicateCounts.rows[0], { cases: 0, tasks: 0, links: 0, operations: 0 },
+  'duplicate rejection must leave the entire batch and operation ledger untouched');
 await db.exec(`
   drop trigger test_fail_second_batch_case on public.sd_internal_cases;
   drop function public.test_fail_second_batch_case();

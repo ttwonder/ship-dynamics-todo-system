@@ -55,6 +55,8 @@ const operations = {
   closedCaseUpdate: 'b1000000-0000-4000-8000-000000000023',
   materializeRollback: 'b1000000-0000-4000-8000-000000000024',
   materializeSuccess: 'b1000000-0000-4000-8000-000000000025',
+  wrongVesselCreateLease: 'b1000000-0000-4000-8000-000000000026',
+  createLeaseEditProbe: 'b1000000-0000-4000-8000-000000000027',
 };
 
 await db.exec(`
@@ -206,7 +208,7 @@ async function createInternalCase({
         operationId,
         ids.workspace,
         caseId,
-        `internal-case:${caseId}`,
+        caseLease.leaseKey,
         ownerSession,
         caseLease.fencingToken,
         JSON.stringify(payload),
@@ -244,7 +246,7 @@ async function updateInternalCase({
         ids.workspace,
         caseId,
         baseCaseVersion,
-        `internal-case:${caseId}`,
+        caseLease.leaseKey,
         ownerSession,
         caseLease.fencingToken,
         JSON.stringify(payload),
@@ -269,9 +271,9 @@ async function visibleIds(userId, table, idColumn = 'id') {
 const standaloneCaseId = 'case-standalone';
 const standaloneLease = await claim(
   ids.owner,
-  `internal-case:${standaloneCaseId}`,
-  'internal-case',
-  standaloneCaseId,
+  'internal-case-create:vessel-a',
+  'internal-case-create',
+  'vessel-a',
   sessions.owner,
 );
 const standalonePayload = casePayload({ description: 'Standalone internal evidence' });
@@ -320,7 +322,7 @@ assert.deepEqual(standaloneRows.rows[0], {
 assert.equal(
   await release(
     ids.owner,
-    `internal-case:${standaloneCaseId}`,
+    'internal-case-create:vessel-a',
     sessions.owner,
     standaloneLease.fencingToken,
   ),
@@ -376,7 +378,10 @@ await assert.rejects(
     caseId: standaloneCaseId,
     baseCaseVersion: 1,
     payload: { ...standalonePayload, description: 'Must not pass fencing' },
-    caseLease: { fencingToken: Number(standaloneSecondLease.fencingToken) - 1 },
+    caseLease: {
+      ...standaloneSecondLease,
+      fencingToken: Number(standaloneSecondLease.fencingToken) - 1,
+    },
     ownerSession: sessions.ownerSecond,
   }),
   /lease-(?:fencing|owner|expired)-mismatch/i,
@@ -487,11 +492,11 @@ assert.equal(materializedReplay.replayed, true,
 
 const linkedCaseId = 'case-linked';
 const linkedTaskId = 'task-linked';
-const linkedCaseLease = await claim(
+const linkedCaseCreateLease = await claim(
   ids.owner,
-  `internal-case:${linkedCaseId}`,
-  'internal-case',
-  linkedCaseId,
+  'internal-case-create:vessel-a',
+  'internal-case-create',
+  'vessel-a',
   sessions.owner,
 );
 const linkedTaskLease = await claim(
@@ -506,7 +511,7 @@ const linkedCreate = await createInternalCase({
   operationId: operations.linkedCreate,
   caseId: linkedCaseId,
   payload: casePayload({ description: 'Atomic linked evidence', status: 'Investigating' }),
-  caseLease: linkedCaseLease,
+  caseLease: linkedCaseCreateLease,
   ownerSession: sessions.owner,
   task: taskPayload(linkedTaskId),
   taskLease: linkedTaskLease,
@@ -547,6 +552,14 @@ assert.deepEqual(linkedRows.rows[0], {
   task_id: linkedTaskId,
   exact_scope_count: 1,
 });
+
+const linkedCaseLease = await claim(
+  ids.owner,
+  `internal-case:${linkedCaseId}`,
+  'internal-case',
+  linkedCaseId,
+  sessions.owner,
+);
 
 const linkedUpdatedPayload = casePayload({
   description: 'Atomic linked evidence updated',
@@ -718,11 +731,11 @@ assert.deepEqual(reopened.rows[0], {
 });
 
 const uniqueCaseId = 'case-unique';
-const uniqueCaseLease = await claim(
+const uniqueCaseCreateLease = await claim(
   ids.owner,
-  `internal-case:${uniqueCaseId}`,
-  'internal-case',
-  uniqueCaseId,
+  'internal-case-create:vessel-a',
+  'internal-case-create',
+  'vessel-a',
   sessions.owner,
 );
 await createInternalCase({
@@ -730,9 +743,16 @@ await createInternalCase({
   operationId: operations.uniqueCaseCreate,
   caseId: uniqueCaseId,
   payload: casePayload({ description: 'Link target case' }),
-  caseLease: uniqueCaseLease,
+  caseLease: uniqueCaseCreateLease,
   ownerSession: sessions.owner,
 });
+const uniqueCaseLease = await claim(
+  ids.owner,
+  `internal-case:${uniqueCaseId}`,
+  'internal-case',
+  uniqueCaseId,
+  sessions.owner,
+);
 const existingTaskLease = await claim(
   ids.owner,
   'task:task-existing',
@@ -767,11 +787,11 @@ assert.equal(Number(linkResult.caseVersion), 2);
 assert.equal(Number(linkResult.taskVersion), 2);
 
 const duplicateCaseId = 'case-duplicate-link';
-const duplicateCaseLease = await claim(
+const duplicateCaseCreateLease = await claim(
   ids.owner,
-  `internal-case:${duplicateCaseId}`,
-  'internal-case',
-  duplicateCaseId,
+  'internal-case-create:vessel-a',
+  'internal-case-create',
+  'vessel-a',
   sessions.owner,
 );
 await createInternalCase({
@@ -779,9 +799,16 @@ await createInternalCase({
   operationId: operations.duplicateCaseCreate,
   caseId: duplicateCaseId,
   payload: casePayload({ description: 'Must not steal a linked task' }),
-  caseLease: duplicateCaseLease,
+  caseLease: duplicateCaseCreateLease,
   ownerSession: sessions.owner,
 });
+const duplicateCaseLease = await claim(
+  ids.owner,
+  `internal-case:${duplicateCaseId}`,
+  'internal-case',
+  duplicateCaseId,
+  sessions.owner,
+);
 await assert.rejects(
   () => asUser(ids.owner, () => db.query(
     `select public.command_ship_dynamics_link_internal_case_task(
@@ -857,11 +884,11 @@ assert.deepEqual(unlinked.rows[0], {
 
 const deleteTaskCaseId = 'case-delete-linked-task';
 const deleteTaskId = 'task-delete-linked';
-const deleteTaskCaseLease = await claim(
+const deleteTaskCaseCreateLease = await claim(
   ids.owner,
-  `internal-case:${deleteTaskCaseId}`,
-  'internal-case',
-  deleteTaskCaseId,
+  'internal-case-create:vessel-a',
+  'internal-case-create',
+  'vessel-a',
   sessions.owner,
 );
 const deleteTaskLease = await claim(
@@ -876,11 +903,18 @@ await createInternalCase({
   operationId: operations.deleteTaskCreate,
   caseId: deleteTaskCaseId,
   payload: casePayload({ description: 'Evidence survives task deletion' }),
-  caseLease: deleteTaskCaseLease,
+  caseLease: deleteTaskCaseCreateLease,
   ownerSession: sessions.owner,
   task: taskPayload(deleteTaskId),
   taskLease: deleteTaskLease,
 });
+const deleteTaskCaseLease = await claim(
+  ids.owner,
+  `internal-case:${deleteTaskCaseId}`,
+  'internal-case',
+  deleteTaskCaseId,
+  sessions.owner,
+);
 const deleteTaskResult = await asUser(ids.owner, async () => {
   const result = await db.query(
     `select public.command_ship_dynamics_delete_task_preserving_internal_case(
@@ -929,11 +963,11 @@ assert.equal(preservedAfterTaskDelete.rows[0].link_count, 0);
 
 const hardDeleteCaseId = 'case-hard-delete';
 const hardDeleteTaskId = 'task-hard-delete';
-const hardDeleteCaseLease = await claim(
+const hardDeleteCaseCreateLease = await claim(
   ids.owner,
-  `internal-case:${hardDeleteCaseId}`,
-  'internal-case',
-  hardDeleteCaseId,
+  'internal-case-create:vessel-a',
+  'internal-case-create',
+  'vessel-a',
   sessions.owner,
 );
 const hardDeleteTaskLease = await claim(
@@ -948,11 +982,18 @@ await createInternalCase({
   operationId: operations.hardDeleteCreate,
   caseId: hardDeleteCaseId,
   payload: casePayload({ description: 'Explicit delete target' }),
-  caseLease: hardDeleteCaseLease,
+  caseLease: hardDeleteCaseCreateLease,
   ownerSession: sessions.owner,
   task: taskPayload(hardDeleteTaskId),
   taskLease: hardDeleteTaskLease,
 });
+const hardDeleteCaseLease = await claim(
+  ids.owner,
+  `internal-case:${hardDeleteCaseId}`,
+  'internal-case',
+  hardDeleteCaseId,
+  sessions.owner,
+);
 const hardDeleteResult = await asUser(ids.owner, async () => {
   const result = await db.query(
     `select public.command_ship_dynamics_delete_internal_case(
@@ -1028,9 +1069,9 @@ assert.equal(hardDeleteReplay.replayed, true);
 const delegateCaseId = 'case-delegate-scope';
 const delegateCaseLease = await claim(
   ids.delegate,
-  `internal-case:${delegateCaseId}`,
-  'internal-case',
-  delegateCaseId,
+  'internal-case-create:vessel-b',
+  'internal-case-create',
+  'vessel-b',
   sessions.delegate,
 );
 await createInternalCase({
@@ -1044,12 +1085,108 @@ await createInternalCase({
 assert.ok((await visibleIds(ids.delegate, 'sd_internal_cases')).includes(delegateCaseId));
 assert.ok(!(await visibleIds(ids.operator, 'sd_internal_cases')).includes(delegateCaseId));
 
+async function captureInternalCaseLeaseClaim(caseId) {
+  try {
+    const result = await asUser(ids.operator, async () => {
+      const claimResult = await db.query(
+        `select public.claim_ship_dynamics_entity_lease(
+          $1::uuid,$2,'internal-case',$3,$4::uuid,75
+        ) as result`,
+        [ids.workspace, `internal-case:${caseId}`, caseId, sessions.operator],
+      );
+      return claimResult.rows[0].result;
+    });
+    return { kind: 'result', result };
+  } catch (error) {
+    return {
+      kind: 'error',
+      code: error?.code || null,
+      message: error?.message || String(error),
+    };
+  }
+}
+
+const missingOracleCaseId = 'case-missing-oracle-probe';
+const hiddenClaimOutcome = await captureInternalCaseLeaseClaim(delegateCaseId);
+const missingClaimOutcome = await captureInternalCaseLeaseClaim(missingOracleCaseId);
+const missingOracleToken = missingClaimOutcome.kind === 'result'
+  ? missingClaimOutcome.result.fencingToken
+  : 1;
+const hiddenRenewOutcome = await asUser(ids.operator, async () => {
+  const result = await db.query(
+    `select public.renew_ship_dynamics_entity_lease(
+      $1::uuid,$2,$3::uuid,$4::bigint,75
+    ) as result`,
+    [ids.workspace, `internal-case:${delegateCaseId}`, sessions.operator, missingOracleToken],
+  );
+  return result.rows[0].result;
+});
+const missingRenewOutcome = await asUser(ids.operator, async () => {
+  const result = await db.query(
+    `select public.renew_ship_dynamics_entity_lease(
+      $1::uuid,$2,$3::uuid,$4::bigint,75
+    ) as result`,
+    [ids.workspace, `internal-case:${missingOracleCaseId}`, sessions.operator, missingOracleToken],
+  );
+  return result.rows[0].result;
+});
+const hiddenReleaseOutcome = await release(
+  ids.operator,
+  `internal-case:${delegateCaseId}`,
+  sessions.operator,
+  missingOracleToken,
+);
+const missingReleaseOutcome = await release(
+  ids.operator,
+  `internal-case:${missingOracleCaseId}`,
+  sessions.operator,
+  missingOracleToken,
+);
+assert.deepEqual(
+  [hiddenClaimOutcome, hiddenRenewOutcome, hiddenReleaseOutcome],
+  [missingClaimOutcome, missingRenewOutcome, missingReleaseOutcome],
+  'scoped operators must receive identical claim/renew/release outcomes for hidden and missing internal-case IDs',
+);
+
+await assert.rejects(
+  () => createInternalCase({
+    userId: ids.owner,
+    operationId: operations.wrongVesselCreateLease,
+    caseId: 'case-wrong-create-vessel',
+    payload: casePayload({ vesselId: 'vessel-b', description: 'Wrong creation scope' }),
+    caseLease: hardDeleteCaseCreateLease,
+    ownerSession: sessions.owner,
+  }),
+  /lease-key-mismatch/i,
+  'the create command must bind the payload vessel to the vessel-scoped creation lease',
+);
+await assert.rejects(
+  () => updateInternalCase({
+    userId: ids.owner,
+    operationId: operations.createLeaseEditProbe,
+    caseId: duplicateCaseId,
+    baseCaseVersion: 1,
+    payload: casePayload({ description: 'Creation leases cannot edit' }),
+    caseLease: hardDeleteCaseCreateLease,
+    ownerSession: sessions.owner,
+  }),
+  /lease-key-mismatch/i,
+  'an internal-case creation lease must never authorize an existing-case edit',
+);
+
+assert.equal(await release(
+  ids.owner,
+  'internal-case-create:vessel-a',
+  sessions.owner,
+  hardDeleteCaseCreateLease.fencingToken,
+), true);
+
 const deniedCaseId = 'case-operator-out-of-scope';
 const deniedCaseLease = await claim(
   ids.operator,
-  `internal-case:${deniedCaseId}`,
-  'internal-case',
-  deniedCaseId,
+  'internal-case-create:vessel-a',
+  'internal-case-create',
+  'vessel-a',
   sessions.operator,
 );
 await assert.rejects(
@@ -1063,14 +1200,20 @@ await assert.rejects(
   }),
   /not-authorized/i,
 );
+assert.equal(await release(
+  ids.operator,
+  'internal-case-create:vessel-a',
+  sessions.operator,
+  deniedCaseLease.fencingToken,
+), true);
 
 const activeHiddenCaseId = 'case-active-hidden';
 const activeHiddenTaskId = 'task-active-hidden';
 const activeHiddenCaseLease = await claim(
   ids.owner,
-  `internal-case:${activeHiddenCaseId}`,
-  'internal-case',
-  activeHiddenCaseId,
+  'internal-case-create:vessel-a',
+  'internal-case-create',
+  'vessel-a',
   sessions.owner,
 );
 const activeHiddenTaskLease = await claim(

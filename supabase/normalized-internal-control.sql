@@ -316,8 +316,33 @@ begin
       'editBusinessContent'
     );
   end if;
-  return public.sd_has_permission(p_workspace_id, 'createTasks');
+  return false;
 end;
+$$;
+
+create function public.sd_can_maintain_internal_case_lease(
+  p_workspace_id uuid,
+  p_entity_type text,
+  p_entity_id text
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  select case p_entity_type
+    when 'internal-case' then public.sd_can_edit_internal_case(
+      p_workspace_id,
+      p_entity_id
+    )
+    when 'internal-case-create' then public.sd_can_mutate_internal_vessel(
+      p_workspace_id,
+      p_entity_id,
+      'createTasks'
+    )
+    else true
+  end
 $$;
 
 create policy sd_internal_cases_read on public.sd_internal_cases
@@ -663,6 +688,64 @@ begin
 end;
 $$;
 
+create function public.sd_internal_assert_ordered_create_leases(
+  p_workspace_id uuid,
+  p_vessel_id text,
+  p_case_lease_key text,
+  p_case_owner_session uuid,
+  p_case_fencing_token bigint,
+  p_task_id text,
+  p_task_lease_key text,
+  p_task_owner_session uuid,
+  p_task_fencing_token bigint
+)
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_lease record;
+begin
+  if p_case_lease_key is distinct from 'internal-case-create:' || p_vessel_id
+     or p_case_owner_session is null
+     or p_case_fencing_token is null then
+    raise exception using errcode = 'P0001', message = 'lease-key-mismatch';
+  end if;
+
+  if p_task_id is null then
+    if p_task_lease_key is not null
+       or p_task_owner_session is not null
+       or p_task_fencing_token is not null then
+      raise exception using errcode = 'P0001', message = 'lease-key-mismatch';
+    end if;
+  elsif p_task_lease_key is distinct from 'task:' || p_task_id
+        or p_task_owner_session is null
+        or p_task_fencing_token is null then
+    raise exception using errcode = 'P0001', message = 'lease-key-mismatch';
+  end if;
+
+  for v_lease in
+    select lease_key, owner_session, fencing_token
+    from (
+      values
+        (p_case_lease_key, p_case_owner_session, p_case_fencing_token),
+        (p_task_lease_key, p_task_owner_session, p_task_fencing_token)
+    ) leases(lease_key, owner_session, fencing_token)
+    where lease_key is not null
+    order by lease_key
+  loop
+    perform public.sd_assert_live_lease(
+      p_workspace_id,
+      v_lease.lease_key,
+      v_lease.owner_session,
+      v_lease.fencing_token
+    );
+  end loop;
+end;
+$$;
+
 create function public.sd_internal_operation_replay(
   p_workspace_id uuid,
   p_operation_id uuid,
@@ -881,6 +964,13 @@ begin
        or not public.sd_can_edit_internal_case(p_workspace_id, p_entity_id) then
       raise exception using errcode = 'P0001', message = 'not-authorized';
     end if;
+  elsif p_entity_type = 'internal-case-create' then
+    if p_lease_key <> 'internal-case-create:' || p_entity_id
+       or not public.sd_can_mutate_internal_vessel(
+         p_workspace_id, p_entity_id, 'createTasks'
+       ) then
+      raise exception using errcode = 'P0001', message = 'not-authorized';
+    end if;
   elsif p_entity_type = 'internal-task' then
     if v_role = 'vessel' or p_lease_key <> 'task:' || p_entity_id then
       raise exception using errcode = 'P0001', message = 'not-authorized';
@@ -956,6 +1046,77 @@ begin
     'fencingToken', v_lease.fencing_token,
     'expiresAt', v_lease.expires_at
   );
+end;
+$$;
+
+create or replace function public.renew_ship_dynamics_entity_lease(
+  p_workspace_id uuid,
+  p_lease_key text,
+  p_owner_session uuid,
+  p_fencing_token bigint,
+  p_ttl_seconds integer default 75
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_now timestamptz := clock_timestamp();
+  v_lease public.sd_edit_leases%rowtype;
+begin
+  update public.sd_edit_leases l
+  set expires_at = v_now + make_interval(secs => least(greatest(p_ttl_seconds, 30), 300)),
+      updated_at = v_now
+  where l.workspace_id = p_workspace_id
+    and l.lease_key = p_lease_key
+    and l.owner_id = auth.uid()
+    and l.owner_session = p_owner_session
+    and l.fencing_token = p_fencing_token
+    and l.expires_at > v_now
+    and public.sd_can_maintain_internal_case_lease(
+      l.workspace_id, l.entity_type, l.entity_id
+    )
+  returning * into v_lease;
+  if not found then return jsonb_build_object('ok', false); end if;
+  return jsonb_build_object(
+    'ok', true,
+    'leaseKey', v_lease.lease_key,
+    'ownerSession', v_lease.owner_session,
+    'fencingToken', v_lease.fencing_token,
+    'expiresAt', v_lease.expires_at
+  );
+end;
+$$;
+
+create or replace function public.release_ship_dynamics_entity_lease(
+  p_workspace_id uuid,
+  p_lease_key text,
+  p_owner_session uuid,
+  p_fencing_token bigint
+)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+begin
+  update public.sd_edit_leases l
+  set owner_id = null,
+      owner_session = null,
+      expires_at = null,
+      updated_at = clock_timestamp()
+  where l.workspace_id = p_workspace_id
+    and l.lease_key = p_lease_key
+    and l.owner_id = auth.uid()
+    and l.owner_session = p_owner_session
+    and l.fencing_token = p_fencing_token
+    and public.sd_can_maintain_internal_case_lease(
+      l.workspace_id, l.entity_type, l.entity_id
+    );
+  return found;
 end;
 $$;
 
@@ -1061,9 +1222,9 @@ begin
   );
   if v_replay is not null then return v_replay; end if;
 
-  perform public.sd_internal_assert_ordered_leases(
+  perform public.sd_internal_assert_ordered_create_leases(
     p_workspace_id,
-    p_case_id,
+    v_vessel_id,
     p_case_lease_key,
     p_case_owner_session,
     p_case_fencing_token,
@@ -3302,7 +3463,7 @@ begin
     v_vessel_id := v_case ->> 'vesselId';
     if btrim(coalesce(v_case_id, '')) = ''
        or v_item ->> 'caseLeaseKey'
-          is distinct from 'internal-case:' || v_case_id then
+          is distinct from 'internal-case-create:' || v_vessel_id then
       raise exception using
         errcode = 'P0001', message = 'invalid-internal-case-batch-item';
     end if;
@@ -3741,6 +3902,7 @@ $$;
 revoke all on function public.sd_can_read_internal_case(uuid, text) from public;
 revoke all on function public.sd_can_mutate_internal_vessel(uuid, text, text) from public;
 revoke all on function public.sd_can_edit_internal_case(uuid, text) from public;
+revoke all on function public.sd_can_maintain_internal_case_lease(uuid, text, text) from public;
 revoke all on function public.sd_internal_assert_actor(uuid, text) from public;
 revoke all on function public.sd_internal_iso_date(text, boolean) from public;
 revoke all on function public.sd_internal_json_text_array(jsonb, text, boolean) from public;
@@ -3748,6 +3910,9 @@ revoke all on function public.sd_internal_json_uuid_array(jsonb, text) from publ
 revoke all on function public.sd_internal_validate_case_payload(jsonb) from public;
 revoke all on function public.sd_internal_validate_task_payload(uuid, text, jsonb) from public;
 revoke all on function public.sd_internal_assert_ordered_leases(
+  uuid, text, text, uuid, bigint, text, text, uuid, bigint
+) from public;
+revoke all on function public.sd_internal_assert_ordered_create_leases(
   uuid, text, text, uuid, bigint, text, text, uuid, bigint
 ) from public;
 revoke all on function public.sd_internal_operation_replay(

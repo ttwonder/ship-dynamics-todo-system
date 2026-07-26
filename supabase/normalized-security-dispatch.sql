@@ -264,6 +264,13 @@ begin
        or not public.sd_can_edit_internal_case(p_workspace_id, p_entity_id) then
       raise exception using errcode = 'P0001', message = 'not-authorized';
     end if;
+  elsif p_entity_type = 'internal-case-create' then
+    if p_lease_key <> 'internal-case-create:' || p_entity_id
+       or not public.sd_can_mutate_internal_vessel(
+         p_workspace_id, p_entity_id, 'createTasks'
+       ) then
+      raise exception using errcode = 'P0001', message = 'not-authorized';
+    end if;
   elsif p_entity_type = 'internal-task' then
     if v_role = 'vessel' or p_lease_key <> 'task:' || p_entity_id then
       raise exception using errcode = 'P0001', message = 'not-authorized';

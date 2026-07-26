@@ -180,8 +180,13 @@ await db.exec(`
   insert into public.sd_internal_cases(
     workspace_id,id,vessel_id,report_date,report_source,description,priority,
     category,is_aware,status,origin,created_by,updated_by
-  ) values (
+  ) values
+  (
     '${ids.workspace}','case-a','vessel-a','2026-07-26','日常','Internal case','中',
+    'Safety',false,'Open','internal-control','${ids.owner}','${ids.owner}'
+  ),
+  (
+    '${ids.workspace}','case-hidden','vessel-b','2026-07-26','日常','Hidden case','中',
     'Safety',false,'Open','internal-control','${ids.owner}','${ids.owner}'
   );
 `);
@@ -204,7 +209,7 @@ assert.deepEqual(vesselCases.rows, [], 'vessel accounts receive no internal-case
 const ownerTasks = await asUser(ids.owner, () => db.query(`select id from public.sd_tasks order by id`));
 assert.equal(ownerTasks.rows.length, 7);
 const ownerCases = await asUser(ids.owner, () => db.query(`select id from public.sd_internal_cases order by id`));
-assert.deepEqual(ownerCases.rows, [{ id: 'case-a' }]);
+assert.deepEqual(ownerCases.rows, [{ id: 'case-a' }, { id: 'case-hidden' }]);
 
 for (const [entityType, entityId, leaseKey] of [
   ['meeting', 'meeting-valid', 'meeting:meeting-valid'],
@@ -223,6 +228,47 @@ for (const [entityType, entityId, leaseKey] of [
   ));
   assert.equal(grant.rows[0].result.ok, true);
 }
+
+async function captureCaseClaim(caseId) {
+  try {
+    const claim = await asUser(ids.operator, () => db.query(
+      `select public.claim_ship_dynamics_entity_lease(
+        $1::uuid,$2,'internal-case',$3,$4::uuid,75
+      ) as result`,
+      [ids.workspace, `internal-case:${caseId}`, caseId, ids.session],
+    ));
+    return { kind: 'result', value: claim.rows[0].result };
+  } catch (error) {
+    return {
+      kind: 'error',
+      code: error?.code || null,
+      message: error?.message || String(error),
+    };
+  }
+}
+assert.deepEqual(
+  await captureCaseClaim('case-hidden'),
+  await captureCaseClaim('case-missing'),
+  'the final composed lease dispatcher must not distinguish hidden and missing case IDs',
+);
+const createGrant = await asUser(ids.operator, () => db.query(
+  `select public.claim_ship_dynamics_entity_lease(
+    $1::uuid,'internal-case-create:vessel-a','internal-case-create','vessel-a',$2::uuid,75
+  ) as result`,
+  [ids.workspace, ids.session],
+));
+assert.equal(createGrant.rows[0].result.ok, true,
+  'authorized operators must retain a vessel-scoped case creation lease path');
+await assert.rejects(
+  () => asUser(ids.vessel, () => db.query(
+    `select public.claim_ship_dynamics_entity_lease(
+      $1::uuid,'internal-case-create:vessel-a','internal-case-create','vessel-a',$2::uuid,75
+    )`,
+    [ids.workspace, ids.session],
+  )),
+  /not-authorized/i,
+  'vessel accounts must never obtain an internal-case creation lease',
+);
 
 const publicExecute = await db.query(`
   select routine_name

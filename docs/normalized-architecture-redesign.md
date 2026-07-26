@@ -131,7 +131,8 @@ Existing status/audit events are immutable and cannot be supplied by the client.
 - exact task member progress: `task-progress:{taskId}:{vesselId}`
 - task creation semantic scope: `task-create:{vesselId}`
 - meeting aggregate/items/scope: `meeting:{meetingId}`
-- internal case: `internal-case:{caseId}`
+- internal case creation semantic scope: `internal-case-create:{vesselId}`
+- existing internal case aggregate: `internal-case:{caseId}`
 - user membership: `user:{userId}`
 - settings: `settings:{sectionKey}`
 - batch vessel editing: the sorted exact set of individual `vessel:{id}` leases, acquired all-or-nothing in deterministic order
@@ -148,7 +149,7 @@ A vessel aggregate, different tasks on that vessel, a meeting and an internal ca
 
 ### Renew/release
 
-Renew and release compare exact actor, opaque owner session and fencing token. Release clears owner/session/expiry but does not delete the row or reduce token.
+Renew and release re-authorize the actor against the lease's current semantic target, then compare exact actor, opaque owner session and fencing token. Release clears owner/session/expiry but does not delete the row or reduce token. Missing and currently hidden internal-case IDs therefore have the same claim/renew/release outcome.
 
 ### Command validation
 
@@ -181,7 +182,8 @@ The operation row and business mutation commit atomically. The browser never rec
 | `delete_task` | task + canonical links/events/notices | `task:id` | task + parent/link versions | meeting/internal link transition atomic; no orphan/resurrection |
 | `batch_task_command` | exact tasks/progress/events | exact sorted leases | version map | prevalidate all, all-or-nothing, per-entity audit |
 | `create/update/delete_meeting` | meeting/items/scopes + generated tasks/progress | `meeting:id` after client-generated stable ID | meeting + affected task versions | one item→at most one task; scope/mode/internal consistency; removed children closed/unlinked per policy |
-| `create/update/cancel/delete_internal_case` | case + optional task link/task/events | `internal-case:id` | case + linked task | canonical one-to-one link; internal transition and notifications atomic |
+| `create_internal_case` / `create_internal_case_from_task` | new case + optional task link/task/events | `internal-case-create:vessel` plus task lease when linked | linked existing task version where applicable | payload vessel must equal leased creation scope; canonical one-to-one link; batch duplicates and writes are all-or-nothing |
+| `update/cancel/delete_internal_case` / `create_task_from_internal_case` | existing case + optional task link/task/events | `internal-case:id` plus task lease when linked | case + linked task | creation leases cannot edit existing cases; internal transition and notifications atomic |
 | `batch_update_vessels` | exact vessels | all exact vessel leases | vessel version map | target = activeVisible ∩ (managed ∪ delegated ∪ manuallySelected); empty rejects; all-or-nothing |
 | `mark_notifications_read` | recipient notifications | none | notification versions | recipient only |
 | `update_settings_section` | one settings row | `settings:section` | section | Owner/fixed permission rules |

@@ -546,8 +546,8 @@ await assert.rejects(
 const taskToCaseCaseId = 'case-from-task';
 const taskToCaseCaseLease = await claim(
   ids.owner,
-  'internal-case',
-  taskToCaseCaseId,
+  'internal-case-create',
+  'v1',
   sessions.owner,
 );
 const taskToCaseTaskLease = await claim(
@@ -574,7 +574,7 @@ const taskToCaseRequest = {
   caseId: taskToCaseCaseId,
   taskId: 'task-to-case',
   baseTaskVersion: 1,
-  caseLeaseKey: `internal-case:${taskToCaseCaseId}`,
+  caseLeaseKey: 'internal-case-create:v1',
   caseOwnerSession: sessions.owner,
   caseFencingToken: Number(taskToCaseCaseLease.fencingToken),
   taskLeaseKey: 'task:task-to-case',
@@ -599,7 +599,7 @@ const taskToCaseResult = await asUser(ids.owner, () => scalar(
     ids.workspace,
     taskToCaseCaseId,
     'task-to-case',
-    `internal-case:${taskToCaseCaseId}`,
+    'internal-case-create:v1',
     sessions.owner,
     taskToCaseCaseLease.fencingToken,
     'task:task-to-case',
@@ -639,8 +639,8 @@ assert.deepEqual(
 const secondCaseId = 'case-from-linked-task-conflict';
 const secondCaseLease = await claim(
   ids.owner,
-  'internal-case',
-  secondCaseId,
+  'internal-case-create',
+  'v1',
   sessions.owner,
 );
 const linkedConflictOperation = operationId();
@@ -648,7 +648,7 @@ const linkedConflictRequest = {
   ...taskToCaseRequest,
   caseId: secondCaseId,
   baseTaskVersion: 2,
-  caseLeaseKey: `internal-case:${secondCaseId}`,
+  caseLeaseKey: 'internal-case-create:v1',
   caseFencingToken: Number(secondCaseLease.fencingToken),
 };
 await reserve(
@@ -669,7 +669,7 @@ await assert.rejects(
       ids.workspace,
       secondCaseId,
       'task-to-case',
-      `internal-case:${secondCaseId}`,
+      'internal-case-create:v1',
       sessions.owner,
       secondCaseLease.fencingToken,
       'task:task-to-case',

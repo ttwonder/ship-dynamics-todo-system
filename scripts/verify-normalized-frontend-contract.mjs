@@ -152,12 +152,12 @@ try {
       correctedStatus: null, reason: 'Duplicate event',
     }),
     () => commands.createInternalCase({
-      caseId: 'case-a', caseLease: entityLease('internal-case:case-a'),
+      caseId: 'case-a', caseLease: entityLease('internal-case-create:v1'),
       casePayload: internalCase,
     }),
     () => commands.convertTaskToInternalCase({
       caseId: 'case-b', taskId: 'task-b', baseTaskVersion: 1,
-      caseLease: entityLease('internal-case:case-b'),
+      caseLease: entityLease('internal-case-create:v1'),
       taskLease: entityLease('task:task-b'), casePayload: internalCase,
     }),
     () => commands.convertInternalCaseToTask({

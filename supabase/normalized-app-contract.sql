@@ -724,9 +724,9 @@ begin
   );
   if v_replay is not null then return v_replay; end if;
 
-  perform public.sd_internal_assert_ordered_leases(
+  perform public.sd_internal_assert_ordered_create_leases(
     p_workspace_id,
-    p_case_id, p_case_lease_key, p_case_owner_session, p_case_fencing_token,
+    v_vessel_id, p_case_lease_key, p_case_owner_session, p_case_fencing_token,
     p_task_id, p_task_lease_key, p_task_owner_session, p_task_fencing_token
   );
   if exists (

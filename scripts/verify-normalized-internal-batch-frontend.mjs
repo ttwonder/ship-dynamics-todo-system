@@ -41,6 +41,7 @@ try {
   const persistedCaseIds = [];
   let atomicBatchCalls = 0;
   let legacyCreateCalls = 0;
+  let claimedLeaseRequests = [];
   const projection = {
     data: { tasks: [], vessels: [], internalControlCases: [] },
     versions: new Map(),
@@ -52,11 +53,14 @@ try {
     removeDraft: () => undefined,
     commands: {
       createOperationId: () => '33333333-3333-4333-8333-333333333333',
-      claimLeaseSet: async requests => requests.map((request, index) => ({
-        leaseKey: request.leaseKey,
-        ownerSession,
-        fencingToken: index + 1,
-      })),
+      claimLeaseSet: async requests => {
+        claimedLeaseRequests = structuredClone(requests);
+        return requests.map((request, index) => ({
+          leaseKey: request.leaseKey,
+          ownerSession,
+          fencingToken: index + 1,
+        }));
+      },
       releaseLeaseSet: async () => true,
       batchCreateInternalCases: async () => {
         atomicBatchCalls += 1;
@@ -79,6 +83,18 @@ try {
     'a failed submitted batch must not leave any earlier case committed');
   assert.equal(atomicBatchCalls, 1, 'the batch must use one command RPC');
   assert.equal(legacyCreateCalls, 0, 'the controller must not loop independent create RPCs');
+  assert.deepEqual(claimedLeaseRequests, [
+    {
+      leaseKey: 'internal-case-create:v1',
+      entityType: 'internal-case-create',
+      entityId: 'v1',
+    },
+    {
+      leaseKey: 'task-create:v1',
+      entityType: 'task-create',
+      entityId: 'v1',
+    },
+  ], 'batch creation must lease authorized vessel creation scopes, not guessed case IDs');
 
   // One offline modal submit remains one durable batch and recovers through one
   // ordered atomic RPC under the operation identity allocated at submission.

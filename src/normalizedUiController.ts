@@ -582,6 +582,7 @@ export class NormalizedUiController {
     },
   ): Promise<'committed' | 'drafted'> {
     const caseKey = `internal-case:${item.id}`;
+    const caseCreateLeaseKey = `internal-case-create:${item.vesselId}`;
     const linkedTask = taskProjection
       ? {
           id: item.linkedTaskId || crypto.randomUUID(),
@@ -606,7 +607,11 @@ export class NormalizedUiController {
     const taskPayload = linkedInternalTaskCommandPayload(item, linkedTask);
     const taskId = typeof taskPayload?.id === 'string' ? taskPayload.id : '';
     const leases = await this.runtime.commands.claimLeaseSet([
-      { leaseKey: caseKey, entityType: 'internal-case', entityId: item.id },
+      {
+        leaseKey: caseCreateLeaseKey,
+        entityType: 'internal-case-create',
+        entityId: item.vesselId,
+      },
       ...(taskId ? [{
         leaseKey: `task:${taskId}`,
         entityType: 'internal-task',
@@ -615,7 +620,7 @@ export class NormalizedUiController {
     ]);
     try {
       const map = new Map(leases.map(lease => [lease.leaseKey, lease]));
-      const caseLease = map.get(caseKey);
+      const caseLease = map.get(caseCreateLeaseKey);
       if (!caseLease) throw new Error('內控案件租約不完整。');
       await this.runtime.commands.createInternalCase({
         caseId: item.id,
@@ -658,6 +663,7 @@ export class NormalizedUiController {
       return {
         item,
         caseKey: `internal-case:${item.id}`,
+        caseCreateLeaseKey: `internal-case-create:${item.vesselId}`,
         taskPayload,
         taskId: typeof taskPayload?.id === 'string' ? taskPayload.id : '',
       };
@@ -699,10 +705,10 @@ export class NormalizedUiController {
       entityId: string;
     }>();
     for (const entry of prepared) {
-      leaseRequests.set(entry.caseKey, {
-        leaseKey: entry.caseKey,
-        entityType: 'internal-case',
-        entityId: entry.item.id,
+      leaseRequests.set(entry.caseCreateLeaseKey, {
+        leaseKey: entry.caseCreateLeaseKey,
+        entityType: 'internal-case-create',
+        entityId: entry.item.vesselId,
       });
       if (entry.taskId) {
         const taskLeaseKey = `task-create:${entry.item.vesselId}`;
@@ -717,7 +723,7 @@ export class NormalizedUiController {
     try {
       const leaseMap = new Map(leases.map(lease => [lease.leaseKey, lease]));
       await this.runtime.commands.batchCreateInternalCases(prepared.map(entry => {
-        const caseLease = leaseMap.get(entry.caseKey);
+        const caseLease = leaseMap.get(entry.caseCreateLeaseKey);
         if (!caseLease) throw new Error('The internal-case batch lease set is incomplete.');
         const taskLease = entry.taskId
           ? leaseMap.get(`task-create:${entry.item.vesselId}`)
