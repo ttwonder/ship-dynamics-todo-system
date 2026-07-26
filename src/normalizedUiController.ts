@@ -32,6 +32,194 @@ import { taskProgressForVessel } from './taskVesselProgress';
 
 type JsonObject = Record<string, unknown>;
 
+type InternalCaseRecoveryIntent = {
+  operationId: string;
+  linkAction: 'preserve' | 'materialize' | 'unlink';
+  taskId: string;
+  taskPayload: JsonObject | null;
+  oldVesselId: string;
+};
+
+type PreparedInternalCase = {
+  item: InternalControlCase;
+  caseKey: string;
+  caseCreateLeaseKey: string;
+  taskPayload: JsonObject | null;
+  taskId: string;
+};
+
+type ParsedInternalCaseDraft = {
+  kind: 'batch';
+  operationId: string;
+  prepared: PreparedInternalCase[];
+} | {
+  kind: 'update';
+  candidate: InternalControlCase;
+  intent: InternalCaseRecoveryIntent;
+};
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ENTITY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
+const ENVELOPE_KEYS = [
+  'version', 'workspaceId', 'actorId', 'entityKey', 'draft', 'baseVersions',
+  'pendingOperation', 'updatedAt',
+] as const;
+const PENDING_OPERATION_KEYS = [
+  'operationId', 'command', 'targetKey', 'dispatchedAt', 'replay',
+] as const;
+const REPLAY_KEYS = ['version', 'rpc', 'request', 'args', 'leases'] as const;
+const REPLAY_LEASE_KEYS = [
+  'leaseKey', 'entityType', 'entityId', 'ownerSession', 'fencingToken',
+] as const;
+const INTERNAL_CASE_KEYS = [
+  'id', 'vesselId', 'reportDate', 'reportSource', 'description', 'priority',
+  'category', 'equipmentSubcategory', 'isAware', 'status', 'departments',
+  'syncToTask', 'linkedTaskId', 'origin', 'isClosed', 'closedDate', 'closedBy',
+  'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'statusLogs',
+] as const;
+const INTERNAL_TASK_KEYS = ['id', 'expectedDate', 'categories', 'ownerUserIds'] as const;
+const STATUS_LOG_KEYS = ['id', 'at', 'by', 'byUserId', 'text'] as const;
+
+function isRecord(value: unknown): value is JsonObject {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function hasExactKeys(
+  value: JsonObject,
+  allowed: readonly string[],
+  required: readonly string[] = allowed,
+): boolean {
+  const allowedSet = new Set(allowed);
+  return Object.keys(value).every(key => allowedSet.has(key))
+    && required.every(key => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function nonEmptyText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function validEntityId(value: unknown): value is string {
+  return typeof value === 'string' && ENTITY_ID_PATTERN.test(value);
+}
+
+function stringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function optionalText(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === 'string';
+}
+
+function validStatusLog(value: unknown): boolean {
+  if (!isRecord(value)
+      || !hasExactKeys(value, STATUS_LOG_KEYS, ['id', 'at', 'by', 'text'])) return false;
+  return nonEmptyText(value.id)
+    && nonEmptyText(value.at)
+    && typeof value.by === 'string'
+    && optionalText(value.byUserId)
+    && typeof value.text === 'string';
+}
+
+function validInternalCaseDraft(value: unknown): value is InternalControlCase {
+  if (!isRecord(value) || !hasExactKeys(value, INTERNAL_CASE_KEYS, [
+    'id', 'vesselId', 'reportDate', 'reportSource', 'description', 'priority',
+    'category', 'isAware', 'status', 'departments', 'syncToTask', 'origin',
+    'isClosed', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'statusLogs',
+  ])) return false;
+  return validEntityId(value.id)
+    && validEntityId(value.vesselId)
+    && [
+      value.reportDate,
+      value.reportSource,
+      value.description,
+      value.priority,
+      value.category,
+      value.status,
+      value.origin,
+      value.createdBy,
+      value.updatedBy,
+      value.createdAt,
+      value.updatedAt,
+    ].every(nonEmptyText)
+    && typeof value.isAware === 'boolean'
+    && typeof value.isClosed === 'boolean'
+    && typeof value.syncToTask === 'boolean'
+    && stringList(value.departments)
+    && Array.isArray(value.statusLogs)
+    && value.statusLogs.every(validStatusLog)
+    && optionalText(value.equipmentSubcategory)
+    && optionalText(value.closedDate)
+    && optionalText(value.closedBy)
+    && (value.linkedTaskId === undefined
+      || value.linkedTaskId === null
+      || validEntityId(value.linkedTaskId));
+}
+
+function validInternalTaskDraft(value: unknown): value is JsonObject {
+  if (!isRecord(value) || !hasExactKeys(value, INTERNAL_TASK_KEYS)) return false;
+  return validEntityId(value.id)
+    && nonEmptyText(value.expectedDate)
+    && stringList(value.categories)
+    && stringList(value.ownerUserIds);
+}
+
+function validReplayEnvelope(value: unknown, command: string): boolean {
+  if (!isRecord(value) || !hasExactKeys(value, REPLAY_KEYS)) return false;
+  return value.version === 1
+    && value.rpc === `command_ship_dynamics_${command}`
+    && isRecord(value.request)
+    && isRecord(value.args)
+    && Array.isArray(value.leases)
+    && value.leases.every(lease => isRecord(lease)
+      && hasExactKeys(lease, REPLAY_LEASE_KEYS)
+      && nonEmptyText(lease.leaseKey)
+      && nonEmptyText(lease.entityType)
+      && nonEmptyText(lease.entityId)
+      && UUID_PATTERN.test(String(lease.ownerSession || ''))
+      && Number.isSafeInteger(lease.fencingToken));
+}
+
+function validBaseVersions(value: unknown, expectedKeys: string[]): boolean {
+  if (!isRecord(value)) return false;
+  const actualKeys = Object.keys(value).sort();
+  const requiredKeys = [...expectedKeys].sort();
+  return actualKeys.length === requiredKeys.length
+    && actualKeys.every((key, index) => key === requiredKeys[index])
+    && actualKeys.every(key => Number.isSafeInteger(value[key]) && Number(value[key]) >= 0);
+}
+
+function validRecoveryEnvelope(
+  envelope: DurableDraftEnvelope,
+  operationId: string,
+  command: string,
+  expectedTargetKey?: string,
+): boolean {
+  if (!isRecord(envelope)
+      || !hasExactKeys(envelope, ENVELOPE_KEYS, [
+        'version', 'workspaceId', 'actorId', 'entityKey', 'draft', 'baseVersions', 'updatedAt',
+      ])
+      || envelope.version !== 1
+      || !nonEmptyText(envelope.workspaceId)
+      || !nonEmptyText(envelope.actorId)
+      || !nonEmptyText(envelope.entityKey)
+      || !isRecord(envelope.draft)
+      || !isRecord(envelope.baseVersions)
+      || !nonEmptyText(envelope.updatedAt)) return false;
+  const pending = envelope.pendingOperation;
+  if (pending === undefined) return true;
+  if (!isRecord(pending)
+      || !hasExactKeys(pending, PENDING_OPERATION_KEYS, [
+        'operationId', 'command', 'targetKey', 'dispatchedAt',
+      ])
+      || !UUID_PATTERN.test(String(pending.operationId || ''))
+      || pending.operationId !== operationId
+      || pending.command !== command
+      || !nonEmptyText(pending.targetKey)
+      || (expectedTargetKey !== undefined && pending.targetKey !== expectedTargetKey)
+      || !nonEmptyText(pending.dispatchedAt)) return false;
+  return pending.replay === undefined || validReplayEnvelope(pending.replay, command);
+}
+
 function isOnline() {
   return typeof navigator === 'undefined' || navigator.onLine !== false;
 }
@@ -637,6 +825,191 @@ export class NormalizedUiController {
     return 'committed';
   }
 
+  #parseInternalCaseDraft(
+    envelope: DurableDraftEnvelope,
+    draft: JsonObject,
+  ): ParsedInternalCaseDraft | null {
+    const kind = typeof draft.kind === 'string' ? draft.kind : '';
+    if (kind === 'internal-case-batch') {
+      const operationId = typeof draft.operationId === 'string' ? draft.operationId : '';
+      if (
+        !hasExactKeys(draft, ['kind', 'operationId', 'entries'])
+        || !UUID_PATTERN.test(operationId)
+        || envelope.entityKey !== `internal-case-batch:${operationId}`
+        || !Array.isArray(draft.entries)
+        || !draft.entries.length
+        || !validBaseVersions(envelope.baseVersions, [])
+        || !validRecoveryEnvelope(envelope, operationId, 'batch_create_internal_cases')
+      ) {
+        throw new NormalizedCommandError(
+          'invalid',
+          'offline-internal-case-batch-invalid',
+          '離線內控批次資料無效；未送出任何案件。',
+        );
+      }
+      const caseIds = new Set<string>();
+      const taskIds = new Set<string>();
+      const prepared = draft.entries.map(value => {
+        if (!isRecord(value)
+            || !hasExactKeys(value, ['candidate', 'linkedTask'])
+            || !validInternalCaseDraft(value.candidate)) {
+          throw new NormalizedCommandError(
+            'invalid',
+            'offline-internal-case-batch-invalid',
+            '離線內控批次資料無效；未送出任何案件。',
+          );
+        }
+        const item = value.candidate;
+        const linkedTaskShapeValid = value.linkedTask === null
+          || validInternalTaskDraft(value.linkedTask);
+        const linkedTask = validInternalTaskDraft(value.linkedTask)
+          ? value.linkedTask
+          : null;
+        const taskId = typeof linkedTask?.id === 'string' ? linkedTask.id : '';
+        const candidateTaskId = typeof item.linkedTaskId === 'string' ? item.linkedTaskId : '';
+        if (
+          !linkedTaskShapeValid
+          || caseIds.has(item.id)
+          || item.syncToTask !== Boolean(linkedTask)
+          || (linkedTask && candidateTaskId !== taskId)
+          || (!linkedTask && candidateTaskId)
+          || (taskId && taskIds.has(taskId))
+        ) {
+          throw new NormalizedCommandError(
+            'invalid',
+            'offline-internal-case-batch-invalid',
+            '離線內控批次資料無效；未送出任何案件。',
+          );
+        }
+        caseIds.add(item.id);
+        if (taskId) taskIds.add(taskId);
+        return {
+          item,
+          caseKey: `internal-case:${item.id}`,
+          caseCreateLeaseKey: `internal-case-create:${item.vesselId}`,
+          taskPayload: linkedTask,
+          taskId,
+        };
+      });
+      return { kind: 'batch', operationId, prepared };
+    }
+    if (kind !== 'internal-case' || draft.mode !== 'update') return null;
+    const operationId = typeof draft.operationId === 'string' ? draft.operationId : '';
+    const linkAction = draft.linkAction;
+    const taskId = typeof draft.taskId === 'string' ? draft.taskId : '';
+    const oldVesselId = typeof draft.oldVesselId === 'string' ? draft.oldVesselId : '';
+    const taskPayload = draft.taskPayload === null
+      ? null
+      : validInternalTaskDraft(draft.taskPayload)
+        ? draft.taskPayload
+        : undefined;
+    const taskPayloadId = taskPayload && typeof taskPayload.id === 'string'
+      ? taskPayload.id
+      : '';
+    const candidate = draft.candidate;
+    const candidateTaskId = validInternalCaseDraft(candidate)
+      && typeof candidate.linkedTaskId === 'string'
+      ? candidate.linkedTaskId
+      : '';
+    const actionValid = linkAction === 'preserve'
+      || linkAction === 'materialize'
+      || linkAction === 'unlink';
+    const taskIntentValid = linkAction === 'materialize'
+      ? Boolean(taskId && taskPayload && taskPayloadId === taskId
+        && validInternalCaseDraft(candidate) && candidate.syncToTask
+        && (!candidateTaskId || candidateTaskId === taskId))
+      : linkAction === 'unlink'
+        ? Boolean(taskId && taskPayload === null
+          && validInternalCaseDraft(candidate) && !candidate.syncToTask && !candidateTaskId)
+        : taskId
+          ? Boolean(taskPayload && taskPayloadId === taskId
+            && validInternalCaseDraft(candidate) && candidate.syncToTask
+            && candidateTaskId === taskId)
+          : taskPayload === null
+            && validInternalCaseDraft(candidate) && !candidate.syncToTask && !candidateTaskId;
+    const caseKey = validInternalCaseDraft(candidate)
+      ? `internal-case:${candidate.id}`
+      : '';
+    const expectedVersionKeys = caseKey
+      ? [caseKey, ...(linkAction !== 'materialize' && taskId ? [`task:${taskId}`] : [])]
+      : [];
+    if (
+      !hasExactKeys(draft, [
+        'kind', 'mode', 'operationId', 'linkAction', 'taskId', 'taskPayload',
+        'oldVesselId', 'candidate',
+      ])
+      || !UUID_PATTERN.test(operationId)
+      || !actionValid
+      || !validEntityId(taskId) && Boolean(taskId)
+      || !validEntityId(oldVesselId)
+      || taskPayload === undefined
+      || !taskIntentValid
+      || !validInternalCaseDraft(candidate)
+      || envelope.entityKey !== caseKey
+      || !validBaseVersions(envelope.baseVersions, expectedVersionKeys)
+      || !validRecoveryEnvelope(envelope, operationId, 'update_internal_case', caseKey)
+    ) {
+      throw new NormalizedCommandError(
+        'invalid',
+        'offline-internal-case-update-invalid',
+        '離線內控更新資料不完整；未送出案件或待辦變更。',
+      );
+    }
+    return {
+      kind: 'update',
+      candidate,
+      intent: { operationId, linkAction, taskId, taskPayload, oldVesselId },
+    };
+  }
+
+  #internalUpdateRefreshKeys(
+    item: InternalControlCase,
+    intent: Pick<InternalCaseRecoveryIntent, 'oldVesselId' | 'taskId'>,
+  ) {
+    return [...new Set([
+      `internal-case:${item.id}`,
+      `vessel:${intent.oldVesselId}`,
+      `vessel:${item.vesselId}`,
+      ...(intent.taskId ? [`task:${intent.taskId}`] : []),
+    ])];
+  }
+
+  async #preflightInternalCaseUpdate(
+    item: InternalControlCase,
+    intent: Pick<InternalCaseRecoveryIntent, 'oldVesselId' | 'linkAction' | 'taskId'>,
+  ): Promise<NormalizedApplicationProjection> {
+    const caseKey = `internal-case:${item.id}`;
+    await this.runtime.refreshEntities([caseKey]);
+    let projection = this.#projection();
+    const currentCase = projection.data.internalControlCases.find(entry => entry.id === item.id);
+    if (!currentCase || currentCase.vesselId !== intent.oldVesselId) {
+      throw new NormalizedCommandError(
+        'version',
+        'offline-internal-case-old-vessel-mismatch',
+        '離線草稿所屬內控案件已隱藏、移動或變更；未送出任何更新。',
+      );
+    }
+    const vesselKeys = [...new Set([
+      `vessel:${intent.oldVesselId}`,
+      `vessel:${item.vesselId}`,
+    ])];
+    await this.runtime.refreshEntities(vesselKeys);
+    projection = this.#projection();
+    if (vesselKeys.some(key => !projection.allowedEntityKeys.has(key))) {
+      throw new NormalizedCommandError(
+        'permission',
+        'offline-internal-case-vessel-scope-revoked',
+        '目前授權未涵蓋內控案件的原船舶與新船舶；未送出任何更新。',
+      );
+    }
+    if (intent.linkAction !== 'materialize' && intent.taskId) {
+      await this.runtime.refreshEntities([`task:${intent.taskId}`]);
+      projection = this.#projection();
+    }
+    this.#validateStoredDraft(caseKey, projection);
+    return projection;
+  }
+
   async createInternalCaseBatch(
     items: InternalControlCase[],
     projections: Record<string, {
@@ -762,15 +1135,11 @@ export class NormalizedUiController {
       expectedDate: string;
       ownerUserIds: string[];
     },
-    recoveryIntent?: {
-      operationId: string;
-      linkAction: 'preserve' | 'materialize' | 'unlink';
-      taskId: string;
-      taskPayload: JsonObject | null;
-      oldVesselId: string;
-    },
+    recoveryIntent?: InternalCaseRecoveryIntent,
   ): Promise<'committed' | 'drafted'> {
     const caseKey = `internal-case:${item.id}`;
+    const online = isOnline();
+    if (online) await this.runtime.refreshEntities([caseKey]);
     const initial = this.#projection().data.internalControlCases.find(entry => entry.id === item.id);
     if (!initial) throw new Error('離線草稿所屬內控案件已不存在。');
     const existingTaskId = initial.linkedTaskId || '';
@@ -795,7 +1164,6 @@ export class NormalizedUiController {
     const taskLeaseKey = addingTask
       ? `task-create:${item.vesselId}`
       : taskId ? `task:${taskId}` : '';
-    const online = isOnline();
     const operationId = recoveryIntent?.operationId
       || (!online ? this.runtime.commands.createOperationId() : undefined);
     if (!online) {
@@ -816,42 +1184,15 @@ export class NormalizedUiController {
       );
       return 'drafted';
     }
-    await this.runtime.refreshEntities([caseKey]);
-    let projection = this.#projection();
-    const currentCase = projection.data.internalControlCases.find(entry => entry.id === item.id);
-    if (!currentCase || currentCase.vesselId !== oldVesselId) {
-      throw new NormalizedCommandError(
-        'version',
-        'offline-internal-case-old-vessel-mismatch',
-        '離線草稿所屬內控案件已隱藏、移動或變更；未送出任何更新。',
-      );
-    }
-    const vesselKeys = [...new Set([
-      `vessel:${oldVesselId}`,
-      `vessel:${item.vesselId}`,
-    ])];
-    await this.runtime.refreshEntities(vesselKeys);
-    projection = this.#projection();
-    if (vesselKeys.some(key => !projection.allowedEntityKeys.has(key))) {
-      throw new NormalizedCommandError(
-        'permission',
-        'offline-internal-case-vessel-scope-revoked',
-        '目前授權未涵蓋內控案件的原船舶與新船舶；未送出任何更新。',
-      );
-    }
-    const taskRefreshKeys = linkAction !== 'materialize' && taskId
-      ? [`task:${taskId}`]
-      : [];
-    if (taskRefreshKeys.length) {
-      await this.runtime.refreshEntities(taskRefreshKeys);
-      projection = this.#projection();
-    }
-    this.#validateStoredDraft(caseKey, projection);
-    const committedRefreshKeys = [...new Set([
-      caseKey,
-      ...vesselKeys,
-      ...(taskId ? [`task:${taskId}`] : []),
-    ])];
+    const projection = await this.#preflightInternalCaseUpdate(item, {
+      oldVesselId,
+      linkAction,
+      taskId,
+    });
+    const committedRefreshKeys = this.#internalUpdateRefreshKeys(item, {
+      oldVesselId,
+      taskId,
+    });
 
     const leases = await this.runtime.commands.claimLeaseSet([
       { leaseKey: caseKey, entityType: 'internal-case', entityId: item.id },
@@ -1023,6 +1364,81 @@ export class NormalizedUiController {
   }
 
   async recoverDraft(envelope: DurableDraftEnvelope): Promise<void> {
+    const draft = isRecord(envelope.draft) ? envelope.draft : null;
+    const internalPendingCommand = envelope.pendingOperation?.command;
+    const parsedInternalCase = draft
+      ? this.#parseInternalCaseDraft(envelope, draft)
+      : null;
+    if ((internalPendingCommand === 'update_internal_case'
+        || internalPendingCommand === 'batch_create_internal_cases')
+        && !parsedInternalCase) {
+      throw new NormalizedCommandError(
+        'invalid',
+        internalPendingCommand === 'update_internal_case'
+          ? 'offline-internal-case-update-invalid'
+          : 'offline-internal-case-batch-invalid',
+        '離線內控復原資料不完整；未查詢或重播伺服器操作。',
+      );
+    }
+    if (parsedInternalCase) {
+      if (envelope.pendingOperation) {
+        const status = await this.runtime.recoverPendingOperation(
+          envelope.entityKey,
+          parsedInternalCase.kind === 'update'
+            ? {
+                beforeReplay: async () => {
+                  await this.#preflightInternalCaseUpdate(
+                    parsedInternalCase.candidate,
+                    parsedInternalCase.intent,
+                  );
+                },
+              }
+            : undefined,
+        );
+        if (status?.status === 'committed') {
+          if (parsedInternalCase.kind === 'batch') {
+            await this.runtime.refreshAll();
+          } else {
+            await this.runtime.refreshEntities(this.#internalUpdateRefreshKeys(
+              parsedInternalCase.candidate,
+              parsedInternalCase.intent,
+            ));
+          }
+          this.#clearDraft(envelope.entityKey);
+          return;
+        }
+        if (status?.status === 'prepared' || status?.status === 'recovery_required') {
+          throw new NormalizedCommandError(
+            'recovery',
+            status.errorCode || 'operation-recovery-required',
+            '先前操作仍待伺服器確認；已保留 operationId 與草稿，暫不重複寫入。',
+            envelope.pendingOperation.operationId,
+          );
+        }
+        if (status?.status === 'rejected') {
+          throw new NormalizedCommandError(
+            'rejected',
+            status.errorCode || 'operation-rejected',
+            '先前內控操作已被伺服器拒絕；草稿仍保留供重新檢視。',
+            envelope.pendingOperation.operationId,
+          );
+        }
+      }
+      if (parsedInternalCase.kind === 'batch') {
+        await this.#submitInternalCaseBatch(
+          parsedInternalCase.prepared,
+          parsedInternalCase.operationId,
+          envelope.entityKey,
+        );
+      } else {
+        await this.updateInternalCase(
+          parsedInternalCase.candidate,
+          undefined,
+          parsedInternalCase.intent,
+        );
+      }
+      return;
+    }
     if (envelope.pendingOperation) {
       const status = await this.runtime.recoverPendingOperation(envelope.entityKey);
       if (status?.status === 'committed') {
@@ -1043,10 +1459,9 @@ export class NormalizedUiController {
         );
       }
     }
-    if (!envelope.draft || typeof envelope.draft !== 'object' || Array.isArray(envelope.draft)) {
+    if (!draft) {
       return;
     }
-    const draft = envelope.draft as JsonObject;
     const kind = typeof draft.kind === 'string' ? draft.kind : '';
     if (kind === 'task' && draft.candidate && typeof draft.candidate === 'object') {
       await this.saveTask(
@@ -1092,144 +1507,21 @@ export class NormalizedUiController {
       );
       return;
     }
-    if (kind === 'internal-case-batch') {
-      const operationId = typeof draft.operationId === 'string' ? draft.operationId : '';
-      if (
-        !operationId
-        || envelope.entityKey !== `internal-case-batch:${operationId}`
-        || !Array.isArray(draft.entries)
-        || !draft.entries.length
-      ) {
-        throw new NormalizedCommandError(
-          'invalid',
-          'offline-internal-case-batch-invalid',
-          '離線內控批次資料無效；未送出任何案件。',
-        );
-      }
-      const caseIds = new Set<string>();
-      const taskIds = new Set<string>();
-      const prepared = draft.entries.map(value => {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) {
-          throw new NormalizedCommandError(
-            'invalid',
-            'offline-internal-case-batch-invalid',
-            '離線內控批次資料無效；未送出任何案件。',
-          );
-        }
-        const entry = value as JsonObject;
-        if (!entry.candidate || typeof entry.candidate !== 'object'
-            || Array.isArray(entry.candidate)) {
-          throw new NormalizedCommandError(
-            'invalid',
-            'offline-internal-case-batch-invalid',
-            '離線內控批次資料無效；未送出任何案件。',
-          );
-        }
-        const item = entry.candidate as unknown as InternalControlCase;
-        const linkedTaskShapeValid = entry.linkedTask === null
-          || Boolean(entry.linkedTask && typeof entry.linkedTask === 'object'
-            && !Array.isArray(entry.linkedTask));
-        const linkedTask = linkedTaskShapeValid && entry.linkedTask !== null
-          ? entry.linkedTask as JsonObject
-          : null;
-        const taskId = typeof linkedTask?.id === 'string' ? linkedTask.id : '';
-        const candidateTaskId = typeof item.linkedTaskId === 'string' ? item.linkedTaskId : '';
-        if (
-          typeof item.id !== 'string'
-          || !item.id
-          || typeof item.vesselId !== 'string'
-          || !item.vesselId
-          || typeof item.syncToTask !== 'boolean'
-          || !linkedTaskShapeValid
-          || caseIds.has(item.id)
-          || item.syncToTask !== Boolean(linkedTask)
-          || (linkedTask && (!taskId || candidateTaskId !== taskId))
-          || (!linkedTask && candidateTaskId)
-          || (taskId && taskIds.has(taskId))
-        ) {
-          throw new NormalizedCommandError(
-            'invalid',
-            'offline-internal-case-batch-invalid',
-            '離線內控批次資料無效；未送出任何案件。',
-          );
-        }
-        caseIds.add(item.id);
-        if (taskId) taskIds.add(taskId);
-        return {
-          item,
-          caseKey: `internal-case:${item.id}`,
-          caseCreateLeaseKey: `internal-case-create:${item.vesselId}`,
-          taskPayload: linkedTask,
-          taskId,
-        };
-      });
-      await this.#submitInternalCaseBatch(prepared, operationId, envelope.entityKey);
-      return;
-    }
-    if (kind === 'internal-case' && draft.candidate && typeof draft.candidate === 'object') {
+    if (kind === 'internal-case' && draft.mode === 'create'
+        && draft.candidate && typeof draft.candidate === 'object') {
       const candidate = draft.candidate as unknown as InternalControlCase;
-      if (draft.mode === 'create') {
-        const linked = draft.linkedTask && typeof draft.linkedTask === 'object'
-          ? draft.linkedTask as JsonObject
-          : null;
-        await this.createInternalCase(candidate, linked ? {
-          categories: Array.isArray(linked.categories)
-            ? linked.categories.filter((value): value is string => typeof value === 'string')
-            : [],
-          expectedDate: typeof linked.expectedDate === 'string' ? linked.expectedDate : '',
-          ownerUserIds: Array.isArray(linked.ownerUserIds)
-            ? linked.ownerUserIds.filter((value): value is string => typeof value === 'string')
-            : [],
-        } : undefined);
-      } else {
-        const operationId = typeof draft.operationId === 'string' ? draft.operationId : '';
-        const linkAction = draft.linkAction;
-        const taskId = typeof draft.taskId === 'string' ? draft.taskId : '';
-        const oldVesselId = typeof draft.oldVesselId === 'string' ? draft.oldVesselId : '';
-        const taskPayload = draft.taskPayload === null
-          ? null
-          : draft.taskPayload && typeof draft.taskPayload === 'object'
-            && !Array.isArray(draft.taskPayload)
-            ? draft.taskPayload as JsonObject
-            : undefined;
-        const taskPayloadId = taskPayload && typeof taskPayload.id === 'string'
-          ? taskPayload.id
-          : '';
-        const actionValid = linkAction === 'preserve'
-          || linkAction === 'materialize'
-          || linkAction === 'unlink';
-        const taskIntentValid = linkAction === 'materialize'
-          ? Boolean(taskId && taskPayload && taskPayloadId === taskId && candidate.syncToTask)
-          : linkAction === 'unlink'
-            ? Boolean(taskId && taskPayload === null && !candidate.syncToTask)
-            : taskId
-              ? Boolean(taskPayload && taskPayloadId === taskId && candidate.syncToTask)
-              : taskPayload === null && !candidate.syncToTask;
-        if (
-          draft.mode !== 'update'
-          || !operationId
-          || !actionValid
-          || !oldVesselId
-          || taskPayload === undefined
-          || !taskIntentValid
-          || typeof candidate.id !== 'string'
-          || envelope.entityKey !== `internal-case:${candidate.id}`
-        ) {
-          throw new NormalizedCommandError(
-            'invalid',
-            'offline-internal-case-update-invalid',
-            '離線內控更新資料不完整；未送出案件或待辦變更。',
-          );
-        }
-        await this.updateInternalCase(candidate, undefined, {
-          operationId,
-          linkAction,
-          taskId,
-          taskPayload,
-          oldVesselId,
-        });
-      }
-      return;
+      const linked = draft.linkedTask && typeof draft.linkedTask === 'object'
+        ? draft.linkedTask as JsonObject
+        : null;
+      await this.createInternalCase(candidate, linked ? {
+        categories: Array.isArray(linked.categories)
+          ? linked.categories.filter((value): value is string => typeof value === 'string')
+          : [],
+        expectedDate: typeof linked.expectedDate === 'string' ? linked.expectedDate : '',
+        ownerUserIds: Array.isArray(linked.ownerUserIds)
+          ? linked.ownerUserIds.filter((value): value is string => typeof value === 'string')
+          : [],
+      } : undefined);
     }
   }
 

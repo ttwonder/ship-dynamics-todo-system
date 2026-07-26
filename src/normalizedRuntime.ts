@@ -434,9 +434,12 @@ export class NormalizedApplicationRuntime {
     this.repository.removeOwnedDraft(owner.workspaceId, owner.actorId, owner.entityKey);
   }
 
-  async recoverPendingOperation(entityKey: string): Promise<OperationStatus | null> {
+  async recoverPendingOperation(
+    entityKey: string,
+    options: { beforeReplay?: () => Promise<void> } = {},
+  ): Promise<OperationStatus | null> {
     return this.repository.recoverPendingOperation(entityKey, {
-      beforeReplay: async () => { await this.refreshAll(); },
+      beforeReplay: options.beforeReplay || (async () => { await this.refreshAll(); }),
     });
   }
 

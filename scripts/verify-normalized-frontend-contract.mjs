@@ -623,11 +623,20 @@ try {
       baseVersions: offline.baseVersions,
       updatedAt: '2026-07-26T00:00:00Z',
     };
+    const cachedAbsentProjection = {
+      ...offlineProjection,
+      data: { ...offlineProjection.data, internalControlCases: [] },
+      versions: new Map(),
+      allowedEntityKeys: new Set(['vessel:v1', 'vessel:v2']),
+    };
     const recoveryRuntime = {
-      projection: offlineProjection,
+      projection: cachedAbsentProjection,
       refreshEntities: async keys => {
         refreshes.push([...keys]);
-        return offlineProjection;
+        if (keys.length === 1 && keys[0] === offline.entityKey) {
+          recoveryRuntime.projection = offlineProjection;
+        }
+        return recoveryRuntime.projection;
       },
       loadDraft: key => key === envelope.entityKey ? envelope : null,
       removeDraft: key => { cleared.push(key); },
@@ -644,6 +653,8 @@ try {
       },
     };
     await new NormalizedUiController(recoveryRuntime).recoverDraft(envelope);
+    assert.deepEqual(refreshes[0], [offline.entityKey],
+      'recovery must refetch an initially absent case before consulting cached projection');
     assert.equal(updates.length, 1,
       'offline case+task intent must recover through one atomic update RPC');
     assert.equal(conversionCalls, 0,
@@ -713,6 +724,158 @@ try {
       'an old-vessel mismatch must fail before the atomic RPC');
     assert.equal(mismatchDraftClears, 0,
       'an old-vessel mismatch must preserve the offline draft');
+
+    const pendingEnvelope = {
+      ...envelope,
+      pendingOperation: {
+        operationId: offlineOperationId,
+        command: 'update_internal_case',
+        targetKey: offline.entityKey,
+        dispatchedAt: '2026-07-26T00:00:01Z',
+      },
+    };
+    const malformedPendingEnvelopes = [
+      { ...pendingEnvelope, unexpectedEnvelopeField: true },
+      { ...pendingEnvelope, draft: { ...pendingEnvelope.draft, unexpectedDraftField: true } },
+      { ...pendingEnvelope, draft: { ...pendingEnvelope.draft, operationId: 'not-a-uuid' } },
+      {
+        ...pendingEnvelope,
+        draft: {
+          ...pendingEnvelope.draft,
+          candidate: { ...pendingEnvelope.draft.candidate, id: 'case:malformed' },
+        },
+        entityKey: 'internal-case:case:malformed',
+        pendingOperation: {
+          ...pendingEnvelope.pendingOperation,
+          targetKey: 'internal-case:case:malformed',
+        },
+      },
+      { ...pendingEnvelope, draft: { ...pendingEnvelope.draft, taskId: 'task-other' } },
+      {
+        ...pendingEnvelope,
+        pendingOperation: {
+          ...pendingEnvelope.pendingOperation,
+          operationId: '66666666-6666-4666-8666-666666666666',
+        },
+      },
+      {
+        ...pendingEnvelope,
+        pendingOperation: { ...pendingEnvelope.pendingOperation, command: 'save_report' },
+      },
+      {
+        ...pendingEnvelope,
+        pendingOperation: {
+          ...pendingEnvelope.pendingOperation,
+          targetKey: 'internal-case:case-other',
+        },
+      },
+      {
+        ...pendingEnvelope,
+        pendingOperation: { ...pendingEnvelope.pendingOperation, unexpectedPendingField: true },
+      },
+    ];
+    for (const malformedEnvelope of malformedPendingEnvelopes) {
+      let malformedRecoveryCalls = 0;
+      let malformedRefreshCalls = 0;
+      let malformedDraftClears = 0;
+      const malformedRuntime = {
+        projection: offlineProjection,
+        recoverPendingOperation: async () => {
+          malformedRecoveryCalls += 1;
+          return {
+            status: 'committed',
+            command: 'update_internal_case',
+            targetKey: malformedEnvelope.entityKey,
+            result: {},
+            errorCode: null,
+            completedAt: '2026-07-26T00:00:02Z',
+          };
+        },
+        refreshEntities: async () => {
+          malformedRefreshCalls += 1;
+          return offlineProjection;
+        },
+        loadDraft: key => key === malformedEnvelope.entityKey ? malformedEnvelope : null,
+        removeDraft: () => { malformedDraftClears += 1; },
+      };
+      await assert.rejects(
+        () => new NormalizedUiController(malformedRuntime).recoverDraft(malformedEnvelope),
+        error => error instanceof NormalizedCommandError
+          && error.code === 'offline-internal-case-update-invalid',
+        'malformed internal-case recovery data must fail closed locally',
+      );
+      assert.equal(malformedRecoveryCalls, 0,
+        'malformed internal-case recovery data must fail before status/replay RPC');
+      assert.equal(malformedRefreshCalls, 0,
+        'malformed internal-case recovery data must fail before authorization refresh RPC');
+      assert.equal(malformedDraftClears, 0,
+        'malformed internal-case recovery data must remain durable');
+    }
+
+    const committedPendingRefreshes = [];
+    const committedPendingClears = [];
+    const committedPendingRuntime = {
+      projection: offlineProjection,
+      recoverPendingOperation: async () => ({
+        status: 'committed',
+        command: 'update_internal_case',
+        targetKey: offline.entityKey,
+        result: {},
+        errorCode: null,
+        completedAt: '2026-07-26T00:00:02Z',
+      }),
+      refreshEntities: async keys => {
+        committedPendingRefreshes.push([...keys]);
+        return offlineProjection;
+      },
+      loadDraft: key => key === envelope.entityKey ? pendingEnvelope : null,
+      removeDraft: key => { committedPendingClears.push(key); },
+    };
+    await new NormalizedUiController(committedPendingRuntime).recoverDraft(pendingEnvelope);
+    assert.ok(
+      committedPendingRefreshes.at(-1).includes(offline.entityKey)
+        && committedPendingRefreshes.at(-1).includes('vessel:v1')
+        && committedPendingRefreshes.at(-1).includes('vessel:v2')
+        && committedPendingRefreshes.at(-1).includes(`task:${offline.draft.taskId}`),
+      'an already-committed pending materialization must refresh the complete fixed intent',
+    );
+    assert.deepEqual(committedPendingClears, [offline.entityKey]);
+
+    let preparedReplayDispatches = 0;
+    let preparedDraftClears = 0;
+    const preparedMismatchRuntime = {
+      projection: offlineProjection,
+      refreshEntities: async keys => {
+        if (keys.length === 1 && keys[0] === offline.entityKey) {
+          preparedMismatchRuntime.projection = changedProjection;
+        }
+        return preparedMismatchRuntime.projection;
+      },
+      recoverPendingOperation: async (_key, options) => {
+        await options.beforeReplay();
+        preparedReplayDispatches += 1;
+        return {
+          status: 'committed',
+          command: 'update_internal_case',
+          targetKey: offline.entityKey,
+          result: {},
+          errorCode: null,
+          completedAt: '2026-07-26T00:00:03Z',
+        };
+      },
+      loadDraft: key => key === envelope.entityKey ? pendingEnvelope : null,
+      removeDraft: () => { preparedDraftClears += 1; },
+    };
+    await assert.rejects(
+      () => new NormalizedUiController(preparedMismatchRuntime).recoverDraft(pendingEnvelope),
+      error => error instanceof NormalizedCommandError
+        && error.code === 'offline-internal-case-old-vessel-mismatch',
+      'prepared replay must revalidate the live old vessel immediately before leases/RPC',
+    );
+    assert.equal(preparedReplayDispatches, 0,
+      'prepared replay must stop before repository lease reclamation and RPC dispatch');
+    assert.equal(preparedDraftClears, 0,
+      'prepared replay preflight failure must preserve the offline draft');
   }
 
   const appSource = await readFile(resolve(root, 'src/NormalizedApp.tsx'), 'utf8');
