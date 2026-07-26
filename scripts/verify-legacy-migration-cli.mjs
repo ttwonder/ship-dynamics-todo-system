@@ -6,8 +6,8 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import {
   buildMigrationPlan,
-  postgresJsonbText,
   runMigrationCli,
+  validateCommittedImportResult,
 } from './migrate-legacy-to-normalized.mjs';
 
 const payload = {
@@ -30,8 +30,24 @@ assert.equal(plan.ready, true);
 assert.equal(plan.revision, 7);
 assert.equal(plan.counts.users, 1);
 assert.equal(plan.quarantineCount, 0);
-assert.match(plan.payloadSha256, /^[0-9a-f]{64}$/);
-assert.equal(postgresJsonbText({ b: [true, 'x'], a: 1 }), '{"a": 1, "b": [true, "x"]}');
+assert.equal('payloadSha256' in plan, false, 'preflight must not invent a client-side PostgreSQL jsonb hash');
+assert.equal('mappingSha256' in plan, false, 'server-returned hashes are the sole commit hash contract');
+const serverCommitted = validateCommittedImportResult(plan, {
+  status: 'committed',
+  replayed: true,
+  workspaceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  legacyRevision: 7,
+  payloadSha256: '1'.repeat(64),
+  mappingSha256: '2'.repeat(64),
+  counts: plan.counts,
+  quarantineCount: 0,
+});
+assert.equal(serverCommitted.replayed, true);
+assert.equal(serverCommitted.payloadSha256, '1'.repeat(64));
+assert.throws(
+  () => validateCommittedImportResult(plan, { ...serverCommitted, counts: { ...plan.counts, users: 2 } }),
+  /migration-result-mismatch/,
+);
 
 const directory = await mkdtemp(join(tmpdir(), 'ship-migration-cli-'));
 try {

@@ -9,6 +9,7 @@
     "supabase/normalized-auth-orchestration.sql",
     "supabase/normalized-app-contract.sql",
     "supabase/normalized-realtime.sql",
+    "supabase/normalized-legacy-cutover.sql",
     "supabase/normalized-legacy-import.sql"
   ]
 }

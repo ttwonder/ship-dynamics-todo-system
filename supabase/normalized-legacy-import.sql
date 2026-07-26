@@ -61,6 +61,7 @@ create table if not exists public.sd_legacy_imports (
   mapping_sha256 text not null,
   counts jsonb not null,
   quarantine_count integer not null check (quarantine_count >= 0),
+  import_actor text not null,
   imported_at timestamptz not null default clock_timestamp(),
   primary key (workspace_id, legacy_revision),
   constraint sd_legacy_import_payload_hash check (
@@ -70,6 +71,13 @@ create table if not exists public.sd_legacy_imports (
     mapping_sha256 ~ '^[0-9a-f]{64}$'
   )
 );
+alter table public.sd_legacy_imports
+  add column if not exists import_actor text;
+update public.sd_legacy_imports
+set import_actor = 'service_role'
+where import_actor is null;
+alter table public.sd_legacy_imports
+  alter column import_actor set not null;
 alter table public.sd_legacy_imports enable row level security;
 revoke all on table public.sd_legacy_imports from public, anon, authenticated;
 grant select on table public.sd_legacy_imports to authenticated;
@@ -307,6 +315,10 @@ declare
   v_actual_counts jsonb;
   v_payload_hash text;
   v_mapping_hash text;
+  v_import_actor text;
+  v_existing_import public.sd_legacy_imports%rowtype;
+  v_source_revision bigint;
+  v_source_payload_hash text;
   v_canonical_permissions jsonb := '{}'::jsonb;
   v_ordinal integer;
   v_event_ordinal integer;
@@ -321,6 +333,10 @@ begin
   if current_setting('role', true) is distinct from 'service_role' then
     raise exception using errcode = '42501', message = 'not-authorized';
   end if;
+  v_import_actor := coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    'service_role'
+  );
   perform set_config('ship_dynamics.legacy_import_authorized', '1', true);
   if p_workspace_id is null
      or btrim(coalesce(p_workspace_key, '')) = ''
@@ -328,16 +344,72 @@ begin
      or p_expected_legacy_revision is null
      or p_expected_legacy_revision < 0
      or p_expected_quarantine_count is null
-     or p_expected_quarantine_count < 0 then
+     or p_expected_quarantine_count < 0
+     or p_legacy_payload is null
+     or p_identity_mapping is null
+     or p_expected_counts is null then
     raise exception using errcode = 'P0001', message = 'invalid-import-identity';
   end if;
-  if exists (
-    select 1 from public.sd_legacy_imports i
-    where i.workspace_id = p_workspace_id
-      and i.legacy_revision = p_expected_legacy_revision
-  ) then
-    raise exception using errcode = 'P0001', message = 'already-imported-idempotency';
+
+  -- PostgreSQL jsonb text is the sole hashing contract. The browser/CLI never
+  -- tries to reproduce jsonb key ordering or numeric rendering.
+  v_payload_hash := public.sd_legacy_jsonb_sha256(p_legacy_payload);
+  v_mapping_hash := public.sd_legacy_jsonb_sha256(p_identity_mapping);
+
+  select i.* into v_existing_import
+  from public.sd_legacy_imports i
+  where i.workspace_id = p_workspace_id
+    and i.legacy_revision = p_expected_legacy_revision;
+  if found then
+    if v_existing_import.import_actor is distinct from v_import_actor
+       or v_existing_import.payload_sha256 is distinct from v_payload_hash
+       or v_existing_import.mapping_sha256 is distinct from v_mapping_hash
+       or v_existing_import.counts is distinct from p_expected_counts
+       or v_existing_import.quarantine_count is distinct from p_expected_quarantine_count
+       or not exists (
+         select 1 from public.sd_workspaces w
+         where w.id = p_workspace_id
+           and w.legacy_key = btrim(p_workspace_key)
+           and w.name = btrim(p_workspace_name)
+       ) then
+      raise exception using errcode = 'P0001', message = 'import-idempotency-mismatch';
+    end if;
+    perform public.sd_assert_legacy_freeze_boundary(p_workspace_key);
+    select s.revision, public.sd_legacy_jsonb_sha256(s.payload)
+    into v_source_revision, v_source_payload_hash
+    from public.ship_dynamics_app_state s
+    where s.workspace_key = p_workspace_key
+    for share;
+    if not found
+       or v_source_revision is distinct from p_expected_legacy_revision
+       or v_source_payload_hash is distinct from v_existing_import.payload_sha256 then
+      raise exception using errcode = 'P0001', message = 'legacy-source-changed-after-import';
+    end if;
+    return jsonb_build_object(
+      'status', 'committed',
+      'replayed', true,
+      'workspaceId', v_existing_import.workspace_id,
+      'legacyRevision', v_existing_import.legacy_revision,
+      'payloadSha256', v_existing_import.payload_sha256,
+      'mappingSha256', v_existing_import.mapping_sha256,
+      'counts', v_existing_import.counts,
+      'quarantineCount', v_existing_import.quarantine_count,
+      'importedAt', v_existing_import.imported_at
+    );
   end if;
+
+  perform public.sd_assert_legacy_freeze_boundary(p_workspace_key);
+  select s.revision, public.sd_legacy_jsonb_sha256(s.payload)
+  into v_source_revision, v_source_payload_hash
+  from public.ship_dynamics_app_state s
+  where s.workspace_key = p_workspace_key
+  for share;
+  if not found
+     or v_source_revision is distinct from p_expected_legacy_revision
+     or v_source_payload_hash is distinct from v_payload_hash then
+    raise exception using errcode = 'P0001', message = 'legacy-source-snapshot-mismatch';
+  end if;
+
   if exists (
     select 1 from public.sd_workspaces w
     where w.id = p_workspace_id or w.legacy_key = p_workspace_key
@@ -1907,12 +1979,8 @@ begin
     );
   end loop;
 
-  v_payload_hash := encode(
-    sha256(convert_to(p_legacy_payload::text, 'UTF8')), 'hex'
-  );
-  v_mapping_hash := encode(
-    sha256(convert_to(p_identity_mapping::text, 'UTF8')), 'hex'
-  );
+  v_payload_hash := public.sd_legacy_jsonb_sha256(p_legacy_payload);
+  v_mapping_hash := public.sd_legacy_jsonb_sha256(p_identity_mapping);
   insert into public.sd_audit_events(
     workspace_id, id, actor_id, command, entity_type, entity_id,
     detail, created_at
@@ -1987,20 +2055,22 @@ begin
 
   insert into public.sd_legacy_imports(
     workspace_id, legacy_revision, payload_sha256, mapping_sha256,
-    counts, quarantine_count, imported_at
+    counts, quarantine_count, import_actor, imported_at
   ) values (
     p_workspace_id, p_expected_legacy_revision, v_payload_hash, v_mapping_hash,
-    v_actual_counts, v_quarantine_count, v_imported_at
+    v_actual_counts, v_quarantine_count, v_import_actor, v_imported_at
   );
 
   return jsonb_build_object(
     'status', 'committed',
+    'replayed', false,
     'workspaceId', p_workspace_id,
     'legacyRevision', p_expected_legacy_revision,
     'payloadSha256', v_payload_hash,
     'mappingSha256', v_mapping_hash,
     'counts', v_actual_counts,
-    'quarantineCount', v_quarantine_count
+    'quarantineCount', v_quarantine_count,
+    'importedAt', v_imported_at
   );
 end;
 $$;

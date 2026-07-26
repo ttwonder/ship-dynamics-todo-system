@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { createClient } from '@supabase/supabase-js';
 import {
   analyzeLegacyImportPackage,
-  sha256Hex,
+  canonicalJson,
 } from './legacy-migration-contract.mjs';
 
 function parseArgs(argv) {
@@ -54,23 +54,24 @@ async function readLiveLegacyRow() {
   return rows[0];
 }
 
-export function postgresJsonbText(value) {
-  if (Array.isArray(value)) return `[${value.map(postgresJsonbText).join(', ')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}: ${postgresJsonbText(value[key])}`).join(', ')}}`;
-  }
-  return JSON.stringify(value);
-}
-
 export function buildMigrationPlan(payload, revision, identityMapping) {
   const numericRevision = Number(revision);
   if (!Number.isSafeInteger(numericRevision) || numericRevision < 0) throw new Error('invalid-revision');
-  const analysis = analyzeLegacyImportPackage(payload, numericRevision, identityMapping);
-  return Object.freeze({
-    ...analysis,
-    payloadSha256: sha256Hex(postgresJsonbText(payload)),
-    mappingSha256: sha256Hex(postgresJsonbText(identityMapping)),
-  });
+  return Object.freeze(analyzeLegacyImportPackage(payload, numericRevision, identityMapping));
+}
+
+export function validateCommittedImportResult(plan, result) {
+  const hash = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+  if (result?.status !== 'committed'
+    || (result.replayed !== true && result.replayed !== false)
+    || Number(result.legacyRevision) !== plan.revision
+    || !hash(result.payloadSha256)
+    || !hash(result.mappingSha256)
+    || canonicalJson(result.counts) !== canonicalJson(plan.counts)
+    || Number(result.quarantineCount) !== plan.quarantineCount) {
+    throw new Error('migration-result-mismatch');
+  }
+  return Object.freeze({ ...result });
 }
 
 function safePlanOutput(plan) {
@@ -80,8 +81,6 @@ function safePlanOutput(plan) {
     counts: plan.counts,
     quarantineCount: plan.quarantineCount,
     issueCounts: plan.issueCounts,
-    payloadSha256: plan.payloadSha256,
-    mappingSha256: plan.mappingSha256,
   };
 }
 
@@ -139,13 +138,16 @@ export async function runMigrationCli(argv = process.argv.slice(2), environment 
     p_expected_quarantine_count: plan.quarantineCount,
   });
   if (error) throw new Error(`migration-rpc-failed:${error.code || 'unknown'}`);
-  if (data?.status !== 'committed'
-    || data.payloadSha256 !== plan.payloadSha256
-    || data.mappingSha256 !== plan.mappingSha256
-    || Number(data.quarantineCount) !== plan.quarantineCount) {
-    throw new Error('migration-result-mismatch');
-  }
-  console.log(JSON.stringify({ status: 'committed', revision: plan.revision, counts: plan.counts, quarantineCount: plan.quarantineCount }));
+  const committed = validateCommittedImportResult(plan, data);
+  console.log(JSON.stringify({
+    status: 'committed',
+    replayed: committed.replayed,
+    revision: plan.revision,
+    counts: committed.counts,
+    quarantineCount: committed.quarantineCount,
+    payloadSha256: committed.payloadSha256,
+    mappingSha256: committed.mappingSha256,
+  }));
   return 0;
 }
 

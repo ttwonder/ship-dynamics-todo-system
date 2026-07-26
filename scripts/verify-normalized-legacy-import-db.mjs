@@ -15,6 +15,7 @@ const manifest = [
   'supabase/normalized-auth-orchestration.sql',
   'supabase/normalized-app-contract.sql',
   'supabase/normalized-realtime.sql',
+  'supabase/normalized-legacy-cutover.sql',
   'supabase/normalized-legacy-import.sql',
 ];
 
@@ -27,6 +28,13 @@ await db.exec(`
   create role service_role noinherit bypassrls;
   create publication supabase_realtime;
   create table auth.users(id uuid primary key, email text unique);
+  create table public.ship_dynamics_app_state(
+    workspace_key text primary key,
+    revision bigint not null,
+    payload jsonb not null,
+    updated_at timestamptz not null default clock_timestamp(),
+    updated_by text
+  );
   create function auth.uid() returns uuid language sql stable as $$
     select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
   $$;
@@ -487,6 +495,21 @@ async function asRole(role, actorId, action) {
   }
 }
 
+async function prepareLegacySource(workspaceId, payload, revision = 42) {
+  const workspaceKey = `fixture-${workspaceId}`;
+  await db.query(
+    `insert into public.ship_dynamics_app_state(workspace_key,revision,payload)
+     values($1,$2,$3::jsonb)`,
+    [workspaceKey, revision, JSON.stringify(payload)],
+  );
+  await asRole('service_role', null, () => db.query(
+    `select public.freeze_ship_dynamics_legacy_writes($1,$2,$3)`,
+    [workspaceKey, revision, `freeze:${workspaceKey}:${revision}`],
+  ));
+}
+
+await prepareLegacySource(ids.workspace, fixture);
+
 for (const role of ['anon', 'authenticated']) {
   await assert.rejects(
     () => asRole(role, role === 'authenticated' ? ids.owner : null, () => callImport()),
@@ -528,6 +551,7 @@ let badIndex = 0;
 for (const [name, payload, identityMappings, counts, quarantineCount, pattern] of badCases) {
   badIndex += 1;
   const workspaceId = `bbbbbbbb-bbbb-4bbb-8bbb-${String(badIndex).padStart(12, '0')}`;
+  await prepareLegacySource(workspaceId, payload);
   await assert.rejects(
     () => asRole('service_role', null, () => callImport({ workspaceId, payload, identityMappings, counts, quarantineCount })),
     pattern,
@@ -537,7 +561,7 @@ for (const [name, payload, identityMappings, counts, quarantineCount, pattern] o
   assert.equal(residue.rows[0].count, 0, `${name} must roll back every row`);
 }
 
-const applied = await asRole('service_role', null, () => callImport());
+const applied = await asRole('service_role', ids.owner, () => callImport());
 assert.equal(applied.rows[0].result.status, 'committed');
 assert.equal(applied.rows[0].result.legacyRevision, 42);
 assert.deepEqual(applied.rows[0].result.counts, expectedCounts);
@@ -610,11 +634,27 @@ for (const [role, actorId, expected] of [
   assert.equal(visible.rows[0].count, expected);
 }
 
-await assert.rejects(
-  () => asRole('service_role', null, () => callImport()),
-  /already-imported|idempotency/i,
-  'a completed workspace/revision cannot be imported twice',
-);
+const replay = await asRole('service_role', ids.owner, () => callImport());
+assert.equal(replay.rows[0].result.status, 'committed');
+assert.equal(replay.rows[0].result.replayed, true, 'lost-response retry returns the original commit result');
+assert.equal(replay.rows[0].result.payloadSha256, applied.rows[0].result.payloadSha256);
+assert.equal(replay.rows[0].result.mappingSha256, applied.rows[0].result.mappingSha256);
+assert.deepEqual(replay.rows[0].result.counts, applied.rows[0].result.counts);
+assert.equal(replay.rows[0].result.quarantineCount, applied.rows[0].result.quarantineCount);
+
+for (const [name, actorId, options] of [
+  ['different-actor', ids.admin, {}],
+  ['payload-mismatch', ids.owner, { payload: { ...fixture, updatedAt: '2026-07-26T01:00:01.000Z' } }],
+  ['mapping-mismatch', ids.owner, { identityMappings: mappings.map((item, index) => index ? item : { ...item, authAlias: 'changed@migration.invalid' }) }],
+  ['count-mismatch', ids.owner, { counts: { ...expectedCounts, importedTasks: expectedCounts.importedTasks + 1 } }],
+  ['quarantine-mismatch', ids.owner, { quarantineCount: 2 }],
+]) {
+  await assert.rejects(
+    () => asRole('service_role', actorId, () => callImport(options)),
+    /idempotency-mismatch/i,
+    `${name} must not replay an existing import`,
+  );
+}
 
 console.log(`normalized_legacy_import_manifest_files=${manifest.length}`);
 console.log(`normalized_legacy_import_quarantine=${expectedCounts.quarantine}`);

@@ -28,12 +28,29 @@ node scripts/verify-normalized-manifest-apply.mjs
 node scripts/apply-normalized-manifest.mjs
 node scripts/verify-legacy-auth-mapping.mjs
 node scripts/verify-legacy-migration-cli.mjs
+node scripts/verify-normalized-legacy-cutover-db.mjs
+node scripts/verify-legacy-cutover-operations.mjs
 node scripts/verify-normalized-legacy-import-db.mjs
 ```
 
 The first `apply-normalized-manifest` invocation is a no-write dry run and prints only the manifest version, file count, and bundle SHA-256. A staging write additionally requires `NORMALIZED_TARGET=staging`, `NORMALIZED_DATABASE_URL=[REDACTED]`, `PSQL_PATH`, `--apply`, and the exact `--confirm staging:HOST:VERSION` string. The tool rejects the production project reference and sends database credentials only through child-process environment variables, never command arguments or logs.
 
 Auth mapping apply requires `MIGRATION_SUPABASE_URL`, `MIGRATION_SUPABASE_SERVICE_ROLE_KEY`, `MIGRATION_ALIAS_HMAC_SECRET`, and `MIGRATION_PACKAGE_PASSPHRASE`, all supplied by the staging secret environment. Legacy import apply separately requires the reviewed mapping, exact source revision/counts, explicit staging confirmation, and a fresh empty target.
+
+### Executable backup, freeze, restore, and write re-enable
+
+`legacy-cutover-operations.mjs` is service-role tooling and refuses any target other than an explicitly confirmed non-production staging project. Secrets are read only from `MIGRATION_*` environment variables. The encrypted backup is created with exclusive-file semantics and mode `0600`; `verify` decrypts it and checks the SHA-256 of the exact PostgreSQL `jsonb::text` exported by the server.
+
+```bash
+node scripts/legacy-cutover-operations.mjs backup --workspace-key WORKSPACE --revision REV --output legacy-backup.enc.json --confirm staging:backup:WORKSPACE:REV
+node scripts/legacy-cutover-operations.mjs verify --input legacy-backup.enc.json
+node scripts/legacy-cutover-operations.mjs freeze --workspace-key WORKSPACE --revision REV --confirm staging:freeze:WORKSPACE:REV
+# Run scripts/migrate-legacy-to-normalized.mjs --apply only after freeze succeeds.
+node scripts/legacy-cutover-operations.mjs restore --input legacy-backup.enc.json --confirm staging:restore:WORKSPACE:REV:PAYLOAD_SHA256
+node scripts/legacy-cutover-operations.mjs reenable --input legacy-backup.enc.json --confirm staging:reenable:WORKSPACE:REV:PAYLOAD_SHA256
+```
+
+The server trigger blocks `INSERT`, `UPDATE`, and `DELETE` on `public.ship_dynamics_app_state` while frozen, including callers that bypass browser UI. The importer independently requires the enabled trigger, a frozen control row, and an exact source revision/payload hash. A lost import response may be replayed only by the same service-authorized actor with identical payload, Auth mapping, counts, and quarantine count; the server returns the original hashes/counts with `replayed=true`. Any difference fails with `import-idempotency-mismatch`. Restore is the only guarded write path during freeze. Re-enable verifies the restored row revision and server hash before opening legacy writes. Normalized evidence is never reverse-dual-written or deleted.
 
 ## 3. Authentication activation
 

@@ -17,6 +17,7 @@ const expectedOrder = [
   'normalized-auth-orchestration.sql',
   'normalized-app-contract.sql',
   'normalized-realtime.sql',
+  'normalized-legacy-cutover.sql',
   'normalized-legacy-import.sql',
 ];
 assert.deepEqual(manifest.migrations.map(path => path.split('/').at(-1)), expectedOrder);
@@ -44,7 +45,8 @@ for (const table of publishedTables) {
 for (const sensitive of [
   'sd_login_options', 'sd_public_site_gate', 'sd_rate_limit_buckets',
   'sd_edit_leases', 'sd_operations', 'sd_operation_reservations',
-  'sd_audit_events', 'sd_legacy_imports', 'sd_migration_quarantine',
+  'sd_audit_events', 'sd_legacy_imports', 'sd_legacy_write_controls',
+  'sd_migration_quarantine',
 ]) {
   assert.ok(!publishedTables.includes(sensitive), `sensitive table published: ${sensitive}`);
 }

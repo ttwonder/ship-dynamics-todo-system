@@ -13,13 +13,13 @@ assert.equal(migrationBody('begin;\nselect 1;\ncommit;\n', 'fixture').trim(), '-
 assert.throws(() => migrationBody('select 1;', 'bad'), /migration-transaction-invalid/);
 const first = await buildNormalizedDeploymentBundle();
 const second = await buildNormalizedDeploymentBundle();
-assert.equal(first.files, 9);
+assert.equal(first.files, 10);
 assert.equal(first.version, 1);
 assert.equal(first.sha256, second.sha256);
 assert.match(first.sha256, /^[0-9a-f]{64}$/);
 assert.equal((first.sql.match(/^begin;$/gim) || []).length, 1);
 assert.equal((first.sql.match(/^commit;$/gim) || []).length, 1);
-assert.equal((first.sql.match(/^-- manifest:/gm) || []).length, 9);
+assert.equal((first.sql.match(/^-- manifest:/gm) || []).length, 10);
 
 const sandbox = { window: {} };
 vm.runInNewContext(await readFile(new URL('../public/supabase-config.js', import.meta.url), 'utf8'), sandbox);
@@ -61,5 +61,5 @@ try {
   console.log = originalLog;
 }
 const dryRun = JSON.parse(logs.at(-1));
-assert.deepEqual(dryRun, { status: 'ready', version: 1, files: 9, sha256: first.sha256 });
+assert.deepEqual(dryRun, { status: 'ready', version: 1, files: 10, sha256: first.sha256 });
 console.log('normalized_manifest_apply=PASS');
