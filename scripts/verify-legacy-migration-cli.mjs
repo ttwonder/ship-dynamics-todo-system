@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +10,7 @@ import {
   runMigrationCli,
   validateCommittedImportResult,
 } from './migrate-legacy-to-normalized.mjs';
+import { encryptLegacyBackup } from './legacy-cutover-operations.mjs';
 
 const payload = {
   users: [{ id: 'owner', role: 'owner', isActive: true }],
@@ -53,8 +55,19 @@ const directory = await mkdtemp(join(tmpdir(), 'ship-migration-cli-'));
 try {
   const payloadPath = join(directory, 'payload.json');
   const mappingPath = join(directory, 'mapping.json');
+  const backupPath = join(directory, 'legacy-backup.enc.json');
   await writeFile(payloadPath, JSON.stringify(payload));
   await writeFile(mappingPath, JSON.stringify(mapping));
+  const payloadText = JSON.stringify(payload);
+  const payloadSha256 = createHash('sha256').update(payloadText).digest('hex');
+  await writeFile(backupPath, JSON.stringify(encryptLegacyBackup({
+    workspaceKey: 'fixture',
+    revision: 7,
+    payloadText,
+    payloadSha256,
+    frozenAt: '2026-07-26T00:00:00.000Z',
+    exportedAt: '2026-07-26T00:00:01.000Z',
+  }, 'correct horse battery staple')));
   const messages = [];
   const originalLog = console.log;
   console.log = message => messages.push(String(message));
@@ -76,21 +89,37 @@ try {
   assert.equal(output.counts.users, 1);
   assert.ok(!JSON.stringify(output).includes('opaque@internal.invalid'));
 
+  messages.length = 0;
+  console.log = message => messages.push(String(message));
+  try {
+    const backupCode = await runMigrationCli([
+      '--backup', backupPath,
+      '--mapping', mappingPath,
+      '--workspace-id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      '--workspace-name', 'Fixture',
+    ], { MIGRATION_PACKAGE_PASSPHRASE: 'correct horse battery staple' });
+    assert.equal(backupCode, 0);
+  } finally {
+    console.log = originalLog;
+  }
+  const backupOutput = JSON.parse(messages.at(-1));
+  assert.equal(backupOutput.revision, 7);
+  assert.equal(backupOutput.payloadSha256, payloadSha256);
+
   const sandbox = { window: {} };
   vm.runInNewContext(await readFile(new URL('../public/supabase-config.js', import.meta.url), 'utf8'), sandbox);
   await assert.rejects(
     () => runMigrationCli([
-      '--payload', payloadPath,
-      '--revision', '7',
+      '--backup', backupPath,
       '--mapping', mappingPath,
       '--workspace-id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      '--workspace-key', 'fixture',
       '--workspace-name', 'Fixture',
       '--apply',
-      '--confirm', 'staging:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:7',
+      '--confirm', `staging:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:7:${payloadSha256}`,
     ], {
       MIGRATION_SUPABASE_URL: sandbox.window.SHIP_DYNAMICS_SUPABASE_CONFIG.supabaseUrl,
       MIGRATION_SUPABASE_SERVICE_ROLE_KEY: 'not-a-real-key',
+      MIGRATION_PACKAGE_PASSPHRASE: 'correct horse battery staple',
     }),
     /production-target-refused/,
   );

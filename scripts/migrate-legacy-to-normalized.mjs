@@ -6,6 +6,7 @@ import {
   analyzeLegacyImportPackage,
   canonicalJson,
 } from './legacy-migration-contract.mjs';
+import { decryptAndVerifyLegacyBackup } from './legacy-cutover-operations.mjs';
 
 function parseArgs(argv) {
   const args = new Map();
@@ -74,20 +75,21 @@ export function validateCommittedImportResult(plan, result) {
   return Object.freeze({ ...result });
 }
 
-function safePlanOutput(plan) {
+function safePlanOutput(plan, payloadSha256) {
   return {
     ready: plan.ready,
     revision: plan.revision,
     counts: plan.counts,
     quarantineCount: plan.quarantineCount,
     issueCounts: plan.issueCounts,
+    ...(payloadSha256 ? { payloadSha256 } : {}),
   };
 }
 
 export async function runMigrationCli(argv = process.argv.slice(2), environment = process.env) {
   const args = parseArgs(argv);
   if (args.has('--help')) {
-    console.log('Usage: node scripts/migrate-legacy-to-normalized.mjs (--payload FILE --revision N | --live-read) --mapping FILE --workspace-id UUID --workspace-name NAME [--workspace-key KEY] [--apply --confirm staging:UUID:REVISION]');
+    console.log('Usage: node scripts/migrate-legacy-to-normalized.mjs (--backup ENCRYPTED_FILE | --payload FILE --revision N | --live-read) --mapping FILE --workspace-id UUID --workspace-name NAME [--workspace-key KEY] [--apply --confirm staging:UUID:REVISION:PAYLOAD_SHA256]');
     return 0;
   }
   const mappingPath = args.get('--mapping');
@@ -96,7 +98,23 @@ export async function runMigrationCli(argv = process.argv.slice(2), environment 
   if (!mappingPath || !workspaceId || !workspaceName) throw new Error('missing-required-arguments');
   const identityMapping = await readJson(mappingPath, 'mapping');
   let row;
-  if (args.has('--live-read')) {
+  let sourcePayloadSha256;
+  if (args.has('--backup')) {
+    if (args.has('--payload') || args.has('--revision') || args.has('--live-read')
+      || args.has('--workspace-key')) throw new Error('ambiguous-source');
+    const passphrase = environment.MIGRATION_PACKAGE_PASSPHRASE;
+    if (!passphrase || passphrase.length < 20) throw new Error('missing-backup-passphrase');
+    const backup = decryptAndVerifyLegacyBackup(
+      await readJson(args.get('--backup'), 'backup'),
+      passphrase,
+    );
+    row = {
+      payload: JSON.parse(backup.payloadText),
+      revision: backup.revision,
+      workspace_key: backup.workspaceKey,
+    };
+    sourcePayloadSha256 = backup.payloadSha256;
+  } else if (args.has('--live-read')) {
     if (args.has('--payload') || args.has('--revision')) throw new Error('ambiguous-source');
     row = await readLiveLegacyRow();
   } else {
@@ -112,16 +130,17 @@ export async function runMigrationCli(argv = process.argv.slice(2), environment 
   const workspaceKey = args.get('--workspace-key') || row.workspace_key;
   if (!workspaceKey) throw new Error('missing-workspace-key');
   const plan = buildMigrationPlan(row.payload, row.revision, identityMapping);
-  console.log(JSON.stringify(safePlanOutput(plan)));
+  console.log(JSON.stringify(safePlanOutput(plan, sourcePayloadSha256)));
   if (!plan.ready) return 1;
   if (!args.has('--apply')) return 0;
+  if (!sourcePayloadSha256) throw new Error('frozen-backup-required');
 
   const targetUrl = String(environment.MIGRATION_SUPABASE_URL || '').replace(/\/$/, '');
   const serviceRole = environment.MIGRATION_SUPABASE_SERVICE_ROLE_KEY;
   if (!targetUrl || !serviceRole) throw new Error('missing-apply-environment');
   const production = String((await runtimeConfig()).supabaseUrl).replace(/\/$/, '');
   if (targetUrl === production) throw new Error('production-target-refused');
-  const confirmation = `staging:${workspaceId}:${plan.revision}`;
+  const confirmation = `staging:${workspaceId}:${plan.revision}:${sourcePayloadSha256}`;
   if (args.get('--confirm') !== confirmation) throw new Error('confirmation-mismatch');
 
   const client = createClient(targetUrl, serviceRole, {

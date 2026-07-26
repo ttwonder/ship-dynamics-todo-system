@@ -43,6 +43,12 @@ declare
   v_workspace_key text := case when tg_op = 'DELETE' then old.workspace_key else new.workspace_key end;
   v_restore boolean;
 begin
+  -- Serialize every legacy row mutation with freeze/backup/rollback control so
+  -- a writer that entered its BEFORE trigger before freeze cannot commit after
+  -- the authoritative snapshot was recorded.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(v_workspace_key, 731921)
+  );
   select c.restore_in_progress
   into v_restore
   from public.sd_legacy_write_controls c
@@ -99,9 +105,11 @@ begin
 end;
 $$;
 
+drop function if exists public.freeze_ship_dynamics_legacy_writes(text, bigint, text);
 create or replace function public.freeze_ship_dynamics_legacy_writes(
   p_workspace_key text,
   p_expected_revision bigint,
+  p_expected_payload_sha256 text,
   p_confirmation text
 )
 returns jsonb
@@ -118,11 +126,13 @@ begin
     raise exception using errcode = '42501', message = 'not-authorized';
   end if;
   if btrim(coalesce(p_workspace_key, '')) = ''
-     or p_expected_revision is null or p_expected_revision < 0 then
+     or p_expected_revision is null or p_expected_revision < 0
+     or coalesce(p_expected_payload_sha256, '') !~ '^[0-9a-f]{64}$' then
     raise exception using errcode = '22023', message = 'invalid-freeze-identity';
   end if;
   if p_confirmation is distinct from
-     'freeze:' || p_workspace_key || ':' || p_expected_revision::text then
+     'freeze:' || p_workspace_key || ':' || p_expected_revision::text || ':' ||
+     p_expected_payload_sha256 then
     raise exception using errcode = '22023', message = 'confirmation-mismatch';
   end if;
   if to_regclass('public.ship_dynamics_app_state') is null then
@@ -137,6 +147,10 @@ begin
     raise exception using errcode = '55000', message = 'legacy-freeze-trigger-missing';
   end if;
 
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_workspace_key, 731921)
+  );
+
   select s.revision, public.sd_legacy_jsonb_sha256(s.payload)
   into v_revision, v_hash
   from public.ship_dynamics_app_state s
@@ -147,6 +161,9 @@ begin
   end if;
   if v_revision <> p_expected_revision then
     raise exception using errcode = 'P0001', message = 'legacy-revision-mismatch';
+  end if;
+  if v_hash is distinct from p_expected_payload_sha256 then
+    raise exception using errcode = 'P0001', message = 'legacy-payload-hash-mismatch';
   end if;
 
   insert into public.sd_legacy_write_controls(
@@ -173,9 +190,11 @@ begin
 end;
 $$;
 
+drop function if exists public.export_ship_dynamics_legacy_backup(text, bigint);
 create or replace function public.export_ship_dynamics_legacy_backup(
   p_workspace_key text,
-  p_expected_revision bigint
+  p_expected_revision bigint,
+  p_expected_payload_sha256 text
 )
 returns jsonb
 language plpgsql
@@ -187,12 +206,33 @@ declare
   v_row record;
   v_payload_text text;
   v_hash text;
+  v_control record;
 begin
   if current_setting('role', true) is distinct from 'service_role' then
     raise exception using errcode = '42501', message = 'not-authorized';
   end if;
   if to_regclass('public.ship_dynamics_app_state') is null then
     raise exception using errcode = '55000', message = 'legacy-source-table-missing';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_workspace_key, 731921)
+  );
+  perform public.sd_assert_legacy_freeze_boundary(p_workspace_key);
+  if p_expected_revision is null or p_expected_revision < 0
+     or coalesce(p_expected_payload_sha256, '') !~ '^[0-9a-f]{64}$' then
+    raise exception using errcode = '22023', message = 'invalid-backup-identity';
+  end if;
+  select c.expected_revision, c.payload_sha256, c.frozen_at
+  into v_control
+  from public.sd_legacy_write_controls c
+  where c.workspace_key = p_workspace_key
+    and c.writes_frozen
+    and not c.restore_in_progress
+  for share;
+  if not found
+     or v_control.expected_revision is distinct from p_expected_revision
+     or v_control.payload_sha256 is distinct from p_expected_payload_sha256 then
+    raise exception using errcode = 'P0001', message = 'legacy-freeze-snapshot-mismatch';
   end if;
   select s.workspace_key, s.revision, s.payload, s.updated_at, s.updated_by
   into v_row
@@ -207,6 +247,9 @@ begin
   end if;
   v_payload_text := v_row.payload::text;
   v_hash := encode(sha256(convert_to(v_payload_text, 'UTF8')), 'hex');
+  if v_hash is distinct from v_control.payload_sha256 then
+    raise exception using errcode = 'P0001', message = 'legacy-source-freeze-hash-mismatch';
+  end if;
   return jsonb_build_object(
     'workspaceKey', v_row.workspace_key,
     'revision', v_row.revision,
@@ -214,6 +257,7 @@ begin
     'payloadSha256', v_hash,
     'updatedAt', v_row.updated_at,
     'updatedBy', v_row.updated_by,
+    'frozenAt', v_control.frozen_at,
     'exportedAt', clock_timestamp()
   );
 end;
@@ -240,6 +284,9 @@ begin
   if current_setting('role', true) is distinct from 'service_role' then
     raise exception using errcode = '42501', message = 'not-authorized';
   end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_workspace_key, 731921)
+  );
   perform public.sd_assert_legacy_freeze_boundary(p_workspace_key);
   if p_legacy_revision is null or p_legacy_revision < 0 or p_legacy_payload is null then
     raise exception using errcode = '22023', message = 'invalid-restore-package';
@@ -307,6 +354,9 @@ begin
   if current_setting('role', true) is distinct from 'service_role' then
     raise exception using errcode = '42501', message = 'not-authorized';
   end if;
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_workspace_key, 731921)
+  );
   perform public.sd_assert_legacy_freeze_boundary(p_workspace_key);
   if p_confirmation is distinct from
      'reenable:' || p_workspace_key || ':' || p_expected_revision::text || ':' || p_payload_sha256 then
@@ -349,12 +399,12 @@ $$;
 revoke all on function public.sd_legacy_jsonb_sha256(jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.sd_guard_legacy_app_state_write() from public, anon, authenticated, service_role;
 revoke all on function public.sd_assert_legacy_freeze_boundary(text) from public, anon, authenticated, service_role;
-revoke all on function public.freeze_ship_dynamics_legacy_writes(text, bigint, text) from public, anon, authenticated;
-revoke all on function public.export_ship_dynamics_legacy_backup(text, bigint) from public, anon, authenticated;
+revoke all on function public.freeze_ship_dynamics_legacy_writes(text, bigint, text, text) from public, anon, authenticated;
+revoke all on function public.export_ship_dynamics_legacy_backup(text, bigint, text) from public, anon, authenticated;
 revoke all on function public.restore_ship_dynamics_legacy_backup(text, bigint, jsonb, text, timestamptz, text, text) from public, anon, authenticated;
 revoke all on function public.reenable_ship_dynamics_legacy_writes(text, bigint, text, text) from public, anon, authenticated;
-grant execute on function public.freeze_ship_dynamics_legacy_writes(text, bigint, text) to service_role;
-grant execute on function public.export_ship_dynamics_legacy_backup(text, bigint) to service_role;
+grant execute on function public.freeze_ship_dynamics_legacy_writes(text, bigint, text, text) to service_role;
+grant execute on function public.export_ship_dynamics_legacy_backup(text, bigint, text) to service_role;
 grant execute on function public.restore_ship_dynamics_legacy_backup(text, bigint, jsonb, text, timestamptz, text, text) to service_role;
 grant execute on function public.reenable_ship_dynamics_legacy_writes(text, bigint, text, text) to service_role;
 

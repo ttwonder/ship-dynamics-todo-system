@@ -28,6 +28,7 @@ function validateServerBackup(value) {
     || !Number.isSafeInteger(Number(value.revision)) || Number(value.revision) < 0
     || typeof value.payloadText !== 'string'
     || !HASH.test(value.payloadSha256)
+    || typeof value.frozenAt !== 'string' || Number.isNaN(Date.parse(value.frozenAt))
     || createHash('sha256').update(value.payloadText).digest('hex') !== value.payloadSha256) {
     throw new Error('backup-integrity-failed');
   }
@@ -81,26 +82,63 @@ export function decryptAndVerifyLegacyBackup(encrypted, passphrase) {
   }
 }
 
-export function assertCutoverTarget(
-  targetUrl, target, confirmation, action, workspaceKey, revision, productionRef, payloadSha256,
-) {
-  if (target !== 'staging') throw new Error('staging-target-required');
+export function assertCutoverTarget({
+  targetUrl,
+  target,
+  confirmation,
+  action,
+  workspaceKey,
+  revision,
+  payloadSha256,
+  productionRef,
+  productionHost,
+  suppliedProductionRef,
+  suppliedProductionHost,
+  allowProductionRollback,
+  productionApproval,
+}) {
   let parsed;
   try { parsed = new URL(targetUrl); } catch { throw new Error('invalid-target-url'); }
-  if (parsed.protocol !== 'https:') throw new Error('invalid-target-url');
-  const host = parsed.hostname.toLowerCase();
-  if (!host || host.includes(String(productionRef || '').toLowerCase())) throw new Error('production-target-refused');
-  const suffix = ['restore', 'reenable'].includes(action) ? `:${payloadSha256}` : '';
-  if (confirmation !== `staging:${action}:${workspaceKey}:${revision}${suffix}`) {
-    throw new Error('confirmation-mismatch');
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password
+    || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new Error('invalid-target-url');
   }
+  const host = parsed.hostname.toLowerCase();
+  const expectedProductionHost = String(productionHost || '').toLowerCase();
+  const expectedProductionRef = String(productionRef || '').toLowerCase();
+  if (!host || !HASH.test(String(payloadSha256 || ''))) throw new Error('invalid-cutover-identity');
+  const expectedConfirmation = `${target}:${action}:${workspaceKey}:${revision}:${payloadSha256}`;
+
+  if (target === 'staging') {
+    if (host === expectedProductionHost || host.split('.')[0] === expectedProductionRef) {
+      throw new Error('production-target-refused');
+    }
+    if (confirmation !== expectedConfirmation) throw new Error('confirmation-mismatch');
+    return host;
+  }
+  if (target !== 'production') throw new Error('invalid-cutover-target');
+  if (allowProductionRollback !== 'I_UNDERSTAND_THIS_CHANGES_PRODUCTION') {
+    throw new Error('production-rollback-default-deny');
+  }
+  if (host !== expectedProductionHost
+    || String(suppliedProductionHost || '').toLowerCase() !== expectedProductionHost) {
+    throw new Error('production-host-mismatch');
+  }
+  if (host.split('.')[0] !== expectedProductionRef
+    || String(suppliedProductionRef || '').toLowerCase() !== expectedProductionRef) {
+    throw new Error('production-project-ref-mismatch');
+  }
+  if (confirmation !== expectedConfirmation) throw new Error('confirmation-mismatch');
+  const expectedApproval = `APPROVE-PRODUCTION-ROLLBACK:${action}:${workspaceKey}:${revision}:${payloadSha256}`;
+  if (productionApproval !== expectedApproval) throw new Error('production-approval-mismatch');
   return host;
 }
 
-async function productionProjectRef() {
+async function productionTarget() {
   const sandbox = { window: {} };
   vm.runInNewContext(await readFile(new URL('../public/supabase-config.js', import.meta.url), 'utf8'), sandbox);
-  return new URL(sandbox.window.SHIP_DYNAMICS_SUPABASE_CONFIG.supabaseUrl).hostname.split('.')[0];
+  const host = new URL(sandbox.window.SHIP_DYNAMICS_SUPABASE_CONFIG.supabaseUrl).hostname.toLowerCase();
+  return { projectRef: host.split('.')[0], host };
 }
 
 async function callRpc(client, name, args) {
@@ -138,15 +176,36 @@ export async function runLegacyCutoverCli(
   }
   const workspaceKey = backup?.workspaceKey || args.get('--workspace-key');
   const revision = Number(backup?.revision ?? args.get('--revision'));
-  if (!workspaceKey || !Number.isSafeInteger(revision) || revision < 0) throw new Error('invalid-cutover-identity');
+  const suppliedPayloadSha256 = args.get('--payload-sha256');
+  if (backup && suppliedPayloadSha256 && suppliedPayloadSha256 !== backup.payloadSha256) {
+    throw new Error('payload-hash-mismatch');
+  }
+  const payloadSha256 = backup?.payloadSha256 || suppliedPayloadSha256;
+  if (!workspaceKey || !Number.isSafeInteger(revision) || revision < 0
+    || !HASH.test(String(payloadSha256 || ''))) {
+    throw new Error('invalid-cutover-identity');
+  }
   const targetUrl = environment.MIGRATION_SUPABASE_URL;
   const serviceRole = environment.MIGRATION_SUPABASE_SERVICE_ROLE_KEY;
   if (!targetUrl || !serviceRole) throw new Error('missing-cutover-environment');
-  const prodRef = dependencies.productionRef || await productionProjectRef();
-  assertCutoverTarget(
-    targetUrl, environment.MIGRATION_TARGET, args.get('--confirm'), command,
-    workspaceKey, revision, prodRef, backup?.payloadSha256,
-  );
+  const production = dependencies.productionRef && dependencies.productionHost
+    ? { projectRef: dependencies.productionRef, host: dependencies.productionHost }
+    : await productionTarget();
+  assertCutoverTarget({
+    targetUrl,
+    target: environment.MIGRATION_TARGET,
+    confirmation: args.get('--confirm'),
+    action: command,
+    workspaceKey,
+    revision,
+    payloadSha256,
+    productionRef: production.projectRef,
+    productionHost: production.host,
+    suppliedProductionRef: environment.MIGRATION_PRODUCTION_PROJECT_REF,
+    suppliedProductionHost: environment.MIGRATION_PRODUCTION_HOST,
+    allowProductionRollback: environment.MIGRATION_ALLOW_PRODUCTION_ROLLBACK,
+    productionApproval: environment.MIGRATION_PRODUCTION_APPROVAL,
+  });
   const factory = dependencies.clientFactory || createClient;
   const client = factory(targetUrl, serviceRole, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
@@ -158,7 +217,12 @@ export async function runLegacyCutoverCli(
     const data = validateServerBackup(await callRpc(client, 'export_ship_dynamics_legacy_backup', {
       p_workspace_key: workspaceKey,
       p_expected_revision: revision,
+      p_expected_payload_sha256: payloadSha256,
     }));
+    if (data.workspaceKey !== workspaceKey || Number(data.revision) !== revision
+      || data.payloadSha256 !== payloadSha256) {
+      throw new Error('cutover-result-mismatch');
+    }
     const encrypted = encryptLegacyBackup(data, passphrase);
     await writeFile(output, `${JSON.stringify(encrypted)}\n`, { mode: 0o600, flag: 'wx' });
     await chmod(output, 0o600);
@@ -170,10 +234,14 @@ export async function runLegacyCutoverCli(
     const data = await callRpc(client, 'freeze_ship_dynamics_legacy_writes', {
       p_workspace_key: workspaceKey,
       p_expected_revision: revision,
-      p_confirmation: `freeze:${workspaceKey}:${revision}`,
+      p_expected_payload_sha256: payloadSha256,
+      p_confirmation: `freeze:${workspaceKey}:${revision}:${payloadSha256}`,
     });
-    if (data?.status !== 'frozen') throw new Error('cutover-result-mismatch');
-    console.log(JSON.stringify({ status: 'frozen', revision, payloadSha256: data.payloadSha256 }));
+    if (data?.status !== 'frozen' || Number(data.revision) !== revision
+      || data.payloadSha256 !== payloadSha256) {
+      throw new Error('cutover-result-mismatch');
+    }
+    console.log(JSON.stringify({ status: 'frozen', revision, payloadSha256 }));
     return 0;
   }
 

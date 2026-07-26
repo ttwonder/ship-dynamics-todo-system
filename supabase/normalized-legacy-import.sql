@@ -382,7 +382,15 @@ begin
     for share;
     if not found
        or v_source_revision is distinct from p_expected_legacy_revision
-       or v_source_payload_hash is distinct from v_existing_import.payload_sha256 then
+       or v_source_payload_hash is distinct from v_existing_import.payload_sha256
+       or not exists (
+         select 1 from public.sd_legacy_write_controls c
+         where c.workspace_key = p_workspace_key
+           and c.writes_frozen
+           and not c.restore_in_progress
+           and c.expected_revision = v_source_revision
+           and c.payload_sha256 = v_source_payload_hash
+       ) then
       raise exception using errcode = 'P0001', message = 'legacy-source-changed-after-import';
     end if;
     return jsonb_build_object(
@@ -406,7 +414,15 @@ begin
   for share;
   if not found
      or v_source_revision is distinct from p_expected_legacy_revision
-     or v_source_payload_hash is distinct from v_payload_hash then
+     or v_source_payload_hash is distinct from v_payload_hash
+     or not exists (
+       select 1 from public.sd_legacy_write_controls c
+       where c.workspace_key = p_workspace_key
+         and c.writes_frozen
+         and not c.restore_in_progress
+         and c.expected_revision = v_source_revision
+         and c.payload_sha256 = v_source_payload_hash
+     ) then
     raise exception using errcode = 'P0001', message = 'legacy-source-snapshot-mismatch';
   end if;
 

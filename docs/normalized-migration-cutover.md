@@ -39,18 +39,23 @@ Auth mapping apply requires `MIGRATION_SUPABASE_URL`, `MIGRATION_SUPABASE_SERVIC
 
 ### Executable backup, freeze, restore, and write re-enable
 
-`legacy-cutover-operations.mjs` is service-role tooling and refuses any target other than an explicitly confirmed non-production staging project. Secrets are read only from `MIGRATION_*` environment variables. The encrypted backup is created with exclusive-file semantics and mode `0600`; `verify` decrypts it and checks the SHA-256 of the exact PostgreSQL `jsonb::text` exported by the server.
+`legacy-cutover-operations.mjs` is service-role tooling. It is default-deny for production, reads secrets only from `MIGRATION_*` environment variables, and never prints the service-role key or backup passphrase. The encrypted backup is created with exclusive-file semantics and mode `0600`; `verify` decrypts it and checks the SHA-256 of the exact PostgreSQL `jsonb::text` exported by the server.
+
+Freeze must happen **before** backup. Compute and independently record the expected final revision and PostgreSQL `jsonb::text` SHA-256, then pass the same `(workspace, revision, payload hash)` to freeze and backup. The server refuses an unfrozen export or any source/control mismatch.
 
 ```bash
-node scripts/legacy-cutover-operations.mjs backup --workspace-key WORKSPACE --revision REV --output legacy-backup.enc.json --confirm staging:backup:WORKSPACE:REV
+# Staging rehearsal. PAYLOAD_SHA256 is the expected hash of the final source row.
+node scripts/legacy-cutover-operations.mjs freeze --workspace-key WORKSPACE --revision REV --payload-sha256 PAYLOAD_SHA256 --confirm staging:freeze:WORKSPACE:REV:PAYLOAD_SHA256
+node scripts/legacy-cutover-operations.mjs backup --workspace-key WORKSPACE --revision REV --payload-sha256 PAYLOAD_SHA256 --output legacy-backup.enc.json --confirm staging:backup:WORKSPACE:REV:PAYLOAD_SHA256
 node scripts/legacy-cutover-operations.mjs verify --input legacy-backup.enc.json
-node scripts/legacy-cutover-operations.mjs freeze --workspace-key WORKSPACE --revision REV --confirm staging:freeze:WORKSPACE:REV
-# Run scripts/migrate-legacy-to-normalized.mjs --apply only after freeze succeeds.
+node scripts/migrate-legacy-to-normalized.mjs --backup legacy-backup.enc.json --mapping AUTH_MAPPING.json --workspace-id WORKSPACE_UUID --workspace-name NAME --apply --confirm staging:WORKSPACE_UUID:REV:PAYLOAD_SHA256
 node scripts/legacy-cutover-operations.mjs restore --input legacy-backup.enc.json --confirm staging:restore:WORKSPACE:REV:PAYLOAD_SHA256
 node scripts/legacy-cutover-operations.mjs reenable --input legacy-backup.enc.json --confirm staging:reenable:WORKSPACE:REV:PAYLOAD_SHA256
 ```
 
-The server trigger blocks `INSERT`, `UPDATE`, and `DELETE` on `public.ship_dynamics_app_state` while frozen, including callers that bypass browser UI. The importer independently requires the enabled trigger, a frozen control row, and an exact source revision/payload hash. A lost import response may be replayed only by the same service-authorized actor with identical payload, Auth mapping, counts, and quarantine count; the server returns the original hashes/counts with `replayed=true`. Any difference fails with `import-idempotency-mismatch`. Restore is the only guarded write path during freeze. Re-enable verifies the restored row revision and server hash before opening legacy writes. Normalized evidence is never reverse-dual-written or deleted.
+Production restore/re-enable is executable but intentionally harder than staging. Every invocation requires all of the following environment values: `MIGRATION_TARGET=production`, an exact `MIGRATION_SUPABASE_URL`, exact `MIGRATION_PRODUCTION_HOST`, exact `MIGRATION_PRODUCTION_PROJECT_REF`, `MIGRATION_ALLOW_PRODUCTION_ROLLBACK=I_UNDERSTAND_THIS_CHANGES_PRODUCTION`, and an action-bound approval `MIGRATION_PRODUCTION_APPROVAL=APPROVE-PRODUCTION-ROLLBACK:ACTION:WORKSPACE:REV:PAYLOAD_SHA256`. The command-line confirmation must separately be `production:ACTION:WORKSPACE:REV:PAYLOAD_SHA256`. Missing, staging, wrong-action, wrong-host/ref, wrong-revision, or wrong-hash confirmation fails before any RPC. Do not place these values in shell history or the run report; inject them from the approved secret environment.
+
+The legacy-write trigger and every freeze, backup, restore, and re-enable RPC take the same workspace advisory transaction lock. A writer cannot pass the trigger immediately before freeze and commit after the frozen snapshot is recorded. The server trigger blocks `INSERT`, `UPDATE`, and `DELETE` on `public.ship_dynamics_app_state` while frozen, including callers that bypass browser UI. The importer independently requires the enabled trigger, a frozen control row, and an exact source revision/payload hash from the encrypted frozen backup; direct payload/live-read apply is rejected. A lost import response may be replayed only by the same service-authorized actor with identical payload, Auth mapping, counts, and quarantine count; the server returns the original hashes/counts with `replayed=true`. Any difference fails with `import-idempotency-mismatch`. Restore is the only guarded write path during freeze. Re-enable verifies the restored row revision and server hash before opening legacy writes. Normalized evidence is never reverse-dual-written or deleted.
 
 ## 3. Authentication activation
 
@@ -82,26 +87,26 @@ No production migration may begin until the rehearsal has a recorded PASS.
 ## 5. Production preparation
 
 - Announce the maintenance window and ask editors to close forms.
-- Confirm the exact deployed legacy revision and exact frontend commit/tree.
+- Confirm the exact deployed legacy revision, expected PostgreSQL `jsonb::text` payload hash, and exact frontend commit/tree.
 - Verify the active Owner can authenticate in the new Auth flow.
 - Provision all pending accounts before cutover; do not expose them to the legacy client.
-- Take a Supabase-native database backup.
-- Export the exact legacy row to an encrypted offline file and record only its checksum, revision, row count, and storage location in the run report.
-- Verify the restore procedure against staging.
+- Take a Supabase-native database backup before the maintenance window.
+- Prepare the encrypted-backup output location and verify the full freeze → backup → verify → staging restore procedure. Do **not** export the final legacy row before writes are frozen.
 - Build the new client from the exact reviewed tree and retain the previous deploy artifact.
+- Have a separate approver supply the exact production host/ref and action-bound approval values only when the maintenance window begins.
 
 ## 6. Maintenance-window transaction
 
-1. Enable a server-enforced workspace maintenance flag; legacy writes must fail on the server, not just hide buttons.
-2. Wait for in-flight requests to finish and verify no active leases or pending legacy writes remain.
-3. Re-read the legacy row and assert its revision is the expected final revision.
-4. Run the normalized import in one PostgreSQL transaction. Any invalid ID, duplicate, missing relationship, role violation, or count mismatch aborts the entire transaction.
+1. Freeze the legacy source with `freeze_ship_dynamics_legacy_writes`, supplying the exact expected revision and payload hash. The trigger and control RPC share the workspace advisory lock, so no pre-freeze writer can commit afterward.
+2. Export the encrypted legacy backup from that frozen source and verify the file. Record only its location, revision, payload hash, and encrypted-file checksum in the run report.
+3. Confirm no active normalized leases or unresolved operations remain.
+4. Import **that encrypted frozen backup** into normalized tables in one PostgreSQL transaction. Any invalid ID, duplicate, missing relationship, role violation, source/control hash mismatch, or count mismatch aborts the entire transaction.
 5. Run the post-import validator before the transaction/cutover is accepted.
 6. Verify Owner, admin, operator, and vessel RLS probes using real Auth JWTs.
 7. Deploy the reviewed client.
 8. Run the critical browser smoke suite.
-9. Disable maintenance only after all gates pass.
-10. Keep the legacy row read-only; do not delete it.
+9. Keep legacy writes frozen after successful cutover; keep the legacy row as the rollback source and do not delete it.
+10. If any gate fails, execute the approved restore/re-enable sequence below rather than manually editing the control row.
 
 ## 7. Import invariants
 
@@ -125,12 +130,15 @@ No production migration may begin until the rehearsal has a recorded PASS.
 
 Rollback is required if any authorization, data-count, relationship, command, or browser critical-path gate fails.
 
-1. Re-enable maintenance.
-2. Re-deploy the previous known-good frontend artifact.
-3. Re-enable legacy table writes only after confirming the legacy revision has not diverged during cutover.
-4. Keep normalized tables and operation/audit evidence read-only for diagnosis; do not attempt reverse dual-write.
-5. If a post-cutover normalized write occurred, record it separately and reconcile deliberately before any future migration attempt.
-6. Restore from the encrypted legacy export/database backup only if the legacy row itself was damaged.
+1. Keep the normalized client in maintenance and re-deploy the previous known-good frontend artifact.
+2. Confirm the approved encrypted backup's workspace, revision, and payload hash against the frozen control row.
+3. If the legacy row was damaged, run the production `restore` command with the exact production target/ref/host, enable phrase, action-bound approval phrase, and command-line confirmation. Otherwise do not rewrite an intact source row.
+4. Run production `reenable` with a **separate** action-bound approval and confirmation. The server rechecks the restored/current row revision and hash under the same workspace advisory lock before reopening writes.
+5. Verify the previous frontend can read and write one approved non-sensitive fixture, then end maintenance.
+6. Keep normalized tables and operation/audit evidence read-only for diagnosis; do not attempt reverse dual-write or delete evidence.
+7. If a post-cutover normalized write occurred, record it separately and reconcile deliberately before any future migration attempt.
+
+A production rollback is never authorized by this runbook text, a staging confirmation, or possession of a service-role key alone. It requires the explicit per-action approvals enforced by `legacy-cutover-operations.mjs` and the organization's separate production change approval.
 
 ## 9. Production approval boundary
 

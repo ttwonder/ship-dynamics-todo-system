@@ -36,21 +36,43 @@ async function asRole(role, action) {
 for (const role of ['anon', 'authenticated']) {
   await assert.rejects(
     () => asRole(role, () => db.query(
-      `select public.freeze_ship_dynamics_legacy_writes('fixture',7,'freeze:fixture:7')`,
+      `select public.freeze_ship_dynamics_legacy_writes('fixture',7,$1,'freeze:fixture:7:' || $1)`,
+      [createHash('sha256').update('{"b": 1, "aa": 2}').digest('hex')],
     )),
     /permission denied|not-authorized/i,
   );
 }
+const frozenPayloadText = '{"b": 1, "aa": 2}';
+const frozenPayloadSha256 = createHash('sha256').update(frozenPayloadText).digest('hex');
 await assert.rejects(
   () => asRole('service_role', () => db.query(
-    `select public.freeze_ship_dynamics_legacy_writes('fixture',6,'freeze:fixture:6')`,
+    `select public.export_ship_dynamics_legacy_backup('fixture',7,$1)`,
+    [frozenPayloadSha256],
+  )),
+  /frozen/i,
+  'an authoritative backup cannot be exported before the source is frozen',
+);
+await assert.rejects(
+  () => asRole('service_role', () => db.query(
+    `select public.freeze_ship_dynamics_legacy_writes('fixture',6,$1,'freeze:fixture:6:' || $1)`,
+    [frozenPayloadSha256],
   )),
   /revision/i,
 );
 const frozen = await asRole('service_role', () => db.query(
-  `select public.freeze_ship_dynamics_legacy_writes('fixture',7,'freeze:fixture:7') as result`,
+  `select public.freeze_ship_dynamics_legacy_writes('fixture',7,$1,'freeze:fixture:7:' || $1) as result`,
+  [frozenPayloadSha256],
 ));
 assert.equal(frozen.rows[0].result.status, 'frozen');
+assert.equal(frozen.rows[0].result.payloadSha256, frozenPayloadSha256);
+await assert.rejects(
+  () => asRole('service_role', () => db.query(
+    `select public.export_ship_dynamics_legacy_backup('fixture',7,$1)`,
+    ['f'.repeat(64)],
+  )),
+  /freeze|snapshot|hash|mismatch/i,
+  'backup must match the exact frozen snapshot hash',
+);
 
 for (const role of ['anon', 'authenticated', 'service_role']) {
   await assert.rejects(
@@ -61,7 +83,8 @@ for (const role of ['anon', 'authenticated', 'service_role']) {
 }
 
 const exported = await asRole('service_role', () => db.query(
-  `select public.export_ship_dynamics_legacy_backup('fixture',7) as result`,
+  `select public.export_ship_dynamics_legacy_backup('fixture',7,$1) as result`,
+  [frozenPayloadSha256],
 ));
 const backup = exported.rows[0].result;
 assert.equal(backup.payloadText, '{"b": 1, "aa": 2}', 'PostgreSQL jsonb canonical key order is authoritative');
@@ -92,7 +115,8 @@ const reenabled = await asRole('service_role', () => db.query(
 assert.equal(reenabled.rows[0].result.status, 'write-enabled');
 await asRole('anon', () => db.exec(`update public.ship_dynamics_app_state set payload='{"damaged":true}'::jsonb, revision=8 where workspace_key='fixture'`));
 await asRole('service_role', () => db.query(
-  `select public.freeze_ship_dynamics_legacy_writes('fixture',8,'freeze:fixture:8')`,
+  `select public.freeze_ship_dynamics_legacy_writes('fixture',8,$1,'freeze:fixture:8:' || $1)`,
+  [createHash('sha256').update('{"damaged": true}').digest('hex')],
 ));
 const restored = await asRole('service_role', () => db.query(
   `select public.restore_ship_dynamics_legacy_backup('fixture',7,$1::jsonb,$2,null,null,'restore:fixture:7:' || $2) as result`,

@@ -502,13 +502,37 @@ async function prepareLegacySource(workspaceId, payload, revision = 42) {
      values($1,$2,$3::jsonb)`,
     [workspaceKey, revision, JSON.stringify(payload)],
   );
+  const hashed = await db.query(
+    'select public.sd_legacy_jsonb_sha256($1::jsonb) as payload_sha256',
+    [JSON.stringify(payload)],
+  );
+  const payloadSha256 = hashed.rows[0].payload_sha256;
   await asRole('service_role', null, () => db.query(
-    `select public.freeze_ship_dynamics_legacy_writes($1,$2,$3)`,
-    [workspaceKey, revision, `freeze:${workspaceKey}:${revision}`],
+    `select public.freeze_ship_dynamics_legacy_writes($1,$2,$3,$4)`,
+    [workspaceKey, revision, payloadSha256, `freeze:${workspaceKey}:${revision}:${payloadSha256}`],
   ));
+  return payloadSha256;
 }
 
-await prepareLegacySource(ids.workspace, fixture);
+const fixturePayloadSha256 = await prepareLegacySource(ids.workspace, fixture);
+
+await db.exec('begin');
+try {
+  await db.query(
+    `update public.sd_legacy_write_controls set payload_sha256=$1 where workspace_key=$2`,
+    ['f'.repeat(64), `fixture-${ids.workspace}`],
+  );
+  await db.exec('set role service_role');
+  await assert.rejects(
+    () => callImport(),
+    /freeze|snapshot|hash|mismatch/i,
+    'import must be bound to the exact hash recorded by the authoritative freeze',
+  );
+} finally {
+  await db.exec('rollback');
+  await db.exec('reset role');
+}
+assert.match(fixturePayloadSha256, /^[0-9a-f]{64}$/);
 
 for (const role of ['anon', 'authenticated']) {
   await assert.rejects(
