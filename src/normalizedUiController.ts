@@ -693,6 +693,7 @@ export class NormalizedUiController {
     prepared: Array<{
       item: InternalControlCase;
       caseKey: string;
+      caseCreateLeaseKey: string;
       taskPayload: JsonObject | null;
       taskId: string;
     }>,
@@ -1157,6 +1158,7 @@ export class NormalizedUiController {
         return {
           item,
           caseKey: `internal-case:${item.id}`,
+          caseCreateLeaseKey: `internal-case-create:${item.vesselId}`,
           taskPayload: linkedTask,
           taskId,
         };
