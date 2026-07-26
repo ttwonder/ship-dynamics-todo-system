@@ -34,6 +34,53 @@ async function runtimeConfig(path = new URL('../public/supabase-config.js', impo
   return config;
 }
 
+export function assertMigrationApplyTarget({
+  targetUrl,
+  productionUrl,
+  target,
+  confirmation,
+  workspaceId,
+  revision,
+  payloadSha256,
+  productionHost,
+  productionRef,
+  suppliedProductionHost,
+  suppliedProductionRef,
+  allowProductionImport,
+  productionApproval,
+}) {
+  const normalizedTargetUrl = String(targetUrl || '').replace(/\/$/, '');
+  const normalizedProductionUrl = String(productionUrl || '').replace(/\/$/, '');
+  if (!normalizedTargetUrl || !normalizedProductionUrl) throw new Error('invalid-target-url');
+  if (normalizedTargetUrl !== normalizedProductionUrl) {
+    if (target && target !== 'staging') throw new Error('invalid-migration-target');
+    if (confirmation !== `staging:${workspaceId}:${revision}:${payloadSha256}`) {
+      throw new Error('confirmation-mismatch');
+    }
+    return 'staging';
+  }
+  if (target !== 'production') throw new Error('production-target-refused');
+  if (allowProductionImport !== 'I_UNDERSTAND_THIS_IMPORTS_PRODUCTION_DATA') {
+    throw new Error('production-import-default-deny');
+  }
+  const host = new URL(normalizedTargetUrl).hostname.toLowerCase();
+  if (host !== String(productionHost || '').toLowerCase()
+    || host !== String(suppliedProductionHost || '').toLowerCase()) {
+    throw new Error('production-host-mismatch');
+  }
+  if (host.split('.')[0] !== String(productionRef || '').toLowerCase()
+    || host.split('.')[0] !== String(suppliedProductionRef || '').toLowerCase()) {
+    throw new Error('production-project-ref-mismatch');
+  }
+  if (confirmation !== `production:import:${workspaceId}:${revision}:${payloadSha256}`) {
+    throw new Error('confirmation-mismatch');
+  }
+  if (productionApproval !== `APPROVE-PRODUCTION-IMPORT:${workspaceId}:${revision}:${payloadSha256}`) {
+    throw new Error('production-approval-mismatch');
+  }
+  return 'production';
+}
+
 async function readJson(path, label) {
   try {
     return JSON.parse(await readFile(path, 'utf8'));
@@ -139,9 +186,22 @@ export async function runMigrationCli(argv = process.argv.slice(2), environment 
   const serviceRole = environment.MIGRATION_SUPABASE_SERVICE_ROLE_KEY;
   if (!targetUrl || !serviceRole) throw new Error('missing-apply-environment');
   const production = String((await runtimeConfig()).supabaseUrl).replace(/\/$/, '');
-  if (targetUrl === production) throw new Error('production-target-refused');
-  const confirmation = `staging:${workspaceId}:${plan.revision}:${sourcePayloadSha256}`;
-  if (args.get('--confirm') !== confirmation) throw new Error('confirmation-mismatch');
+  const productionHost = new URL(production).hostname.toLowerCase();
+  assertMigrationApplyTarget({
+    targetUrl,
+    productionUrl: production,
+    target: environment.MIGRATION_TARGET,
+    confirmation: args.get('--confirm'),
+    workspaceId,
+    revision: plan.revision,
+    payloadSha256: sourcePayloadSha256,
+    productionHost,
+    productionRef: productionHost.split('.')[0],
+    suppliedProductionHost: environment.MIGRATION_PRODUCTION_HOST,
+    suppliedProductionRef: environment.MIGRATION_PRODUCTION_PROJECT_REF,
+    allowProductionImport: environment.MIGRATION_ALLOW_PRODUCTION_IMPORT,
+    productionApproval: environment.MIGRATION_PRODUCTION_APPROVAL,
+  });
 
   const client = createClient(targetUrl, serviceRole, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },

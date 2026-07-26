@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import {
+  assertAuthApplyTarget,
   decryptActivationPackage,
   encryptActivationPackage,
   runPrepareAuthCli,
@@ -49,6 +50,30 @@ try {
 
   const sandbox = { window: {} };
   vm.runInNewContext(await readFile(new URL('../public/supabase-config.js', import.meta.url), 'utf8'), sandbox);
+  const productionUrl = sandbox.window.SHIP_DYNAMICS_SUPABASE_CONFIG.supabaseUrl;
+  const productionHost = new URL(productionUrl).hostname;
+  const productionRef = productionHost.split('.')[0];
+  const productionTarget = {
+    targetUrl: productionUrl,
+    productionUrl,
+    target: 'production',
+    confirmation: 'production:auth-provision:fixture:1',
+    workspaceKey: 'fixture',
+    userCount: 1,
+    productionHost,
+    productionRef,
+    suppliedProductionHost: productionHost,
+    suppliedProductionRef: productionRef,
+  };
+  assert.throws(
+    () => assertAuthApplyTarget(productionTarget),
+    /production-auth-provision-default-deny/,
+  );
+  assert.doesNotThrow(() => assertAuthApplyTarget({
+    ...productionTarget,
+    allowProductionAuthProvision: 'I_UNDERSTAND_THIS_CREATES_PRODUCTION_AUTH_USERS',
+    productionApproval: 'APPROVE-PRODUCTION-AUTH-PROVISION:fixture:1',
+  }));
   await assert.rejects(
     () => runPrepareAuthCli([
       '--payload', payloadPath,
@@ -58,7 +83,7 @@ try {
       '--activation-output', join(directory, 'activation.enc.json'),
       '--confirm', 'staging:fixture:1',
     ], {
-      MIGRATION_SUPABASE_URL: sandbox.window.SHIP_DYNAMICS_SUPABASE_CONFIG.supabaseUrl,
+      MIGRATION_SUPABASE_URL: productionUrl,
       MIGRATION_SUPABASE_SERVICE_ROLE_KEY: 'not-real',
       MIGRATION_ALIAS_HMAC_SECRET: 'x'.repeat(32),
       MIGRATION_PACKAGE_PASSPHRASE: 'correct horse battery staple',

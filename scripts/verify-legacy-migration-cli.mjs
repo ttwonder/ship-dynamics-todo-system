@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import {
+  assertMigrationApplyTarget,
   buildMigrationPlan,
   runMigrationCli,
   validateCommittedImportResult,
@@ -108,6 +109,31 @@ try {
 
   const sandbox = { window: {} };
   vm.runInNewContext(await readFile(new URL('../public/supabase-config.js', import.meta.url), 'utf8'), sandbox);
+  const productionUrl = sandbox.window.SHIP_DYNAMICS_SUPABASE_CONFIG.supabaseUrl;
+  const productionHost = new URL(productionUrl).hostname;
+  const productionRef = productionHost.split('.')[0];
+  const productionTarget = {
+    targetUrl: productionUrl,
+    productionUrl,
+    target: 'production',
+    confirmation: `production:import:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:7:${payloadSha256}`,
+    workspaceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    revision: 7,
+    payloadSha256,
+    productionHost,
+    productionRef,
+    suppliedProductionHost: productionHost,
+    suppliedProductionRef: productionRef,
+  };
+  assert.throws(
+    () => assertMigrationApplyTarget(productionTarget),
+    /production-import-default-deny/,
+  );
+  assert.doesNotThrow(() => assertMigrationApplyTarget({
+    ...productionTarget,
+    allowProductionImport: 'I_UNDERSTAND_THIS_IMPORTS_PRODUCTION_DATA',
+    productionApproval: `APPROVE-PRODUCTION-IMPORT:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:7:${payloadSha256}`,
+  }));
   await assert.rejects(
     () => runMigrationCli([
       '--backup', backupPath,
@@ -117,7 +143,7 @@ try {
       '--apply',
       '--confirm', `staging:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:7:${payloadSha256}`,
     ], {
-      MIGRATION_SUPABASE_URL: sandbox.window.SHIP_DYNAMICS_SUPABASE_CONFIG.supabaseUrl,
+      MIGRATION_SUPABASE_URL: productionUrl,
       MIGRATION_SUPABASE_SERVICE_ROLE_KEY: 'not-a-real-key',
       MIGRATION_PACKAGE_PASSPHRASE: 'correct horse battery staple',
     }),

@@ -37,6 +37,50 @@ async function productionUrl() {
   return String(sandbox.window.SHIP_DYNAMICS_SUPABASE_CONFIG?.supabaseUrl || '').replace(/\/$/, '');
 }
 
+export function assertAuthApplyTarget({
+  targetUrl,
+  productionUrl: configuredProductionUrl,
+  target,
+  confirmation,
+  workspaceKey,
+  userCount,
+  productionHost,
+  productionRef,
+  suppliedProductionHost,
+  suppliedProductionRef,
+  allowProductionAuthProvision,
+  productionApproval,
+}) {
+  const normalizedTargetUrl = String(targetUrl || '').replace(/\/$/, '');
+  const normalizedProductionUrl = String(configuredProductionUrl || '').replace(/\/$/, '');
+  if (!normalizedTargetUrl || !normalizedProductionUrl) throw new Error('invalid-target-url');
+  if (normalizedTargetUrl !== normalizedProductionUrl) {
+    if (target && target !== 'staging') throw new Error('invalid-migration-target');
+    if (confirmation !== `staging:${workspaceKey}:${userCount}`) throw new Error('confirmation-mismatch');
+    return 'staging';
+  }
+  if (target !== 'production') throw new Error('production-target-refused');
+  if (allowProductionAuthProvision !== 'I_UNDERSTAND_THIS_CREATES_PRODUCTION_AUTH_USERS') {
+    throw new Error('production-auth-provision-default-deny');
+  }
+  const host = new URL(normalizedTargetUrl).hostname.toLowerCase();
+  if (host !== String(productionHost || '').toLowerCase()
+    || host !== String(suppliedProductionHost || '').toLowerCase()) {
+    throw new Error('production-host-mismatch');
+  }
+  if (host.split('.')[0] !== String(productionRef || '').toLowerCase()
+    || host.split('.')[0] !== String(suppliedProductionRef || '').toLowerCase()) {
+    throw new Error('production-project-ref-mismatch');
+  }
+  if (confirmation !== `production:auth-provision:${workspaceKey}:${userCount}`) {
+    throw new Error('confirmation-mismatch');
+  }
+  if (productionApproval !== `APPROVE-PRODUCTION-AUTH-PROVISION:${workspaceKey}:${userCount}`) {
+    throw new Error('production-approval-mismatch');
+  }
+  return 'production';
+}
+
 export function syntheticAuthAlias(workspaceKey, legacyUserId, hmacSecret, domain) {
   if (![workspaceKey, legacyUserId, hmacSecret, domain].every(value => typeof value === 'string' && value.trim())) {
     throw new Error('invalid-alias-input');
@@ -119,8 +163,22 @@ export async function runPrepareAuthCli(argv = process.argv.slice(2), environmen
   const packagePassphrase = environment.MIGRATION_PACKAGE_PASSPHRASE;
   const domain = environment.MIGRATION_AUTH_ALIAS_DOMAIN || 'ship-dynamics.internal.invalid';
   if (!targetUrl || !serviceRole || !hmacSecret || !packagePassphrase) throw new Error('missing-apply-environment');
-  if (targetUrl === await productionUrl()) throw new Error('production-target-refused');
-  if (args.get('--confirm') !== `staging:${workspaceKey}:${users.length}`) throw new Error('confirmation-mismatch');
+  const configuredProductionUrl = await productionUrl();
+  const productionHost = new URL(configuredProductionUrl).hostname.toLowerCase();
+  assertAuthApplyTarget({
+    targetUrl,
+    productionUrl: configuredProductionUrl,
+    target: environment.MIGRATION_TARGET,
+    confirmation: args.get('--confirm'),
+    workspaceKey,
+    userCount: users.length,
+    productionHost,
+    productionRef: productionHost.split('.')[0],
+    suppliedProductionHost: environment.MIGRATION_PRODUCTION_HOST,
+    suppliedProductionRef: environment.MIGRATION_PRODUCTION_PROJECT_REF,
+    allowProductionAuthProvision: environment.MIGRATION_ALLOW_PRODUCTION_AUTH_PROVISION,
+    productionApproval: environment.MIGRATION_PRODUCTION_APPROVAL,
+  });
   const mappingOutput = args.get('--mapping-output');
   const activationOutput = args.get('--activation-output');
   if (!mappingOutput || !activationOutput || mappingOutput === activationOutput) throw new Error('invalid-output-paths');
