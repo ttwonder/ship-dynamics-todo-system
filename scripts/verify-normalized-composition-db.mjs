@@ -31,6 +31,7 @@ for (const relative of [
   'supabase/normalized-internal-control.sql',
   'supabase/normalized-security-dispatch.sql',
   'supabase/normalized-auth-orchestration.sql',
+  'supabase/normalized-app-contract.sql',
 ]) {
   const sql = await readFile(resolve(root, relative), 'utf8');
   await db.exec(sql);
@@ -44,6 +45,10 @@ const functions = await db.query(`
     and p.proname in (
       'command_ship_dynamics_create_meeting',
       'command_ship_dynamics_create_internal_case',
+      'command_ship_dynamics_create_internal_case_from_task',
+      'command_ship_dynamics_create_task_from_internal_case',
+      'command_ship_dynamics_update_user',
+      'reserve_ship_dynamics_operation',
       'claim_ship_dynamics_entity_lease',
       'sd_can_read_task'
     )
@@ -51,6 +56,10 @@ const functions = await db.query(`
 `);
 assert.equal(functions.rows.filter(row => row.proname === 'command_ship_dynamics_create_meeting').length, 1);
 assert.equal(functions.rows.filter(row => row.proname === 'command_ship_dynamics_create_internal_case').length, 1);
+assert.equal(functions.rows.filter(row => row.proname === 'command_ship_dynamics_create_internal_case_from_task').length, 1);
+assert.equal(functions.rows.filter(row => row.proname === 'command_ship_dynamics_create_task_from_internal_case').length, 1);
+assert.equal(functions.rows.filter(row => row.proname === 'command_ship_dynamics_update_user').length, 1);
+assert.equal(functions.rows.filter(row => row.proname === 'reserve_ship_dynamics_operation').length, 1);
 assert.equal(functions.rows.filter(row => row.proname === 'claim_ship_dynamics_entity_lease').length, 1);
 assert.equal(functions.rows.filter(row => row.proname === 'sd_can_read_task').length, 1);
 
@@ -65,14 +74,19 @@ assert.match(definition, /sd_meeting_items|source_meeting_item_id/i, 'final task
 assert.match(definition, /sd_internal_cases|is_internal_control/i, 'final task reader must preserve internal-control confidentiality checks');
 
 const lease = await db.query(`
-  select pg_get_functiondef(p.oid) as definition
+  select string_agg(pg_get_functiondef(p.oid), E'\n') as definition
   from pg_proc p
   join pg_namespace n on n.oid=p.pronamespace
-  where n.nspname='public' and p.proname='claim_ship_dynamics_entity_lease'
+  where n.nspname='public'
+    and p.proname in (
+      'claim_ship_dynamics_entity_lease',
+      'sd_app_claim_ship_dynamics_entity_lease_base'
+    )
 `);
 const leaseDefinition = lease.rows[0]?.definition || '';
 assert.match(leaseDefinition, /meeting/i, 'final lease dispatcher must preserve meeting authorization');
 assert.match(leaseDefinition, /internal-case/i, 'final lease dispatcher must preserve internal-case authorization');
+assert.match(leaseDefinition, /user/i, 'final lease dispatcher must preserve non-owner user authorization');
 
 const ids = {
   workspace: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -217,7 +231,10 @@ const sensitiveReads = await db.query(`
   select grantee,table_name
   from information_schema.role_table_grants
   where table_schema='public'
-    and table_name in ('sd_public_site_gate','sd_login_options','sd_rate_limit_buckets','sd_edit_leases')
+    and table_name in (
+      'sd_public_site_gate','sd_login_options','sd_rate_limit_buckets',
+      'sd_edit_leases','sd_operation_reservations'
+    )
     and grantee in ('anon','authenticated')
     and privilege_type='SELECT'
   order by grantee,table_name

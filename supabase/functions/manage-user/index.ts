@@ -141,7 +141,7 @@ Deno.serve(async request => {
     } else if (action === 'change-role') {
       const role = requiredString(body.role, 'role', 32);
       validated.role = role;
-      if (role !== 'owner' && !roles.has(role)) throw new HttpError(400, 'invalid-role');
+      if (!roles.has(role)) throw new HttpError(400, 'invalid-role');
     } else if (action === 'reset-password') {
       password = requiredPassword(body.password);
     }
@@ -154,15 +154,20 @@ Deno.serve(async request => {
       );
     }
 
-    const { data: membership, error: membershipError } = await service
+    const { data: membership, error: membershipError } = await actorDatabase
       .from('sd_memberships')
       .select('role,is_active')
       .eq('workspace_id', workspaceId)
       .eq('user_id', actor.id)
       .eq('is_active', true)
       .maybeSingle();
-    if (membershipError || !membership || membership.role !== 'owner') {
-      throw new HttpError(403, 'owner-required');
+    if (
+      membershipError
+      || !membership
+      || (membership.role !== 'owner' && membership.role !== 'admin')
+      || (action === 'transfer-owner' && membership.role !== 'owner')
+    ) {
+      throw new HttpError(403, 'manage-user-required');
     }
 
     const { data: begun, error: beginError } = await actorDatabase.rpc(
@@ -276,7 +281,7 @@ Deno.serve(async request => {
         );
         if (activationError) throw new HttpError(503, 'operation-recovery-required');
         result = { userId: targetId, credentialReset: true };
-      } else if (action === 'transfer-owner' || validated.role === 'owner') {
+      } else if (action === 'transfer-owner') {
         if (!target.is_active) throw new HttpError(409, 'target-inactive');
         externalSideEffectMayHaveOccurred = true;
         const { data: transferred, error: transferError } = await actorDatabase.rpc(

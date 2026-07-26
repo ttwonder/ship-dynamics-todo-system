@@ -522,8 +522,11 @@ assert.doesNotMatch(loginDirectoryEdge, /grant_type=password|access_token|refres
 assert.doesNotMatch(loginDirectoryEdge, /body\.password|password\s*:/, 'the directory Edge Function must never receive a login password');
 const manageUserEdge = await readFile(resolve(root, edgeFiles[3]), 'utf8');
 assert.match(manageUserEdge, /role\s*!==\s*["']owner["']/i);
+assert.match(manageUserEdge, /role\s*!==\s*["']admin["']/i);
 assert.match(manageUserEdge, /auth\.admin\.(createUser|updateUserById|deleteUser)/);
 assert.match(manageUserEdge, /transfer_ship_dynamics_owner/);
+assert.match(manageUserEdge, /p_user_id:\s*targetId/);
+assert.doesNotMatch(manageUserEdge, /p_new_owner_id/);
 assert.match(manageUserEdge, /passwordless-account|password.{0,30}required/is);
 assert.doesNotMatch(manageUserEdge, /p_request:\s*body/, 'operation ledgers must not store submitted passwords');
 assert.match(manageUserEdge, /credentialFingerprint/, 'credential operations need secret request matching without plaintext');
