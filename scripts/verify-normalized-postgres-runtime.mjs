@@ -398,11 +398,15 @@ async function main() {
     runPsql(runtimeDatabase, {
       file: resolve(fixtureRoot, 'normalized-postgres-runtime-assertions.sql'),
       label: 'normalized-runtime-assertions',
-    }).stdout.split(/\r?\n/).filter(Boolean).forEach(line => console.log(line));
+    }).stdout.split('\n').filter(Boolean).forEach(line => console.log(line));
+    runPsql(runtimeDatabase, {
+      file: resolve(fixtureRoot, 'normalized-postgres-cutover-rehearsal.sql'),
+      label: 'normalized-postgres-cutover-rehearsal',
+    }).stdout.split('\n').filter(Boolean).forEach(line => console.log(line));
     runPsql(runtimeDatabase, {
       file: resolve(fixtureRoot, 'normalized-postgres-runtime-fixture.sql'),
       label: 'normalized-runtime-fixture',
-    }).stdout.split(/\r?\n/).filter(Boolean).forEach(line => console.log(line));
+    }).stdout.split('\n').filter(Boolean).forEach(line => console.log(line));
     proveIndependentSessions();
     proveLogicalPgoutput();
     console.log('normalized_postgres_runtime=PASS');

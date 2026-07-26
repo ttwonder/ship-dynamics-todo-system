@@ -22,9 +22,12 @@ function parseArgs(argv) {
 }
 
 export function migrationBody(sql, label) {
-  const withoutBegin = sql.replace(/^\s*begin\s*;\s*/i, '');
+  const normalized = sql
+    .split(String.fromCharCode(13, 10)).join('\n')
+    .split(String.fromCharCode(13)).join('\n');
+  const withoutBegin = normalized.replace(/^\s*begin\s*;\s*/i, '');
   const withoutCommit = withoutBegin.replace(/\s*commit\s*;\s*$/i, '');
-  if (withoutBegin === sql || withoutCommit === withoutBegin) throw new Error(`migration-transaction-invalid:${label}`);
+  if (withoutBegin === normalized || withoutCommit === withoutBegin) throw new Error(`migration-transaction-invalid:${label}`);
   return `\n-- manifest:${label}\n${withoutCommit.trim()}\n`;
 }
 

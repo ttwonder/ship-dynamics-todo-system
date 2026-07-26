@@ -31,6 +31,26 @@ create table if not exists auth.users (
   email text unique
 );
 
+-- Minimal legacy shared-payload surface used only to rehearse the additive
+-- freeze/export/restore/reenable boundary on the same true PostgreSQL runtime.
+create table if not exists public.ship_dynamics_app_state (
+  workspace_key text primary key,
+  revision bigint not null,
+  payload jsonb not null,
+  updated_at timestamptz not null default clock_timestamp(),
+  updated_by text
+);
+alter table public.ship_dynamics_app_state enable row level security;
+grant select, insert, update, delete on public.ship_dynamics_app_state to anon, authenticated;
+create policy ship_runtime_legacy_select on public.ship_dynamics_app_state
+  for select to anon, authenticated using (true);
+create policy ship_runtime_legacy_insert on public.ship_dynamics_app_state
+  for insert to anon, authenticated with check (true);
+create policy ship_runtime_legacy_update on public.ship_dynamics_app_state
+  for update to anon, authenticated using (true) with check (true);
+create policy ship_runtime_legacy_delete on public.ship_dynamics_app_state
+  for delete to anon, authenticated using (true);
+
 create or replace function auth.uid()
 returns uuid
 language sql

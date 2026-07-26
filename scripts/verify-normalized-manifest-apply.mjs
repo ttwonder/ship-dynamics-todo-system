@@ -10,6 +10,11 @@ import {
 } from './apply-normalized-manifest.mjs';
 
 assert.equal(migrationBody('begin;\nselect 1;\ncommit;\n', 'fixture').trim(), '-- manifest:fixture\nselect 1;');
+assert.equal(
+  migrationBody(['begin;', 'select 1;', 'select 2;', 'commit;', ''].join(String.fromCharCode(13, 10)), 'fixture'),
+  migrationBody('begin;\nselect 1;\nselect 2;\ncommit;\n', 'fixture'),
+  'manifest body and deployment hash must be checkout line-ending independent',
+);
 assert.throws(() => migrationBody('select 1;', 'bad'), /migration-transaction-invalid/);
 const first = await buildNormalizedDeploymentBundle();
 const second = await buildNormalizedDeploymentBundle();
