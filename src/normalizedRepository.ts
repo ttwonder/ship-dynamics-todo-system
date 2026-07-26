@@ -215,8 +215,25 @@ export interface DurableDraftEnvelope<TDraft = JsonObject> {
     command: string;
     targetKey: string;
     dispatchedAt: string;
+    replay?: DurableCommandReplay;
   };
   updatedAt: string;
+}
+
+export interface DurableReplayLease {
+  leaseKey: string;
+  entityType: string;
+  entityId: string;
+  ownerSession: string;
+  fencingToken: number;
+}
+
+export interface DurableCommandReplay {
+  version: 1;
+  rpc: string;
+  request: JsonObject;
+  args: JsonObject;
+  leases: DurableReplayLease[];
 }
 
 function storageKey(workspaceId: string, actorId: string, entityKey: string) {
@@ -306,6 +323,7 @@ export class NormalizedDurableStateStore {
     operationId: string;
     command: string;
     targetKey: string;
+    replay?: DurableCommandReplay;
   }): DurableDraftEnvelope {
     const previous = this.load(input.workspaceId, input.actorId, input.entityKey);
     const next: DurableDraftEnvelope = {
@@ -320,6 +338,7 @@ export class NormalizedDurableStateStore {
         command: input.command,
         targetKey: input.targetKey,
         dispatchedAt: new Date().toISOString(),
+        replay: input.replay,
       },
       updatedAt: new Date().toISOString(),
     };
@@ -498,6 +517,158 @@ function assertSafeDraftValue(value: unknown, depth = 0): void {
       throw new Error(`Draft content may not persist ${key}.`);
     }
     assertSafeDraftValue(item, depth + 1);
+  }
+}
+
+const REPLAYABLE_COMMANDS = new Set([
+  'update_vessel_profile',
+  'update_vessel_position',
+  'update_vessel_cargo',
+  'update_vessel_note',
+  'update_vessel_weekly_attention',
+  'update_vessel_manual_attention',
+  'create_vessel',
+  'replace_vessel_assignments',
+  'disable_vessel',
+  'create_ordinary_task',
+  'update_ordinary_task',
+  'save_ordinary_task',
+  'close_ordinary_task',
+  'reopen_ordinary_task',
+  'delete_ordinary_task',
+  'update_task_vessel_progress',
+  'create_meeting',
+  'update_meeting',
+  'delete_meeting',
+  'correct_meeting_status_event',
+  'update_user',
+  'update_departments',
+  'update_task_categories',
+  'update_meeting_task_categories',
+  'update_priorities',
+  'update_equipment_options',
+  'update_role_permissions',
+  'update_workspace_settings',
+  'mark_notifications_read',
+  'save_report',
+]);
+
+function assertSafeReplayValue(value: unknown, depth = 0): void {
+  if (depth > 32) throw new Error('Replay content is too deeply nested.');
+  if (value === null || value === undefined) return;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return;
+  if (Array.isArray(value)) {
+    for (const item of value) assertSafeReplayValue(item, depth + 1);
+    return;
+  }
+  if (!isRecord(value)) throw new Error('Replay content must be JSON-compatible.');
+  const forbiddenExact = new Set([
+    'revision', 'settings', 'users', 'vessels', 'tasks', 'meetings',
+    'internalcontrolcases', 'agendareports', 'auditlogs', 'notifications',
+    'rolepermissions', 'requestpayload', 'cloudpayload',
+  ]);
+  for (const [key, item] of Object.entries(value)) {
+    const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
+    if (
+      forbiddenExact.has(normalized)
+      || normalized.includes('password')
+      || normalized.includes('authalias')
+      || normalized.includes('accesstoken')
+      || normalized.includes('refreshtoken')
+      || normalized.includes('gatetoken')
+      || normalized.includes(['service', 'role'].join(''))
+      || normalized.includes('anonkey')
+      || normalized.includes('credentialhash')
+      || normalized.includes('credentialfingerprint')
+      || normalized.includes('secret')
+    ) {
+      throw new Error(`Replay content may not persist ${key}.`);
+    }
+    assertSafeReplayValue(item, depth + 1);
+  }
+}
+
+function replayLeaseFromIdentity(
+  leaseKey: unknown,
+  ownerSession: unknown,
+  fencingToken: unknown,
+): DurableReplayLease | null {
+  if (typeof leaseKey !== 'string' || typeof ownerSession !== 'string'
+      || typeof fencingToken !== 'number' || !Number.isFinite(fencingToken)) return null;
+  const separator = leaseKey.indexOf(':');
+  if (separator < 1 || separator === leaseKey.length - 1) return null;
+  return {
+    leaseKey,
+    entityType: leaseKey.slice(0, separator),
+    entityId: leaseKey.slice(separator + 1),
+    ownerSession,
+    fencingToken,
+  };
+}
+
+function collectReplayLeases(value: unknown, leases = new Map<string, DurableReplayLease>()) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectReplayLeases(item, leases);
+    return leases;
+  }
+  if (!isRecord(value)) return leases;
+  const ordinary = replayLeaseFromIdentity(value.leaseKey, value.ownerSession, value.fencingToken);
+  if (ordinary) leases.set(ordinary.leaseKey, ordinary);
+  for (const prefix of ['case', 'task']) {
+    const lease = replayLeaseFromIdentity(
+      value[`${prefix}LeaseKey`],
+      value[`${prefix}OwnerSession`],
+      value[`${prefix}FencingToken`],
+    );
+    if (lease) leases.set(lease.leaseKey, lease);
+  }
+  for (const item of Object.values(value)) collectReplayLeases(item, leases);
+  return leases;
+}
+
+function safeCommandReplay(input: {
+  rpc: string;
+  command: string;
+  request: JsonObject;
+  args: JsonObject;
+}): DurableCommandReplay | undefined {
+  if (!REPLAYABLE_COMMANDS.has(input.command)) return undefined;
+  try {
+    assertSafeReplayValue(input.request);
+    assertSafeReplayValue(input.args);
+    const replay: DurableCommandReplay = {
+      version: 1,
+      rpc: input.rpc,
+      request: structuredClone(input.request),
+      args: structuredClone(input.args),
+      leases: [...collectReplayLeases(input.request).values()],
+    };
+    if (JSON.stringify(replay).length > 256_000) return undefined;
+    return replay;
+  } catch {
+    return undefined;
+  }
+}
+
+function deterministicCommandFailure(error: unknown, operationId: string) {
+  const code = errorCodeFromUnknown(error);
+  if (!/(?:version-conflict|stale-version|40001|lease|busy|locked|fencing|not-authorized|permission|row-level|42501|\b401\b|\b403\b|invalid|mismatch|unsupported|duplicate|constraint|check violation)/i.test(code)) {
+    return null;
+  }
+  return commandFailure(code, operationId);
+}
+
+function assertPendingStatusIdentity(
+  pending: NonNullable<DurableDraftEnvelope['pendingOperation']>,
+  status: OperationStatus,
+) {
+  if (status.command !== pending.command || status.targetKey !== pending.targetKey) {
+    throw new NormalizedCommandError(
+      'invalid',
+      'operation-recovery-mismatch',
+      '本機復原資料與伺服器操作識別不一致，已停止復原且未取消伺服器操作。',
+      pending.operationId,
+    );
   }
 }
 
@@ -826,6 +997,12 @@ export class NormalizedRepository {
       operationId,
       command,
       targetKey,
+      replay: safeCommandReplay({
+        rpc: input.rpc,
+        command,
+        request: input.request,
+        args: input.args,
+      }),
     });
 
     const response = await this.#client.rpc<TResult>(input.rpc, {
@@ -842,6 +1019,14 @@ export class NormalizedRepository {
         // The durable reservation remains available for a later recovery pass.
       }
       this.#scope.assertCurrent(token);
+      if (recovered) {
+        assertPendingStatusIdentity({
+          operationId,
+          command,
+          targetKey,
+          dispatchedAt: '',
+        }, recovered);
+      }
       if (recovered?.status === 'committed' && recovered.result) {
         this.#durableState.clearPendingOperation(token.workspaceId, token.actorId, entityKey);
         return recovered.result;
@@ -849,6 +1034,21 @@ export class NormalizedRepository {
       if (recovered?.status === 'rejected') {
         this.#durableState.clearPendingOperation(token.workspaceId, token.actorId, entityKey);
         throw commandFailure(recovered.errorCode || 'operation-rejected', operationId);
+      }
+      const deterministic = deterministicCommandFailure(response.error, operationId);
+      if (recovered?.status === 'prepared' && deterministic) {
+        try {
+          await this.#rejectPreparedOperation(operationId, deterministic.code, command);
+          this.#durableState.clearPendingOperation(token.workspaceId, token.actorId, entityKey);
+        } catch (rejectError) {
+          throw new NormalizedCommandError(
+            'recovery',
+            errorCodeFromUnknown(rejectError),
+            '操作取消結果尚未能確認；已保留操作編號，請稍後重新查詢。',
+            operationId,
+          );
+        }
+        throw deterministic;
       }
       throw new NormalizedCommandError(
         'recovery',
@@ -875,6 +1075,207 @@ export class NormalizedRepository {
     this.#scope.assertCurrent(token);
     if (response.error) throw errorFromUnknown(response.error);
     return parseOperationStatus<TResult>(response.data);
+  }
+
+  rememberPendingOperation(input: {
+    entityKey: string;
+    operationId: string;
+    command: string;
+    targetKey?: string;
+  }) {
+    const token = this.#scope.capture();
+    return this.#durableState.markPendingOperation({
+      workspaceId: token.workspaceId,
+      actorId: token.actorId,
+      entityKey: assertIdentity(input.entityKey, 'Entity key'),
+      operationId: assertIdentity(input.operationId, 'Operation identity'),
+      command: assertIdentity(input.command, 'Command', 128),
+      targetKey: assertIdentity(input.targetKey || input.entityKey, 'Target key'),
+    });
+  }
+
+  async recoverPendingOperation<TResult extends JsonObject = JsonObject>(
+    entityKey: string,
+    options: { beforeReplay?: () => Promise<void> } = {},
+  ): Promise<OperationStatus<TResult> | null> {
+    const token = this.#scope.capture();
+    const normalizedEntityKey = assertIdentity(entityKey, 'Entity key');
+    const local = this.#durableState.load(token.workspaceId, token.actorId, normalizedEntityKey);
+    const pending = local?.pendingOperation;
+    if (!pending) return null;
+    let status = await this.getOperationStatus<TResult>(pending.operationId);
+    if (!status) {
+      throw new NormalizedCommandError(
+        'permission',
+        'operation-status-unavailable',
+        '目前登入身分無法讀取先前操作；未重播也未取消該操作。',
+        pending.operationId,
+      );
+    }
+    assertPendingStatusIdentity(pending, status);
+    if (status.status === 'committed' || status.status === 'rejected') {
+      this.resolvePendingOperation(normalizedEntityKey, status);
+      return status;
+    }
+    if (!pending.replay) {
+      throw new NormalizedCommandError(
+        'recovery',
+        status.errorCode || 'operation-not-replayable',
+        '先前操作含有不可保存的內容，無法自動重播；可在確認伺服器狀態後明確取消。',
+        pending.operationId,
+      );
+    }
+    const replay = safeCommandReplay({
+      rpc: pending.replay.rpc,
+      command: pending.command,
+      request: pending.replay.request,
+      args: pending.replay.args,
+    });
+    if (pending.replay.version !== 1
+        || pending.replay.rpc !== `command_ship_dynamics_${pending.command}`
+        || !replay) {
+      throw new NormalizedCommandError(
+        'invalid',
+        'operation-replay-envelope-invalid',
+        '本機操作復原資料無效；未重播也未取消伺服器操作。',
+        pending.operationId,
+      );
+    }
+    await options.beforeReplay?.();
+    this.#scope.assertCurrent(token);
+    status = await this.getOperationStatus<TResult>(pending.operationId);
+    if (!status) {
+      throw new NormalizedCommandError(
+        'permission',
+        'operation-status-unavailable',
+        '目前登入身分無法讀取先前操作；未重播也未取消該操作。',
+        pending.operationId,
+      );
+    }
+    assertPendingStatusIdentity(pending, status);
+    if (status.status === 'committed' || status.status === 'rejected') {
+      this.resolvePendingOperation(normalizedEntityKey, status);
+      return status;
+    }
+    for (const expected of replay.leases) {
+      let grant: LeaseGrant;
+      try {
+        grant = await this.claimLease({
+          leaseKey: expected.leaseKey,
+          entityType: expected.entityType,
+          entityId: expected.entityId,
+          ownerSession: expected.ownerSession,
+        });
+      } catch (error) {
+        throw new NormalizedCommandError(
+          'recovery',
+          errorCodeFromUnknown(error),
+          '無法確認復原所需的編輯租約；已保留操作編號。',
+          pending.operationId,
+        );
+      }
+      if (!grant.ok || grant.ownerSession !== expected.ownerSession
+          || grant.fencingToken !== expected.fencingToken) {
+        if (grant.ok && grant.ownerSession && grant.fencingToken !== undefined) {
+          await this.releaseLease({
+            leaseKey: grant.leaseKey,
+            ownerSession: grant.ownerSession,
+            fencingToken: grant.fencingToken,
+          }).catch(() => false);
+        }
+        await this.terminatePendingOperation(normalizedEntityKey, 'recovery-lease-changed');
+        throw new NormalizedCommandError(
+          'busy',
+          'recovery-lease-changed',
+          '先前租約已失效，無法維持原操作識別；該準備操作已明確取消。',
+          pending.operationId,
+        );
+      }
+    }
+    await this.executeCommand<TResult>({
+      rpc: replay.rpc,
+      command: pending.command,
+      operationId: pending.operationId,
+      entityKey: normalizedEntityKey,
+      targetKey: pending.targetKey,
+      request: replay.request,
+      args: replay.args,
+    });
+    const terminal = await this.getOperationStatus<TResult>(pending.operationId);
+    if (!terminal) {
+      throw new NormalizedCommandError(
+        'recovery',
+        'operation-status-unavailable',
+        '操作已重播，但尚未能讀取最終狀態。',
+        pending.operationId,
+      );
+    }
+    assertPendingStatusIdentity(pending, terminal);
+    this.resolvePendingOperation(normalizedEntityKey, terminal);
+    return terminal;
+  }
+
+  async terminatePendingOperation(
+    entityKey: string,
+    errorCode = 'client-cancelled-prepared-operation',
+  ): Promise<OperationStatus | null> {
+    const token = this.#scope.capture();
+    const normalizedEntityKey = assertIdentity(entityKey, 'Entity key');
+    const local = this.#durableState.load(token.workspaceId, token.actorId, normalizedEntityKey);
+    const pending = local?.pendingOperation;
+    if (!pending) return null;
+    const status = await this.getOperationStatus(pending.operationId);
+    if (!status) {
+      throw new NormalizedCommandError(
+        'permission',
+        'operation-status-unavailable',
+        '目前登入身分無法讀取先前操作；未取消該操作。',
+        pending.operationId,
+      );
+    }
+    assertPendingStatusIdentity(pending, status);
+    if (status.status === 'committed' || status.status === 'rejected') {
+      this.resolvePendingOperation(normalizedEntityKey, status);
+      return status;
+    }
+    if (status.status === 'recovery_required') {
+      throw new NormalizedCommandError(
+        'recovery',
+        status.errorCode || 'operation-recovery-required',
+        '伺服器外部效果可能已發生，不能取消此操作；必須使用原操作編號完成復原。',
+        pending.operationId,
+      );
+    }
+    await this.#rejectPreparedOperation(pending.operationId, errorCode, pending.command);
+    const terminal = await this.getOperationStatus(pending.operationId);
+    if (!terminal) {
+      throw new NormalizedCommandError(
+        'recovery',
+        'operation-cancel-status-unavailable',
+        '取消要求已送出，但尚未能確認最終狀態。',
+        pending.operationId,
+      );
+    }
+    assertPendingStatusIdentity(pending, terminal);
+    if (terminal.status === 'committed' || terminal.status === 'rejected') {
+      this.resolvePendingOperation(normalizedEntityKey, terminal);
+    }
+    return terminal;
+  }
+
+  async #rejectPreparedOperation(operationId: string, errorCode: string, command: string) {
+    const token = this.#scope.capture();
+    const rpc = command.startsWith('manage_user:')
+      ? 'reject_ship_dynamics_user_operation'
+      : 'reject_ship_dynamics_operation_reservation';
+    const response = await this.#client.rpc(rpc, {
+      p_workspace_id: token.workspaceId,
+      p_operation_id: assertIdentity(operationId, 'Operation identity'),
+      p_error_code: assertIdentity(errorCode, 'Operation error code', 256),
+    });
+    this.#scope.assertCurrent(token);
+    if (response.error) throw errorFromUnknown(response.error);
+    return response.data;
   }
 
   async refetchInvalidatedEntities(entityKeys: string[]): Promise<InvalidatedEntityResult[]> {

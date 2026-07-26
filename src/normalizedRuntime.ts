@@ -310,7 +310,9 @@ export class NormalizedApplicationRuntime {
   }
 
   listDrafts() {
-    return this.repository.listLocalStates().filter(envelope => envelope.draft !== undefined);
+    return this.repository.listLocalStates().filter(
+      envelope => envelope.draft !== undefined || envelope.pendingOperation !== undefined,
+    );
   }
 
   removeDraft(entityKey: string) {
@@ -322,11 +324,16 @@ export class NormalizedApplicationRuntime {
   }
 
   async recoverPendingOperation(entityKey: string): Promise<OperationStatus | null> {
-    const local = this.repository.loadLocalState(entityKey);
-    const operationId = local?.pendingOperation?.operationId;
-    if (!operationId) return null;
-    const status = await this.repository.getOperationStatus(operationId);
-    this.repository.resolvePendingOperation(entityKey, status);
+    return this.repository.recoverPendingOperation(entityKey, {
+      beforeReplay: async () => { await this.refreshAll(); },
+    });
+  }
+
+  async terminatePendingOperation(entityKey: string): Promise<OperationStatus | null> {
+    const status = await this.repository.terminatePendingOperation(entityKey);
+    if (status?.status === 'committed' || status?.status === 'rejected') {
+      await this.refreshAll();
+    }
     return status;
   }
 
@@ -399,6 +406,16 @@ export class NormalizedApplicationRuntime {
         operationId,
       );
     }
+    if (reservation.status === 'committed') {
+      await this.refreshAll();
+      return reservation.result;
+    }
+    this.repository.rememberPendingOperation({
+      entityKey: targetKey,
+      operationId,
+      command,
+      targetKey,
+    });
     const response = await this.client.functions.invoke('manage-user', {
       body: {
         ...input,
@@ -408,14 +425,30 @@ export class NormalizedApplicationRuntime {
     });
     if (response.error) {
       const recovered = await this.repository.getOperationStatus(operationId).catch(() => null);
-      if (recovered?.status !== 'committed') {
+      if (recovered?.status === 'committed') {
+        this.repository.resolvePendingOperation(targetKey, recovered);
+        await this.refreshAll();
+        return recovered.result;
+      }
+      if (recovered?.status === 'rejected') {
+        this.repository.resolvePendingOperation(targetKey, recovered);
         throw new NormalizedCommandError(
-          'recovery',
-          'manage-user-recovery-required',
-          '帳號服務結果尚未確認，請以相同操作編號進行復原。',
+          'rejected',
+          recovered.errorCode || 'operation-rejected',
+          '帳號管理操作已被伺服器拒絕。',
           operationId,
         );
       }
+      throw new NormalizedCommandError(
+        'recovery',
+        recovered?.errorCode || 'manage-user-recovery-required',
+        '帳號服務結果尚未確認，請以相同操作編號進行復原。',
+        operationId,
+      );
+    }
+    const terminal = await this.repository.getOperationStatus(operationId).catch(() => null);
+    if (terminal?.status === 'committed' || terminal?.status === 'rejected') {
+      this.repository.resolvePendingOperation(targetKey, terminal);
     }
     await this.refreshAll();
     return response.data;

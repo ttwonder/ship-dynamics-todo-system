@@ -10,7 +10,11 @@ import type {
 import type { NormalizedApplicationRuntime } from './normalizedRuntime';
 import type { LeaseProof } from './normalizedCommands';
 import type { NormalizedApplicationProjection } from './normalizedProjection';
-import { NormalizedCommandError, type DurableDraftEnvelope } from './normalizedRepository';
+import {
+  NormalizedCommandError,
+  type DurableDraftEnvelope,
+  type OperationStatus,
+} from './normalizedRepository';
 import {
   changedVesselSections,
   internalCaseCommandPayload,
@@ -918,9 +922,6 @@ export class NormalizedUiController {
   }
 
   async recoverDraft(envelope: DurableDraftEnvelope): Promise<void> {
-    if (!envelope.draft || typeof envelope.draft !== 'object' || Array.isArray(envelope.draft)) {
-      return;
-    }
     if (envelope.pendingOperation) {
       const status = await this.runtime.recoverPendingOperation(envelope.entityKey);
       if (status?.status === 'committed') {
@@ -936,6 +937,9 @@ export class NormalizedUiController {
           envelope.pendingOperation.operationId,
         );
       }
+    }
+    if (!envelope.draft || typeof envelope.draft !== 'object' || Array.isArray(envelope.draft)) {
+      return;
     }
     const draft = envelope.draft as JsonObject;
     const kind = typeof draft.kind === 'string' ? draft.kind : '';
@@ -1002,6 +1006,10 @@ export class NormalizedUiController {
         await this.updateInternalCase(candidate);
       }
     }
+  }
+
+  async terminatePreparedOperation(entityKey: string): Promise<OperationStatus | null> {
+    return this.runtime.terminatePendingOperation(entityKey);
   }
 
   data(): AppData {
