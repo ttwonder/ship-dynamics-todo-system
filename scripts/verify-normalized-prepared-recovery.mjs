@@ -72,7 +72,14 @@ class MockClient {
       return { data: true, error: null };
     }
     if (name === 'claim_ship_dynamics_entity_lease') {
-      return { data: structuredClone(this.lease), error: null };
+      return {
+        data: {
+          ...structuredClone(this.lease),
+          leaseKey: args.p_lease_key,
+          ownerSession: args.p_owner_session,
+        },
+        error: null,
+      };
     }
     if (name === 'release_ship_dynamics_entity_lease') {
       return { data: true, error: null };
@@ -215,12 +222,14 @@ const server = await createServer({ server: { middlewareMode: true }, appType: '
 try {
   const repositoryModule = await server.ssrLoadModule('/src/normalizedRepository.ts');
   const scopeModule = await server.ssrLoadModule('/src/normalizedSupabaseClient.ts');
+  const commandModule = await server.ssrLoadModule('/src/normalizedCommands.ts');
   const controllerModule = await server.ssrLoadModule('/src/normalizedUiController.ts');
   const runtimeModule = await server.ssrLoadModule('/src/normalizedRuntime.ts');
   const {
     NormalizedUiController,
     reconcileNormalizedDraftEnvelopes,
   } = controllerModule;
+  const { NormalizedCommandClient, batchTargetKey } = commandModule;
   const {
     NormalizedCommandError,
     NormalizedDurableStateStore,
@@ -292,6 +301,150 @@ try {
     ));
     assert.equal(replayCall?.args.p_operation_id, operationId);
     assert.equal(replayCall?.args.p_fencing_token, 7);
+  }
+
+  // Internal-case writes, including the submitted batch, are transaction-only
+  // commands and must retain a secret-free exact replay envelope after a lost response.
+  {
+    const internalCommands = [
+      'create_internal_case',
+      'update_internal_case',
+      'delete_internal_case',
+      'link_internal_case_task',
+      'unlink_internal_case_task',
+      'cancel_internal_case',
+      'reopen_internal_case',
+      'delete_task_preserving_internal_case',
+      'create_internal_case_from_task',
+      'create_task_from_internal_case',
+    ];
+    for (const [index, command] of internalCommands.entries()) {
+      const storage = new MemoryStorage();
+      const client = new MockClient();
+      const entityKey = `internal-case:replay-${index}`;
+      const commandOperationId = `internal-operation-${index}`;
+      client.status = {
+        status: 'prepared', command, target: entityKey,
+        result: null, errorCode: null, completedAt: null,
+      };
+      client.commandError = { message: 'Failed to fetch' };
+      const repository = new NormalizedRepository(client, createScope(NormalizedRequestScope), {
+        durableState: new NormalizedDurableStateStore(storage),
+      });
+      await assert.rejects(() => repository.executeCommand({
+        rpc: `command_ship_dynamics_${command}`,
+        command,
+        operationId: commandOperationId,
+        entityKey,
+        request: {
+          caseLeaseKey: entityKey,
+          caseOwnerSession: ownerSession,
+          caseFencingToken: 7,
+        },
+        args: {
+          p_case_lease_key: entityKey,
+          p_case_owner_session: ownerSession,
+          p_case_fencing_token: 7,
+        },
+      }), error => error instanceof NormalizedCommandError && error.kind === 'recovery');
+      assert.ok(repository.loadLocalState(entityKey)?.pendingOperation?.replay,
+        `${command} must preserve an exact replay envelope`);
+      assert.doesNotMatch(storage.serialized(), /password|secret|access_token|refresh_token/i);
+    }
+  }
+
+  // A prepared batch reclaims every exact lease and dispatches the original
+  // ordered p_items once under the original operation and target identities.
+  {
+    const durableBatchKey = `internal-case-batch:${operationId}`;
+    const batchItems = [{
+      caseId: 'case-replay-a',
+      caseLeaseKey: 'internal-case:case-replay-a',
+      caseOwnerSession: ownerSession,
+      caseFencingToken: 7,
+      case: {
+        vesselId: 'v1', reportDate: '2026-07-26', reportSource: 'daily',
+        description: 'Replay batch A', priority: 'medium', category: 'Safety',
+        equipmentSubcategory: null, isAware: false, status: 'open',
+        origin: 'internal-control', isClosed: false, departments: ['Operations'],
+      },
+      task: {
+        id: 'task-replay-a', expectedDate: '2026-08-01',
+        categories: ['Safety'], ownerUserIds: [actorId],
+      },
+      taskLeaseKey: 'task-create:v1',
+      taskOwnerSession: ownerSession,
+      taskFencingToken: 7,
+    }, {
+      caseId: 'case-replay-b',
+      caseLeaseKey: 'internal-case:case-replay-b',
+      caseOwnerSession: ownerSession,
+      caseFencingToken: 7,
+      case: {
+        vesselId: 'v2', reportDate: '2026-07-27', reportSource: 'daily',
+        description: 'Replay batch B', priority: 'high', category: 'Fleet',
+        equipmentSubcategory: null, isAware: true, status: 'open',
+        origin: 'internal-control', isClosed: false, departments: [],
+      },
+      task: null,
+      taskLeaseKey: null,
+      taskOwnerSession: null,
+      taskFencingToken: null,
+    }];
+    const targetKey = batchTargetKey('internal-case', batchItems);
+    const storage = new MemoryStorage();
+    const firstClient = new MockClient();
+    firstClient.status = {
+      status: 'prepared', command: 'batch_create_internal_cases', target: targetKey,
+      result: null, errorCode: null, completedAt: null,
+    };
+    firstClient.commandError = { message: 'network response lost' };
+    const firstRepository = new NormalizedRepository(
+      firstClient,
+      createScope(NormalizedRequestScope),
+      { durableState: new NormalizedDurableStateStore(storage) },
+    );
+    await assert.rejects(
+      () => new NormalizedCommandClient(firstRepository)
+        .batchCreateInternalCases(batchItems, operationId, durableBatchKey),
+      error => error instanceof NormalizedCommandError && error.kind === 'recovery',
+    );
+    const pending = firstRepository.loadLocalState(durableBatchKey)?.pendingOperation;
+    assert.equal(pending?.command, 'batch_create_internal_cases');
+    assert.equal(pending?.targetKey, targetKey);
+    assert.deepEqual(pending?.replay?.request, { items: batchItems });
+    assert.deepEqual(pending?.replay?.args, { p_items: batchItems });
+    assert.deepEqual(
+      pending?.replay?.leases.map(item => item.leaseKey).sort(),
+      ['internal-case:case-replay-a', 'internal-case:case-replay-b', 'task-create:v1'],
+    );
+
+    const secondClient = new MockClient();
+    secondClient.status = structuredClone(firstClient.status);
+    const secondRepository = new NormalizedRepository(
+      secondClient,
+      createScope(NormalizedRequestScope),
+      { durableState: new NormalizedDurableStateStore(storage) },
+    );
+    const recovered = await secondRepository.recoverPendingOperation(durableBatchKey, {
+      beforeReplay: async () => undefined,
+    });
+    assert.equal(recovered?.status, 'committed');
+    const leaseClaims = secondClient.calls.filter(call =>
+      call.name === 'claim_ship_dynamics_entity_lease');
+    assert.deepEqual(
+      leaseClaims.map(call => call.args.p_lease_key).sort(),
+      ['internal-case:case-replay-a', 'internal-case:case-replay-b', 'task-create:v1'],
+      'prepared batch replay must reclaim the complete exact lease set',
+    );
+    assert.equal(leaseClaims.every(call =>
+      call.args.p_owner_session === ownerSession), true);
+    const replayCalls = secondClient.calls.filter(call =>
+      call.name === 'command_ship_dynamics_batch_create_internal_cases');
+    assert.equal(replayCalls.length, 1, 'the original batch RPC must replay exactly once');
+    assert.equal(replayCalls[0].args.p_operation_id, operationId);
+    assert.deepEqual(replayCalls[0].args.p_items, batchItems,
+      'prepared batch replay must preserve exact item order and content');
   }
 
   // Secret-bearing commands retain only non-secret cancellation metadata.

@@ -431,10 +431,15 @@ try {
     statusLogs: [],
   };
   const linkedProjection = {
-    data: { tasks: [], vessels: [], internalControlCases: [linkedCase] },
+    data: { tasks: [], vessels: [{ id: 'v1' }], internalControlCases: [linkedCase] },
     versions: new Map([
       ['internal-case:case-projection', 3],
       ['task:task-projection', 5],
+    ]),
+    allowedEntityKeys: new Set([
+      'internal-case:case-projection',
+      'task:task-projection',
+      'vessel:v1',
     ]),
   };
   let linkedUpdateInput;
@@ -474,8 +479,13 @@ try {
     syncToTask: true,
   };
   const materializingProjection = {
-    data: { tasks: [], vessels: [], internalControlCases: [{ ...materializingCase, syncToTask: false }] },
+    data: {
+      tasks: [],
+      vessels: [{ id: 'v1' }],
+      internalControlCases: [{ ...materializingCase, syncToTask: false }],
+    },
     versions: new Map([['internal-case:case-materialize', 4]]),
+    allowedEntityKeys: new Set(['internal-case:case-materialize', 'vessel:v1']),
   };
   let persistedMaterializingDescription = 'Persisted before materialization';
   let atomicMaterializationCalls = 0;
@@ -523,6 +533,187 @@ try {
     'case update plus task materialization must use one atomic command');
   assert.equal(legacyConversionCalls, 0,
     'the controller must not materialize a linked task through a second RPC');
+
+  // Offline materialization persists the complete case+task action and recovers
+  // through the same atomic update while refreshing both old and new vessel scopes.
+  {
+    const offlineOperationId = '55555555-5555-4555-8555-555555555555';
+    const offlineCandidate = {
+      ...materializingCase,
+      id: 'case-offline-materialize',
+      vesselId: 'v2',
+      description: 'Offline materialization exact intent',
+    };
+    const persistedCase = {
+      ...offlineCandidate,
+      vesselId: 'v1',
+      syncToTask: false,
+      linkedTaskId: undefined,
+    };
+    const offlineProjection = {
+      data: {
+        tasks: [],
+        vessels: [{ id: 'v1' }, { id: 'v2' }],
+        internalControlCases: [persistedCase],
+      },
+      versions: new Map([['internal-case:case-offline-materialize', 9]]),
+      allowedEntityKeys: new Set([
+        'internal-case:case-offline-materialize',
+        'vessel:v1',
+        'vessel:v2',
+      ]),
+    };
+    const taskProjection = {
+      expectedDate: '2026-10-05',
+      categories: ['Safety', 'Fleet'],
+      equipmentSubcategory: undefined,
+      ownerUserIds: [actorId],
+    };
+    const saved = [];
+    const previousNavigator = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { onLine: false },
+    });
+    try {
+      const offlineRuntime = {
+        projection: offlineProjection,
+        saveDraft: (entityKey, draft, baseVersions) =>
+          saved.push({ entityKey, draft, baseVersions }),
+        commands: { createOperationId: () => offlineOperationId },
+      };
+      const outcome = await new NormalizedUiController(offlineRuntime)
+        .updateInternalCase(offlineCandidate, taskProjection);
+      assert.equal(outcome, 'drafted');
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        configurable: true,
+        value: previousNavigator,
+      });
+    }
+
+    assert.equal(saved.length, 1);
+    const [offline] = saved;
+    assert.equal(offline.entityKey, 'internal-case:case-offline-materialize');
+    assert.equal(offline.draft.operationId, offlineOperationId);
+    assert.equal(offline.draft.linkAction, 'materialize');
+    assert.equal(offline.draft.oldVesselId, 'v1');
+    assert.equal(typeof offline.draft.taskId, 'string');
+    assert.ok(offline.draft.taskId);
+    assert.deepEqual(offline.draft.taskPayload, {
+      id: offline.draft.taskId,
+      expectedDate: taskProjection.expectedDate,
+      categories: taskProjection.categories,
+      ownerUserIds: taskProjection.ownerUserIds,
+    }, 'the offline action must preserve the exact linked-task projection');
+    assert.deepEqual(offline.baseVersions, {
+      'internal-case:case-offline-materialize': 9,
+    });
+
+    const refreshes = [];
+    const updates = [];
+    let conversionCalls = 0;
+    const cleared = [];
+    const envelope = {
+      version: 1,
+      workspaceId,
+      actorId,
+      entityKey: offline.entityKey,
+      draft: offline.draft,
+      baseVersions: offline.baseVersions,
+      updatedAt: '2026-07-26T00:00:00Z',
+    };
+    const recoveryRuntime = {
+      projection: offlineProjection,
+      refreshEntities: async keys => {
+        refreshes.push([...keys]);
+        return offlineProjection;
+      },
+      loadDraft: key => key === envelope.entityKey ? envelope : null,
+      removeDraft: key => { cleared.push(key); },
+      commands: {
+        createOperationId: () => { throw new Error('recovery must reuse the original operation'); },
+        claimLeaseSet: async requests => requests.map((request, index) => ({
+          leaseKey: request.leaseKey,
+          ownerSession: lease.ownerSession,
+          fencingToken: lease.fencingToken + index,
+        })),
+        releaseLeaseSet: async () => true,
+        updateInternalCase: async input => { updates.push(structuredClone(input)); },
+        convertInternalCaseToTask: async () => { conversionCalls += 1; },
+      },
+    };
+    await new NormalizedUiController(recoveryRuntime).recoverDraft(envelope);
+    assert.equal(updates.length, 1,
+      'offline case+task intent must recover through one atomic update RPC');
+    assert.equal(conversionCalls, 0,
+      'offline materialization must not recover as a second conversion RPC');
+    assert.equal(updates[0].operationId, offlineOperationId);
+    assert.equal(updates[0].linkAction, 'materialize');
+    assert.equal(updates[0].taskLease.leaseKey, 'task-create:v2');
+    assert.deepEqual(updates[0].taskPayload, offline.draft.taskPayload);
+    assert.ok(refreshes.some(keys =>
+      keys.includes('vessel:v1') && keys.includes('vessel:v2')),
+    'recovery must refresh current authorization for old and new vessel scopes');
+    assert.ok(
+      refreshes.at(-1).includes(`task:${offline.draft.taskId}`),
+      'a committed materialization must refresh the fixed new task into the projection',
+    );
+    assert.deepEqual(cleared, [offline.entityKey]);
+
+    const changedProjection = {
+      ...offlineProjection,
+      data: {
+        ...offlineProjection.data,
+        vessels: [{ id: 'v1' }, { id: 'v2' }, { id: 'v3' }],
+        internalControlCases: [{ ...persistedCase, vesselId: 'v3' }],
+      },
+      allowedEntityKeys: new Set([
+        offline.entityKey,
+        'vessel:v1',
+        'vessel:v2',
+        'vessel:v3',
+      ]),
+    };
+    const mismatchRefreshes = [];
+    let mismatchLeaseClaims = 0;
+    let mismatchRpcCalls = 0;
+    let mismatchDraftClears = 0;
+    const mismatchRuntime = {
+      projection: offlineProjection,
+      refreshEntities: async keys => {
+        mismatchRefreshes.push([...keys]);
+        if (keys.length === 1 && keys[0] === offline.entityKey) {
+          mismatchRuntime.projection = changedProjection;
+        }
+        return mismatchRuntime.projection;
+      },
+      loadDraft: key => key === envelope.entityKey ? envelope : null,
+      removeDraft: () => { mismatchDraftClears += 1; },
+      commands: {
+        claimLeaseSet: async () => {
+          mismatchLeaseClaims += 1;
+          return [];
+        },
+        releaseLeaseSet: async () => true,
+        updateInternalCase: async () => { mismatchRpcCalls += 1; },
+      },
+    };
+    await assert.rejects(
+      () => new NormalizedUiController(mismatchRuntime).recoverDraft(envelope),
+      error => error instanceof NormalizedCommandError
+        && error.code === 'offline-internal-case-old-vessel-mismatch',
+      'recovery must fail closed when the current case moved away from the durable old vessel',
+    );
+    assert.deepEqual(mismatchRefreshes[0], [offline.entityKey],
+      'recovery must refresh the current internal case before trusting its vessel identity');
+    assert.equal(mismatchLeaseClaims, 0,
+      'an old-vessel mismatch must fail before any lease claim');
+    assert.equal(mismatchRpcCalls, 0,
+      'an old-vessel mismatch must fail before the atomic RPC');
+    assert.equal(mismatchDraftClears, 0,
+      'an old-vessel mismatch must preserve the offline draft');
+  }
 
   const appSource = await readFile(resolve(root, 'src/NormalizedApp.tsx'), 'utf8');
   const managementSource = await readFile(resolve(root, 'src/NormalizedManagement.tsx'), 'utf8');

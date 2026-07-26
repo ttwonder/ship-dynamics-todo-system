@@ -768,14 +768,14 @@ export class NormalizedCommandClient {
     taskLeaseKey: string | null;
     taskOwnerSession: string | null;
     taskFencingToken: number | null;
-  }>, operationId = uuid()) {
+  }>, operationId = uuid(), entityKey?: string) {
     const request = { items };
     const targetKey = batchTargetKey('internal-case', items);
     return this.#repository.executeCommand({
       rpc: 'command_ship_dynamics_batch_create_internal_cases',
       command: 'batch_create_internal_cases',
       operationId,
-      entityKey: targetKey,
+      entityKey: entityKey || targetKey,
       targetKey,
       request,
       args: { p_items: items },

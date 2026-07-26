@@ -51,6 +51,7 @@ try {
     loadDraft: () => null,
     removeDraft: () => undefined,
     commands: {
+      createOperationId: () => '33333333-3333-4333-8333-333333333333',
       claimLeaseSet: async requests => requests.map((request, index) => ({
         leaseKey: request.leaseKey,
         ownerSession,
@@ -78,6 +79,173 @@ try {
     'a failed submitted batch must not leave any earlier case committed');
   assert.equal(atomicBatchCalls, 1, 'the batch must use one command RPC');
   assert.equal(legacyCreateCalls, 0, 'the controller must not loop independent create RPCs');
+
+  // One offline modal submit remains one durable batch and recovers through one
+  // ordered atomic RPC under the operation identity allocated at submission.
+  {
+    const batchOperationId = '44444444-4444-4444-8444-444444444444';
+    const offlineDrafts = [];
+    const previousNavigator = globalThis.navigator;
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: { onLine: false },
+    });
+    try {
+      const offlineRuntime = {
+        projection,
+        saveDraft: (entityKey, draft, baseVersions) => {
+          offlineDrafts.push({ entityKey, draft, baseVersions });
+        },
+        commands: {
+          createOperationId: () => batchOperationId,
+        },
+      };
+      const outcome = await new NormalizedUiController(offlineRuntime)
+        .createInternalCaseBatch(items, projections);
+      assert.equal(outcome, 'drafted');
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        configurable: true,
+        value: previousNavigator,
+      });
+    }
+
+    assert.equal(offlineDrafts.length, 1,
+      'one offline modal submit must persist one durable batch envelope');
+    const [offline] = offlineDrafts;
+    assert.equal(offline.entityKey, `internal-case-batch:${batchOperationId}`);
+    assert.equal(offline.draft.kind, 'internal-case-batch');
+    assert.equal(offline.draft.operationId, batchOperationId);
+    assert.deepEqual(
+      offline.draft.entries.map(entry => entry.candidate.id),
+      items.map(item => item.id),
+      'the durable batch must retain exact submitted order',
+    );
+    assert.equal(offline.draft.entries.every(entry => typeof entry.linkedTask?.id === 'string'), true,
+      'projected task identities must be fixed before the offline batch is persisted');
+
+    const recoveredBatchCalls = [];
+    const recoveredLegacyCalls = [];
+    const clearedDrafts = [];
+    const recoveryRuntime = {
+      projection,
+      refreshEntities: async () => projection,
+      removeDraft: entityKey => { clearedDrafts.push(entityKey); },
+      commands: {
+        claimLeaseSet: async requests => requests.map((request, index) => ({
+          leaseKey: request.leaseKey,
+          ownerSession,
+          fencingToken: index + 10,
+        })),
+        releaseLeaseSet: async () => true,
+        batchCreateInternalCases: async (...args) => { recoveredBatchCalls.push(args); },
+        createInternalCase: async input => { recoveredLegacyCalls.push(input); },
+      },
+    };
+    await new NormalizedUiController(recoveryRuntime).recoverDraft({
+      version: 1,
+      workspaceId: 'workspace-a',
+      actorId,
+      entityKey: offline.entityKey,
+      draft: offline.draft,
+      baseVersions: offline.baseVersions,
+      updatedAt: at,
+    });
+    assert.equal(recoveredBatchCalls.length, 1,
+      'offline batch recovery must invoke the atomic batch RPC once');
+    assert.equal(recoveredLegacyCalls.length, 0,
+      'offline batch recovery must never decompose into per-case RPCs');
+    assert.equal(recoveredBatchCalls[0][1], batchOperationId,
+      'offline batch recovery must reuse the original operation identity');
+    assert.equal(recoveredBatchCalls[0][2], offline.entityKey,
+      'pending replay metadata must merge into the original durable batch envelope');
+    assert.deepEqual(
+      recoveredBatchCalls[0][0].map(entry => entry.caseId),
+      items.map(item => item.id),
+      'the atomic recovery request must preserve exact submitted order',
+    );
+    assert.deepEqual(clearedDrafts, [offline.entityKey]);
+
+    const malformedDraft = structuredClone(offline.draft);
+    malformedDraft.entries[0] = {
+      candidate: {
+        ...malformedDraft.entries[0].candidate,
+        syncToTask: false,
+        linkedTaskId: undefined,
+      },
+      linkedTask: 'not-an-envelope-task',
+    };
+    let malformedLeaseClaims = 0;
+    let malformedBatchCalls = 0;
+    let malformedDraftClears = 0;
+    const malformedRuntime = {
+      projection,
+      removeDraft: () => { malformedDraftClears += 1; },
+      commands: {
+        claimLeaseSet: async () => {
+          malformedLeaseClaims += 1;
+          return [];
+        },
+        releaseLeaseSet: async () => true,
+        batchCreateInternalCases: async () => { malformedBatchCalls += 1; },
+      },
+    };
+    await assert.rejects(
+      () => new NormalizedUiController(malformedRuntime).recoverDraft({
+        version: 1,
+        workspaceId: 'workspace-a',
+        actorId,
+        entityKey: offline.entityKey,
+        draft: malformedDraft,
+        baseVersions: {},
+        updatedAt: at,
+      }),
+      error => error?.code === 'offline-internal-case-batch-invalid',
+      'a malformed durable batch entry must be rejected as one envelope',
+    );
+    assert.equal(malformedLeaseClaims, 0,
+      'malformed durable batches must fail before leases');
+    assert.equal(malformedBatchCalls, 0,
+      'malformed durable batches must fail before the atomic RPC');
+    assert.equal(malformedDraftClears, 0,
+      'malformed durable batches must remain available for inspection');
+
+    let fullRefreshes = 0;
+    const invalidBatchRefreshes = [];
+    const committedRecoveryRuntime = {
+      projection,
+      recoverPendingOperation: async () => ({
+        status: 'committed', command: 'batch_create_internal_cases',
+        targetKey: 'internal-case-batch:target', result: {}, errorCode: null,
+        completedAt: at,
+      }),
+      refreshAll: async () => { fullRefreshes += 1; return projection; },
+      refreshEntities: async keys => {
+        invalidBatchRefreshes.push(keys);
+        throw new Error('batch envelope is not a projection entity');
+      },
+      removeDraft: entityKey => { clearedDrafts.push(entityKey); },
+    };
+    await new NormalizedUiController(committedRecoveryRuntime).recoverDraft({
+      version: 1,
+      workspaceId: 'workspace-a',
+      actorId,
+      entityKey: offline.entityKey,
+      draft: offline.draft,
+      baseVersions: offline.baseVersions,
+      pendingOperation: {
+        operationId: batchOperationId,
+        command: 'batch_create_internal_cases',
+        targetKey: 'internal-case-batch:target',
+        dispatchedAt: at,
+      },
+      updatedAt: at,
+    });
+    assert.equal(fullRefreshes, 1,
+      'a committed prepared batch must refresh the complete authorized projection');
+    assert.deepEqual(invalidBatchRefreshes, [],
+      'a durable batch key must never be treated as a refetchable entity key');
+  }
 
   const appSource = await readFile(resolve(root, 'src/NormalizedApp.tsx'), 'utf8');
   assert.match(appSource, /controller\.createInternalCaseBatch\(items,\s*projections\)/,
