@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import fpmcLogo from './assets/fpmc-logo.png';
 import type {
   AppData,
@@ -9,8 +9,10 @@ import type {
   WeeklyAttentionKey,
 } from './types';
 import type { LoginDirectoryPerson } from './normalizedAuth';
-import type { NormalizedApplicationProjection } from './normalizedProjection';
-import { NormalizedApplicationRuntime } from './normalizedRuntime';
+import {
+  NormalizedApplicationRuntime,
+  type NormalizedRuntimeView,
+} from './normalizedRuntime';
 import { NormalizedUiController } from './normalizedUiController';
 import DashboardView from './Dashboard';
 import MorningWorkspaceView from './MorningWorkspace';
@@ -28,12 +30,67 @@ import { dashboardMeetingAlerts } from './meetingVesselAttention';
 import { todayDate } from './runtimeUtils';
 import RichTextContent from './RichTextContent';
 import { vesselPositionCommandValue } from './normalizedAdapters';
+import type { NormalizedApplicationProjection } from './normalizedProjection';
+import {
+  cleanupNormalizedTaskEditorDraft,
+  createNormalizedAuthorizationEpoch,
+  openNormalizedTaskEditor,
+  resolveAuthorizedTaskEditor,
+  type NormalizedTaskEditorSession,
+} from './normalizedAuthorizationUi';
 
 type Tab = 'dashboard' | 'morning' | 'work' | 'tasks' | 'closed'
   | 'internal' | 'meetings' | 'reports' | 'stats' | 'management';
 
+const EMPTY_RUNTIME_VIEW: NormalizedRuntimeView = Object.freeze({
+  projection: null,
+  authorizationGeneration: 0,
+  projectionGeneration: 0,
+});
+const subscribeToNothing = () => () => undefined;
+const emptyRuntimeView = () => EMPTY_RUNTIME_VIEW;
+
 function messageOf(error: unknown) {
   return error instanceof Error ? error.message : '伺服器拒絕此操作。';
+}
+
+function taskEditorAuthorization(
+  projection: NormalizedApplicationProjection | null,
+  authorizationGeneration: number,
+) {
+  if (!projection) return null;
+  const { data, actor: user } = projection;
+  const permission = (key: Parameters<typeof hasPermission>[2]) => (
+    hasPermission(data.settings.rolePermissions, user, key)
+  );
+  const viewAll = canAccessAllVessels(data.settings.rolePermissions, user, data.vessels);
+  const visibleVessels = data.vessels.filter(vessel => vessel.isActive && (
+    projection.vesselAccount
+    || viewAll
+    || vessel.assignedUserIds.includes(user.id)
+    || user.managedVesselIds.includes(vessel.id)
+    || hasActiveVesselDelegation(vessel, user.id)
+  ));
+  const visibleVesselIds = new Set(visibleVessels.map(vessel => vessel.id));
+  const visibleTasks = data.tasks.filter(task => (
+    taskVesselIds(task).some(id => visibleVesselIds.has(id))
+    || task.ownerUserIds.includes(user.id)
+  ));
+  const permissionBits = (['editBusinessContent', 'createTasks', 'closeTasks', 'deleteTasks'] as const)
+    .map(key => permission(key) ? '1' : '0')
+    .join('');
+  return {
+    authorizationEpoch: createNormalizedAuthorizationEpoch({
+      authorizationGeneration,
+      actorId: user.id,
+      role: user.role,
+      permissionBits,
+      vesselIds: visibleVessels.map(vessel => vessel.id),
+    }),
+    visibleTasks,
+    visibleVesselIds,
+    canCreate: !projection.vesselAccount && permission('createTasks'),
+  };
 }
 
 function newTask(user: UserAccount, vesselId: string): TaskItem {
@@ -333,7 +390,6 @@ export default function NormalizedApp() {
   const controller = controllerRef.current;
   const [loading, setLoading] = useState(true);
   const [directory, setDirectory] = useState<LoginDirectoryPerson[] | null>(null);
-  const [projection, setProjection] = useState<NormalizedApplicationProjection | null>(null);
   const [activationLocked, setActivationLocked] = useState(false);
   const [globalError, setGlobalError] = useState('');
   const [tab, setTab] = useState<Tab>('dashboard');
@@ -341,22 +397,39 @@ export default function NormalizedApp() {
   const [batchSelected, setBatchSelected] = useState<string[]>([]);
   const [detailVesselId, setDetailVesselId] = useState('');
   const [editingVesselId, setEditingVesselId] = useState('');
-  const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
-  const [creatingTask, setCreatingTask] = useState(false);
-  const [taskProgressVesselId, setTaskProgressVesselId] = useState('');
+  const [taskEditor, setTaskEditorState] = useState<NormalizedTaskEditorSession | null>(null);
+  const taskEditorRef = useRef<NormalizedTaskEditorSession | null>(null);
   const recoveringDrafts = useRef(false);
+  const runtimeView = useSyncExternalStore(
+    runtime?.subscribeView || subscribeToNothing,
+    runtime?.getViewSnapshot || emptyRuntimeView,
+    runtime?.getViewSnapshot || emptyRuntimeView,
+  );
+  const projection = runtimeView.projection;
+  const editorAuthorization = taskEditorAuthorization(
+    projection,
+    runtimeView.authorizationGeneration,
+  );
+  const authorizedEditingTask = editorAuthorization
+    ? resolveAuthorizedTaskEditor(taskEditor, editorAuthorization)
+    : null;
 
-  const sync = () => {
-    if (runtime?.projection) setProjection(runtime.projection);
+  const setTaskEditor = (next: NormalizedTaskEditorSession | null) => {
+    taskEditorRef.current = next;
+    setTaskEditorState(next);
   };
+
   const run = async <T,>(action: () => Promise<T>): Promise<T | undefined> => {
+    const authorizationGeneration = runtime?.authorizationGeneration;
     setGlobalError('');
     try {
       const result = await action();
-      sync();
+      if (runtime?.authorizationGeneration !== authorizationGeneration) return undefined;
       return result;
     } catch (error) {
-      setGlobalError(messageOf(error));
+      if (runtime?.authorizationGeneration === authorizationGeneration) {
+        setGlobalError(messageOf(error));
+      }
       return undefined;
     }
   };
@@ -366,9 +439,8 @@ export default function NormalizedApp() {
   }));
   const enterApplication = () => {
     if (!runtime?.projection) return;
-    setProjection(runtime.projection);
     setActivationLocked(runtime.activationRequired);
-    runtime.startInvalidations(setProjection, error => setGlobalError(messageOf(error)));
+    runtime.startInvalidations(() => undefined, error => setGlobalError(messageOf(error)));
   };
 
   useEffect(() => {
@@ -397,6 +469,24 @@ export default function NormalizedApp() {
   }, [runtime]);
 
   useEffect(() => {
+    setEditingVesselId('');
+    setDetailVesselId('');
+    setSelectedVessels([]);
+    setBatchSelected([]);
+    setDirectory(null);
+    setGlobalError('');
+  }, [runtime, runtimeView.authorizationGeneration]);
+
+  useEffect(() => {
+    const editor = taskEditorRef.current;
+    if (!editor) return;
+    if (editorAuthorization && resolveAuthorizedTaskEditor(editor, editorAuthorization)) return;
+    cleanupNormalizedTaskEditorDraft(editor, owner => runtime?.removeOwnedDraft(owner));
+    taskEditorRef.current = null;
+    setTaskEditorState(null);
+  }, [runtime, editorAuthorization]);
+
+  useEffect(() => {
     if (!runtime || !controller || !projection || activationLocked) return;
     const recover = async () => {
       if (recoveringDrafts.current || navigator.onLine === false) return;
@@ -405,7 +495,6 @@ export default function NormalizedApp() {
         for (const envelope of runtime.listDrafts()) {
           await controller.recoverDraft(envelope);
         }
-        if (runtime.projection) setProjection(runtime.projection);
       } catch (error) {
         setGlobalError(projection.vesselAccount
           ? '離線草稿與伺服器版本不一致，請重新檢視後再提交。'
@@ -429,11 +518,11 @@ export default function NormalizedApp() {
     onDirectory={people => setDirectory(people.length ? people : null)}
     onSignedIn={enterApplication}/>;
   if (activationLocked) return <ActivationLock runtime={runtime}
-    onActivated={() => { setActivationLocked(false); sync(); }}
-    onSignOut={() => void runtime.signOut().then(() => {
-      setProjection(null);
+    onActivated={() => setActivationLocked(false)}
+    onSignOut={() => {
       setDirectory(null);
-    })}/>;
+      void runtime.signOut().catch(error => setGlobalError(messageOf(error)));
+    }}/>;
 
   const data = projection.data;
   const user = projection.actor;
@@ -464,15 +553,29 @@ export default function NormalizedApp() {
   const canDelete = !projection.vesselAccount && permission('deleteTasks');
 
   const openTask = (task: TaskItem, vesselId = '') => {
-    setEditingTask(structuredClone(task));
-    setCreatingTask(false);
-    setTaskProgressVesselId(vesselId);
+    setTaskEditor(openNormalizedTaskEditor(task, {
+      authorizationEpoch,
+      creating: false,
+      progressVesselId: vesselId,
+      draftOwner: {
+        workspaceId: runtime.scope.workspaceId,
+        actorId: user.id,
+        entityKey: `task:${task.id}`,
+      },
+    }));
   };
   const addTask = (vesselId: string) => {
     if (!canCreate || !visibleVesselIds.has(vesselId)) return;
-    setEditingTask(newTask(user, vesselId));
-    setCreatingTask(true);
-    setTaskProgressVesselId('');
+    setTaskEditor(openNormalizedTaskEditor(newTask(user, vesselId), {
+      authorizationEpoch,
+      creating: true,
+      progressVesselId: '',
+      draftOwner: {
+        workspaceId: runtime.scope.workspaceId,
+        actorId: user.id,
+        entityKey: `task-create:${vesselId}`,
+      },
+    }));
   };
   const saveTask = async (candidate: TaskItem, creating: boolean) => {
     const outcome = await run(() => controller.saveTask(candidate, creating));
@@ -486,13 +589,9 @@ export default function NormalizedApp() {
     if (outcome === 'drafted') alert('目前離線：船端進度已保存為個人草稿。');
     return true;
   };
-  const authorizationEpoch = [
-    user.id,
-    user.role,
-    visibleVessels.map(vessel => vessel.id).sort().join(','),
-    ...(['editBusinessContent', 'createTasks', 'closeTasks', 'deleteTasks'] as const)
-      .map(key => permission(key) ? '1' : '0'),
-  ].join('|');
+  const authorizationEpoch = editorAuthorization?.authorizationEpoch || '';
+  const creatingTask = taskEditor?.creating === true;
+  const taskProgressVesselId = taskEditor?.progressVesselId || '';
 
   const nav: Array<[Tab, string, boolean]> = [
     ['dashboard', '總覽', true],
@@ -518,10 +617,10 @@ export default function NormalizedApp() {
           if (!password || password.length < 12) return;
           await run(() => runtime.changePersonalPassword(password));
         }}>變更密碼</button>
-        <button className="btn small ghost" onClick={() => void runtime.signOut().then(() => {
-          setProjection(null);
+        <button className="btn small ghost" onClick={() => {
           setDirectory(null);
-        })}>登出</button>
+          void runtime.signOut().catch(error => setGlobalError(messageOf(error)));
+        }}>登出</button>
       </div>
     </header>
     <nav className="main-nav">{nav.filter(([, , visible]) => visible).map(([key, label]) =>
@@ -664,19 +763,19 @@ export default function NormalizedApp() {
     {editingVessel && <VesselEditor vessel={editingVessel} data={data}
       close={() => setEditingVesselId('')}
       save={async candidate => Boolean(await run(() => controller.saveVessel(editingVessel, candidate)))}/>}
-    {editingTask && <TaskEditModal task={editingTask} creating={creatingTask}
+    {authorizedEditingTask && <TaskEditModal task={authorizedEditingTask} creating={creatingTask}
       data={data} visibleVessels={visibleVessels} currentUser={user}
       canClose={canClose} canDelete={canDelete} canCancelInternalControl={canClose}
-      canEditOverall={(canEdit || creatingTask) && !editingTask.sourceMeetingId}
+      canEditOverall={(canEdit || creatingTask) && !authorizedEditingTask.sourceMeetingId}
       initialProgressVesselId={taskProgressVesselId}
       readOnly={!creatingTask && (
         (!canEdit && !projection.vesselAccount)
-        || (Boolean(editingTask.sourceMeetingId) && !taskProgressVesselId)
+        || (Boolean(authorizedEditingTask.sourceMeetingId) && !taskProgressVesselId)
       )}
-      readOnlyReason={editingTask.sourceMeetingId
+      readOnlyReason={authorizedEditingTask.sourceMeetingId
         ? '會議待辦的整體內容請由臨時會議頁以聚合命令編輯'
         : '目前角色只有檢視權限'}
-      close={() => setEditingTask(null)}
+      close={() => setTaskEditor(null)}
       onDraftChange={candidate => {
         const key = creatingTask ? `task-create:${candidate.vesselId}` : `task:${candidate.id}`;
         const versions = projection.versions.has(`task:${candidate.id}`)
@@ -688,8 +787,8 @@ export default function NormalizedApp() {
       onSaveVesselProgress={saveProgress}
       onDelete={() => {
         if (!canDelete || !confirm('確定刪除此待辦？')) return;
-        void runBoolean(() => controller.deleteTask(editingTask.id)).then(ok => {
-          if (ok) setEditingTask(null);
+        void runBoolean(() => controller.deleteTask(authorizedEditingTask.id)).then(ok => {
+          if (ok) setTaskEditor(null);
         });
       }}/>}
   </div>;

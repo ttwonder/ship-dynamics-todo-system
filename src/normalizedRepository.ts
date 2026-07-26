@@ -926,6 +926,14 @@ export class NormalizedRepository {
     );
   }
 
+  removeOwnedDraft(workspaceId: string, actorId: string, entityKey: string) {
+    this.#durableState.removeDraft(
+      assertIdentity(workspaceId, 'Workspace identity'),
+      assertIdentity(actorId, 'Actor identity'),
+      assertIdentity(entityKey, 'Entity key'),
+    );
+  }
+
   subscribeInvalidations(onInvalidate: (entityKeys: string[]) => void): () => Promise<void> {
     const token = this.#scope.capture();
     let channel = this.#client.channel(

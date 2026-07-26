@@ -1,5 +1,10 @@
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
-import { NormalizedAuth, type LoginDirectoryPerson, type SiteGateGrant } from './normalizedAuth';
+import {
+  NormalizedAuth,
+  type LoginDirectoryPerson,
+  type NormalizedAuthTransition,
+  type SiteGateGrant,
+} from './normalizedAuth';
 import { NormalizedCommandClient, leaseProof, type LeaseProof } from './normalizedCommands';
 import {
   NormalizedCommandError,
@@ -11,10 +16,12 @@ import {
   NormalizedProjectionReader,
   type NormalizedApplicationProjection,
 } from './normalizedProjection';
+import type { NormalizedDraftOwner } from './normalizedAuthorizationUi';
 import {
   createNormalizedSupabaseClient,
   NormalizedRequestScope,
   StaleNormalizedResponseError,
+  type NormalizedRequestToken,
 } from './normalizedSupabaseClient';
 
 type JsonObject = Record<string, unknown>;
@@ -40,6 +47,12 @@ export interface SubmitDraftContext {
 export interface MutationOutcome {
   committed: boolean;
   drafted: boolean;
+}
+
+export interface NormalizedRuntimeView {
+  readonly projection: NormalizedApplicationProjection | null;
+  readonly authorizationGeneration: number;
+  readonly projectionGeneration: number;
 }
 
 export function readNormalizedRuntimeConfig(
@@ -90,6 +103,20 @@ export class NormalizedApplicationRuntime {
   #unsubscribe: (() => Promise<void>) | null = null;
   #invalidationQueue = new Set<string>();
   #invalidationPromise: Promise<void> | null = null;
+  #invalidationHandlers: {
+    onProjection: (projection: NormalizedApplicationProjection) => void;
+    onError: (error: Error) => void;
+  } | null = null;
+  #invalidationGeneration = 0;
+  #authorizationGeneration = 0;
+  #projectionGeneration = 0;
+  #publicationRequestGeneration = 0;
+  #view: NormalizedRuntimeView = Object.freeze({
+    projection: null,
+    authorizationGeneration: 0,
+    projectionGeneration: 0,
+  });
+  #viewListeners = new Set<() => void>();
 
   constructor(
     config = readNormalizedRuntimeConfig(),
@@ -102,7 +129,9 @@ export class NormalizedApplicationRuntime {
       workspaceId: config.workspaceKey,
     });
     this.scope = new NormalizedRequestScope(config.workspaceKey);
-    this.auth = new NormalizedAuth(this.client as never, this.scope);
+    this.auth = new NormalizedAuth(this.client as never, this.scope, {
+      onTransition: transition => this.#handleAuthTransition(transition),
+    });
     this.repository = new NormalizedRepository(this.client as never, this.scope);
     this.commands = new NormalizedCommandClient(this.repository);
     this.projectionReader = new NormalizedProjectionReader(this.client as never, this.scope);
@@ -110,6 +139,27 @@ export class NormalizedApplicationRuntime {
 
   get projection() {
     return this.#projection;
+  }
+
+  get authorizationGeneration() {
+    return this.#authorizationGeneration;
+  }
+
+  get projectionGeneration() {
+    return this.#projectionGeneration;
+  }
+
+  getViewSnapshot = () => this.#view;
+
+  subscribeView = (listener: () => void) => {
+    this.#viewListeners.add(listener);
+    return () => this.#viewListeners.delete(listener);
+  };
+
+  subscribeProjection(listener: (projection: NormalizedApplicationProjection | null) => void) {
+    const notify = () => listener(this.#projection);
+    this.#viewListeners.add(notify);
+    return () => this.#viewListeners.delete(notify);
   }
 
   get activationRequired() {
@@ -160,22 +210,35 @@ export class NormalizedApplicationRuntime {
   }
 
   async signOut() {
-    await this.stopInvalidations();
-    this.#projection = null;
-    this.#directoryPasswordChange = false;
-    this.#activationRequired = false;
     await this.auth.signOut();
   }
 
   async refreshAll() {
-    this.#projection = await this.projectionReader.fetchApplicationProjection();
-    return this.#projection;
+    const token = this.scope.capture();
+    const authorizationGeneration = this.#authorizationGeneration;
+    const publicationRequestGeneration = ++this.#publicationRequestGeneration;
+    const projection = await this.projectionReader.fetchApplicationProjection();
+    this.#assertPublicationCurrent(
+      token,
+      authorizationGeneration,
+      publicationRequestGeneration,
+    );
+    this.#publishProjection(projection);
+    return projection;
   }
 
   async refreshEntities(entityKeys: string[]) {
     if (!entityKeys.length) return this.#projection;
+    const token = this.scope.capture();
+    const authorizationGeneration = this.#authorizationGeneration;
+    const publicationRequestGeneration = ++this.#publicationRequestGeneration;
     const projection = await this.projectionReader.refetchInvalidatedProjection(entityKeys);
-    this.#projection = projection;
+    this.#assertPublicationCurrent(
+      token,
+      authorizationGeneration,
+      publicationRequestGeneration,
+    );
+    this.#publishProjection(projection);
     return projection;
   }
 
@@ -183,8 +246,11 @@ export class NormalizedApplicationRuntime {
     onProjection: (projection: NormalizedApplicationProjection) => void,
     onError: (error: Error) => void,
   ) {
-    void this.stopInvalidations().then(() => {
-      this.#unsubscribe = this.repository.subscribeInvalidations(keys => {
+    this.#invalidationHandlers = { onProjection, onError };
+    void this.#detachInvalidations();
+    const generation = ++this.#invalidationGeneration;
+    this.#unsubscribe = this.repository.subscribeInvalidations(keys => {
+        if (generation !== this.#invalidationGeneration) return;
         const current = this.#projection;
         const visibleVesselId = current?.vesselAccount
           ? current.data.vessels[0]?.id || ''
@@ -206,32 +272,29 @@ export class NormalizedApplicationRuntime {
         }
         if (this.#invalidationPromise) return;
         this.#invalidationPromise = Promise.resolve().then(async () => {
-          while (this.#invalidationQueue.size) {
+          while (generation === this.#invalidationGeneration && this.#invalidationQueue.size) {
             const pending = [...this.#invalidationQueue];
             this.#invalidationQueue.clear();
             try {
               const projection = await this.refreshEntities(pending);
-              if (projection) onProjection(projection);
+              if (generation === this.#invalidationGeneration && projection) onProjection(projection);
             } catch (error) {
               if (error instanceof StaleNormalizedResponseError) return;
               const safeError = this.#projection?.vesselAccount
                 ? new Error('授權資料已變更，請重新整理。')
                 : error instanceof Error ? error : new Error(String(error));
-              onError(safeError);
+              if (generation === this.#invalidationGeneration) onError(safeError);
             }
           }
         }).finally(() => {
-          this.#invalidationPromise = null;
+          if (generation === this.#invalidationGeneration) this.#invalidationPromise = null;
         });
       });
-    });
   }
 
   async stopInvalidations() {
-    const unsubscribe = this.#unsubscribe;
-    this.#unsubscribe = null;
-    this.#invalidationQueue.clear();
-    if (unsubscribe) await unsubscribe();
+    this.#invalidationHandlers = null;
+    await this.#detachInvalidations();
   }
 
   saveDraft<TDraft extends JsonObject>(
@@ -252,6 +315,10 @@ export class NormalizedApplicationRuntime {
 
   removeDraft(entityKey: string) {
     this.repository.removeDraft(entityKey);
+  }
+
+  removeOwnedDraft(owner: NormalizedDraftOwner) {
+    this.repository.removeOwnedDraft(owner.workspaceId, owner.actorId, owner.entityKey);
   }
 
   async recoverPendingOperation(entityKey: string): Promise<OperationStatus | null> {
@@ -354,10 +421,69 @@ export class NormalizedApplicationRuntime {
     return response.data;
   }
 
+  #handleAuthTransition(transition: NormalizedAuthTransition) {
+    if (!transition.authorityChanged) {
+      const handlers = this.#invalidationHandlers;
+      if (handlers) this.startInvalidations(handlers.onProjection, handlers.onError);
+      return;
+    }
+    this.#authorizationGeneration += 1;
+    this.#publicationRequestGeneration += 1;
+    this.#directoryPasswordChange = false;
+    this.#activationRequired = false;
+    this.#invalidationHandlers = null;
+    void this.#detachInvalidations();
+    this.#publishProjection(null);
+  }
+
+  #assertPublicationCurrent(
+    token: NormalizedRequestToken,
+    authorizationGeneration: number,
+    publicationRequestGeneration: number,
+  ) {
+    this.scope.assertCurrent(token);
+    if (authorizationGeneration !== this.#authorizationGeneration
+       || publicationRequestGeneration !== this.#publicationRequestGeneration) {
+      throw new StaleNormalizedResponseError();
+    }
+  }
+
+  #publishProjection(projection: NormalizedApplicationProjection | null) {
+    this.#projection = projection;
+    this.#projectionGeneration += 1;
+    this.#view = Object.freeze({
+      projection,
+      authorizationGeneration: this.#authorizationGeneration,
+      projectionGeneration: this.#projectionGeneration,
+    });
+    for (const listener of [...this.#viewListeners]) listener();
+  }
+
+  #detachInvalidations(): Promise<void> {
+    this.#invalidationGeneration += 1;
+    const unsubscribe = this.#unsubscribe;
+    this.#unsubscribe = null;
+    this.#invalidationQueue.clear();
+    this.#invalidationPromise = null;
+    if (!unsubscribe) return Promise.resolve();
+    try {
+      return Promise.resolve(unsubscribe()).then(() => undefined);
+    } catch {
+      return Promise.resolve();
+    }
+  }
+
   async #establishAuthenticatedWorkspace() {
+    const authorizationGeneration = this.#authorizationGeneration;
     await this.repository.resolveWorkspaceByLegacyKey(this.config.workspaceKey);
+    if (authorizationGeneration !== this.#authorizationGeneration) {
+      throw new StaleNormalizedResponseError();
+    }
     this.#activationRequired = this.#directoryPasswordChange
       || await this.auth.passwordActivationRequired(this.scope.workspaceId);
-    this.#projection = await this.projectionReader.fetchApplicationProjection();
+    if (authorizationGeneration !== this.#authorizationGeneration) {
+      throw new StaleNormalizedResponseError();
+    }
+    await this.refreshAll();
   }
 }

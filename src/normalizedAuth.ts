@@ -1,5 +1,8 @@
 import type { Session } from '@supabase/supabase-js';
-import type { NormalizedRequestScope } from './normalizedSupabaseClient';
+import {
+  StaleNormalizedResponseError,
+  type NormalizedRequestScope,
+} from './normalizedSupabaseClient';
 
 interface AuthResult<T> {
   data: T;
@@ -54,6 +57,14 @@ export interface PasswordlessCutoverFlag {
   reason: 'passwordless-account';
 }
 
+export interface NormalizedAuthTransition {
+  readonly event: string;
+  readonly previousActorId: string | null;
+  readonly actorId: string | null;
+  readonly requestGeneration: number;
+  readonly authorityChanged: boolean;
+}
+
 export function flagPasswordlessCutoverAccounts(
   candidates: PasswordlessCutoverCandidate[],
 ): PasswordlessCutoverFlag[] {
@@ -86,17 +97,24 @@ export class NormalizedAuth {
   #scope: NormalizedRequestScope;
   #gateStorage: Storage | null;
   #subscription: { unsubscribe(): void } | null = null;
+  #transitionGeneration = 0;
+  #latestTransition: NormalizedAuthTransition | null = null;
+  #onTransition: ((transition: NormalizedAuthTransition) => void) | null;
 
   constructor(
     client: NormalizedAuthClient,
     scope: NormalizedRequestScope,
-    options: { gateStorage?: Storage | null } = {},
+    options: {
+      gateStorage?: Storage | null;
+      onTransition?: (transition: NormalizedAuthTransition) => void;
+    } = {},
   ) {
     this.#client = client;
     this.#scope = scope;
     this.#gateStorage = options.gateStorage === undefined
       ? defaultGateStorage()
       : options.gateStorage;
+    this.#onTransition = options.onTransition || null;
   }
 
   get actorId() { return this.#scope.actorId; }
@@ -105,28 +123,66 @@ export class NormalizedAuth {
     return this.#scope.capture().actorId;
   }
 
+  #acceptTransition(event: string, session: Session | null, forceGenerationChange = true) {
+    const previousActorId = this.#scope.actorId;
+    this.#scope.acceptSession(session, forceGenerationChange);
+    const transition = Object.freeze({
+      event,
+      previousActorId,
+      actorId: this.#scope.actorId,
+      requestGeneration: this.#scope.generation,
+      authorityChanged: previousActorId !== this.#scope.actorId,
+    });
+    this.#transitionGeneration += 1;
+    this.#latestTransition = transition;
+    this.#onTransition?.(transition);
+  }
+
+  #assertOperationCurrent(generation: number) {
+    if (generation !== this.#transitionGeneration) throw new StaleNormalizedResponseError();
+  }
+
+  #installSubscription() {
+    this.#subscription?.unsubscribe();
+    this.#subscription = this.#client.auth.onAuthStateChange((event, changedSession) => {
+      const nextActorId = changedSession?.user?.id?.trim() || null;
+      if (event === 'INITIAL_SESSION'
+        && this.#latestTransition?.event === 'INITIAL_SESSION'
+        && this.#latestTransition.actorId === nextActorId) return;
+      this.#acceptTransition(event, changedSession, true);
+    }).data.subscription;
+  }
+
   async initialize(): Promise<Session | null> {
+    const operationGeneration = this.#transitionGeneration;
     const { data, error } = await this.#client.auth.getSession();
+    this.#assertOperationCurrent(operationGeneration);
     if (error) {
-      this.#scope.invalidateAuthentication();
+      this.#acceptTransition('SESSION_ERROR', null, true);
       throwFunctionError(error);
     }
     let session = data.session;
     if (session) {
       const verified = await this.#client.auth.getUser();
+      this.#assertOperationCurrent(operationGeneration);
       if (verified.error || !verified.data.user) {
-        this.#scope.invalidateAuthentication();
+        this.#acceptTransition('INVALID_SESSION', null, true);
         await this.#client.auth.signOut();
         if (verified.error) throwFunctionError(verified.error);
         throw new Error('The persisted authentication session is invalid.');
       }
       session = { ...session, user: verified.data.user };
     }
-    this.#scope.acceptSession(session);
-    this.#subscription?.unsubscribe();
-    this.#subscription = this.#client.auth.onAuthStateChange((_event, changedSession) => {
-      this.#scope.acceptSession(changedSession, true);
-    }).data.subscription;
+    this.#installSubscription();
+    if (this.#transitionGeneration === operationGeneration) {
+      this.#acceptTransition('INITIAL_SESSION', session, false);
+    } else {
+      const expectedActorId = session?.user?.id?.trim() || null;
+      const expectedCallback = this.#transitionGeneration === operationGeneration + 1
+        && this.#latestTransition?.event === 'INITIAL_SESSION'
+        && this.#latestTransition.actorId === expectedActorId;
+      if (!expectedCallback) throw new StaleNormalizedResponseError();
+    }
     return session;
   }
 
@@ -199,13 +255,21 @@ export class NormalizedAuth {
       4096,
     );
     if (!input.password || input.password.length > 256) throw new Error('Password is invalid.');
+    const operationGeneration = this.#transitionGeneration;
     const accepted = await this.#client.auth.signInWithPassword({
       email: requiredText(input.authAlias, 'Authentication alias', 320),
       password: input.password,
     });
     if (accepted.error) throwFunctionError(accepted.error);
     if (!accepted.data.session) throw new Error('Supabase rejected the login.');
-    this.#scope.acceptSession(accepted.data.session, true);
+    if (this.#transitionGeneration === operationGeneration) {
+      this.#acceptTransition('SIGNED_IN', accepted.data.session, true);
+    } else {
+      const expectedCallback = this.#transitionGeneration === operationGeneration + 1
+        && this.#latestTransition?.event === 'SIGNED_IN'
+        && this.#latestTransition.actorId === accepted.data.session.user.id;
+      if (!expectedCallback) throw new StaleNormalizedResponseError();
+    }
     return accepted.data.session;
   }
 
@@ -239,7 +303,7 @@ export class NormalizedAuth {
   }
 
   async signOut(): Promise<void> {
-    this.#scope.invalidateAuthentication();
+    this.#acceptTransition('SIGNED_OUT', null, true);
     const { error } = await this.#client.auth.signOut();
     if (error) throwFunctionError(error);
   }

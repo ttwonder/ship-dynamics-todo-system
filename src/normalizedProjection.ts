@@ -1,4 +1,8 @@
-import type { NormalizedRequestScope } from './normalizedSupabaseClient';
+import {
+  StaleNormalizedResponseError,
+  type NormalizedRequestScope,
+  type NormalizedRequestToken,
+} from './normalizedSupabaseClient';
 import type {
   AgendaReport,
   AppData,
@@ -653,10 +657,17 @@ function emptyRows(): RowCache {
   ) as RowCache;
 }
 
+function cloneRows(rows: RowCache): RowCache {
+  return Object.fromEntries(
+    (Object.keys(TABLES) as TableName[]).map(name => [name, [...rows[name]]]),
+  ) as RowCache;
+}
+
 export class NormalizedProjectionReader {
   #client: NormalizedProjectionClient;
   #scope: NormalizedRequestScope;
   #rows: RowCache = emptyRows();
+  #requestGeneration = 0;
 
   constructor(client: NormalizedProjectionClient, scope: NormalizedRequestScope) {
     this.#client = client;
@@ -665,6 +676,7 @@ export class NormalizedProjectionReader {
 
   async fetchApplicationProjection(): Promise<NormalizedApplicationProjection> {
     const token = this.#scope.capture();
+    const requestGeneration = ++this.#requestGeneration;
     const entries = await Promise.all(
       (Object.keys(TABLES) as TableName[]).map(async name => {
         const definition = TABLES[name] as TableDefinition & { table: string };
@@ -678,21 +690,35 @@ export class NormalizedProjectionReader {
         return [name, rows] as const;
       }),
     );
-    this.#scope.assertCurrent(token);
-    this.#rows = Object.fromEntries(entries) as RowCache;
-    return projectNormalizedRows(this.#rows, token.workspaceId, token.actorId);
+    const candidateRows = Object.fromEntries(entries) as RowCache;
+    const projection = projectNormalizedRows(candidateRows, token.workspaceId, token.actorId);
+    this.#assertCurrent(token, requestGeneration);
+    this.#rows = candidateRows;
+    return projection;
   }
 
   async refetchInvalidatedProjection(
     entityKeys: string[],
   ): Promise<NormalizedApplicationProjection> {
     const token = this.#scope.capture();
+    const requestGeneration = ++this.#requestGeneration;
+    const candidateRows = cloneRows(this.#rows);
     const keys = [...new Set(entityKeys)];
     for (const key of keys) {
-      await this.#refreshKey(key, token.workspaceId);
-      this.#scope.assertCurrent(token);
+      await this.#refreshKey(candidateRows, key, token.workspaceId);
+      this.#assertCurrent(token, requestGeneration);
     }
-    return projectNormalizedRows(this.#rows, token.workspaceId, token.actorId);
+    const projection = projectNormalizedRows(candidateRows, token.workspaceId, token.actorId);
+    this.#assertCurrent(token, requestGeneration);
+    this.#rows = candidateRows;
+    return projection;
+  }
+
+  #assertCurrent(token: NormalizedRequestToken, requestGeneration: number) {
+    this.#scope.assertCurrent(token);
+    if (requestGeneration !== this.#requestGeneration) {
+      throw new StaleNormalizedResponseError();
+    }
   }
 
   async #query(
@@ -717,6 +743,7 @@ export class NormalizedProjectionReader {
   }
 
   async #replace(
+    rows: RowCache,
     name: TableName,
     filters: Array<[string, string]>,
     predicate: (row: Row) => boolean,
@@ -729,20 +756,22 @@ export class NormalizedProjectionReader {
       definition.order,
       definition.limit,
     );
-    this.#rows[name] = [...this.#rows[name].filter(row => !predicate(row)), ...next];
+    rows[name] = [...rows[name].filter(row => !predicate(row)), ...next];
   }
 
-  async #refreshKey(entityKey: string, workspaceId: string) {
+  async #refreshKey(rows: RowCache, entityKey: string, workspaceId: string) {
     const workspaceFilter: [string, string] = ['workspace_id', workspaceId];
     if (entityKey.startsWith('task-progress:')) {
       const [taskId, vesselId] = entityKey.slice('task-progress:'.length).split(':');
       await Promise.all([
         this.#replace(
+          rows,
           'taskVessels',
           [workspaceFilter, ['task_id', taskId], ['vessel_id', vesselId]],
           row => text(row.task_id) === taskId && text(row.vessel_id) === vesselId,
         ),
         this.#replace(
+          rows,
           'taskVesselStatusEvents',
           [workspaceFilter, ['task_id', taskId], ['vessel_id', vesselId]],
           row => text(row.task_id) === taskId && text(row.vessel_id) === vesselId,
@@ -763,6 +792,7 @@ export class NormalizedProjectionReader {
         ['taskVesselStatusEvents', 'task_id'],
       ];
       await Promise.all(taskTables.map(([name, column]) => this.#replace(
+        rows,
         name,
         [workspaceFilter, [column, taskId]],
         row => text(row[column]) === taskId,
@@ -773,11 +803,13 @@ export class NormalizedProjectionReader {
       const vesselId = entityKey.slice('vessel:'.length);
       await Promise.all([
         this.#replace(
+          rows,
           'vessels',
           [workspaceFilter, ['id', vesselId]],
           row => text(row.id) === vesselId,
         ),
         this.#replace(
+          rows,
           'vesselAssignments',
           [workspaceFilter, ['vessel_id', vesselId]],
           row => text(row.vessel_id) === vesselId,
@@ -789,11 +821,13 @@ export class NormalizedProjectionReader {
       const userId = entityKey.slice('user:'.length);
       await Promise.all([
         this.#replace(
+          rows,
           'memberships',
           [workspaceFilter, ['user_id', userId]],
           row => text(row.user_id) === userId,
         ),
         this.#replace(
+          rows,
           'vesselAssignments',
           [workspaceFilter, ['user_id', userId]],
           row => text(row.user_id) === userId,
@@ -814,12 +848,13 @@ export class NormalizedProjectionReader {
         ['meetingStatusCorrections', 'meeting_id'],
       ];
       await Promise.all(tables.map(([name, column]) => this.#replace(
+        rows,
         name,
         [workspaceFilter, [column, meetingId]],
         row => text(row[column]) === meetingId,
       )));
       const itemIds = new Set(
-        this.#rows.meetingItems
+        rows.meetingItems
           .filter(item => text(item.meeting_id) === meetingId)
           .map(item => text(item.id)),
       );
@@ -829,8 +864,8 @@ export class NormalizedProjectionReader {
         [workspaceFilter],
         TABLES.meetingItemCategories.order,
       );
-      this.#rows.meetingItemCategories = [
-        ...this.#rows.meetingItemCategories.filter(
+      rows.meetingItemCategories = [
+        ...rows.meetingItemCategories.filter(
           category => !itemIds.has(text(category.meeting_item_id)),
         ),
         ...categories.filter(category => itemIds.has(text(category.meeting_item_id))),
@@ -846,6 +881,7 @@ export class NormalizedProjectionReader {
         ['internalCaseStatusEvents', 'case_id'],
       ];
       await Promise.all(tables.map(([name, column]) => this.#replace(
+        rows,
         name,
         [workspaceFilter, [column, caseId]],
         row => text(row[column]) === caseId,
@@ -855,6 +891,7 @@ export class NormalizedProjectionReader {
     if (entityKey.startsWith('notification:')) {
       const id = entityKey.slice('notification:'.length);
       await this.#replace(
+        rows,
         'notifications',
         [workspaceFilter, ['id', id]],
         row => text(row.id) === id,
@@ -865,11 +902,13 @@ export class NormalizedProjectionReader {
       const id = entityKey.slice('report:'.length);
       await Promise.all([
         this.#replace(
+          rows,
           'savedReports',
           [workspaceFilter, ['id', id]],
           row => text(row.id) === id,
         ),
         this.#replace(
+          rows,
           'savedReportVessels',
           [workspaceFilter, ['report_id', id]],
           row => text(row.report_id) === id,
@@ -878,7 +917,7 @@ export class NormalizedProjectionReader {
       return;
     }
     if (entityKey === 'audit') {
-      this.#rows.auditEvents = await this.#query(
+      rows.auditEvents = await this.#query(
         TABLES.auditEvents.table,
         TABLES.auditEvents.selection,
         [workspaceFilter],
@@ -890,6 +929,7 @@ export class NormalizedProjectionReader {
     if (entityKey.startsWith('settings:')) {
       const section = entityKey.slice('settings:'.length);
       await this.#replace(
+        rows,
         'settings',
         [workspaceFilter, ['section_key', section]],
         row => text(row.section_key) === section,
@@ -905,7 +945,7 @@ export class NormalizedProjectionReader {
               : section === 'role-permissions' ? ['rolePermissions'] : [];
       await Promise.all(names.map(async name => {
         const definition = TABLES[name] as TableDefinition & { table: string };
-        this.#rows[name] = await this.#query(
+        rows[name] = await this.#query(
           definition.table,
           definition.selection,
           [workspaceFilter],
