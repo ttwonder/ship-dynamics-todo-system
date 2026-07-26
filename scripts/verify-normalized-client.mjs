@@ -149,7 +149,7 @@ class MockSupabase {
         }
         if (options?.body?.action === 'directory') {
           return {
-            data: { people: [{ department: 'Operations', usernameLabel: 'Alice', displayName: 'Alice', authAlias: 'opaque@internal.invalid' }] },
+            data: { people: [{ department: 'Operations', usernameLabel: 'Alice', displayName: 'Alice', authAlias: 'opaque@internal.invalid', mustChangePassword: true }] },
             error: null,
           };
         }
@@ -263,6 +263,7 @@ try {
   });
   assert.equal(directory[0].displayName, 'Alice');
   assert.equal(directory[0].authAlias, 'opaque@internal.invalid');
+  assert.equal(directory[0].mustChangePassword, true);
   await auth.signInWithDirectoryPassword({
     authAlias: directory[0].authAlias,
     password: 'personal-secret',
@@ -279,6 +280,11 @@ try {
   assert.equal(auth.actorId, 'actor-login', 'native Auth session output must become the only actor');
   await auth.changePersonalPassword('new-personal-secret');
   assert.deepEqual(client.updatedUserAttributes, { password: 'new-personal-secret' });
+  assert.equal(await auth.passwordActivationRequired('workspace-a'), true);
+  await auth.activatePersonalPassword('workspace-a', 'activated-personal-secret');
+  assert.deepEqual(client.updatedUserAttributes, { password: 'activated-personal-secret' });
+  assert.ok(client.rpcCalls.some(call => call.name === 'get_my_ship_dynamics_password_activation_status'));
+  assert.ok(client.rpcCalls.some(call => call.name === 'complete_my_ship_dynamics_password_activation'));
 
   const signOutDeferred = new Deferred();
   client.auth.signOut = () => signOutDeferred.promise;

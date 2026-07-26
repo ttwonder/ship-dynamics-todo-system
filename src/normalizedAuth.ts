@@ -26,6 +26,7 @@ interface NormalizedAuthClient {
       options: { body: Record<string, unknown>; headers?: Record<string, string> },
     ): Promise<AuthResult<T>>;
   };
+  rpc<T>(name: string, parameters: Record<string, unknown>): Promise<AuthResult<T>>;
 }
 
 export interface SiteGateGrant {
@@ -38,6 +39,7 @@ export interface LoginDirectoryPerson {
   usernameLabel: string;
   displayName: string;
   authAlias: string;
+  mustChangePassword: boolean;
 }
 
 export interface PasswordlessCutoverCandidate {
@@ -182,6 +184,7 @@ export class NormalizedAuth {
       usernameLabel: requiredText(person.usernameLabel, 'Person label', 128),
       displayName: requiredText(person.displayName, 'Display name', 128),
       authAlias: requiredText(person.authAlias, 'Authentication alias', 320),
+      mustChangePassword: person.mustChangePassword === true,
     }));
   }
 
@@ -213,6 +216,26 @@ export class NormalizedAuth {
     }
     const { error } = await this.#client.auth.updateUser({ password });
     if (error) throwFunctionError(error);
+  }
+
+  async passwordActivationRequired(workspaceId: string): Promise<boolean> {
+    this.requireActor();
+    const { data, error } = await this.#client.rpc<boolean>(
+      'get_my_ship_dynamics_password_activation_status',
+      { p_workspace_id: requiredText(workspaceId, 'Workspace ID', 64) },
+    );
+    if (error) throwFunctionError(error);
+    return data !== false;
+  }
+
+  async activatePersonalPassword(workspaceId: string, password: string): Promise<void> {
+    await this.changePersonalPassword(password);
+    const { data, error } = await this.#client.rpc<boolean>(
+      'complete_my_ship_dynamics_password_activation',
+      { p_workspace_id: requiredText(workspaceId, 'Workspace ID', 64) },
+    );
+    if (error) throwFunctionError(error);
+    if (data !== true) throw new Error('Password activation was not confirmed.');
   }
 
   async signOut(): Promise<void> {

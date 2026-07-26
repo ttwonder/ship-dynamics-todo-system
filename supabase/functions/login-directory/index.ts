@@ -58,7 +58,7 @@ Deno.serve(async request => {
 
     const { data: people, error } = await service
       .from('sd_login_options')
-      .select('department,username_label,display_name,auth_alias')
+      .select('department,username_label,display_name,auth_alias,must_change_password')
       .eq('workspace_id', workspace.id)
       .eq('is_active', true)
       .order('department', { ascending: true })
@@ -71,6 +71,7 @@ Deno.serve(async request => {
         usernameLabel: person.username_label,
         displayName: person.display_name,
         authAlias: person.auth_alias,
+        mustChangePassword: person.must_change_password === true,
       })),
     }, 200, corsHeaders);
   } catch (error) {

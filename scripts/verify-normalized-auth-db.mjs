@@ -142,8 +142,27 @@ const replay = await asUser(ids.owner, () => db.query(
   [ids.workspace, ids.createOperation, JSON.stringify(request)],
 ));
 assert.equal(replay.rows[0].result.status, 'committed');
-const loginRow = await db.query(`select auth_alias,is_active from public.sd_login_options where user_id='${ids.newUser}'`);
-assert.deepEqual(loginRow.rows, [{ auth_alias: 'opaque-new@internal.invalid', is_active: true }]);
+const loginRow = await db.query(`select auth_alias,is_active,must_change_password from public.sd_login_options where user_id='${ids.newUser}'`);
+assert.deepEqual(loginRow.rows, [{ auth_alias: 'opaque-new@internal.invalid', is_active: true, must_change_password: true }]);
+const initialActivation = await asUser(ids.newUser, () => db.query(
+  `select public.get_my_ship_dynamics_password_activation_status($1::uuid) as required`,
+  [ids.workspace],
+));
+assert.equal(initialActivation.rows[0].required, true);
+await asUser(ids.newUser, () => db.query(
+  `select public.complete_my_ship_dynamics_password_activation($1::uuid)`,
+  [ids.workspace],
+));
+const completedActivation = await asUser(ids.newUser, () => db.query(
+  `select public.get_my_ship_dynamics_password_activation_status($1::uuid) as required`,
+  [ids.workspace],
+));
+assert.equal(completedActivation.rows[0].required, false);
+await assert.rejects(
+  () => db.exec(`set role anon; select public.get_my_ship_dynamics_password_activation_status('${ids.workspace}'::uuid); reset role`),
+  /permission denied/i,
+);
+await db.exec('reset role');
 
 await asUser(ids.owner, () => db.query(
   `select public.begin_ship_dynamics_user_operation($1::uuid,$2::uuid,'reset-password',$3::uuid,$4::jsonb)`,
@@ -153,6 +172,15 @@ await asUser(ids.owner, () => db.query(
   `select public.mark_ship_dynamics_user_operation_effect($1::uuid,$2::uuid,$3::uuid)`,
   [ids.workspace, ids.recoveryOperation, ids.newUser],
 ));
+await asUser(ids.owner, () => db.query(
+  `select public.mark_ship_dynamics_password_reset_required($1::uuid,$2::uuid,$3::uuid)`,
+  [ids.workspace, ids.newUser, ids.recoveryOperation],
+));
+const resetActivation = await asUser(ids.newUser, () => db.query(
+  `select public.get_my_ship_dynamics_password_activation_status($1::uuid) as required`,
+  [ids.workspace],
+));
+assert.equal(resetActivation.rows[0].required, true);
 await asUser(ids.owner, () => db.query(
   `select public.mark_ship_dynamics_user_operation_recovery_required($1::uuid,$2::uuid,'lost-response')`,
   [ids.workspace, ids.recoveryOperation],

@@ -89,6 +89,7 @@ create table public.sd_login_options (
   display_name text not null,
   auth_alias text not null,
   is_active boolean not null default true,
+  must_change_password boolean not null default true,
   updated_at timestamptz not null default clock_timestamp(),
   primary key (workspace_id, user_id),
   constraint sd_login_department_not_blank check (btrim(department) <> ''),
@@ -369,14 +370,14 @@ begin
     version=public.sd_memberships.version+1,
     updated_at=clock_timestamp(),updated_by=auth.uid();
   insert into public.sd_login_options(
-    workspace_id,user_id,department,username_label,display_name,auth_alias,is_active
+    workspace_id,user_id,department,username_label,display_name,auth_alias,is_active,must_change_password
   ) values (
     p_workspace_id,p_user_id,btrim(p_department),btrim(p_username_label),
-    btrim(p_display_name),lower(btrim(p_auth_alias)),true
+    btrim(p_display_name),lower(btrim(p_auth_alias)),true,true
   ) on conflict(workspace_id,user_id) do update set
     department=excluded.department,username_label=excluded.username_label,
     display_name=excluded.display_name,auth_alias=excluded.auth_alias,
-    is_active=true,updated_at=clock_timestamp();
+    is_active=true,must_change_password=true,updated_at=clock_timestamp();
   return true;
 end;
 $$;
@@ -590,6 +591,84 @@ begin
 end;
 $$;
 
+create or replace function public.get_my_ship_dynamics_password_activation_status(
+  p_workspace_id uuid
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  select coalesce((
+    select l.must_change_password
+    from public.sd_login_options l
+    join public.sd_memberships m
+      on m.workspace_id=l.workspace_id and m.user_id=l.user_id and m.is_active
+    where l.workspace_id=p_workspace_id and l.user_id=auth.uid() and l.is_active
+  ), true)
+$$;
+
+create or replace function public.complete_my_ship_dynamics_password_activation(
+  p_workspace_id uuid
+)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+begin
+  if auth.uid() is null or public.sd_membership_role(p_workspace_id) is null then
+    raise exception using errcode='P0001', message='not-authorized';
+  end if;
+  update public.sd_login_options l
+  set must_change_password=false,updated_at=clock_timestamp()
+  where l.workspace_id=p_workspace_id and l.user_id=auth.uid() and l.is_active;
+  if not found then raise exception using errcode='P0001', message='not-authorized'; end if;
+  insert into public.sd_audit_events(workspace_id,id,actor_id,command,entity_type,entity_id,detail)
+  values(
+    p_workspace_id,
+    public.sd_core_event_id(auth.uid(),clock_timestamp()::text),
+    auth.uid(),'complete_password_activation','user',auth.uid()::text,'{}'::jsonb
+  );
+  return true;
+end;
+$$;
+
+create or replace function public.mark_ship_dynamics_password_reset_required(
+  p_workspace_id uuid,
+  p_user_id uuid,
+  p_operation_id uuid
+)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+begin
+  if public.sd_membership_role(p_workspace_id) not in ('owner','admin')
+     or exists(
+       select 1 from public.sd_memberships m
+       where m.workspace_id=p_workspace_id and m.user_id=p_user_id and m.role='owner'
+     )
+     or not exists(
+       select 1 from public.sd_operations o
+       where o.workspace_id=p_workspace_id and o.operation_id=p_operation_id
+         and o.actor_id=auth.uid() and o.command='manage_user:reset-password'
+         and o.status in ('prepared','recovery_required')
+     ) then
+    raise exception using errcode='P0001', message='not-authorized';
+  end if;
+  update public.sd_login_options l
+  set must_change_password=true,updated_at=clock_timestamp()
+  where l.workspace_id=p_workspace_id and l.user_id=p_user_id and l.is_active;
+  if not found then raise exception using errcode='P0001', message='not-authorized'; end if;
+  return true;
+end;
+$$;
+
 -- User saga RPCs are JWT-bound; the service key cannot substitute an actor.
 revoke all on function public.begin_ship_dynamics_user_operation(uuid,uuid,text,uuid,jsonb) from public, anon;
 revoke all on function public.mark_ship_dynamics_user_operation_effect(uuid,uuid,uuid) from public, anon;
@@ -609,6 +688,12 @@ grant execute on function public.provision_ship_dynamics_user(uuid,uuid,text,tex
 grant execute on function public.disable_ship_dynamics_user(uuid,uuid,uuid) to authenticated;
 grant execute on function public.change_ship_dynamics_user_role(uuid,uuid,text,uuid) to authenticated;
 grant execute on function public.transfer_ship_dynamics_owner(uuid,uuid,uuid) to authenticated;
+revoke all on function public.get_my_ship_dynamics_password_activation_status(uuid) from public, anon;
+revoke all on function public.complete_my_ship_dynamics_password_activation(uuid) from public, anon;
+revoke all on function public.mark_ship_dynamics_password_reset_required(uuid,uuid,uuid) from public, anon;
+grant execute on function public.get_my_ship_dynamics_password_activation_status(uuid) to authenticated;
+grant execute on function public.complete_my_ship_dynamics_password_activation(uuid) to authenticated;
+grant execute on function public.mark_ship_dynamics_password_reset_required(uuid,uuid,uuid) to authenticated;
 revoke all on function public.command_ship_dynamics_update_site_gate(uuid,uuid,bigint,text,uuid,bigint,text) from public, anon;
 grant execute on function public.command_ship_dynamics_update_site_gate(uuid,uuid,bigint,text,uuid,bigint,text) to authenticated;
 

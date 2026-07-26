@@ -266,6 +266,15 @@ Deno.serve(async request => {
         });
         if (resetError) throw new HttpError(503, 'operation-recovery-required');
         await markExternalEffect(actorDatabase, workspaceId, operationId, targetId);
+        const { error: activationError } = await actorDatabase.rpc(
+          'mark_ship_dynamics_password_reset_required',
+          {
+            p_workspace_id: workspaceId,
+            p_user_id: targetId,
+            p_operation_id: operationId,
+          },
+        );
+        if (activationError) throw new HttpError(503, 'operation-recovery-required');
         result = { userId: targetId, credentialReset: true };
       } else if (action === 'transfer-owner' || validated.role === 'owner') {
         if (!target.is_active) throw new HttpError(409, 'target-inactive');
@@ -274,7 +283,7 @@ Deno.serve(async request => {
           'transfer_ship_dynamics_owner',
           {
             p_workspace_id: workspaceId,
-            p_new_owner_id: targetId,
+            p_user_id: targetId,
             p_operation_id: operationId,
           },
         );
