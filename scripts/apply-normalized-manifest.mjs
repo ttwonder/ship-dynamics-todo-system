@@ -65,10 +65,24 @@ export function assertStagingTarget(databaseUrl, target, confirmation, version, 
   return host;
 }
 
+export function postgresEnvironment(databaseUrl, baseEnvironment = process.env) {
+  const parsed = new URL(databaseUrl);
+  const local = ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname);
+  return {
+    ...baseEnvironment,
+    PGHOST: parsed.hostname,
+    PGPORT: parsed.port || '5432',
+    PGUSER: decodeURIComponent(parsed.username),
+    PGPASSWORD: decodeURIComponent(parsed.password),
+    PGDATABASE: decodeURIComponent(parsed.pathname.replace(/^\//, '')),
+    PGSSLMODE: parsed.searchParams.get('sslmode') || (local ? 'disable' : 'require'),
+  };
+}
+
 function runPsql(executable, databaseUrl, file) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, ['--no-psqlrc', '--set', 'ON_ERROR_STOP=1', '--file', file], {
-      env: { ...process.env, PGDATABASE: databaseUrl },
+      env: postgresEnvironment(databaseUrl),
       stdio: ['ignore', 'inherit', 'inherit'],
       windowsHide: true,
     });

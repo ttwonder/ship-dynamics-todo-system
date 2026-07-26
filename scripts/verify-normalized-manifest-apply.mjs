@@ -5,6 +5,7 @@ import {
   assertStagingTarget,
   buildNormalizedDeploymentBundle,
   migrationBody,
+  postgresEnvironment,
   runApplyManifestCli,
 } from './apply-normalized-manifest.mjs';
 
@@ -35,6 +36,22 @@ assert.equal(
   assertStagingTarget('postgresql://postgres:secret@db.staging-ref.supabase.co:5432/postgres', 'staging', 'staging:db.staging-ref.supabase.co:1', 1, productionRef),
   'db.staging-ref.supabase.co',
 );
+const connectionEnvironment = postgresEnvironment(
+  'postgresql://db-user:p%40ss@127.0.0.1:55432/ship_test?sslmode=disable',
+  { SAFE_BASE: 'yes' },
+);
+assert.deepEqual({
+  host: connectionEnvironment.PGHOST,
+  port: connectionEnvironment.PGPORT,
+  user: connectionEnvironment.PGUSER,
+  password: connectionEnvironment.PGPASSWORD,
+  database: connectionEnvironment.PGDATABASE,
+  sslmode: connectionEnvironment.PGSSLMODE,
+  base: connectionEnvironment.SAFE_BASE,
+}, {
+  host: '127.0.0.1', port: '55432', user: 'db-user', password: 'p@ss',
+  database: 'ship_test', sslmode: 'disable', base: 'yes',
+});
 const logs = [];
 const originalLog = console.log;
 console.log = message => logs.push(String(message));

@@ -66,7 +66,11 @@ begin
     end if;
 
     if v_task.source_kind <> 'meeting'
-       or v_task.source_meeting_item_id is null then
+       or v_task.source_type <> 'temporary'
+       or v_task.source_meeting_id is null
+       or v_task.source_meeting_item_id is null
+       or not v_task.distribute_to_vessels
+       or v_scope_count <> 1 then
       return false;
     end if;
 
@@ -89,8 +93,15 @@ begin
        and own_progress.is_active_scope
       where mi.workspace_id = p_workspace_id
         and mi.id = v_task.source_meeting_item_id
+        and m.id = v_task.source_meeting_id
         and mi.is_active
         and mi.distribute_to_vessels
+        and (
+          select count(*)
+          from public.sd_meeting_vessels one_scope
+          where one_scope.workspace_id = mi.workspace_id
+            and one_scope.meeting_id = mi.meeting_id
+        ) = 1
         and public.sd_meeting_scope_is_valid(mi.workspace_id, mi.meeting_id)
         and not exists (
           select 1

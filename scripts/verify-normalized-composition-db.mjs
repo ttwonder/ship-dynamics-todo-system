@@ -129,31 +129,44 @@ await db.exec(`
     is_internal_control,created_by,updated_by
   ) values
     ('${ids.workspace}','meeting-valid','vessels','Valid','追蹤中','2026-07-26','Reason','中',false,'${ids.owner}','${ids.owner}'),
-    ('${ids.workspace}','meeting-inactive','vessels','Inactive','追蹤中','2026-07-26','Reason','中',false,'${ids.owner}','${ids.owner}');
+    ('${ids.workspace}','meeting-inactive','vessels','Inactive','追蹤中','2026-07-26','Reason','中',false,'${ids.owner}','${ids.owner}'),
+    ('${ids.workspace}','meeting-cross','vessels','Cross','追蹤中','2026-07-26','Reason','中',false,'${ids.owner}','${ids.owner}');
   insert into public.sd_meeting_vessels(workspace_id,meeting_id,vessel_id) values
     ('${ids.workspace}','meeting-valid','vessel-a'),
-    ('${ids.workspace}','meeting-inactive','vessel-a');
+    ('${ids.workspace}','meeting-inactive','vessel-a'),
+    ('${ids.workspace}','meeting-cross','vessel-a'),
+    ('${ids.workspace}','meeting-cross','vessel-b');
   insert into public.sd_meeting_items(
     workspace_id,id,meeting_id,description,distribute_to_vessels,ordinal,is_active,created_by,updated_by
   ) values
     ('${ids.workspace}','item-valid','meeting-valid','Valid item',true,1,true,'${ids.owner}','${ids.owner}'),
-    ('${ids.workspace}','item-inactive','meeting-inactive','Inactive item',true,1,false,'${ids.owner}','${ids.owner}');
+    ('${ids.workspace}','item-inactive','meeting-inactive','Inactive item',true,1,false,'${ids.owner}','${ids.owner}'),
+    ('${ids.workspace}','item-cross','meeting-cross','Cross item',true,1,true,'${ids.owner}','${ids.owner}'),
+    ('${ids.workspace}','item-orphan','meeting-valid','Orphan item',true,2,true,'${ids.owner}','${ids.owner}');
 
   insert into public.sd_tasks(
-    workspace_id,id,description,status,priority,source_kind,source_meeting_item_id,
+    workspace_id,id,description,status,priority,source_kind,source_meeting_id,source_meeting_item_id,
+    source_type,vessel_scope_mode,distribute_to_vessels,
     is_internal_control,internal_control_cancelled_at,internal_control_cancelled_by,
     created_by,updated_by
   ) values
-    ('${ids.workspace}','ordinary-a','Ordinary','Open','中','ordinary',null,false,null,null,'${ids.owner}','${ids.owner}'),
-    ('${ids.workspace}','internal-a','Internal','Open','中','ordinary',null,true,null,null,'${ids.owner}','${ids.owner}'),
-    ('${ids.workspace}','cancelled-a','Cancelled internal','Open','中','ordinary',null,false,clock_timestamp(),'${ids.owner}','${ids.owner}','${ids.owner}'),
-    ('${ids.workspace}','meeting-valid-task','Meeting valid','Open','中','meeting','item-valid',false,null,null,'${ids.owner}','${ids.owner}'),
-    ('${ids.workspace}','meeting-inactive-task','Meeting inactive','Open','中','meeting','item-inactive',false,null,null,'${ids.owner}','${ids.owner}');
+    ('${ids.workspace}','ordinary-a','Ordinary','Open','中','ordinary',null,null,'morning','vessels',false,false,null,null,'${ids.owner}','${ids.owner}'),
+    ('${ids.workspace}','internal-a','Internal','Open','中','ordinary',null,null,'morning','vessels',false,true,null,null,'${ids.owner}','${ids.owner}'),
+    ('${ids.workspace}','cancelled-a','Cancelled internal','Open','中','ordinary',null,null,'morning','vessels',false,false,clock_timestamp(),'${ids.owner}','${ids.owner}','${ids.owner}'),
+    ('${ids.workspace}','meeting-valid-task','Meeting valid','Open','中','meeting','meeting-valid','item-valid','temporary','vessels',true,false,null,null,'${ids.owner}','${ids.owner}'),
+    ('${ids.workspace}','meeting-inactive-task','Meeting inactive','Open','中','meeting','meeting-inactive','item-inactive','temporary','vessels',true,false,null,null,'${ids.owner}','${ids.owner}'),
+    ('${ids.workspace}','meeting-cross-task','Meeting cross','Open','中','meeting','meeting-cross','item-cross','temporary','vessels',true,false,null,null,'${ids.owner}','${ids.owner}'),
+    ('${ids.workspace}','meeting-orphan-task','Meeting orphan','Open','中','meeting','missing-meeting','item-orphan','temporary','vessels',true,false,null,null,'${ids.owner}','${ids.owner}');
   insert into public.sd_task_vessels(
     workspace_id,task_id,vessel_id,is_active_scope,status,is_closed,updated_by
   )
   select '${ids.workspace}', id, 'vessel-a', true, status, false, '${ids.owner}'
   from public.sd_tasks where workspace_id='${ids.workspace}';
+  insert into public.sd_task_vessels(
+    workspace_id,task_id,vessel_id,is_active_scope,status,is_closed,updated_by
+  ) values (
+    '${ids.workspace}','meeting-cross-task','vessel-b',true,'Open',false,'${ids.owner}'
+  );
 
   insert into public.sd_internal_cases(
     workspace_id,id,vessel_id,report_date,report_source,description,priority,
@@ -180,7 +193,7 @@ const vesselCases = await asUser(ids.vessel, () => db.query(`
 assert.deepEqual(vesselCases.rows, [], 'vessel accounts receive no internal-case existence signal');
 
 const ownerTasks = await asUser(ids.owner, () => db.query(`select id from public.sd_tasks order by id`));
-assert.equal(ownerTasks.rows.length, 5);
+assert.equal(ownerTasks.rows.length, 7);
 const ownerCases = await asUser(ids.owner, () => db.query(`select id from public.sd_internal_cases order by id`));
 assert.deepEqual(ownerCases.rows, [{ id: 'case-a' }]);
 
