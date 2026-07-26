@@ -205,6 +205,27 @@ async function proveMissingBootstrap(bundleFile) {
   }
 }
 
+function proveSecurityDefinerExecuteGrantGate() {
+  const signature = 'public.command_ship_dynamics_batch_create_internal_cases(uuid,uuid,jsonb)';
+  runPsql(runtimeDatabase, {
+    sql: `grant execute on function ${signature} to anon;`,
+    label: 'security-definer-execute-negative-control-grant',
+  });
+  try {
+    runPsql(runtimeDatabase, {
+      file: resolve(fixtureRoot, 'normalized-postgres-runtime-assertions.sql'),
+      label: 'security-definer-execute-negative-control',
+      expectFailure: /security-definer-execute-exposed/i,
+    });
+  } finally {
+    runPsql(runtimeDatabase, {
+      sql: `revoke execute on function ${signature} from anon;`,
+      label: 'security-definer-execute-negative-control-revoke',
+    });
+  }
+  console.log('security_definer_execute_negative_control=PASS injected_role=anon');
+}
+
 function proveIndependentSessions() {
   const workspace = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const operator = '22222222-2222-4222-8222-222222222222';
@@ -395,6 +416,7 @@ async function main() {
       label: 'normalized-manifest-outer-transaction',
     });
     console.log(`manifest=APPLIED files=${bundle.files} sha256=${bundle.sha256} outer_transaction=true`);
+    proveSecurityDefinerExecuteGrantGate();
     runPsql(runtimeDatabase, {
       file: resolve(fixtureRoot, 'normalized-postgres-runtime-assertions.sql'),
       label: 'normalized-runtime-assertions',

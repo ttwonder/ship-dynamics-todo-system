@@ -5,6 +5,7 @@ declare
   v_tables integer;
   v_publication_tables integer;
   v_unsafe_definers text[];
+  v_anon_definer_execute text[];
   v_direct_dml jsonb;
   v_sensitive_grants jsonb;
   v_hash text;
@@ -32,6 +33,17 @@ begin
     and not ('search_path=pg_catalog, public' = any(coalesce(p.proconfig, '{}'::text[])));
   if coalesce(cardinality(v_unsafe_definers), 0) <> 0 then
     raise exception 'security-definer-search-path-unpinned:%', v_unsafe_definers;
+  end if;
+
+  select array_agg(p.oid::regprocedure::text order by p.oid::regprocedure::text)
+  into v_anon_definer_execute
+  from pg_catalog.pg_proc p
+  join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.prosecdef
+    and pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE');
+  if coalesce(cardinality(v_anon_definer_execute), 0) <> 0 then
+    raise exception 'security-definer-execute-exposed:%', v_anon_definer_execute;
   end if;
 
   select coalesce(jsonb_agg(to_jsonb(g) order by g.grantee, g.table_name, g.privilege_type), '[]'::jsonb)
