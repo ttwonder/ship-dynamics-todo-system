@@ -635,6 +635,12 @@ assert.match(siteUnlockEdge, /verify_ship_dynamics_site_password/);
 assert.match(siteUnlockEdge, /enforceRateLimit/);
 assert.match(siteUnlockEdge, /gateToken/);
 assert.doesNotMatch(siteUnlockEdge, /\.from\([^)]*sd_public_site_gate/i, 'site password hashes stay behind a verifier RPC');
+const sharedEdgeSecurity = await readFile(resolve(root, 'supabase/functions/_shared/security.ts'), 'utf8');
+assert.match(
+  sharedEdgeSecurity,
+  /access-control-allow-headers[^\n]*x-application-name/,
+  'Edge CORS must allow the normalized client application header',
+);
 const loginDirectoryEdge = await readFile(resolve(root, edgeFiles[2]), 'utf8');
 assert.match(loginDirectoryEdge, /auth_alias/);
 assert.match(loginDirectoryEdge, /enforceRateLimit/);

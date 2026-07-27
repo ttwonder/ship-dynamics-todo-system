@@ -110,7 +110,7 @@ export function corsHeadersFor(request: Request): Record<string, string> {
   }
   return {
     'access-control-allow-origin': origin,
-    'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info, x-site-gate-token',
+    'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info, x-application-name, x-site-gate-token',
     'access-control-allow-methods': 'POST, OPTIONS',
     'access-control-max-age': '600',
     'content-type': 'application/json; charset=utf-8',
