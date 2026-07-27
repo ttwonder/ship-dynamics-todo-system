@@ -6,6 +6,7 @@ import type { AppData, FilterState, InternalControlCase, StatusLog, TaskItem, Ta
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
 import { CloudConflictError, claimEditLock, fetchCloudData, getSupabaseConfig, releaseEditLock, saveCloudData, type ResolvedSupabaseConfig } from './cloud';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
+import { mayOfferFirstRunInitialization, mayPersistLocalSnapshot, trustedMatchingCloudIdentity } from './cloudBootstrapSafety';
 import ManagementView from './Management';
 import MorningWorkspaceView from './MorningWorkspace';
 import TemporaryMeetingsPage from './TemporaryMeetings';
@@ -262,6 +263,7 @@ export default function App() {
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [cloudBootstrapped, setCloudBootstrapped] = useState(false);
   const [cloudWriteBlocked, setCloudWriteBlocked] = useState(false);
+  const [cloudInitializationAllowed, setCloudInitializationAllowed] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [activeEditLock, setActiveEditLock] = useState<ActiveEditLock | null>(null);
   const saveTimer = useRef<number | null>(null);
@@ -356,7 +358,18 @@ export default function App() {
     void releaseBatchEditLockSnapshot(locks,false);
   };
 
-  useEffect(() => { saveLocal(data); }, [data]);
+  useEffect(() => {
+    if (!mayPersistLocalSnapshot({
+      cloudConfigured: Boolean(getSupabaseConfig()),
+      cloudBootstrapped,
+      cloudWriteBlocked,
+      activeCloudIdentity: activeCloudIdentity.current,
+      currentCloudIdentity: cloudIdentity(getSupabaseConfig()),
+      cloudInitializationAllowed,
+      localInitializationAllowed: import.meta.env.DEV,
+    })) return;
+    saveLocal(data);
+  }, [data, cloudBootstrapped, cloudWriteBlocked, cloudInitializationAllowed]);
   useEffect(() => { currentUserId ? localStorage.setItem(CURRENT_USER_KEY, currentUserId) : localStorage.removeItem(CURRENT_USER_KEY); }, [currentUserId]);
   useEffect(()=>{taskOpenRequests.current.invalidate();},[tab]);
   useEffect(() => {
@@ -486,7 +499,13 @@ export default function App() {
 
   useEffect(() => {
     const cfg = getSupabaseConfig();
-    if (!cfg) { setCloudStatus('本機模式：尚未配置 Supabase，資料保存於本機瀏覽器'); setCloudBootstrapped(true); return; }
+    setCloudInitializationAllowed(false);
+    if (!cfg) {
+      if(import.meta.env.DEV){setCloudInitializationAllowed(true);setCloudWriteBlocked(false);setCloudStatus('開發模式：尚未配置 Supabase，資料保存於本機瀏覽器');}
+      else{setCloudInitializationAllowed(false);setCloudWriteBlocked(true);setCloudStatus('正式環境未載入 Supabase 設定，已禁止本機初始化');}
+      setCloudBootstrapped(true);
+      return;
+    }
     if(!durableRevisionFloorRegistryIsValid()){
       setCloudWriteBlocked(true);
       setCloudStatus('durable revision floor registry損壞，已禁止載入、同步及保存；請先受控恢復本機歷程資料');
@@ -496,6 +515,7 @@ export default function App() {
     const identity = cloudIdentity(cfg);
     const bootstrapToken=configIoCoordinator.current.begin(cfg);
     const cachedIdentity = cachedCloudIdentityFor(cfg);
+    const trustedLocalIdentity=trustedMatchingCloudIdentity(cachedIdentity,identity);
     const hasLocalCache = localStorage.getItem(STORAGE_KEY) !== null;
     const identityChanged = Boolean(cachedIdentity && cachedIdentity !== identity);
     const unknownDirtyCache = !cachedIdentity && hasLocalCache;
@@ -511,6 +531,7 @@ export default function App() {
       if(cancelled||!configIoCoordinator.current.isCurrent(bootstrapToken,getSupabaseConfig()))return;
       const latestConfig = getSupabaseConfig();
       if (!latestConfig || cloudIdentity(latestConfig) !== identity) {
+        setCloudInitializationAllowed(false);
         setCloudWriteBlocked(true);
         setCloudStatus('雲端設定在載入期間變更，已禁止寫入；請重新載入或同步最新資料');
         setCloudBootstrapped(true);
@@ -522,10 +543,13 @@ export default function App() {
         const persistedRemoteRollback=remote.revision<persistedDurableFloor;
         const recoveredBase=!identityChanged&&!unknownDirtyCache?trustedPersistedBaseForRemote(persistedConfirmedBase,remote,appDataContentEqual):null;
         if (identityChanged || unknownDirtyCache || localContentDiverged || persistedRemoteRollback) {
+          setCloudInitializationAllowed(false);
+          if(localContentDiverged&&trustedLocalIdentity)activeCloudIdentity.current=trustedLocalIdentity;
           confirmedCloudData.current=recoveredBase;
           setCloudWriteBlocked(true);
           setCloudStatus(identityChanged?'偵測到不同雲端工作區的本機快取，已禁止寫入；不會自動合併或覆蓋':unknownDirtyCache?'偵測到來源未綁定的本機快取與既有雲端資料，已禁止自動覆蓋；本機內容仍保留':persistedRemoteRollback?`雲端revision ${remote.revision}低於已確認的durable floor ${persistedDurableFloor}，疑似rollback；已拒絕採用並保留本機內容`:recoveredBase?`已恢復此工作區的可信共同基線；本機cache與雲端內容不同，請按「同步最新（安全合併）」完成恢復`:`本機cache與雲端內容不一致（本機 ${data.revision}、雲端 ${remote.revision}），缺少可信共同基線；兩邊內容均不會被覆蓋`);
         } else {
+          setCloudInitializationAllowed(false);
           activeCloudIdentity.current=identity;
           confirmCloudSnapshot(identity,remote);
           setData(remote);
@@ -539,17 +563,17 @@ export default function App() {
         const persistedRemoteMissing=persistedDurableFloor>=0;
         confirmedCloudData.current=persistedConfirmedBase;
         if (identityChanged || unknownDirtyCache || persistedRemoteMissing) {
+          setCloudInitializationAllowed(false);
           setCloudWriteBlocked(true);
           setCloudStatus(persistedRemoteMissing?`雲端主資料遺失，但此工作區已有durable revision ${persistedDurableFloor}；已禁止自動保存、同步及重新初始化`: '目標工作區尚無資料，但本機快取來源未受信任；為避免跨工作區複製，禁止同步或初始化。請先匯出核對，再透過受控匯入處理');
         } else {
-          activeCloudIdentity.current=identity;
-          setCloudWriteBlocked(false);
-          rememberCloudIdentity();
-          setCloudStatus('雲端已連線，目前尚無主資料');
+          setCloudInitializationAllowed(false);
+          setCloudWriteBlocked(true);
+          setCloudStatus('雲端工作區沒有主資料，已禁止從瀏覽器初始化；請由受控備份或管理流程恢復');
         }
       }
       setCloudBootstrapped(true);
-    }).catch(e => { if(!cancelled){setCloudWriteBlocked(true);setCloudStatus(`雲端載入失敗，已禁止寫入：${e.message || e}`);setCloudBootstrapped(true);} });
+    }).catch(e => { if(!cancelled){setCloudInitializationAllowed(false);setCloudWriteBlocked(true);setCloudStatus(`雲端載入失敗，已禁止寫入：${e.message || e}`);setCloudBootstrapped(true);} });
     return()=>{cancelled=true;};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1029,6 +1053,17 @@ export default function App() {
   const closedTasks = useMemo(() => roleVisibleTasks.filter(t=>taskMatchesFilters(t,closedFilters,vesselMap,currentUser,true,canViewAllVessels,Boolean(currentUser&&t.ownerUserIds.includes(currentUser.id)))),[roleVisibleTasks,vesselMap,currentUser,closedFilters,canViewAllVessels]);
 
   if (!cloudBootstrapped) return <div className="login-page"><div className="login-card loading-card"><h2>正在載入雲端主資料</h2><p className="muted">請稍候，完成前不會寫入或覆蓋資料。</p></div></div>;
+  const firstRunInitializationAllowed=mayOfferFirstRunInitialization({
+    cloudConfigured:Boolean(getSupabaseConfig()),
+    cloudBootstrapped,
+    cloudWriteBlocked,
+    activeCloudIdentity:activeCloudIdentity.current,
+    currentCloudIdentity:cloudIdentity(getSupabaseConfig()),
+    cloudInitializationAllowed,
+    localInitializationAllowed:import.meta.env.DEV,
+  });
+  const productionCloudUnavailable=!getSupabaseConfig()&&!import.meta.env.DEV;
+  if(productionCloudUnavailable||((!data.settings.sitePasswordHash||!ownerExists)&&!firstRunInitializationAllowed))return <div className="login-page"><div className="login-card loading-card"><h2>雲端主資料尚未通過首次初始化安全檢查</h2><p className="warn">已阻止設定進站密碼或建立 Owner。</p><p className="muted">{cloudStatus}</p><p className="muted">請確認網路與 Supabase 設定後重新載入；系統不會使用內建初始資料取代正式資料。</p></div></div>;
   if (!siteUnlocked || !data.settings.sitePasswordHash) return <SiteGate data={data} setData={setData} onUnlock={() => { sessionStorage.setItem(SESSION_SITE_UNLOCK,'1'); setSiteUnlocked(true); }} />;
   if (!ownerExists && !currentUser) return <Login data={data} setCurrentUserId={setCurrentUserId} />;
   if (!ownerExists && currentUser) return <OwnerSetup currentUser={currentUser} setData={setData} setCurrentUserId={setCurrentUserId} />;
