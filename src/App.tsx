@@ -1855,12 +1855,7 @@ export default function App() {
         }else setCloudStatus(savedStatus('已同步雲端', remote.updatedAt));
       } else {
         if(durableRevisionFloor>=0)throw new CloudRebaseConflictError([`雲端主資料遺失，但此工作區已有durable revision ${durableRevisionFloor}，拒絕以本機資料重新初始化`]);
-        activeCloudIdentity.current = syncIdentity;
-        lastCloudRevision.current = -1;
-        confirmedCloudData.current = null;
-        setCloudWriteBlocked(false);
-        rememberCloudIdentity();
-        setCloudStatus('雲端尚無資料；已允許以目前本機資料初始化');
+        throw new CloudRebaseConflictError(['雲端工作區沒有主資料，已禁止從瀏覽器初始化']);
       }
     } catch (error: any) {
       setCloudWriteBlocked(true);

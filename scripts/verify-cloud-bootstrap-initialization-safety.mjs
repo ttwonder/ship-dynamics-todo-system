@@ -142,6 +142,25 @@ try {
       && app.includes('activeCloudIdentity.current=trustedLocalIdentity'),
     'trusted same-workspace divergent data must remain eligible for local cache persistence',
   );
+  const syncLatestSource = app.slice(
+    app.indexOf('const syncLatest = async () => {'),
+    app.indexOf('const saveChanges = async () => {'),
+  );
+  const emptyRemoteBranch = syncLatestSource.slice(
+    syncLatestSource.indexOf('if(durableRevisionFloor>=0)'),
+    syncLatestSource.indexOf('} catch (error: any)'),
+  );
+  assert.ok(
+    syncLatestSource.length > 0
+      && emptyRemoteBranch.includes("throw new CloudRebaseConflictError(['雲端工作區沒有主資料，已禁止從瀏覽器初始化'])")
+      && !emptyRemoteBranch.includes('activeCloudIdentity.current')
+      && !emptyRemoteBranch.includes('lastCloudRevision.current = -1')
+      && !emptyRemoteBranch.includes('confirmedCloudData.current = null')
+      && !emptyRemoteBranch.includes('setCloudWriteBlocked(false)')
+      && !emptyRemoteBranch.includes('rememberCloudIdentity()')
+      && !app.includes('雲端尚無資料；已允許以目前本機資料初始化'),
+    'manual sync empty-remote branch must never bind identity, unlock writes, or initialize production cloud data',
+  );
   assert.equal(
     app.match(/currentCloudIdentity:\s*cloudIdentity\(getSupabaseConfig\(\)\)/g)?.length,
     2,
