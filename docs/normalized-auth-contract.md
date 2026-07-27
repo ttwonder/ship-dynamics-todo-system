@@ -1,12 +1,12 @@
 # Normalized authentication and client contract
 
-Status: client/Edge boundary building blocks. `App.tsx` and `Management.tsx` are intentionally not wired in this change.
+Status: production normalized client/Edge boundary with legacy sign-in compatibility.
 
 ## Authority and identity
 
 Supabase Auth `auth.uid()` is the only actor identity. The browser may remember a Supabase session and the current UI selection, but a roster ID, display name, role, `currentUserId`, and localStorage value are never authority. Every database policy and command must derive the actor from the verified JWT.
 
-The existing department → person → password UX remains. A gated directory response contains department, display name, user-facing `usernameLabel`, and an opaque synthetic Auth alias. It never returns the Supabase Auth UUID, password state, or credential metadata. The browser passes that alias and password directly to `supabase.auth.signInWithPassword`; no custom Edge Function receives the personal password or brokers access/refresh tokens, so Supabase Auth's native throttling, CAPTCHA, and session controls remain in force.
+The existing department → person UX remains. A gated directory response contains department, display name, user-facing `usernameLabel`, an opaque synthetic Auth alias, and one non-secret login mode. It never returns the Supabase Auth UUID, legacy hash, or other credential metadata. Owner and native-password accounts pass their alias and password directly to `supabase.auth.signInWithPassword`. Existing non-owner accounts explicitly classified as `legacy-password` or `passwordless` use the signed-gate `legacy-session` action: the Edge function rate-limits the network and exact identity, verifies the server-only legacy SHA-256 hash (or an exactly blank passwordless input), denies Owner and passwordless Admin access, derives a deterministic server-only bridge credential, and returns only the resulting Supabase access/refresh pair. The browser installs that real Supabase session; `auth.uid()` and RLS remain the sole authority.
 
 Synthetic Auth aliases belong to `auth.users` and the service-only `sd_login_options` directory table. New accounts receive an immutable operation-correlated alias under `AUTH_SYNTHETIC_EMAIL_DOMAIN`; an HMAC of workspace and operation identity makes retries recover the same Auth user without exposing a human identifier. Public profile/roster rows store human labels but never the alias.
 
@@ -30,9 +30,9 @@ localStorage may contain the Supabase library's session cache, the current displ
 
 ## Password and account management
 
-All secure-cutover accounts must have a password. Migration code must run `flagPasswordlessCutoverAccounts` (or an equivalent server report), quarantine every `passwordless-account`, and abort secure cutover until credentials are provisioned. Passwordless login is not supported.
+Existing non-owner accounts preserve the pre-cutover contract: a valid legacy hash remains usable through `legacy-password`, while an originally blank Operator/Vessel credential remains `passwordless`. Owner is always native Supabase password mode. A passwordless account promoted to Admin fails closed into native mode and must receive a manager reset before login.
 
-An authenticated non-owner changes only their own password through `supabase.auth.updateUser({ password })`. Passwords are never written to profile or membership rows.
+An authenticated user changes only their own password through `supabase.auth.updateUser({ password })`. After Auth accepts the new credential, `complete_my_ship_dynamics_password_activation` atomically switches the login option to native `supabase`, clears the legacy hash, clears activation-required state, and records an audit event. Passwords are never written to profile or membership rows. A manager reset likewise switches to native mode and erases the former legacy hash.
 
 `manage-user` handles actions needing Auth Admin:
 
@@ -69,7 +69,7 @@ Realtime is invalidation only. Subscriptions are filtered by the captured worksp
 
 The functions intentionally depend on server-authoritative RPCs that must land with the normalized server migration before UI wiring: `verify_ship_dynamics_site_password`; `consume_ship_dynamics_rate_limit`; `begin`, `mark effect`, `complete`, `reject`, and `mark recovery required` user-operation RPCs; `provision_ship_dynamics_user`; `disable_ship_dynamics_user`; `change_ship_dynamics_user_role`; and `transfer_ship_dynamics_owner`. Those RPCs own password verification, throttling, idempotency matching, recoverable external-effect state, membership invariants, unique Owner transfer, fail-closed disable state, and audit insertion. The Edge code must not fall back to direct browser-readable hashes or client-authored audit rows.
 
-`supabase/config.toml` disables gateway JWT verification only for the pre-authentication `site-unlock` and `login-directory` functions; their exact-Origin and signed-gate checks remain mandatory. `manage-user` keeps gateway verification enabled and independently validates the bearer token plus active Owner membership.
+`supabase/config.toml` disables gateway JWT verification for these functions because `site-unlock` and `login-directory` are pre-authentication endpoints and `manage-user` independently validates the bearer token through Auth before checking live Owner/Admin membership. Exact-Origin checks remain mandatory; both login-directory actions also require the signed site-gate token.
 
 Set these Edge runtime secrets:
 
@@ -83,6 +83,6 @@ Set these Edge runtime secrets:
 - `USER_OPERATION_HMAC_SECRET`
 - `RATE_LIMIT_HMAC_SECRET`
 
-`site-unlock`, the gated directory, and Owner account management consume server-side rate-limit buckets before sensitive verification or mutation. Bucket keys are HMAC fingerprints; raw network/account identifiers are not stored in the rate table. Personal password login itself goes directly through Supabase Auth and therefore retains its native rate-limit/CAPTCHA path.
+`site-unlock`, the gated directory, compatibility login, and account management consume server-side rate-limit buckets before sensitive verification or mutation. Compatibility login has independent network and identity buckets. Bucket keys are HMAC fingerprints; raw network/account identifiers are not stored in the rate table. Native personal-password login still goes directly through Supabase Auth and retains its native rate-limit/CAPTCHA path.
 
 No function uses wildcard CORS. Errors are generic, responses are `no-store`, and no password, token, synthetic email, or server credential may be logged. Production rollout still requires the architecture packet's staging tests for JWT → `auth.uid()`, RLS, Auth Admin, two-session concurrency, Realtime refetch, and migration rollback.

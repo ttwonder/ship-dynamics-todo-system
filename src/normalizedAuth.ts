@@ -20,6 +20,10 @@ interface NormalizedAuthClient {
       session: Session | null;
       user: { id: string } | null;
     }>>;
+    setSession(credentials: { access_token: string; refresh_token: string }): Promise<AuthResult<{
+      session: Session | null;
+      user: { id: string } | null;
+    }>>;
     signOut(): Promise<{ error: unknown }>;
     updateUser(attributes: { password: string }): Promise<AuthResult<unknown>>;
   };
@@ -42,6 +46,7 @@ export interface LoginDirectoryPerson {
   usernameLabel: string;
   displayName: string;
   authAlias: string;
+  loginMode: 'supabase' | 'legacy-password' | 'passwordless';
   mustChangePassword: boolean;
 }
 
@@ -81,6 +86,11 @@ function requiredText(value: unknown, label: string, maximum = 256): string {
   const normalized = typeof value === 'string' ? value.trim() : '';
   if (!normalized || normalized.length > maximum) throw new Error(`${label} is invalid.`);
   return normalized;
+}
+
+function loginMode(value: unknown): LoginDirectoryPerson['loginMode'] {
+  if (value === 'supabase' || value === 'legacy-password' || value === 'passwordless') return value;
+  throw new Error('Login mode is invalid.');
 }
 
 function throwFunctionError(error: unknown): never {
@@ -240,6 +250,7 @@ export class NormalizedAuth {
       usernameLabel: requiredText(person.usernameLabel, 'Person label', 128),
       displayName: requiredText(person.displayName, 'Display name', 128),
       authAlias: requiredText(person.authAlias, 'Authentication alias', 320),
+      loginMode: loginMode(person.loginMode),
       mustChangePassword: person.mustChangePassword === true,
     }));
   }
@@ -273,13 +284,65 @@ export class NormalizedAuth {
     return accepted.data.session;
   }
 
-  async changePersonalPassword(password: string): Promise<void> {
+  async signInWithLegacyCompatibility(input: {
+    workspaceKey: string;
+    authAlias: string;
+    password: string;
+    gateToken?: string;
+  }): Promise<Session> {
+    const gateToken = requiredText(
+      input.gateToken || this.readGateToken(),
+      'Gate token',
+      4096,
+    );
+    if (typeof input.password !== 'string' || input.password.length > 256) {
+      throw new Error('Password is invalid.');
+    }
+    const operationGeneration = this.#transitionGeneration;
+    const { data, error } = await this.#client.functions.invoke<{
+      session?: { access_token?: string; refresh_token?: string };
+    }>('login-directory', {
+      body: {
+        action: 'legacy-session',
+        workspaceKey: requiredText(input.workspaceKey, 'Workspace key', 128),
+        authAlias: requiredText(input.authAlias, 'Authentication alias', 320),
+        password: input.password,
+      },
+      headers: { 'x-site-gate-token': gateToken },
+    });
+    if (error) throwFunctionError(error);
+    const accessToken = requiredText(data?.session?.access_token, 'Access token', 8192);
+    const refreshToken = requiredText(data?.session?.refresh_token, 'Refresh token', 8192);
+    const accepted = await this.#client.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    if (accepted.error) throwFunctionError(accepted.error);
+    if (!accepted.data.session) throw new Error('Supabase rejected the compatibility session.');
+    if (this.#transitionGeneration === operationGeneration) {
+      this.#acceptTransition('SIGNED_IN', accepted.data.session, true);
+    } else {
+      const expectedCallback = this.#transitionGeneration === operationGeneration + 1
+        && this.#latestTransition?.event === 'SIGNED_IN'
+        && this.#latestTransition.actorId === accepted.data.session.user.id;
+      if (!expectedCallback) throw new StaleNormalizedResponseError();
+    }
+    return accepted.data.session;
+  }
+
+  async changePersonalPassword(workspaceId: string, password: string): Promise<void> {
     this.requireActor();
     if (password.length < 12 || password.length > 256) {
       throw new Error('A personal password must contain 12 to 256 characters.');
     }
     const { error } = await this.#client.auth.updateUser({ password });
     if (error) throwFunctionError(error);
+    const { data, error: completionError } = await this.#client.rpc<boolean>(
+      'complete_my_ship_dynamics_password_activation',
+      { p_workspace_id: requiredText(workspaceId, 'Workspace ID', 64) },
+    );
+    if (completionError) throwFunctionError(completionError);
+    if (data !== true) throw new Error('Password change was not confirmed.');
   }
 
   async passwordActivationRequired(workspaceId: string): Promise<boolean> {
@@ -293,13 +356,7 @@ export class NormalizedAuth {
   }
 
   async activatePersonalPassword(workspaceId: string, password: string): Promise<void> {
-    await this.changePersonalPassword(password);
-    const { data, error } = await this.#client.rpc<boolean>(
-      'complete_my_ship_dynamics_password_activation',
-      { p_workspace_id: requiredText(workspaceId, 'Workspace ID', 64) },
-    );
-    if (error) throwFunctionError(error);
-    if (data !== true) throw new Error('Password activation was not confirmed.');
+    await this.changePersonalPassword(workspaceId, password);
   }
 
   async signOut(): Promise<void> {

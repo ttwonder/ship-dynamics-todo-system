@@ -154,6 +154,11 @@ class MockSupabase {
         this.session = { access_token: 'login-access-token', refresh_token: 'login-refresh-token', user: { id: 'actor-login' } };
         return { data: { session: this.session, user: this.session.user }, error: null };
       },
+      setSession: async (credentials) => {
+        this.setSessionCredentials = credentials;
+        this.session = { ...credentials, user: { id: 'actor-legacy' } };
+        return { data: { session: this.session, user: this.session.user }, error: null };
+      },
       signOut: async () => {
         this.session = null;
         this.authListener?.('SIGNED_OUT', null);
@@ -175,7 +180,10 @@ class MockSupabase {
         }
         if (options?.body?.action === 'directory') {
           return {
-            data: { people: [{ department: 'Operations', usernameLabel: 'Alice', displayName: 'Alice', authAlias: 'opaque@internal.invalid', mustChangePassword: true }] },
+            data: { people: [
+              { department: 'Management', usernameLabel: 'Owner', displayName: 'Owner', authAlias: 'owner@internal.invalid', loginMode: 'supabase', mustChangePassword: true },
+              { department: 'Operations', usernameLabel: 'Alice', displayName: 'Alice', authAlias: 'opaque@internal.invalid', loginMode: 'passwordless', mustChangePassword: false },
+            ] },
             error: null,
           };
         }
@@ -287,8 +295,9 @@ try {
     workspaceKey: 'ship-dynamics-main',
     gateToken: gate.gateToken,
   });
-  assert.equal(directory[0].displayName, 'Alice');
-  assert.equal(directory[0].authAlias, 'opaque@internal.invalid');
+  assert.equal(directory[0].displayName, 'Owner');
+  assert.equal(directory[0].authAlias, 'owner@internal.invalid');
+  assert.equal(directory[0].loginMode, 'supabase');
   assert.equal(directory[0].mustChangePassword, true);
   await auth.signInWithDirectoryPassword({
     authAlias: directory[0].authAlias,
@@ -296,7 +305,7 @@ try {
     gateToken: gate.gateToken,
   });
   assert.deepEqual(client.signInCredentials, {
-    email: 'opaque@internal.invalid',
+    email: 'owner@internal.invalid',
     password: 'personal-secret',
   }, 'password authentication must use the native Supabase Auth client');
   const directoryCall = client.functionCalls.at(-1);
@@ -304,8 +313,33 @@ try {
   assert.equal('password' in directoryCall.options.body, false, 'the Edge directory must never receive the password');
   assert.equal('userId' in directoryCall.options.body, false, 'the login directory must not expose auth.uid');
   assert.equal(auth.actorId, 'actor-login', 'native Auth session output must become the only actor');
-  await auth.changePersonalPassword('new-personal-secret');
+
+  assert.equal(directory[1].loginMode, 'passwordless');
+  await auth.signInWithLegacyCompatibility({
+    workspaceKey: 'ship-dynamics-main',
+    authAlias: directory[1].authAlias,
+    password: '',
+    gateToken: gate.gateToken,
+  });
+  const compatibilityCall = client.functionCalls.at(-1);
+  assert.equal(compatibilityCall.name, 'login-directory');
+  assert.deepEqual(compatibilityCall.options.body, {
+    action: 'legacy-session',
+    workspaceKey: 'ship-dynamics-main',
+    authAlias: 'opaque@internal.invalid',
+    password: '',
+  });
+  assert.deepEqual(client.setSessionCredentials, {
+    access_token: 'login-access-token',
+    refresh_token: 'login-refresh-token',
+  }, 'legacy compatibility must install only the server-issued Supabase session');
+  assert.equal(auth.actorId, 'actor-legacy', 'legacy compatibility may not create a browser-local actor');
+  await auth.changePersonalPassword('workspace-a', 'new-personal-secret');
   assert.deepEqual(client.updatedUserAttributes, { password: 'new-personal-secret' });
+  assert.deepEqual(client.rpcCalls.at(-1), {
+    name: 'complete_my_ship_dynamics_password_activation',
+    args: { p_workspace_id: 'workspace-a' },
+  }, 'a personal password change must permanently move compatibility users to native Auth mode');
   assert.equal(await auth.passwordActivationRequired('workspace-a'), true);
   await auth.activatePersonalPassword('workspace-a', 'activated-personal-secret');
   assert.deepEqual(client.updatedUserAttributes, { password: 'activated-personal-secret' });
@@ -604,8 +638,18 @@ assert.doesNotMatch(siteUnlockEdge, /\.from\([^)]*sd_public_site_gate/i, 'site p
 const loginDirectoryEdge = await readFile(resolve(root, edgeFiles[2]), 'utf8');
 assert.match(loginDirectoryEdge, /auth_alias/);
 assert.match(loginDirectoryEdge, /enforceRateLimit/);
-assert.doesNotMatch(loginDirectoryEdge, /grant_type=password|access_token|refresh_token/);
-assert.doesNotMatch(loginDirectoryEdge, /body\.password|password\s*:/, 'the directory Edge Function must never receive a login password');
+const directoryActionStart = loginDirectoryEdge.indexOf("if (action === 'directory')");
+const directoryActionEnd = loginDirectoryEdge.indexOf('const authAlias', directoryActionStart);
+const directoryActionSource = directoryActionStart >= 0 && directoryActionEnd > directoryActionStart
+  ? loginDirectoryEdge.slice(directoryActionStart, directoryActionEnd)
+  : '';
+assert.ok(directoryActionSource, 'the public directory action must be structurally identifiable');
+assert.doesNotMatch(directoryActionSource, /access_token|refresh_token|body\.password|legacy_password_hash/,
+  'the public directory action must never receive a password or expose credential/session material');
+assert.match(loginDirectoryEdge, /action !== 'directory' && action !== 'legacy-session'/);
+assert.match(loginDirectoryEdge, /verifyLegacyCredential\(/);
+assert.match(loginDirectoryEdge, /access_token/);
+assert.match(loginDirectoryEdge, /refresh_token/);
 const manageUserEdge = await readFile(resolve(root, edgeFiles[3]), 'utf8');
 assert.match(manageUserEdge, /requireJwtUser\(/, 'manage-user must verify the caller JWT inside the function');
 assert.match(manageUserEdge, /role\s*!==\s*["']owner["']/i);

@@ -261,11 +261,17 @@ export class NormalizedApplicationRuntime {
   }
 
   async signIn(person: LoginDirectoryPerson, password: string) {
-    const session = await this.auth.signInWithDirectoryPassword({
-      authAlias: person.authAlias,
-      password,
-    });
-    this.#directoryPasswordChange = person.mustChangePassword;
+    const session = person.loginMode === 'supabase'
+      ? await this.auth.signInWithDirectoryPassword({
+        authAlias: person.authAlias,
+        password,
+      })
+      : await this.auth.signInWithLegacyCompatibility({
+        workspaceKey: this.config.workspaceKey,
+        authAlias: person.authAlias,
+        password,
+      });
+    this.#directoryPasswordChange = person.loginMode === 'supabase' && person.mustChangePassword;
     await this.#establishAuthenticatedWorkspace();
     return session;
   }
@@ -282,7 +288,7 @@ export class NormalizedApplicationRuntime {
   }
 
   async changePersonalPassword(password: string) {
-    await this.auth.changePersonalPassword(password);
+    await this.auth.changePersonalPassword(this.scope.workspaceId, password);
   }
 
   async signOut() {

@@ -190,6 +190,7 @@ function GateAndLogin({
   const departments = Array.from(new Set((directory || []).map(person => person.department)));
   const people = (directory || []).filter(person => !department || person.department === department);
   const selected = people.find(person => person.authAlias === personAlias);
+  const passwordRequired = selected?.loginMode !== 'passwordless';
   if (!directory) {
     return <main className="auth-shell"><section className="auth-card">
       <img src={fpmcLogo} alt="FPMC"/>
@@ -218,7 +219,7 @@ function GateAndLogin({
   return <main className="auth-shell"><section className="auth-card">
     <img src={fpmcLogo} alt="FPMC"/>
     <h1>人員登入</h1>
-    <p>選擇伺服器提供的人員目錄，並使用個人 Supabase Auth 密碼登入。</p>
+    <p>Owner使用Supabase個人密碼；其他人維持原有密碼或免密碼登入方式。</p>
     <label>部門
       <select value={department} onChange={event => {
         setDepartment(event.target.value);
@@ -228,19 +229,24 @@ function GateAndLogin({
     </label>
     <label>人員
       <select value={personAlias} disabled={!department}
-        onChange={event => setPersonAlias(event.target.value)}>
+        onChange={event => {
+          setPersonAlias(event.target.value);
+          setPassword('');
+        }}>
         <option value="">請選擇人員</option>
         {people.map(person => <option key={person.authAlias} value={person.authAlias}>
           {person.displayName}｜{person.usernameLabel}
         </option>)}
       </select>
     </label>
-    <label>個人密碼
+    <label>{selected?.loginMode === 'passwordless' ? '免密碼登入' : '個人密碼'}
       <input type="password" autoComplete="current-password" value={password}
+        disabled={selected?.loginMode === 'passwordless'}
+        placeholder={selected?.loginMode === 'passwordless' ? '此帳號不需要個人密碼' : '請輸入密碼'}
         onChange={event => setPassword(event.target.value)}/>
     </label>
     {error && <div className="error-banner">{error}</div>}
-    <button className="btn primary" disabled={busy || !selected || !password}
+    <button className="btn primary" disabled={busy || !selected || (passwordRequired && !password)}
       onClick={async () => {
         if (!selected) return;
         setBusy(true);
@@ -253,7 +259,7 @@ function GateAndLogin({
         } finally {
           setBusy(false);
         }
-      }}>{busy ? '登入中…' : '登入'}</button>
+      }}>{busy ? '登入中…' : selected?.loginMode === 'passwordless' ? '免密碼登入' : '登入'}</button>
     <button className="btn ghost" disabled={busy} onClick={() => {
       runtime.auth.clearGateToken();
       onDirectory([]);
@@ -618,8 +624,11 @@ export default function NormalizedApp() {
       <div className="topbar-actions">
         <span>{user.department}｜{user.name}</span>
         <button className="btn small ghost" onClick={async () => {
-          const password = prompt('輸入新個人密碼（至少 12 字元）');
-          if (!password || password.length < 12) return;
+          const password = prompt('設定／變更新個人密碼（至少 12 字元）');
+          if (password === null) return;
+          if (password.length < 12) return setGlobalError('個人密碼至少需要 12 個字元。');
+          const confirmation = prompt('再次輸入新個人密碼');
+          if (confirmation !== password) return setGlobalError('兩次輸入的新密碼不一致。');
           await run(() => runtime.changePersonalPassword(password));
         }}>變更密碼</button>
         <button className="btn small ghost" onClick={() => {
