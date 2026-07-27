@@ -1,6 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './NormalizedApp';
+import App from './App';
 import ErrorBoundary from './ErrorBoundary';
 import './styles.css';
 
