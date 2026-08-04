@@ -797,11 +797,8 @@ export default function NormalizedApp() {
       }}
       onSave={saveTask}
       onSaveVesselProgress={saveProgress}
-      onDelete={() => {
-        if (!canDelete || !confirm('確定刪除此待辦？')) return;
-        void runBoolean(() => controller.deleteTask(authorizedEditingTask.id)).then(ok => {
-          if (ok) setTaskEditor(null);
-        });
-      }}/>}
-  </div>;
+      onDelete={async () => {
+        if (!canDelete || !confirm('確定刪除此待辦？')) return false;
+        return runBoolean(() => controller.deleteTask(authorizedEditingTask.id));
+      }}/>}</div>;
 }

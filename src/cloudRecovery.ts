@@ -70,6 +70,17 @@ export function trustedPersistedBaseForRemote(base:AppData|null,remote:AppData,c
   return base;
 }
 
+export function bootstrapFailureHasUnsavedWork(input:{
+  local:AppData;
+  persistedConfirmedBase:AppData|null;
+  hasLocalCache:boolean;
+  equals:(left:AppData,right:AppData)=>boolean;
+}):boolean{
+  return input.persistedConfirmedBase
+    ? !input.equals(input.local,input.persistedConfirmedBase)
+    : input.hasLocalCache;
+}
+
 export function withStableCreationAttemptProvenance(firstAttempt:TaskItem,retry:TaskItem):TaskItem{
   const stable=structuredClone(retry);
   stable.createdAt=firstAttempt.createdAt;

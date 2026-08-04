@@ -6,7 +6,7 @@ const server = await createServer({ server: { middlewareMode: true }, appType: '
 try {
   const { createInitialData } = await server.ssrLoadModule('/src/data/seed.ts');
   const { rebaseDisjointAppData, prepareCloudSyncSnapshot, CloudRebaseConflictError } = await server.ssrLoadModule('/src/cloudRebase.ts');
-  const { cloudWorkspaceIdentity, cloudConfigIdentity, normalizeStoredCloudWorkspaceIdentity, serializeConfirmedCloudBase, parseConfirmedCloudBase, serializeDurableRevisionFloors, parseDurableRevisionFloors, updateDurableRevisionFloor, trustedPersistedBaseForRemote, withStableCreationAttemptProvenance, creationTaskCommitMatches } = await server.ssrLoadModule('/src/cloudRecovery.ts');
+  const { cloudWorkspaceIdentity, cloudConfigIdentity, normalizeStoredCloudWorkspaceIdentity, serializeConfirmedCloudBase, parseConfirmedCloudBase, serializeDurableRevisionFloors, parseDurableRevisionFloors, updateDurableRevisionFloor, trustedPersistedBaseForRemote, bootstrapFailureHasUnsavedWork, withStableCreationAttemptProvenance, creationTaskCommitMatches } = await server.ssrLoadModule('/src/cloudRecovery.ts');
   const clone = value => structuredClone(value);
   const base = createInitialData();
   assert.ok(base.vessels.length >= 2, 'fixture requires at least two vessels');
@@ -43,6 +43,32 @@ try {
   assert.equal(parseDurableRevisionFloors('{"bad":true}').valid,false,'malformed floor registry must be distinguishable from first use');
   assert.equal(parseDurableRevisionFloors(JSON.stringify({version:1,floors:[[workspaceA,-1],[workspaceB,2.5],["legacy|ambiguous",8]]})).valid,false,'invalid revisions or non-v2 workspace identities must fail closed');
   assert.ok(trustedPersistedBaseForRemote(persistedBase,clone(persistedBase),(left,right)=>JSON.stringify(left)===JSON.stringify(right)),'persisted base equal to unchanged normalized remote must restore offline rebase path');
+  assert.equal(bootstrapFailureHasUnsavedWork({
+    local:clone(persistedBase),
+    persistedConfirmedBase:persistedBase,
+    hasLocalCache:true,
+    equals:(left,right)=>JSON.stringify(left)===JSON.stringify(right),
+  }),false,'bootstrap fetch failure must not mark an unchanged persisted cloud snapshot as unsaved');
+  const dirtyBootstrapLocal=clone(persistedBase);
+  dirtyBootstrapLocal.tasks.push({id:'bootstrap-dirty-task'});
+  assert.equal(bootstrapFailureHasUnsavedWork({
+    local:dirtyBootstrapLocal,
+    persistedConfirmedBase:persistedBase,
+    hasLocalCache:true,
+    equals:(left,right)=>JSON.stringify(left)===JSON.stringify(right),
+  }),true,'bootstrap fetch failure must retain a real local change as unsaved');
+  assert.equal(bootstrapFailureHasUnsavedWork({
+    local:clone(persistedBase),
+    persistedConfirmedBase:null,
+    hasLocalCache:true,
+    equals:(left,right)=>JSON.stringify(left)===JSON.stringify(right),
+  }),true,'bootstrap failure without a trusted base must fail closed when a local cache exists');
+  assert.equal(bootstrapFailureHasUnsavedWork({
+    local:clone(persistedBase),
+    persistedConfirmedBase:null,
+    hasLocalCache:false,
+    equals:(left,right)=>JSON.stringify(left)===JSON.stringify(right),
+  }),false,'bootstrap failure without any local cache must not invent unsaved work');
   const persistedRollbackRemote=clone(persistedBase);persistedRollbackRemote.revision=persistedBase.revision-1;
   assert.equal(trustedPersistedBaseForRemote(persistedBase,persistedRollbackRemote,(left,right)=>JSON.stringify(left)===JSON.stringify(right)),null,'remote revision below persisted durable base must be treated as rollback even when business content is equal');
   const rewrittenSameRevision=clone(persistedBase);rewrittenSameRevision.tasks.push({id:'rewritten'});
@@ -450,7 +476,7 @@ try {
   const syncLatestSource=appSource.slice(syncLatestStart,saveChangesStart);
   assert.ok(syncLatestSource.includes('prepareCloudSyncSnapshot('), '同步最新必須先以可信base合併本機dirty snapshot');
   assert.ok(syncLatestSource.includes('appDataContentEqual(localSnapshot,baseSnapshot)'), 'App必須以本機與可信base的內容差異判定dirty，不能只比較revision');
-  assert.ok(syncLatestSource.includes('本機編輯內容仍完整保留'), '真衝突時同步最新必須明示本機內容未被覆蓋');
+  assert.ok(syncLatestSource.includes('classifyCloudSyncFailure(error).message'), '同步錯誤必須區分真欄位衝突、權限撤銷及安全基線阻擋');
   const compactSyncLatestSource=syncLatestSource.replace(/\s+/g,'');
   assert.ok(compactSyncLatestSource.includes('constcachedCloudIdentity=cachedCloudIdentityFor(syncConfig)'), '同步必須透過migration-aware helper讀取本機資料cache identity，不能信任bootstrap已切到新設定的active ref');
   assert.ok(compactSyncLatestSource.includes("consthasUnboundLocalCache=!cachedCloudIdentity&&localStorage.getItem(STORAGE_KEY)!==null"), '沒有identity的既有本機cache必須被視為未綁定資料，而非自動視作目前workspace');
@@ -480,8 +506,12 @@ try {
   const enqueueStart=appSource.indexOf('const enqueueCloudSave =');
   const enqueueEnd=appSource.indexOf('\n  const flushCloudBeforeBatchRelease=',enqueueStart);
   const enqueueSource=appSource.slice(enqueueStart,enqueueEnd);
-  assert.ok(enqueueSource.includes('const queuedAfterConflict=pendingCloudData.current')&&enqueueSource.includes('queuedAfterConflict&&queuedAfterConflict.isCurrent()?queuedAfterConflict'), 'conflict rebase must retain the newest queued snapshot caller context instead of overwriting it with a stale batch guard');
-  assert.ok(enqueueSource.indexOf('if(!isCurrent())continue;',enqueueSource.indexOf('} catch(error)'))<enqueueSource.indexOf('error instanceof CloudConflictError',enqueueSource.indexOf('} catch(error)')), 'stale caller must be ignored before any generic network/config error can block the new session');
+  const firstIntentShift=enqueueSource.indexOf('let pendingEntry=pendingCloudData.current.shift();');
+  const firstIntentResolve=enqueueSource.indexOf('pendingEntry.resolve();',firstIntentShift);
+  const nextIntentShift=enqueueSource.indexOf('pendingEntry=pendingCloudData.current.shift();',firstIntentResolve);
+  assert.ok(enqueueSource.includes('const turnEntry=pendingCloudData.current.peek();')&&firstIntentShift>=0&&firstIntentResolve>firstIntentShift&&nextIntentShift>firstIntentResolve, 'block retry must leave every newer queued snapshot untouched until the current intent has its own durable completion receipt');
+  const patchCatch=enqueueSource.indexOf('}catch(error){');
+  assert.ok(patchCatch>=0&&enqueueSource.indexOf('if(!isCurrent())break;',patchCatch)<enqueueSource.indexOf('error instanceof CloudBlockPatchUnavailableError',patchCatch), 'stale caller must be ignored before fallback or conflict handling can block the new session');
 
   console.log('Cloud disjoint rebase runtime contracts passed.');
 } finally {

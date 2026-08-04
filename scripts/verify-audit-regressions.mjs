@@ -20,11 +20,11 @@ const checks = [
   ['查無事項需顯示空狀態', app.includes('目前沒有符合條件的事項')],
   ['管理頁需有 handler/render 雙層防護', app.includes("hasPermission(data.settings.rolePermissions, currentUser, 'enterManagement')") && app.includes("tab==='management' && canEnterManagement")],
   ['Owner 初始化前需先完成個人登入', app.includes('!ownerExists && !currentUser') && app.includes('OwnerSetup currentUser={currentUser}') && !app.includes('Owner 人員</label><select')],
-  ['保存需使用雲端 revision CAS', /saveCloudData\(next,\s*lastCloudRevision\.current,\s*savedBy,\s*config\)/.test(app)],
+  ['保存需優先使用原子區塊 CAS，僅在 RPC 未部署時降級 revision CAS', app.includes('buildCloudBlockPatch(remote,candidate,storageRemote)') && app.includes('applyCloudBlockPatchRpc(operations') && app.includes('error instanceof CloudBlockPatchUnavailableError') && cloud.includes("supabase.rpc('apply_ship_dynamics_block_patch'")],
   ['啟動內容分歧／remote缺失需阻擋寫入且不得建立偽共同base', app.includes('localContentDiverged=hasLocalCache&&!appDataContentEqual(data,remote)') && app.includes('confirmedCloudData.current=recoveredBase') && app.includes('const persistedRemoteMissing=persistedDurableFloor>=0') && app.includes('confirmedCloudData.current=persistedConfirmedBase') && app.includes('identityChanged || unknownDirtyCache || persistedRemoteMissing') && app.includes('setCloudWriteBlocked(true)') && app.includes('if (cloudWriteBlocked)')],
   ['工作區 identity 不同或來源未知時不得自動初始化空雲端', app.includes('CLOUD_CACHE_IDENTITY_KEY') && app.includes('localStorage.getItem(STORAGE_KEY) !== null') && app.includes('identityChanged || unknownDirtyCache') && app.includes('為避免跨工作區複製')],
   ['每次保存與同步皆需重新驗證目前 workspace identity', app.includes('currentIdentity !== activeCloudIdentity.current') && (app.match(/hasCurrentCloudIdentity\(\)/g) || []).length >= 2 && app.includes('configIoCoordinator.current.run(syncToken, getSupabaseConfig, fetchCloudData)') && app.includes('configIoCoordinator.current.isCurrent(syncToken, getSupabaseConfig())') && app.includes('雲端設定在載入期間變更')],
-  ['自動、手動保存與同步需共用串行／互斥控制', app.includes('cloudSaveInFlight') && app.includes('pendingCloudData') && app.includes('while (pendingCloudData.current)') && app.includes('enqueueCloudSave(data)') && app.includes('cloudSyncInFlight') && app.includes('cloudSyncing')],
+  ['自動、手動保存與同步需共用串行／互斥控制', app.includes('cloudSaveInFlight') && app.includes('pendingCloudData') && app.includes('drainCloudSaveQueueUntilStable') && app.includes('pendingCloudData.current.size()>0') && app.includes('enqueueCloudSave(data)') && app.includes('cloudSyncInFlight') && app.includes('cloudSyncing')],
   ['本機保存不得誤報已保存雲端', app.includes('已保存於本機瀏覽器')],
   ['臨時會議需限制授權角色修改', meetings.includes('canEditTemporaryMeetings(data.settings.rolePermissions, currentUser)') && meetingAccess.includes("hasPermission(matrix, user, 'manageMeetings') && hasPermission(matrix, user, 'viewAllVessels')")],
   ['臨時會議可保存未指定船舶範圍', !meetings.includes("if (!resolvedVesselIds.length) return alert('請至少選擇一艘船舶')") && meetings.includes('liveScopeVessels.length&&!canAccessAllVessels')],
@@ -35,7 +35,7 @@ const checks = [
   ['正規化器需先過濾 null 物件及非字串陣列元素', normalizer.includes('objects(raw.users)') && normalizer.includes('strings(item.departments)') && normalizer.includes('normalizeStatusLogs')],
   ['雲端保存需偵測衝突', cloud.includes('CloudConflictError') && cloud.includes(".eq('revision', expectedRevision)")],
   ['雲端保存不得保留 force-upsert 旁路', !cloud.includes('.upsert(') && cloud.includes('expectedRevision: number')],
-  ['操作員臨時會議表單需原生禁用', meetings.includes('<fieldset disabled={!editable}')],
+  ['操作員或未持鎖者的臨時會議表單需原生禁用', meetings.includes('<fieldset disabled={!editorWritable}')],
   ['中窄版臨時會議需改為單欄', css.includes('@media (max-width:900px)') && css.includes('.temporary-meeting-workspace')],
 ];
 

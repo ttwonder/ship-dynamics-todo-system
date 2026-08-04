@@ -35,7 +35,7 @@ try {
   assert.ok(!app.includes('involvedVesselIds.has(v.id)'), '事项负责人不得扩大整船访问权');
   assert.match(app, /flushSync\(\(\)=>setData\(prev=>[\s\S]*taskVessels\(candidate,prev\.vessels\)/, '保存需在最新 state 解析完整事项范围');
   assert.match(app, /previous\.updatedAt!==expectedUpdatedAt/, '单笔事项保存需以打开时版本执行 CAS');
-  assert.match(app, /prev\.revision!==expectedRevision/, '单笔事项 CAS 必须同时使用无同毫秒碰撞的全局 revision');
+  assert.match(app, /\(!getSupabaseConfig\(\)&&prev\.revision!==expectedRevision\)/, '單筆事項只在本機模式保留 global revision guard；雲端模式由 item version 與原子 block expected-value fencing 保護');
   assert.ok(app.includes('candidate.sourceMeetingId!==previous.sourceMeetingId')&&app.includes('candidate.sourceMeetingItemId!==previous.sourceMeetingItemId')&&app.includes('candidate.sourceType!==previous.sourceType'),'普通待辦保存不得偽造、解除或改寫會議來源關聯');
   assert.ok(app.includes("candidate.sourceType==='temporary'")&&app.includes("candidate.attentionDimension==='meeting'")&&app.includes("boundaryCandidate.sourceType='morning'")&&app.includes("boundaryCandidate.attentionDimension='task'"),'普通新增路徑需拒絕並正規化偽造的會議語意');
   assert.ok(app.includes("candidate.isClosed&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')")&&app.includes('boundaryCandidate.createdBy=liveUser.id')&&app.includes('boundaryCandidate.createdAt=saveAt'),'新建已結案待辦需 closeTasks，建立來源與時間必須由保存端蓋章');
@@ -47,7 +47,7 @@ try {
   assert.ok(!app.includes('function Stats('),'未使用且仍依賴 raw isClosed 的舊 Stats 元件應移除，避免日後誤啟用');
   assert.ok(app.includes('meetingTaskLinkIsValidForMutation(previous,prev.meetings)')&&app.includes('會議來源關聯缺失、失效或與父會議狀態不一致'),'既有會議語意或關聯待辦保存前需以共用 guard 驗證父會議權威狀態，孤立或不一致語意均需拒絕');
   assert.ok(app.includes('JSON.stringify(candidate.vesselProgress||[])!==JSON.stringify(previous.vesselProgress||[])')&&app.includes("hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')"),'保存端需保護分船結案歷史並重新驗證結案／重開權限');
-  assert.ok(app.includes('expectedUpdatedAtById')&&app.includes('prev.revision!==expectedRevision||liveSelection.tasks.some'),'批量完成需在確認後以 revision 及逐筆 updatedAt CAS');
+  assert.ok(app.includes('expectedUpdatedAtById')&&app.includes('runTaskMutationWithLockBundle(uniqueIds')&&app.includes('prev.revision!==fresh.revision||liveSelection.tasks.some(task=>task.updatedAt!==expectedUpdatedAtById.get(task.id))'),'批量完成需在完整關聯鎖後以 fresh revision 及逐筆 updatedAt CAS');
   assert.ok(app.includes('vessels.length!==taskVesselIds(liveTask).length'),'單筆刪除需拒絕含缺失船舶的部分解析範圍');
   assert.match(app, /previousVessels[\s\S]*必須同時具備原涉船與新涉船範圍權限/, '单笔事项更新需同时验证原范围与新范围');
   assert.match(app, /savedScopeVessels[\s\S]*saved\.ownerUserIds\.some[\s\S]*isEligibleTaskOwner/, '保存端需按最终实际涉船范围重新验证全部负责人资格');

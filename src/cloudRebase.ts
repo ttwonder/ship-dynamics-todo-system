@@ -1,4 +1,5 @@
 import type { AppData } from './types';
+import { actorAuthorizationUnchanged } from './cloudAuthorization';
 
 const COLLECTION_KEYS = ['users', 'vessels', 'tasks', 'internalControlCases', 'meetings', 'agendaReports', 'auditLogs', 'notifications'] as const;
 type CollectionKey = typeof COLLECTION_KEYS[number];
@@ -65,10 +66,11 @@ function relationshipValues(baseItems: any[], sideItems: any[], ids: Set<string>
 
 const intersects = (left: Set<string>, right: Set<string>) => [...left].some(value => right.has(value));
 
-function detectDependencyConflicts(base: AppData, local: AppData, remote: AppData, conflicts: string[]) {
+function detectDependencyConflicts(base: AppData, local: AppData, remote: AppData, conflicts: string[],actorUserId?:string) {
   const localSensitive = !equal(base.users, local.users) || vesselAuthorizationChanged(base,local) || SENSITIVE_SETTINGS.some(key => settingsKeyChanged(base, local, key));
   const remoteSensitive = !equal(base.users, remote.users) || vesselAuthorizationChanged(base,remote) || SENSITIVE_SETTINGS.some(key => settingsKeyChanged(base, remote, key));
-  if ((localSensitive && meaningfulChange(base, remote)) || (remoteSensitive && meaningfulChange(base, local))) conflicts.push('authorization-domain');
+  const actorAuthorizationChanged=remoteSensitive&&meaningfulChange(base,local)&&(!actorUserId||!actorAuthorizationUnchanged(base,remote,actorUserId));
+  if ((localSensitive && meaningfulChange(base, remote)) || actorAuthorizationChanged) conflicts.push('authorization-domain');
   const changed = (side: AppData, key: CollectionKey) => changedIds(base[key] as Identified[], side[key] as Identified[]);
   const localTaskIds = changed(local, 'tasks');
   const remoteTaskIds = changed(remote, 'tasks');
@@ -364,7 +366,7 @@ function mergeCollection(key: CollectionKey, baseItems: Identified[], localItems
   return merged;
 }
 
-export function rebaseDisjointAppData(base: AppData, local: AppData, remote: AppData, at: string): AppData {
+export function rebaseDisjointAppData(base: AppData, local: AppData, remote: AppData, at: string,actorUserId?:string): AppData {
   const conflicts: string[] = [];
   for (const key of COLLECTION_KEYS) {
     validateCollectionIds(key, 'base', base[key] as Identified[], conflicts);
@@ -372,7 +374,7 @@ export function rebaseDisjointAppData(base: AppData, local: AppData, remote: App
     validateCollectionIds(key, 'remote', remote[key] as Identified[], conflicts);
   }
   if (conflicts.length) throw new CloudRebaseConflictError([...new Set(conflicts)]);
-  detectDependencyConflicts(base, local, remote, conflicts);
+  detectDependencyConflicts(base,local,remote,conflicts,actorUserId);
   if (conflicts.length) throw new CloudRebaseConflictError([...new Set(conflicts)]);
   const settings = mergeSettingsValue(base.settings, local.settings, remote.settings, 'settings', conflicts) as AppData['settings'];
   const merged = { ...clone(remote), settings } as AppData;
@@ -385,12 +387,12 @@ export function rebaseDisjointAppData(base: AppData, local: AppData, remote: App
   return merged;
 }
 
-export function prepareCloudSyncSnapshot(base: AppData | null, local: AppData, remote: AppData, expectedRevision: number, at: string): AppData {
+export function prepareCloudSyncSnapshot(base: AppData | null, local: AppData, remote: AppData, expectedRevision: number, at: string,actorUserId?:string): AppData {
   if (remote.revision < expectedRevision) throw new CloudRebaseConflictError(['缺少可信的雲端合併基線']);
   if(base&&(remote.revision<base.revision||(remote.revision===base.revision&&!appDataContentEqual(base,remote))))throw new CloudRebaseConflictError(['缺少可信的雲端合併基線']);
   if (base && base.revision <= expectedRevision && base.revision <= remote.revision && local.revision >= base.revision) {
     if (appDataContentEqual(local, base)) return clone(remote);
-    return rebaseDisjointAppData(base, local, remote, at);
+    return rebaseDisjointAppData(base,local,remote,at,actorUserId);
   }
   if (appDataContentEqual(local, remote)) return clone(remote);
   throw new CloudRebaseConflictError(['缺少可信的雲端合併基線']);

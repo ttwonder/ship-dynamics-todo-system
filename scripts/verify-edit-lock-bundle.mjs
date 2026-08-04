@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { createServer } from 'vite';
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
@@ -87,6 +89,38 @@ try {
   assert.equal(await releaseTrackedLeases(longSessionState,[longSessionLeases[0]],releaseLongSession),true,'old successful release must remain idempotent after more than 2048 later releases');
   assert.equal(longSessionReleaseCalls,2050,'stale callback must not issue a second RPC for an old successful lease');
   assert.deepEqual(pendingTrackedLeases(longSessionState),[],'old successful lease must never become a false pending release');
+
+  const { createEditLockCoordinator } = await server.ssrLoadModule('/src/editLockCoordinator.ts');
+  const { runCloudSaveQueueRpc } = await server.ssrLoadModule('/src/cloudSaveQueue.ts');
+  const coordinator = createEditLockCoordinator();
+  const timedOutClaim = coordinator.run(() => runCloudSaveQueueRpc('test claim', () => new Promise(() => {}), 10));
+  let cleanupRan = false;
+  const cleanup = coordinator.run(async () => { cleanupRan = true; });
+  await assert.rejects(timedOutClaim, /test claim逾時/);
+  await cleanup;
+  assert.equal(cleanupRan, true, 'a timed-out lock RPC must not poison the coordinator tail');
+
+  const appPath = new URL('../src/App.tsx', import.meta.url);
+  const appSource = readFileSync(appPath, 'utf8');
+  const sourceFile = ts.createSourceFile('App.tsx', appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const lockRpcNames = new Set(['claimEditLock','renewEditLock','releaseEditLock']);
+  const unbounded = [];
+  const isBounded = node => {
+    for(let current=node.parent;current;current=current.parent){
+      if(ts.isCallExpression(current)&&ts.isIdentifier(current.expression)&&current.expression.text==='runCloudSaveQueueRpc')return true;
+      if(ts.isStatement(current))return false;
+    }
+    return false;
+  };
+  const visit = node => {
+    if(ts.isCallExpression(node)&&ts.isIdentifier(node.expression)&&lockRpcNames.has(node.expression.text)&&!isBounded(node)){
+      const position=sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+      unbounded.push(`${node.expression.text}@${position.line+1}`);
+    }
+    ts.forEachChild(node,visit);
+  };
+  visit(sourceFile);
+  assert.deepEqual(unbounded, [], `all production lock RPCs must be bounded: ${unbounded.join(', ')}`);
 
   console.log('Edit-lock bundle runtime contracts passed.');
 } finally {

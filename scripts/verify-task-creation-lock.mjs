@@ -31,6 +31,8 @@ try {
   assert.equal(taskCreationLockMatchesVessel('task-create:vessel-a', 'vessel-b'), false);
   assert.equal(isTaskCreationLockKey('task-create:vessel-a'), true);
   assert.equal(isTaskCreationLockKey('task:vessel-a'), false);
+  assert.notEqual(taskCreationLockKey('vessel-a','draft-1'),taskCreationLockKey('vessel-a','draft-2'),'two new-task drafts on the same vessel must not block one another');
+  assert.equal(taskCreationLockMatchesVessel(taskCreationLockKey('vessel-a','draft-1'),'vessel-a'),true);
 
   let resolvePersist;
   let committed=null;
@@ -39,6 +41,7 @@ try {
     snapshot:{id:'draft-a'},
     persist:()=>new Promise(resolve=>{resolvePersist=resolve;}),
     isCurrent:()=>current,
+    resolveCommittedValue:confirmed=>confirmed,
     commit:value=>{committed=value;},
   });
   await Promise.resolve();
@@ -46,6 +49,21 @@ try {
   resolvePersist({id:'confirmed-a'});
   assert.equal(await handoff,true);
   assert.deepEqual(committed,{id:'confirmed-a'},'durably confirmed snapshot must commit while the same session is current');
+  let liveDuringAck={id:'base',laterLocalEdit:0};
+  let resolveConcurrentPersist;
+  let concurrentCommitted=null;
+  const concurrentHandoff=runDurableCreationHandoff({
+    snapshot:{id:'created',laterLocalEdit:0},
+    persist:()=>new Promise(resolve=>{resolveConcurrentPersist=resolve;}),
+    isCurrent:()=>true,
+    resolveCommittedValue:confirmed=>({...confirmed,laterLocalEdit:liveDuringAck.laterLocalEdit}),
+    commit:value=>{concurrentCommitted=value;},
+  });
+  await Promise.resolve();
+  liveDuringAck={...liveDuringAck,laterLocalEdit:1};
+  resolveConcurrentPersist({id:'created',laterLocalEdit:0});
+  assert.equal(await concurrentHandoff,true);
+  assert.equal(concurrentCommitted.laterLocalEdit,1,'a later local edit must survive durable creation acknowledgement');
   committed=null;current=true;
   let classifiedStaleSuccess=null;
   const staleHandoff=runDurableCreationHandoff({
@@ -53,6 +71,7 @@ try {
     persist:async()=>{current=false;return {id:'confirmed-b'};},
     isCurrent:()=>current,
     onDurable:value=>{classifiedStaleSuccess=value;},
+    resolveCommittedValue:confirmed=>confirmed,
     commit:value=>{committed=value;},
   });
   assert.equal(await staleHandoff,false,'stale creation session must not commit into successor UI');
@@ -75,21 +94,24 @@ try {
   assert.deepEqual(sessionCoordinator.peek(),{vesselId:'new'});
   assert.deepEqual(consumeCurrentTaskEditorSession(sessionCoordinator,newSession),{vesselId:'new'});
 
-  assert.match(app, /const addTaskForVessel = async[\s\S]*?claimEditingLock\(taskCreationLockKey\(vesselId\)/, 'every ordinary add-task entry must claim the per-vessel creation lock before opening');
+  assert.match(app, /const addTaskForVessel = async[\s\S]*?const creationLockKey=taskCreationLockKey\(vesselId,id\);[\s\S]*?claimEditingLock\(creationLockKey/, 'every ordinary add-task entry must claim its unique draft creation lock before opening');
   assert.ok(app.includes("if(getSupabaseConfig()&&cloudWriteBlocked){alert('雲端寫入已阻擋"), 'cloud-blocked state must not open a creation editor that could bypass safe sync');
-  assert.ok(app.includes("taskCreationLockKey(candidate.vesselId)") && app.includes('requireMutationLease'), 'create save must revalidate the exact vessel creation lease');
+  assert.ok(app.includes("taskCreationLockKey(candidate.vesselId,candidate.id)") && app.includes('requireMutationLease'), 'create save must revalidate the exact draft creation lease');
   const saveTaskStart=app.slice(app.indexOf('const saveTask = async'),app.indexOf('let applied=false;',app.indexOf('const saveTask = async')));
   const mutationLeaseGuard=app.slice(app.indexOf('const requireMutationLease='),app.indexOf('const requireLogin =',app.indexOf('const requireMutationLease=')));
-  assert.ok(saveTaskStart.indexOf('latestCreationDrafts.current.set(candidate.id')>=0&&saveTaskStart.indexOf('latestCreationDrafts.current.set(candidate.id')<saveTaskStart.indexOf('requireMutationLease(taskCreationLockKey(candidate.vesselId))')&&mutationLeaseGuard.includes('quarantineCreationDraftForLock(activeEditLock)'), 'lease-invalid create submit must retain the latest candidate and quarantine it before hiding/releasing');
+  assert.ok(saveTaskStart.indexOf('latestCreationDrafts.current.set(candidate.id')>=0&&saveTaskStart.indexOf('latestCreationDrafts.current.set(candidate.id')<saveTaskStart.indexOf('requireMutationLease(taskCreationLockKey(candidate.vesselId,candidate.id))')&&mutationLeaseGuard.includes('quarantineCreationDraftForLock(lock)'), 'lease-invalid create submit must retain the latest candidate and quarantine it before hiding/releasing');
   assert.ok(editor.includes('onDraftChange?: (task: TaskItem) => void')&&editor.includes('onDraftChange?.(clone(draft))')&&app.includes('onDraftChange={captureCreationDraft}')&&app.includes('latestCreationDrafts.current.set(draft.id,{leaseOwnerId:lock.leaseOwnerId,task:clone(draft)})'),'every pre-submit modal change must be captured by the exact opaque creation lease so TTL/config/auth invalidation cannot fall back to the initial empty parent draft');
   assert.ok(app.includes('isTaskCreationLockKey(lock.sectionKey)') && app.includes('setCreatingTask(null)'), 'creation editor must close when its lease becomes invalid');
   assert.ok(editor.includes('disabled={globalReadOnly||creating}'), 'a creation draft must not change vessels after claiming its vessel-scoped lock');
   assert.ok(editor.includes('const [saving,setSaving]=useState(false)')&&editor.includes('await onSave(saved, creating')&&editor.includes('disabled={saving} onClick={close}'), 'creation editor must await durable save and disable duplicate submit/cancel');
   assert.match(app,/const saveTask = async[\s\S]*?runDurableCreationHandoff[\s\S]*?persist:async snapshot=>\{[\s\S]*?await enqueueCloudSave\(snapshot,creationIsCurrent,false\)/, 'creation save must hold the task-create lease until cloud CAS acknowledgement');
-  assert.ok(app.includes('await enqueueCloudSave(liveData.current,creationIsCurrent)')&&app.includes('const creationBase=confirmedBeforeCreation&&confirmedBeforeCreation.revision===lastCloudRevision.current?confirmedBeforeCreation:liveData.current'), 'creation handoff must durably flush prior local work and build from the confirmed base');
-  assert.ok(app.includes('const submittedOrLive=liveData.current.revision>next.revision?liveData.current:next'), 'CAS conflict rebase must retain an unrendered submitted creation snapshot');
+  const creationFlowSource=app.slice(app.indexOf('const creationFlow=(async()=>{'),app.indexOf('\n      const barrier:DurableCreationHandoffBarrier'));
+  assert.ok(creationFlowSource.includes('acquireEditLockBundle(')&&creationFlowSource.includes('`vessel:${vesselId}`')&&creationFlowSource.includes('transientCloudBlockLockGuards.current.set'), 'creation save must acquire and submit every existing vessel lock touched by weekly-attention projection');
+  assert.ok(app.includes('resolveCommittedValue:confirmed=>{')&&app.includes('rebaseDisjointAppData(creationBase,live,confirmed')&&app.includes('creationCommitHasSuccessorChanges'), 'durable creation acknowledgement must rebase into the current live snapshot instead of overwriting later local edits');
+  assert.ok(app.includes('await enqueueCloudSave(liveData.current,creationIsCurrent)')&&app.includes('const creationBase=await fetchCloudData(capturedCreationConfig)')&&app.includes('assertRemoteExtendsDurableHistory(cloudIdentity(capturedCreationConfig),confirmedBeforeCreation,creationBase)'), 'creation handoff must durably flush prior local work, acquire relation locks, and rebuild from a freshly fetched authoritative base');
+  assert.ok(app.includes('const pending=pendingEntry.value;')&&app.includes('const {snapshot:next,baseSnapshot:base,token,savedBy,actorUserId,lockGuards,isCurrent}=pending')&&app.includes('buildCloudBlockPatch(remote,candidate,storageRemote)'), 'atomic block retry must retain and replay the exact per-intent unrendered submitted creation snapshot and durable base');
   assert.ok(app.includes("const creationAttempts=useRef(new Map<string,{leaseOwnerId:string;task:TaskItem}>())")&&app.includes('creationAttempts.current.set(candidate.id,{leaseOwnerId:creationLock.leaseOwnerId,task:clone(submittedCreationTask)})')&&app.includes('withStableCreationAttemptProvenance(existingAttempt.task,submittedCreationTask)')&&app.includes("const submittedTask=attempt?.leaseOwnerId===creationLock.leaseOwnerId?attempt.task:undefined"), 'lost-ack recovery must retain and apply first-attempt creation provenance across user retries, bind it to the exact lease, and retain the latest stable retry draft');
-  const leaveIdentityStart=app.indexOf('const leaveCurrentIdentity = () => {');
+  const leaveIdentityStart=app.indexOf('const leaveCurrentIdentity = async () => {');
   const leaveIdentityEnd=app.indexOf('\n  const readOnlyTask=',leaveIdentityStart);
   const leaveIdentityBranch=app.slice(leaveIdentityStart,leaveIdentityEnd);
   assert.ok(app.includes('latestCreationDrafts.current.set(candidate.id,{leaseOwnerId:creationLock.leaseOwnerId,task:clone(candidate)})')&&leaveIdentityBranch.includes('const latestDraft=latestCreationDrafts.current.get(creatingTask.id)'),'quarantine must capture the latest modal candidate before any flush/CAS await, not only the initial empty task or later generated snapshot');
@@ -102,9 +124,9 @@ try {
   assert.ok(app.includes('const confirmedCreationLeases=useRef(new Set<string>())')&&app.includes('if(confirmedCreationLeases.current.has(lock.leaseOwnerId))return false')&&app.includes('onDurable:()=>{')&&app.includes('confirmedCreationLeases.current.add(creationLock.leaseOwnerId)'),'durable-success classification must be recorded by opaque lease independently of stale/current UI publication');
   const durableOutcomeHandler=app.slice(app.indexOf('onDurable:()=>{'),app.indexOf('commit:confirmed=>',app.indexOf('onDurable:()=>{')));
   assert.ok(durableOutcomeHandler.includes('clearCreationAttempt(candidate.id,creationLock.leaseOwnerId)')&&durableOutcomeHandler.includes('previous?.leaseOwnerId!==creationLock.leaseOwnerId'),'stale durable success must remove only its exact attempt/quarantine so it cannot be offered as a new draft or touch a successor');
-  assert.ok(app.includes('clearCreationAttempt(creatingTask?.id,activeEditLock?.leaseOwnerId||quarantinedCreationDraft?.leaseOwnerId)')&&app.includes('if(creationAttempts.current.get(taskId)?.leaseOwnerId===leaseOwnerId)')&&app.includes('if(latestCreationDrafts.current.get(taskId)?.leaseOwnerId===leaseOwnerId)'), 'closing an editor may clear only its exact active or quarantined task/lease attempt and stale callbacks must not clear a successor');
-  assert.ok(app.includes('const closeTaskEditor = (requestGeneration=taskEditorRequestGeneration)')&&app.includes('consumeCurrentTaskEditorSession(taskOpenRequests.current,requestGeneration)'), 'task editor close must be bound to the exact editor session token');
-  assert.ok(app.includes("const closeVesselEditor=(lock:ActiveEditLock|null)=>{")&&app.includes("!lockCoordinator.current.isCurrent(lock.generation)")&&app.includes('close={()=>closeVesselEditor(activeEditLock)}'), 'vessel editor close must ignore stale callbacks from an older lock generation');
+  assert.ok(app.includes('clearCreationAttempt(creatingTask?.id,closingLeaseOwnerId)')&&app.includes('if(creationAttempts.current.get(taskId)?.leaseOwnerId===leaseOwnerId)')&&app.includes('if(latestCreationDrafts.current.get(taskId)?.leaseOwnerId===leaseOwnerId)'), 'closing an editor may clear only its exact active or quarantined task/lease attempt and stale callbacks must not clear a successor');
+  assert.ok(app.includes('const closeTaskEditor = async (requestGeneration=taskEditorRequestGeneration)')&&app.includes('consumeCurrentTaskEditorSession(taskOpenRequests.current,requestGeneration)'), 'task editor close must be bound to the exact editor session token and await durable release');
+  assert.ok(app.includes("const closeVesselEditor=async(lock:ActiveEditLock|null)=>{")&&app.includes("!lockCoordinator.current.isCurrent(lock.generation)")&&app.includes('close={()=>void closeVesselEditor(activeEditLockRef.current)}'), 'vessel editor close must ignore stale callbacks from an older lock generation and await durable release');
   assert.ok(app.includes('creationHandoffInFlight.current')&&app.includes('await waitForDurableCreationHandoff(pendingHandoff,lock.leaseOwnerId)'), 'all task-create release paths must await the matching durable creation handoff');
   assert.ok(app.includes("if(creationHandoffMatches(lock)){setSensitiveCloudStatus('雲端設定已變更：正在完成目前新增要事的耐久保存，暫不釋放協作鎖',lock.sectionKey);return;}")&&app.includes("if(creationHandoffMatches(lock)){setSensitiveCloudStatus('協作鎖有效期已到：正在等待新增要事耐久保存完成，暫不交出協作鎖',lock.sectionKey);return;}"), 'config change and lease-expiry callbacks must defer invalidation while the durable task-create handoff is in flight');
   assert.ok(app.includes('if((authorizationChanged||staleLock)&&activeEditLock&&creationHandoffMatches(activeEditLock))')&&app.includes('creationHandoffVersion'), 'authorization changes must defer destructive cleanup until handoff settlement and then re-run invalidation');
@@ -113,12 +135,13 @@ try {
   const expiryInvalidation=app.slice(app.indexOf('return scheduleValidatedLeaseExpiry'),app.indexOf('},[activeEditLock?.sectionKey',app.indexOf('return scheduleValidatedLeaseExpiry')));
   const authorizationInvalidation=app.slice(app.indexOf('const previousAuthorizationEpochValue='),app.indexOf('const claimEditingLock=',app.indexOf('const previousAuthorizationEpochValue=')));
   const renewalStaleSuffix=app.slice(app.indexOf('if(!renewalStillCurrent())'),app.indexOf('if(!renewed.ok){',app.indexOf('if(!renewalStillCurrent())')));
-  assert.ok(configInvalidation.includes('closeEditorForLock(lock,true)')&&expiryInvalidation.includes('closeEditorForLock(lock,true)')&&authorizationInvalidation.includes('quarantineCreationDraftForLock(activeEditLock)')&&renewalStaleSuffix.includes('quarantineCreationDraftForLock(lock)'), 'config, authorization, TTL, and post-renewal invalidation must all quarantine the owner/lease draft after handoff settlement before hide/release');
+  assert.ok(configInvalidation.includes("status:'error'")&&configInvalidation.includes('凍結並保留')&&!configInvalidation.includes('closeEditorForLock(lock,true)')&&!configInvalidation.includes('void releaseCurrentEditLock()'),'an external config change must freeze the old-workspace creation draft in place instead of clearing or releasing it');
+  assert.ok(expiryInvalidation.includes('closeEditorForLock(lock,true)')&&authorizationInvalidation.includes('quarantineCreationDraftForLock(activeEditLock)')&&renewalStaleSuffix.includes('quarantineCreationDraftForLock(lock)'), 'authorization, TTL, and post-renewal invalidation must quarantine the owner/lease draft after handoff settlement before hide/release');
   const automaticQuarantine=app.slice(app.indexOf('const quarantineCreationDraftForLock='),app.indexOf('const closeEditorForLock=',app.indexOf('const quarantineCreationDraftForLock=')));
   assert.ok(automaticQuarantine.includes('setQuarantinedCreationDrafts')&&!automaticQuarantine.includes('clearCreationAttempt('),'automatic invalidation must preserve latest draft and lost-ack provenance; only exact user cancel may clear them');
-  assert.ok(app.includes("if(isTaskCreationLockKey(lock.sectionKey)&&liveCreatingTaskId.current)")&&app.includes("草稿已唯讀保留")&&app.includes('mutationLeaseIsOwned(taskCreationLockKey(editingTask!.vesselId))||preservedCreationDraft'), 'a task-create renewal loss after handoff settlement must preserve the draft visibly in read-only mode instead of unmounting it');
+  assert.ok(app.includes("if(isTaskCreationLockKey(lock.sectionKey)&&liveCreatingTaskId.current)")&&app.includes("草稿已唯讀保留")&&app.includes('mutationLeaseIsOwned(taskCreationLockKey(editingTask!.vesselId,editingTask!.id))||preservedCreationDraft'), 'a task-create renewal loss after handoff settlement must preserve the draft visibly in read-only mode instead of unmounting it');
   assert.match(app, /onAddTask=\{async id=>\{if\(await closeBatchManaged\(renderedBatchManagedAuthorization\)\)addTaskForVessel\(id,false,true\);\}\}/, 'batch-managed add-task must release the exact captured batch session bundle, then use the common creation-lock entry');
-  assert.ok(app.includes('其他使用者正在新增此船要事'), 'blocked creation must show a clear vessel-specific conflict notice');
+  assert.ok(app.includes('此新增要事草稿正在由'), 'blocked creation must explain the exact draft conflict without falsely blocking all drafts on the vessel');
   assert.equal(pkg.scripts['test:task-creation-lock'], 'node scripts/verify-task-creation-lock.mjs');
 
   console.log('Per-vessel task creation lock contracts passed.');

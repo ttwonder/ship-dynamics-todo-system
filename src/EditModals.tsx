@@ -127,7 +127,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
   </div></div>;
 }
 
-export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, canEditOverall, initialProgressVesselId = '', readOnly = false, readOnlyReason = '', close, onDraftChange, onSave, onSaveVesselProgress, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; canEditOverall: boolean; initialProgressVesselId?: string; readOnly?: boolean; readOnlyReason?: string; close: () => void; onDraftChange?: (task: TaskItem) => void; onSave: (task: TaskItem, creating: boolean, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onSaveVesselProgress: (task: TaskItem, vesselId: string, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onDelete: () => void }) {
+export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, canEditOverall, initialProgressVesselId = '', readOnly = false, readOnlyReason = '', close, onDraftChange, onSave, onSaveVesselProgress, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; canEditOverall: boolean; initialProgressVesselId?: string; readOnly?: boolean; readOnlyReason?: string; close: () => void; onDraftChange?: (task: TaskItem) => void; onSave: (task: TaskItem, creating: boolean, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onSaveVesselProgress: (task: TaskItem, vesselId: string, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onDelete: () => boolean | Promise<boolean> }) {
   const [saving,setSaving]=useState(false);
   useEscapeClose(()=>{if(!saving)close();});
   const [draft, setDraft] = useState<TaskItem | null>(() => task ? clone(task) : null);
@@ -208,6 +208,12 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     try{if (await onSave(saved, creating, expectedUpdatedAtRef.current, expectedRevisionRef.current)) close();}
     finally{setSaving(false);}
   };
+  const remove = async () => {
+    if(saving)return;
+    setSaving(true);
+    try{if(await onDelete())close();}
+    finally{setSaving(false);}
+  };
   const users=data.users.filter(user=>user.isActive);
   const taskScopeVessels=taskScopeIds.map(vesselId=>data.vessels.find(item=>item.id===vesselId)).filter((vessel): vessel is Vessel=>Boolean(vessel));
   const eligibleOwnerUsers=users.filter(user=>isEligibleTaskOwner(data.settings.rolePermissions,user,taskScopeVessels));
@@ -220,7 +226,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const selectedVessel=data.vessels.find(vessel=>vessel.id===progressScope);
   const editorTitle=hasMeetingScope?(readOnly?'查看臨會／專題待辦':'更新臨會／專題待辦'):(creating?'新增要事':readOnly?'查看要事':'更新要事');
   const taskCategoryChoices = categoryChoicesForTask(draft, data.settings);
-  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" disabled={saving} onClick={onDelete}>刪除待辦</button>}{!readOnly&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} disabled={saving} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" disabled={saving} onClick={close}>{readOnly?'關閉':'取消'}</button>{!readOnly&&<button className="btn primary" disabled={saving} onClick={save}>{saving?'正在確認雲端…':creating?'建立要事':'保存變更'}</button>}</div></div>
+  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" disabled={saving} onClick={()=>void remove()}>刪除待辦</button>}{!readOnly&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} disabled={saving} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" disabled={saving} onClick={close}>{readOnly?'關閉':'取消'}</button>{!readOnly&&<button className="btn primary" disabled={saving} onClick={save}>{saving?'正在確認雲端…':creating?'建立要事':'保存變更'}</button>}</div></div>
     {readOnly&&readOnlyReason&&<div className="callout info read-only-server-note" role="status"><b>只讀詳情</b><span>{readOnlyReason}；此頁不可修改或保存。</span></div>}
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
     {perVesselMode&&<section className="vessel-progress-scope"><div className="field"><label>進度範圍</label><select aria-label="待辦進度範圍" value={progressScope} onChange={event=>{setProgressScope(event.target.value);setQuickStatus('');}}>{visibleScopeIds.map(id=>{const vessel=data.vessels.find(item=>item.id===id);return <option key={id} value={id}>單船進度｜{vessel?vesselDisplayName(vessel):id}</option>})}{canEditOverall&&<option value="overall">總體進度｜全部涉船</option>}</select></div><div className="progress-scope-note"><b>單船 {progressSummary.completed}/{progressSummary.total} 已結案</b><span>{editingSingleVessel?'目前操作只会更新所选船舶，不影响总体及其他船舶。':'目前操作会更新整项会议待办的总体进度。'}</span></div></section>}
