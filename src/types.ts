@@ -62,6 +62,11 @@ export interface VesselDelegateAssignment {
 
 export interface VesselNote {
   statusList: ShipStatus[];
+  statusSupplement: string;
+  captain: string;
+  chiefOfficer: string;
+  chiefEngineer: string;
+  firstEngineer: string;
   recentDynamics: string;
   subsequentDynamics: string;
   updatedAt: string;

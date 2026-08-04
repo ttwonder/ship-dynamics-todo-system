@@ -5,13 +5,14 @@ import { dashboardVesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention, unlinkedInternalControlCasesForVessel, vesselAttentionClass, vesselAttentionLabel, vesselAttentionPriorityCount } from './vesselAttention';
 import QuickMorningPicker from './QuickMorningPicker';
-import { toggleDashboardFilter } from './dashboardFilters';
 import { appearsInSingleVesselTasks, vesselAttentionTasks } from './taskAttention';
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
 import { formatScheduleDisplay } from './scheduleTime';
-import { hasActiveVesselDelegation } from './vesselDelegation';
+import { userCanManageVesselByAssignmentOrDelegation } from './vesselDelegation';
 import { meetingCreatesVesselAbnormalAlert, type DashboardMeetingAlert } from './meetingVesselAttention';
 import RichTextContent from './RichTextContent';
+import VesselFilterControls from './VesselFilterControls';
+import { attentionFilterGroup, emptyVesselFilterState, matchesVesselFilterGroups, shipTypeFilterOptions, supervisorIdsForVessel, vesselSupervisorOptions } from './vesselDashboardFilters';
 
 const PRIORITY_RANK = { 急: 0, 高: 1, 中: 2, 低: 3 } as const;
 const WEEKLY_ATTENTION_OPTIONS: Array<{ key: WeeklyAttentionKey; label: string }> = [
@@ -26,6 +27,7 @@ const WEEKLY_ATTENTION_OPTIONS: Array<{ key: WeeklyAttentionKey; label: string }
 
 interface DashboardProps {
   user: UserAccount;
+  users: UserAccount[];
   vessels: Vessel[];
   tasks: TaskItem[];
   internalControlCases: InternalControlCase[];
@@ -49,8 +51,8 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, vessels, tasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
-  const [fleetFilter, setFleetFilter] = useState('all');
+export default function Dashboard({ user, users, vessels, tasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+  const [vesselFilters, setVesselFilters] = useState(emptyVesselFilterState);
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
   const scheduleKinds: ScheduleKind[] = ['ETA','ETB','ETD'];
@@ -58,13 +60,24 @@ export default function Dashboard({ user, vessels, tasks, internalControlCases, 
 
   const abnormalMeetingsForVessel = (vesselId: string) => meetings.filter(meeting => meetingCreatesVesselAbnormalAlert(meeting, vesselId));
 
+  const filterFactsByVessel = new Map(vessels.map(vessel => {
+    const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task, vessel.id));
+    const attention = deriveVesselAttention(vessel, vesselAttentionTasks(vesselTasks), abnormalMeetingsForVessel(vessel.id).length > 0, internalControlCases).effective;
+    return [vessel.id, {
+      id: vessel.id,
+      selfManaged: userCanManageVesselByAssignmentOrDelegation(vessel, user),
+      shipType: vessel.shipType.trim(),
+      attentionGroup: attentionFilterGroup(attention),
+      selectedForMeeting: selected.includes(vessel.id),
+      supervisorIds: supervisorIdsForVessel(vessel, users),
+    }] as const;
+  }));
+  const shipTypes = shipTypeFilterOptions(vessels);
+  const supervisors = vesselSupervisorOptions(vessels, users);
+
   const visible = vessels.filter(vessel => {
-    const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
-    const hasMeetingAbnormal = abnormalMeetingsForVessel(vessel.id).length > 0;
-    if (fleetFilter === 'selected' && !selected.includes(vessel.id)) return false;
-    if (fleetFilter === 'high' && !['高', '急', '特別關注'].includes(deriveVesselAttention(vessel, vesselAttentionTasks(vesselTasks), hasMeetingAbnormal, internalControlCases).effective)) return false;
-    if (fleetFilter === 'mine' && !vessel.assignedUserIds.includes(user.id) && !user.managedVesselIds.includes(vessel.id) && !hasActiveVesselDelegation(vessel, user.id)) return false;
-    if (!['all', 'selected', 'high', 'mine'].includes(fleetFilter) && !vessel.fleetCategory.toLowerCase().includes(fleetFilter)) return false;
+    const filterFacts = filterFactsByVessel.get(vessel.id);
+    if (!filterFacts || !matchesVesselFilterGroups(filterFacts, vesselFilters)) return false;
     const query = keyword.trim().toLowerCase();
     return !query || [
       vessel.shortName,
@@ -105,9 +118,7 @@ export default function Dashboard({ user, vessels, tasks, internalControlCases, 
     </div>
     <div className="dashboard-toolbar no-print">
       <input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
-      {[
-        ['all', '全部'], ['mine', '自管船舶'], ['tanker', '油輪'], ['bulk', '散貨'], ['high', '急／高關注'], ...(canUseMeetings ? [['selected', '選入會議']] : []),
-      ].map(([key, label]) => <button key={key} aria-pressed={fleetFilter === key} className={`filter-pill ${key === 'mine' ? 'filter-pill-mine' : key === 'high' ? 'filter-pill-high' : ''} ${fleetFilter === key ? 'active' : ''}`} onClick={() => setFleetFilter(current => toggleDashboardFilter(current, key))}>{label}</button>)}
+      <VesselFilterControls filters={vesselFilters} shipTypes={shipTypes} supervisors={supervisors} onChange={setVesselFilters} showMeeting={canUseMeetings}/>
     </div>
     <div className="fleet-card-grid">{visible.map(vessel => {
       const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
@@ -128,6 +139,10 @@ export default function Dashboard({ user, vessels, tasks, internalControlCases, 
       const sortedTasks = [...summaryTasks].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || Number(b.isAbnormal) - Number(a.isAbnormal));
       const highest = vesselAttentionLabel(attentionResult, attentionTasks);
       const selectedForMeeting = selected.includes(vessel.id);
+      const statusSupplement = [
+        vessel.note.statusList.map(status => status === 'drydock/repiar' ? 'drydock/repair' : status).join('、'),
+        vessel.note.statusSupplement.trim(),
+      ].filter(Boolean).join('｜') || '未設定';
       return <article key={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
         <div className="ship-card-head">
           <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${dashboardVesselDisplayName(vessel)} 單船詳情`}>{dashboardVesselDisplayName(vessel)}</button><small>{vessel.shipType}</small></div>
@@ -138,9 +153,9 @@ export default function Dashboard({ user, vessels, tasks, internalControlCases, 
           <div className="ship-position"><small>位置</small><b>{vessel.position.location || '未設定'}</b></div>
           <div className="ship-navigation"><small>航行狀態</small><b>{vessel.position.navigationStatus === '航行' ? `${vessel.position.speedKnots || 0} kn` : vessel.position.navigationStatus}</b></div>
           <button type="button" className="ship-schedule" onClick={() => cycleSchedule(vessel.id)} title="點擊循環顯示 ETA／ETB／ETD"><b>{scheduleKind}</b><span>{scheduleValue}</span></button>
-          <div className="ship-status"><small>船舶狀態</small><b>{vessel.note.statusList.join('、') || '未設定'}</b></div>
+          <div className="ship-status"><small>狀態補充</small><b>{statusSupplement}</b></div>
           <div className="ship-load"><small>載況</small><b>{vessel.cargo.loadStatus}</b></div>
-          <div className="ship-cargo"><small>貨名貨量</small>{vessel.cargo.items.length ? vessel.cargo.items.map((item, index) => <span key={`${item.name}-${index}`}><b>{item.name || '未填貨名'}</b>{item.quantity && ` ${item.quantity}`}</span>) : <span>TBA</span>}</div>
+          <div className="ship-cargo"><small>貨名貨量：</small><div className="ship-cargo-items">{vessel.cargo.items.length ? vessel.cargo.items.map((item, index) => <span key={`${item.name}-${index}`}><b>{item.name || '未填貨名'}</b>{item.quantity && <em>{item.quantity}</em>}</span>) : <span>TBA</span>}</div></div>
         </div>
         <div className="weekly-attention no-print" aria-label="未來一週關注事項">{WEEKLY_ATTENTION_OPTIONS.map(option => {
           const active = vessel.weeklyAttention.includes(option.key);

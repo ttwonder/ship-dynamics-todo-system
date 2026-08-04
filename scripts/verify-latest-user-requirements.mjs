@@ -82,7 +82,7 @@ try {
   const normalizeSource = fs.readFileSync('src/normalize.ts','utf8');
   const cloudSource = fs.readFileSync('src/cloud.ts','utf8');
   const attentionSource = fs.readFileSync('src/vesselAttention.ts','utf8');
-  assert.ok(dashboard.includes('船舶狀態') && dashboard.includes('vessel.note.statusList'), '看板載況旁必須顯示船舶狀態');
+  assert.ok(dashboard.includes('狀態補充') && dashboard.includes('vessel.note.statusList') && dashboard.includes('vessel.note.statusSupplement'), '看板載況旁必須以「狀態補充」同時顯示固定狀態與自由補充');
   assert.ok(editor.includes('categoryChoicesForTask') && editor.includes('draft.categories'), '新增要事／臨會待辦分類必須依來源使用各自分類並可多選');
   assert.ok(editor.includes("if (creating && !draft.vesselId) return alert('請選擇船舶')"), '新增要事的船舶必須由保存 handler 验证');
   assert.ok(editor.includes("if (creating && !draft.priority) return alert('請選擇關注程度')"), '新增要事的关注程度必须由保存 handler 验证');

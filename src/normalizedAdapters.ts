@@ -68,6 +68,11 @@ export function vesselCargoCommandValue(vessel: Vessel): JsonObject {
 export function vesselNoteCommandValue(vessel: Vessel): JsonObject {
   return {
     statusList: vessel.note.statusList,
+    statusSupplement: vessel.note.statusSupplement,
+    captain: vessel.note.captain,
+    chiefOfficer: vessel.note.chiefOfficer,
+    chiefEngineer: vessel.note.chiefEngineer,
+    firstEngineer: vessel.note.firstEngineer,
     recentDynamics: vessel.note.recentDynamics,
     subsequentDynamics: vessel.note.subsequentDynamics,
   };

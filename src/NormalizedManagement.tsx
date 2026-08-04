@@ -108,6 +108,11 @@ function newVesselDraft(): Vessel {
     },
     note: {
       statusList: [],
+      statusSupplement: '',
+      captain: '',
+      chiefOfficer: '',
+      chiefEngineer: '',
+      firstEngineer: '',
       recentDynamics: '',
       subsequentDynamics: '',
       updatedAt: timestamp,

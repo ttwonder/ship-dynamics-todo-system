@@ -3,19 +3,18 @@ import fs from 'node:fs';
 import { createServer } from 'vite';
 
 const dashboard=fs.readFileSync('src/Dashboard.tsx','utf8');
+const controls=fs.readFileSync('src/VesselFilterControls.tsx','utf8');
 
 const server=await createServer({ root:process.cwd(), server:{ middlewareMode:true }, appType:'custom', logLevel:'silent' });
 try {
-  const module=await server.ssrLoadModule('/src/dashboardFilters.ts');
-  const toggle=module.toggleDashboardFilter;
-  assert.equal(toggle('bulk','bulk'),'all','再次点击散货必须取消选中');
-  assert.equal(toggle('tanker','tanker'),'all','再次点击油轮必须取消选中');
-  assert.equal(toggle('mine','mine'),'all','再次点击自管船舶必须取消选中');
-  assert.equal(toggle('high','high'),'all','再次点击急／高关注必须取消选中');
-  assert.equal(toggle('selected','selected'),'all','再次点击选入会议必须取消选中');
-  assert.equal(toggle('bulk','high'),'high','点击其他筛选必须切换到该筛选');
-  assert.equal(toggle('all','all'),'all','全部是清除筛选状态，不可切成空白结果');
-  assert.match(dashboard,/toggleDashboardFilter\(current, key\)/,'看板按钮必须调用统一切换逻辑');
-  assert.match(dashboard,/aria-pressed=\{fleetFilter === key\}/,'按钮必须暴露选中语义');
-  console.log('Dashboard filter toggle contracts passed.');
+  const module=await server.ssrLoadModule('/src/vesselDashboardFilters.ts');
+  const toggle=module.toggleFilterValue;
+  assert.deepEqual(toggle([], '超油'), ['超油'], '第一次點擊船型必須選中');
+  assert.deepEqual(toggle(['兩岸油化','超油'], '超油'), ['兩岸油化'], '再次點擊已選船型必須取消');
+  assert.deepEqual(toggle(['兩岸油化'], '超油'), ['兩岸油化','超油'], '點擊其他同類船型必須保留原選項並加入多選');
+  assert.match(dashboard,/VesselFilterControls/,'看板必須使用共同多選篩選控制');
+  assert.match(controls,/aria-pressed=\{filters\.selfManagedOnly\}/,'自管船舶按鈕必須暴露選中語義');
+  assert.match(controls,/aria-pressed=\{filters\.shipTypes\.includes\(shipType\)\}/,'船型按鈕必須暴露各自選中語義');
+  assert.match(controls,/onClick=\{\(\) => onChange\(emptyVesselFilterState\(\)\)\}/,'全部必須清除所有分組篩選');
+  console.log('Dashboard multi-filter toggle contracts passed.');
 } finally { await server.close(); }

@@ -357,6 +357,11 @@ export function normalizeAppData(value: unknown): AppData | null {
         },
         note: {
           statusList: Array.from(new Set(strings(note.statusList).map(normalizeShipStatus).filter((entry): entry is ShipStatus => Boolean(entry)))),
+          statusSupplement: text(note.statusSupplement),
+          captain: text(note.captain),
+          chiefOfficer: text(note.chiefOfficer),
+          chiefEngineer: text(note.chiefEngineer),
+          firstEngineer: text(note.firstEngineer),
           recentDynamics,
           subsequentDynamics: '',
           updatedAt: text(note.updatedAt, timestamp),
