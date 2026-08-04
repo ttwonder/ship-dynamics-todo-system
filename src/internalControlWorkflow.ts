@@ -10,6 +10,7 @@ import type {
 } from './types';
 import { hasActiveVesselDelegation } from './vesselDelegation';
 import { richTextToPlainText } from './richText';
+import { supervisorIdsForVessel } from './vesselDashboardFilters';
 
 export const INTERNAL_CONTROL_REPORT_SOURCES: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 
@@ -88,6 +89,8 @@ export const emptyInternalControlFilters = (vesselIds: string[] = []): InternalC
   departments: [],
   reportSources: [],
   equipmentSubcategories: [],
+  supervisorIds: [],
+  syncMode: 'all',
   fromDate: '',
   toDate: '',
   awareMode: 'all',
@@ -100,6 +103,7 @@ export function filterInternalControlCases(
   cases: InternalControlCase[],
   vessels: InternalControlVessel[],
   filters: InternalControlFilters,
+  users: UserAccount[] = [],
 ): InternalControlCase[] {
   const vesselMap = new Map(vessels.map(vessel => [vessel.id, vessel]));
   const keyword = filters.keyword.trim().toLocaleLowerCase();
@@ -113,6 +117,9 @@ export function filterInternalControlCases(
     if (!intersects(filters.departments, item.departments)) return false;
     if (filters.reportSources.length && !filters.reportSources.includes(item.reportSource)) return false;
     if (filters.equipmentSubcategories?.length && (!item.equipmentSubcategory || !filters.equipmentSubcategories.includes(item.equipmentSubcategory))) return false;
+    if (filters.supervisorIds?.length && !intersects(filters.supervisorIds, supervisorIdsForVessel(vessel, users))) return false;
+    if (filters.syncMode === 'synced' && !item.linkedTaskId) return false;
+    if (filters.syncMode === 'not-synced' && item.linkedTaskId) return false;
     if (filters.awareMode === 'aware' && !item.isAware) return false;
     if (filters.awareMode === 'not-aware' && item.isAware) return false;
     if (filters.closureMode === 'open' && item.isClosed) return false;

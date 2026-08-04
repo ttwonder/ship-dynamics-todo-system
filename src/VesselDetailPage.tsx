@@ -16,6 +16,7 @@ const attentionLabels: Record<string, string> = {
   maintenance: '維修', survey: 'Survey', 'audit-inspection': '稽核檢查', 'psc-window': 'PSC窗開',
 };
 const value = (text?: string | number) => text === '' || text === undefined || text === null ? '未設定' : String(text);
+const officerValue = (text?: string) => text?.trim() || '-';
 const sourceLabel = (source: string) => source === 'manual' ? '人工更新' : source === 'smart-ship-api' ? '智慧船舶 API' : '模擬智慧船舶資料';
 const dateTime = (text?: string) => text ? text.replace('T', ' ').slice(0, 16) : '未設定';
 const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
@@ -78,6 +79,8 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
         <div><dt>完整船名</dt><dd>{value(vessel.fullName)}</dd></div><div><dt>船種</dt><dd>{value(vessel.shipType)}</dd></div>
         <div><dt>船隊類別</dt><dd>{value(vessel.fleetCategory)}</dd></div><div><dt>船隊標籤</dt><dd>{vessel.fleetTags.join('、') || '未設定'}</dd></div>
         <div><dt>啟用狀態</dt><dd>{vessel.isActive ? '啟用' : '停用'}</dd></div><div><dt>經管人員</dt><dd>{assignedNames.join('、') || '未指派'}</dd></div>
+        <div><dt>船長</dt><dd>{officerValue(vessel.note.captain)}</dd></div><div><dt>大副</dt><dd>{officerValue(vessel.note.chiefOfficer)}</dd></div>
+        <div><dt>輪機長</dt><dd>{officerValue(vessel.note.chiefEngineer)}</dd></div><div><dt>大管輪</dt><dd>{officerValue(vessel.note.firstEngineer)}</dd></div>
         <div><dt>建立時間</dt><dd>{dateTime(vessel.createdAt)}</dd></div><div><dt>最後更新</dt><dd>{dateTime(vessel.updatedAt)}</dd></div>
       </dl></section>
       <section className="panel vessel-info-panel"><h2>航行與港口</h2><dl>

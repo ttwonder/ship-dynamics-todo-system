@@ -108,7 +108,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
   const openTasks = data.tasks.filter(task => appearsInSingleVesselTasks(task) && taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="vessel-edit-title"><div className="modal-header"><div><h2 id="vessel-edit-title">快速更新｜{vesselDisplayName(vessel)}</h2><small>修改後立即保存；按 Esc 可關閉</small></div><button className="btn ghost" onClick={close}>完成並關閉</button></div>
     <div className="smart-ship-api-note"><b>智慧船舶接口預留</b><span>上下港、位置、速度／航行狀態、載況、ETA／ETB／ETD 與貨名貨量日後可自動同步；目前欄位同時支援手動修改，手動值會正常保存。</span></div>
-    <div className="grid cols-4">
+    <div className="grid cols-4 vessel-operational-grid">
       <div className="field"><label>目前位置</label><input value={vessel.position.location} onChange={event => { const value = event.target.value; update(target => { target.position.location = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改目前位置'); }}/></div>
       <div className="field"><label>上一港</label><input value={vessel.position.lastPort} onChange={event => { const value = event.target.value; update(target => { target.position.lastPort = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改上一港'); }}/></div>
       <div className="field"><label>下一港</label><input value={vessel.position.nextPort} onChange={event => { const value = event.target.value; update(target => { target.position.nextPort = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改下一港'); }}/></div>
@@ -118,20 +118,27 @@ export function VesselEditModal({ vessel, data, currentUser, close, commit, addT
       <ScheduleDateTimeField label="ETA" value={vessel.position.eta} onChange={value => update(target => { target.position.eta = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETA')}/>
       <ScheduleDateTimeField label="ETB" value={vessel.position.etb} onChange={value => update(target => { target.position.etb = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETB')}/>
       <ScheduleDateTimeField label="ETD" value={vessel.position.etd} onChange={value => update(target => { target.position.etd = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改 ETD')}/>
-      <div className="field span-2"><label>多筆貨名／貨量</label><textarea value={cargoLines(vessel.cargo.items)} placeholder={'每行一筆，例如：\n原油｜28,000 MT\n柴油｜5,000 MT'} onChange={event => { const items = parseCargoLines(event.target.value); update(target => { target.cargo.items = items; target.cargo.name = items[0]?.name || ''; target.cargo.quantity = items[0]?.quantity || ''; target.cargo.source = 'manual'; target.cargo.updatedAt = nowIso(); }, `修改貨名貨量：${items.length} 筆`); }}/></div>
-      <div className="field"><label>人工備註</label><input value={vessel.position.manualRemark} onChange={event => { const value = event.target.value; update(target => { target.position.manualRemark = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改人工動態備註'); }}/></div>
-      <div className="field span-2"><label>近期／後續動態</label><textarea value={vessel.note.recentDynamics} onChange={event => { const value = event.target.value; update(target => { target.note.recentDynamics = value; target.note.subsequentDynamics = ''; target.note.updatedAt = nowIso(); }, '修改近期／後續動態'); }}/></div>
     </div>
-    <div className="vessel-status-edit-grid">
-      <CheckboxMultiPicker label="船舶狀態" values={vessel.note.statusList} choices={data.settings.vesselStatuses.map(status => ({ value: status, label: status === 'drydock/repiar' ? 'drydock/repair' : status }))} onChange={values => update(target => { target.note.statusList = values as ShipStatus[]; target.note.updatedAt = nowIso(); }, `修改船舶狀態：${values.join('、') || '無'}`)}/>
-      <div className="field vessel-status-supplement"><label>船舶作業／動態補充</label><textarea value={vessel.note.statusSupplement} placeholder="可自由輸入；可與上方快捷狀態同時使用，也可全部留空" onChange={event => { const value = event.target.value; update(target => { target.note.statusSupplement = value; target.note.updatedAt = nowIso(); }, '修改船舶作業／動態補充'); }}/></div>
+    <div className="grid cols-2 vessel-cargo-note-grid">
+      <div className="field vessel-cargo-field"><label>多筆貨名／貨量</label><textarea value={cargoLines(vessel.cargo.items)} placeholder={'每行一筆，例如：\n原油｜28,000 MT\n柴油｜5,000 MT'} onChange={event => { const items = parseCargoLines(event.target.value); update(target => { target.cargo.items = items; target.cargo.name = items[0]?.name || ''; target.cargo.quantity = items[0]?.quantity || ''; target.cargo.source = 'manual'; target.cargo.updatedAt = nowIso(); }, `修改貨名貨量：${items.length} 筆`); }}/></div>
+      <div className="field vessel-manual-remark"><label>人工備註</label><textarea value={vessel.position.manualRemark} onChange={event => { const value = event.target.value; update(target => { target.position.manualRemark = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }, '修改人工動態備註'); }}/></div>
     </div>
-    <div className="grid cols-4 vessel-officer-grid">
-      <div className="field"><label>船長</label><input value={vessel.note.captain} onChange={event => { const value = event.target.value; update(target => { target.note.captain = value; target.note.updatedAt = nowIso(); }, '修改船長姓名'); }}/></div>
-      <div className="field"><label>大副</label><input value={vessel.note.chiefOfficer} onChange={event => { const value = event.target.value; update(target => { target.note.chiefOfficer = value; target.note.updatedAt = nowIso(); }, '修改大副姓名'); }}/></div>
-      <div className="field"><label>輪機長</label><input value={vessel.note.chiefEngineer} onChange={event => { const value = event.target.value; update(target => { target.note.chiefEngineer = value; target.note.updatedAt = nowIso(); }, '修改輪機長姓名'); }}/></div>
-      <div className="field"><label>大管輪</label><input value={vessel.note.firstEngineer} onChange={event => { const value = event.target.value; update(target => { target.note.firstEngineer = value; target.note.updatedAt = nowIso(); }, '修改大管輪姓名'); }}/></div>
+    <div className="grid cols-2 vessel-followup-officer-layout">
+      <div className="field vessel-dynamics-field"><label>近期／後續動態</label><textarea value={vessel.note.recentDynamics} onChange={event => { const value = event.target.value; update(target => { target.note.recentDynamics = value; target.note.subsequentDynamics = ''; target.note.updatedAt = nowIso(); }, '修改近期／後續動態'); }}/></div>
+      <div className="vessel-officer-grid">
+        <div className="field"><label>船長</label><input value={vessel.note.captain} onChange={event => { const value = event.target.value; update(target => { target.note.captain = value; target.note.updatedAt = nowIso(); }, '修改船長姓名'); }}/></div>
+        <div className="field"><label>大副</label><input value={vessel.note.chiefOfficer} onChange={event => { const value = event.target.value; update(target => { target.note.chiefOfficer = value; target.note.updatedAt = nowIso(); }, '修改大副姓名'); }}/></div>
+        <div className="field"><label>輪機長</label><input value={vessel.note.chiefEngineer} onChange={event => { const value = event.target.value; update(target => { target.note.chiefEngineer = value; target.note.updatedAt = nowIso(); }, '修改輪機長姓名'); }}/></div>
+        <div className="field"><label>大管輪</label><input value={vessel.note.firstEngineer} onChange={event => { const value = event.target.value; update(target => { target.note.firstEngineer = value; target.note.updatedAt = nowIso(); }, '修改大管輪姓名'); }}/></div>
+      </div>
     </div>
+    <section className="vessel-dynamics-section">
+      <div className="vessel-dynamics-section-title"><h3>船舶動態</h3><span>快捷狀態與自由補充可分別使用</span></div>
+      <div className="vessel-status-edit-grid">
+        <CheckboxMultiPicker label="船舶狀態" values={vessel.note.statusList} choices={data.settings.vesselStatuses.map(status => ({ value: status, label: status === 'drydock/repiar' ? 'drydock/repair' : status }))} onChange={values => update(target => { target.note.statusList = values as ShipStatus[]; target.note.updatedAt = nowIso(); }, `修改船舶狀態：${values.join('、') || '無'}`)}/>
+        <div className="field vessel-status-supplement"><label>船舶作業／動態補充</label><textarea value={vessel.note.statusSupplement} placeholder="可自由輸入；可與快捷狀態同時使用，也可全部留空" onChange={event => { const value = event.target.value; update(target => { target.note.statusSupplement = value; target.note.updatedAt = nowIso(); }, '修改船舶作業／動態補充'); }}/></div>
+      </div>
+    </section>
     <section className="modal-task-section"><div className="panel-title"><h3>未結要事 <span className="muted">({openTasks.length})</span></h3><button className="btn primary small" onClick={() => addTask(vessel.id)}>＋ 新增要事</button></div>{openTasks.length ? openTasks.map(task => <button key={task.id} className="modal-task-row" onClick={() => editTask(task.id)}><span className={`badge ${priorityBadgeClass(task.priority)}`}>{task.priority}</span><b>{task.isAbnormal && <span className="inline-abnormal">異常</span>}{richTextToPlainText(task.description) || '尚未輸入要事內容'}</b><small>{richTextToPlainText(task.status) || '尚未更新狀態'}｜期限 {task.expectedDate || '未設定'}</small></button>) : <div className="empty-state compact">目前沒有未結要事</div>}</section>
   </div></div>;
 }

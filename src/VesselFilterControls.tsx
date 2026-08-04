@@ -17,7 +17,7 @@ export default function VesselFilterControls({ filters, shipTypes, supervisors, 
   const selectedSupervisors = supervisors.filter(option => filters.supervisorIds.includes(option.id));
   const normalizedSupervisorQuery = supervisorQuery.trim().toLocaleLowerCase();
   const visibleSupervisors = normalizedSupervisorQuery
-    ? supervisors.filter(option => `${option.name} ${option.department}`.toLocaleLowerCase().includes(normalizedSupervisorQuery))
+    ? supervisors.filter(option => option.name.toLocaleLowerCase().includes(normalizedSupervisorQuery))
     : supervisors;
   const supervisorSummary = selectedSupervisors.length
     ? selectedSupervisors.map(option => option.name).join('、')
@@ -29,10 +29,10 @@ export default function VesselFilterControls({ filters, shipTypes, supervisors, 
       <summary><span>督導姓名</span><b>{supervisorSummary}</b><i aria-hidden="true">⌄</i></summary>
       <div className="vessel-supervisor-menu">
         <div className="vessel-supervisor-heading"><span>可多選督導</span>{filters.supervisorIds.length > 0 && <button type="button" className="btn small ghost" onClick={() => onChange({ ...filters, supervisorIds: [] })}>清空</button>}</div>
-        <input className="vessel-supervisor-search" type="search" value={supervisorQuery} onChange={event => setSupervisorQuery(event.target.value)} placeholder="搜尋督導姓名或部門..." aria-label="搜尋督導姓名"/>
+        <input className="vessel-supervisor-search" type="search" value={supervisorQuery} onChange={event => setSupervisorQuery(event.target.value)} placeholder="搜尋督導姓名..." aria-label="搜尋督導姓名"/>
         <div className="vessel-supervisor-options">{visibleSupervisors.length ? visibleSupervisors.map(option => {
           const checked = filters.supervisorIds.includes(option.id);
-          return <label key={option.id} className={checked ? 'selected' : ''}><input type="checkbox" checked={checked} onChange={() => onChange({ ...filters, supervisorIds: toggleFilterValue(filters.supervisorIds, option.id) })}/><span><b>{option.name}</b><small>{option.department || '未指定部門'}</small></span></label>;
+          return <label key={option.id} className={checked ? 'selected' : ''}><input type="checkbox" checked={checked} onChange={() => onChange({ ...filters, supervisorIds: toggleFilterValue(filters.supervisorIds, option.id) })}/><span className="vessel-supervisor-option-name">{option.name}</span></label>;
         }) : <span className="vessel-supervisor-empty">{normalizedSupervisorQuery ? '沒有符合的督導' : '目前沒有督導分管資料'}</span>}</div>
       </div>
     </details>}

@@ -290,6 +290,8 @@ export interface InternalControlFilters {
   departments: string[];
   reportSources: InternalControlReportSource[];
   equipmentSubcategories: string[];
+  supervisorIds: string[];
+  syncMode: 'all' | 'synced' | 'not-synced';
   fromDate: string;
   toDate: string;
   awareMode: 'all' | 'aware' | 'not-aware';

@@ -139,13 +139,15 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       const sortedTasks = [...summaryTasks].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || Number(b.isAbnormal) - Number(a.isAbnormal));
       const highest = vesselAttentionLabel(attentionResult, attentionTasks);
       const selectedForMeeting = selected.includes(vessel.id);
+      const assignedSupervisorIds = new Set(supervisorIdsForVessel(vessel, users));
+      const supervisorNames = supervisors.filter(option => assignedSupervisorIds.has(option.id)).map(option => option.name);
       const statusSupplement = [
         vessel.note.statusList.map(status => status === 'drydock/repiar' ? 'drydock/repair' : status).join('、'),
         vessel.note.statusSupplement.trim(),
       ].filter(Boolean).join('｜') || '未設定';
       return <article key={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
         <div className="ship-card-head">
-          <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${dashboardVesselDisplayName(vessel)} 單船詳情`}>{dashboardVesselDisplayName(vessel)}</button><small>{vessel.shipType}</small></div>
+          <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${dashboardVesselDisplayName(vessel)} 單船詳情`}>{dashboardVesselDisplayName(vessel)}</button><div className="ship-type-supervisor"><span>{vessel.shipType || '-'}</span><i aria-hidden="true">｜</i><span>{supervisorNames.join('、') || '-'}</span></div></div>
           <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<button type="button" disabled={!canEdit} className={`priority-pill attention-adjust ${level}`} title={canEdit?'點擊切換自動或不低於目前自動下限的手動關注度':'目前關注度'} onClick={()=>onAdjustAttention(vessel.id)}>{highest}</button></div>
         </div>
         <div className="ship-operation-grid">

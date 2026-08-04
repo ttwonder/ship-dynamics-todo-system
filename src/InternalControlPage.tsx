@@ -14,6 +14,7 @@ import PaginationControls from './PaginationControls';
 import { BatchCreateModal, CaseEditModal } from './InternalControlModals';
 import type { InternalControlTaskProjection } from './internalControlData';
 import { internalControlEditLockKey } from './exclusiveItemEditLock';
+import { vesselSupervisorOptions } from './vesselDashboardFilters';
 
 const REPORT_SOURCES: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 type Subpage = 'open' | 'closed' | 'stats';
@@ -40,7 +41,7 @@ type Props = {
 };
 
 const emptyFilters = (vesselIds: string[]): InternalControlFilters => ({
-  keyword: '', vesselIds, shipTypes: [], priorities: [], categories: [], departments: [], reportSources: [], equipmentSubcategories: [], fromDate: '', toDate: '', awareMode: 'all', closureMode: 'all',
+  keyword: '', vesselIds, shipTypes: [], priorities: [], categories: [], departments: [], reportSources: [], equipmentSubcategories: [], supervisorIds: [], syncMode: 'all', fromDate: '', toDate: '', awareMode: 'all', closureMode: 'all',
 });
 
 function MultiFilter({ label, options, selected, onChange }: { label: string; options: MultiOption[]; selected: string[]; onChange: (values: string[]) => void }) {
@@ -64,7 +65,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const scopedCases = data.internalControlCases.filter(item => visibleVesselIds.has(item.vesselId));
   const activeClosure: InternalControlFilters['closureMode'] = subpage === 'open' ? 'open' : subpage === 'closed' ? 'closed' : 'all';
   const effectiveFilters = { ...filters, closureMode: activeClosure };
-  const filtered = filterInternalControlCases(scopedCases, vessels, effectiveFilters);
+  const filtered = filterInternalControlCases(scopedCases, vessels, effectiveFilters, data.users);
   const paged = paginateItems(filtered, page, 30);
   const stats = buildInternalControlStats(filtered, vessels);
   const visibleEditing=Boolean(editing&&editorAuthorizationEpoch===authorizationEpoch&&scopedCases.some(item=>item.id===editing.id));
@@ -87,6 +88,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const categories = unique([...data.settings.taskCategories, ...scopedCases.map(item => item.category), '設備故障']);
   const departments = unique([...data.settings.departments, ...scopedCases.flatMap(item => item.departments)]);
   const vesselOptions = vessels.map(vessel => ({ value: vessel.id, label: vesselDisplayName(vessel) }));
+  const supervisorOptions = vesselSupervisorOptions(vessels, data.users).map(option => ({ value: option.id, label: option.name }));
   const setFilter = <K extends keyof InternalControlFilters>(key: K, value: InternalControlFilters[K]) => setFilters(previous => ({ ...previous, [key]: value }));
   const reset = () => setFilters(emptyFilters(defaultInternalControlVesselIds(user, vessels)));
   const selfManaged = () => setFilter('vesselIds', managedInternalControlVesselIds(user, vessels));
@@ -122,10 +124,27 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
     <section className="panel ic-filter-panel no-print">
       <div className="panel-title"><h2>篩選條件 <span className="muted">目前 {filtered.length} 件</span></h2><div><button className="btn small ghost" onClick={selfManaged}>經管船舶</button><button className="btn small ghost" onClick={reset}>重設（全部經管船）</button></div></div>
       <div className="ic-filter-primary"><input aria-label="內控異常關鍵字" value={filters.keyword} onChange={event => setFilter('keyword', event.target.value)} placeholder="搜尋事項、狀態、船舶、分類、部門…"/><label>報告日期起<input type="date" value={filters.fromDate} onChange={event => setFilter('fromDate', event.target.value)}/></label><label>報告日期迄<input type="date" value={filters.toDate} onChange={event => setFilter('toDate', event.target.value)}/></label><label>知曉事項<select value={filters.awareMode} onChange={event => setFilter('awareMode', event.target.value as InternalControlFilters['awareMode'])}><option value="all">不限</option><option value="aware">是</option><option value="not-aware">否</option></select></label></div>
-      <div className="ic-filter-grid"><MultiFilter label="船舶名稱" options={vesselOptions} selected={filters.vesselIds} onChange={value => setFilter('vesselIds', value)}/><MultiFilter label="船舶類型" options={optionList(shipTypes)} selected={filters.shipTypes} onChange={value => setFilter('shipTypes', value)}/><MultiFilter label="重要程度" options={optionList(data.settings.priorities)} selected={filters.priorities} onChange={value => setFilter('priorities', value as TaskPriority[])}/><MultiFilter label="事項分類" options={optionList(categories)} selected={filters.categories} onChange={value => setFilter('categories', value)}/><MultiFilter label="涉及部門" options={optionList(departments)} selected={filters.departments} onChange={value => setFilter('departments', value)}/><MultiFilter label="報告來源" options={optionList(REPORT_SOURCES)} selected={filters.reportSources} onChange={value => setFilter('reportSources', value as InternalControlReportSource[])}/><MultiFilter label="設備故障細項" options={optionList(data.settings.equipmentFailureSubcategories)} selected={filters.equipmentSubcategories} onChange={value => setFilter('equipmentSubcategories', value)}/></div>
+      <div className="ic-filter-grid"><MultiFilter label="船舶名稱" options={vesselOptions} selected={filters.vesselIds} onChange={value => setFilter('vesselIds', value)}/><MultiFilter label="船舶類型" options={optionList(shipTypes)} selected={filters.shipTypes} onChange={value => setFilter('shipTypes', value)}/><MultiFilter label="重要程度" options={optionList(data.settings.priorities)} selected={filters.priorities} onChange={value => setFilter('priorities', value as TaskPriority[])}/><MultiFilter label="事項分類" options={optionList(categories)} selected={filters.categories} onChange={value => setFilter('categories', value)}/><MultiFilter label="涉及部門" options={optionList(departments)} selected={filters.departments} onChange={value => setFilter('departments', value)}/><MultiFilter label="報告來源" options={optionList(REPORT_SOURCES)} selected={filters.reportSources} onChange={value => setFilter('reportSources', value as InternalControlReportSource[])}/><MultiFilter label="設備故障細項" options={optionList(data.settings.equipmentFailureSubcategories)} selected={filters.equipmentSubcategories} onChange={value => setFilter('equipmentSubcategories', value)}/><MultiFilter label="經管督導" options={supervisorOptions} selected={filters.supervisorIds} onChange={value => setFilter('supervisorIds', value)}/><label className="ic-filter-group ic-filter-select"><span>是否和要事同步</span><select aria-label="是否和要事同步" value={filters.syncMode} onChange={event => setFilter('syncMode', event.target.value as InternalControlFilters['syncMode'])}><option value="all">不限</option><option value="synced">已同步要事</option><option value="not-synced">未同步要事</option></select></label></div>
     </section>
 
-    {subpage !== 'stats' ? <section className="panel ic-list-panel"><div className="table-wrap"><table className="compact ic-table"><thead><tr><th>船舶／日期</th><th>來源</th><th>關注</th><th>事項內容</th><th>分類／部門</th><th>最新狀態</th><th>{subpage === 'closed' ? '結案' : '同步'}</th><th className="no-print">操作</th></tr></thead><tbody>{paged.items.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td><b>{vessel ? vesselDisplayName(vessel) : item.vesselId}</b><small>{vessel?.shipType || '未填船型'}｜{item.reportDate}</small></td><td>{item.reportSource}{item.isAware && <small>知曉事項</small>}</td><td><span className={`priority-pill ${priorityClass(item.priority)}`}>{item.priority}</span></td><td><b>{richTextToPlainText(item.description)}</b></td><td>{item.category}{item.equipmentSubcategory && <small>{item.equipmentSubcategory}</small>}<small>{item.departments.join('、') || '未指定部門'}</small></td><td>{richTextToPlainText(item.status) || '尚未更新'}<small>更新 {item.updatedAt.slice(0, 10)}</small></td><td>{item.isClosed ? <><b>已結案</b><small>{item.closedDate || '-'}</small></> : item.linkedTaskId ? <><b>已同步要事</b><small>{item.linkedTaskId}</small></> : '僅內控'}</td><td className="no-print"><div className="table-actions"><button className="btn small primary" onClick={() => void openCase(item)}>{canEdit ? '更新' : '查看'}</button>{item.linkedTaskId && <button className="btn small ghost" onClick={() => onOpenTask(item.linkedTaskId!)}>要事</button>}</div></td></tr>; })}</tbody></table></div>{!filtered.length && <div className="empty-state">目前篩選條件沒有案件</div>}<PaginationControls page={paged.page} pageCount={paged.pageCount} total={paged.total} from={paged.from} to={paged.to} onPageChange={setPage} ariaLabel="內控異常分頁"/></section> : <InternalControlStatsView stats={stats}/>}
+    {subpage !== 'stats' ? <section className="panel ic-list-panel">
+      <div className="table-wrap"><table className="compact ic-table"><thead><tr>
+        <th>船舶／日期</th><th>來源</th><th>關注</th><th className="ic-description-column">事項內容</th><th>分類／部門</th><th className="ic-status-column">最新狀態</th>{subpage === 'closed' ? <th className="ic-closure-column">結案</th> : <th className="ic-sync-column">同步</th>}<th className="no-print">操作</th>
+      </tr></thead><tbody>{paged.items.map(item => {
+        const vessel = vessels.find(entry => entry.id === item.vesselId);
+        return <tr key={item.id}>
+          <td><b>{vessel ? vesselDisplayName(vessel) : item.vesselId}</b><small>{vessel?.shipType || '未填船型'}｜{item.reportDate}</small></td>
+          <td>{item.reportSource}{item.isAware && <small>知曉事項</small>}</td>
+          <td><span className={`priority-pill ${priorityClass(item.priority)}`}>{item.priority}</span></td>
+          <td className="ic-description-column"><b>{richTextToPlainText(item.description)}</b></td>
+          <td>{item.category}{item.equipmentSubcategory && <small>{item.equipmentSubcategory}</small>}<small>{item.departments.join('、') || '未指定部門'}</small></td>
+          <td className="ic-status-column">{richTextToPlainText(item.status) || '尚未更新'}<small>更新 {item.updatedAt.slice(0, 10)}</small></td>
+          {subpage === 'closed' ? <td className="ic-closure-column"><b>已結案</b><small>{item.closedDate || '-'}</small></td> : <td className="ic-sync-column"><b>{item.linkedTaskId ? '已同步要事' : '未同步要事'}</b></td>}
+          <td className="no-print"><div className="table-actions"><button className="btn small primary" onClick={() => void openCase(item)}>{canEdit ? '更新' : '查看'}</button>{item.linkedTaskId && <button className="btn small ghost" onClick={() => onOpenTask(item.linkedTaskId!)}>要事</button>}</div></td>
+        </tr>;
+      })}</tbody></table></div>
+      {!filtered.length && <div className="empty-state">目前篩選條件沒有案件</div>}<PaginationControls page={paged.page} pageCount={paged.pageCount} total={paged.total} from={paged.from} to={paged.to} onPageChange={setPage} ariaLabel="內控異常分頁"/>
+    </section> : <InternalControlStatsView stats={stats}/>}
 
     <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單' : subpage === 'closed' ? '結案清單' : '統計報告'}</h1><p>{summary}｜共 {filtered.length} 件｜匯出人 {user.name}｜{new Date().toLocaleString('zh-TW')}</p>{subpage === 'stats' ? <InternalControlStatsView stats={stats}/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{filtered.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? vesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
 
