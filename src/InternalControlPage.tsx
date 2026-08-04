@@ -13,6 +13,7 @@ import { paginateItems } from './pagination';
 import PaginationControls from './PaginationControls';
 import { BatchCreateModal, CaseEditModal } from './InternalControlModals';
 import type { InternalControlTaskProjection } from './internalControlData';
+import { internalControlEditLockKey } from './exclusiveItemEditLock';
 
 const REPORT_SOURCES: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 type Subpage = 'open' | 'closed' | 'stats';
@@ -32,6 +33,10 @@ type Props = {
   onUpdate: (item: InternalControlCase, expectedUpdatedAt: string, expectedRevision: number, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>;
   onDelete: (item: InternalControlCase, expectedRevision: number) => boolean | Promise<boolean>;
   onOpenTask: (taskId: string) => void;
+  claimItemLease?: (sectionKey:string,label:string)=>Promise<AppData|null>;
+  requireItemLease?: (sectionKey:string)=>boolean;
+  releaseItemLease?: (sectionKey:string)=>Promise<boolean>;
+  activeItemLeaseKey?: string;
 };
 
 const emptyFilters = (vesselIds: string[]): InternalControlFilters => ({
@@ -47,7 +52,7 @@ const optionList = (values: string[]): MultiOption[] => values.filter(Boolean).m
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
 const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
 
-export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, onCreate, onUpdate, onDelete, onOpenTask }: Props) {
+export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, onCreate, onUpdate, onDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
   const [subpage, setSubpage] = useState<Subpage>('open');
   const [filters, setFilters] = useState<InternalControlFilters>(() => emptyFilters(defaultInternalControlVesselIds(user, vessels)));
   const [batchOpen, setBatchOpen] = useState(false);
@@ -64,6 +69,9 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const stats = buildInternalControlStats(filtered, vessels);
   const visibleEditing=Boolean(editing&&editorAuthorizationEpoch===authorizationEpoch&&scopedCases.some(item=>item.id===editing.id));
   const visibleBatch=Boolean(batchOpen&&batchAuthorizationEpoch===authorizationEpoch&&canCreate&&vessels.length);
+  const canMutateItem=canEdit||canClose||canDelete;
+  const itemLeaseEnforced=activeItemLeaseKey!==undefined;
+  const editorWritable=!canMutateItem||!itemLeaseEnforced||Boolean(editing&&activeItemLeaseKey===internalControlEditLockKey(editing.id));
 
   useEffect(() => setPage(1), [subpage, JSON.stringify(filters)]);
   useEffect(()=>{setEditing(null);setBatchOpen(false);setEditorAuthorizationEpoch('');setBatchAuthorizationEpoch('');},[authorizationEpoch]);
@@ -90,6 +98,22 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
     window.addEventListener('afterprint', () => document.body.classList.remove('printing-internal-control'), { once: true });
     window.setTimeout(() => window.print(), 80);
   };
+  const openCase=async(item:InternalControlCase)=>{
+    let fresh=item;
+    if(canMutateItem){
+      const snapshot=claimItemLease?await claimItemLease(internalControlEditLockKey(item.id),`內控異常｜${richTextToPlainText(item.description)||item.id}`):data;
+      if(!snapshot)return;
+      const latest=snapshot.internalControlCases.find(candidate=>candidate.id===item.id);
+      if(!latest){if(releaseItemLease)await releaseItemLease(internalControlEditLockKey(item.id));return;}
+      fresh=latest;
+    }
+    setEditorAuthorizationEpoch(authorizationEpoch);
+    setEditing(structuredClone(fresh));
+  };
+  const closeEditor=async()=>{
+    if(editing&&canMutateItem&&activeItemLeaseKey===internalControlEditLockKey(editing.id)&&releaseItemLease&&!await releaseItemLease(internalControlEditLockKey(editing.id)))return;
+    setEditing(null);
+  };
 
   return <section className="internal-control-page">
     <div className="page-heading"><div><h1>內控異常</h1><p>督導日常、訪船、隨船及外部發現事項的獨立登記、跟進、結案與統計。</p></div><div className="heading-actions no-print">{canCreate && <button className="btn green" onClick={() => {setBatchAuthorizationEpoch(authorizationEpoch);setBatchOpen(true);}}>＋ 批量新增</button>}{canExport && <button className="btn ghost" disabled={!filtered.length} onClick={() => downloadInternalControlExcel(filtered, vessels, summary)}>導出 Excel</button>}{canExport && <button className="btn primary" disabled={!filtered.length} onClick={print}>導出 PDF</button>}</div></div>
@@ -101,12 +125,32 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
       <div className="ic-filter-grid"><MultiFilter label="船舶名稱" options={vesselOptions} selected={filters.vesselIds} onChange={value => setFilter('vesselIds', value)}/><MultiFilter label="船舶類型" options={optionList(shipTypes)} selected={filters.shipTypes} onChange={value => setFilter('shipTypes', value)}/><MultiFilter label="重要程度" options={optionList(data.settings.priorities)} selected={filters.priorities} onChange={value => setFilter('priorities', value as TaskPriority[])}/><MultiFilter label="事項分類" options={optionList(categories)} selected={filters.categories} onChange={value => setFilter('categories', value)}/><MultiFilter label="涉及部門" options={optionList(departments)} selected={filters.departments} onChange={value => setFilter('departments', value)}/><MultiFilter label="報告來源" options={optionList(REPORT_SOURCES)} selected={filters.reportSources} onChange={value => setFilter('reportSources', value as InternalControlReportSource[])}/><MultiFilter label="設備故障細項" options={optionList(data.settings.equipmentFailureSubcategories)} selected={filters.equipmentSubcategories} onChange={value => setFilter('equipmentSubcategories', value)}/></div>
     </section>
 
-    {subpage !== 'stats' ? <section className="panel ic-list-panel"><div className="table-wrap"><table className="compact ic-table"><thead><tr><th>船舶／日期</th><th>來源</th><th>關注</th><th>事項內容</th><th>分類／部門</th><th>最新狀態</th><th>{subpage === 'closed' ? '結案' : '同步'}</th><th className="no-print">操作</th></tr></thead><tbody>{paged.items.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td><b>{vessel ? vesselDisplayName(vessel) : item.vesselId}</b><small>{vessel?.shipType || '未填船型'}｜{item.reportDate}</small></td><td>{item.reportSource}{item.isAware && <small>知曉事項</small>}</td><td><span className={`priority-pill ${priorityClass(item.priority)}`}>{item.priority}</span></td><td><b>{richTextToPlainText(item.description)}</b></td><td>{item.category}{item.equipmentSubcategory && <small>{item.equipmentSubcategory}</small>}<small>{item.departments.join('、') || '未指定部門'}</small></td><td>{richTextToPlainText(item.status) || '尚未更新'}<small>更新 {item.updatedAt.slice(0, 10)}</small></td><td>{item.isClosed ? <><b>已結案</b><small>{item.closedDate || '-'}</small></> : item.linkedTaskId ? <><b>已同步要事</b><small>{item.linkedTaskId}</small></> : '僅內控'}</td><td className="no-print"><div className="table-actions"><button className="btn small primary" onClick={() => {setEditorAuthorizationEpoch(authorizationEpoch);setEditing(structuredClone(item));}}>{canEdit ? '更新' : '查看'}</button>{item.linkedTaskId && <button className="btn small ghost" onClick={() => onOpenTask(item.linkedTaskId!)}>要事</button>}</div></td></tr>; })}</tbody></table></div>{!filtered.length && <div className="empty-state">目前篩選條件沒有案件</div>}<PaginationControls page={paged.page} pageCount={paged.pageCount} total={paged.total} from={paged.from} to={paged.to} onPageChange={setPage} ariaLabel="內控異常分頁"/></section> : <InternalControlStatsView stats={stats}/>}
+    {subpage !== 'stats' ? <section className="panel ic-list-panel"><div className="table-wrap"><table className="compact ic-table"><thead><tr><th>船舶／日期</th><th>來源</th><th>關注</th><th>事項內容</th><th>分類／部門</th><th>最新狀態</th><th>{subpage === 'closed' ? '結案' : '同步'}</th><th className="no-print">操作</th></tr></thead><tbody>{paged.items.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td><b>{vessel ? vesselDisplayName(vessel) : item.vesselId}</b><small>{vessel?.shipType || '未填船型'}｜{item.reportDate}</small></td><td>{item.reportSource}{item.isAware && <small>知曉事項</small>}</td><td><span className={`priority-pill ${priorityClass(item.priority)}`}>{item.priority}</span></td><td><b>{richTextToPlainText(item.description)}</b></td><td>{item.category}{item.equipmentSubcategory && <small>{item.equipmentSubcategory}</small>}<small>{item.departments.join('、') || '未指定部門'}</small></td><td>{richTextToPlainText(item.status) || '尚未更新'}<small>更新 {item.updatedAt.slice(0, 10)}</small></td><td>{item.isClosed ? <><b>已結案</b><small>{item.closedDate || '-'}</small></> : item.linkedTaskId ? <><b>已同步要事</b><small>{item.linkedTaskId}</small></> : '僅內控'}</td><td className="no-print"><div className="table-actions"><button className="btn small primary" onClick={() => void openCase(item)}>{canEdit ? '更新' : '查看'}</button>{item.linkedTaskId && <button className="btn small ghost" onClick={() => onOpenTask(item.linkedTaskId!)}>要事</button>}</div></td></tr>; })}</tbody></table></div>{!filtered.length && <div className="empty-state">目前篩選條件沒有案件</div>}<PaginationControls page={paged.page} pageCount={paged.pageCount} total={paged.total} from={paged.from} to={paged.to} onPageChange={setPage} ariaLabel="內控異常分頁"/></section> : <InternalControlStatsView stats={stats}/>}
 
     <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單' : subpage === 'closed' ? '結案清單' : '統計報告'}</h1><p>{summary}｜共 {filtered.length} 件｜匯出人 {user.name}｜{new Date().toLocaleString('zh-TW')}</p>{subpage === 'stats' ? <InternalControlStatsView stats={stats}/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{filtered.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? vesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
 
     {visibleBatch && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={async (items, projections) => { if (await onCreate(items, data.revision, projections)) { setBatchOpen(false); return true; } return false; }}/>}
-    {visibleEditing && editing && <CaseEditModal item={editing} data={data} vessels={vessels} canEdit={canEdit} canClose={canClose} canDelete={canDelete} close={() => setEditing(null)} save={async (candidate, projection) => { if (await onUpdate(candidate, editing.updatedAt, data.revision, projection)) { setEditing(null); return true; } return false; }} onDelete={async candidate => { if (await onDelete(candidate, data.revision)) { setEditing(null); return true; } return false; }}/>}
+    {visibleEditing && editing && <CaseEditModal
+      item={editing} data={data} vessels={vessels}
+      canEdit={canEdit&&editorWritable} canClose={canClose&&editorWritable} canDelete={canDelete&&editorWritable}
+      close={() => void closeEditor()}
+      save={async (candidate, projection) => {
+        if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
+        if (await onUpdate(candidate, editing.updatedAt, data.revision, projection)) {
+          if(!releaseItemLease||await releaseItemLease(internalControlEditLockKey(editing.id)))setEditing(null);
+          return true;
+        }
+        return false;
+      }}
+      onDelete={async candidate => {
+        if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
+        if (await onDelete(candidate, data.revision)) {
+          if(!releaseItemLease||await releaseItemLease(internalControlEditLockKey(editing.id)))setEditing(null);
+          return true;
+        }
+        return false;
+      }}
+    />}
   </section>;
 }
 

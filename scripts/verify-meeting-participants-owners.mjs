@@ -34,7 +34,8 @@ assert.match(page, /ownerUserIds:effectiveDraft\.trackingUserIds/, '追蹤窗口
 assert.match(page, /flushSync\(\(\)=>setData\(prev=>[\s\S]*liveMeeting=prev\.meetings\.find/, '会议保存需在最新 state 重验目标与权限');
 assert.match(page, /!wasCreating&&\(!liveMeeting[\s\S]*未保存任何變更/, '已删除会议不得被更新流程复活');
 assert.match(page,/liveMeeting!\.updatedAt!==baseMeetingUpdatedAt/,'会议保存必须执行版本冲突检测');
-assert.match(page,/prev\.revision!==baseRevision/,'会议 CAS 必须同时使用无同毫秒碰撞的全局 revision');
+assert.doesNotMatch(page,/prev\.revision!==baseRevision/,'雲端會議保存不得因無關實體 revision 產生假衝突');
+assert.match(page,/runDurableRelatedMutation\(sectionKey,'臨會\/專題保存',apply\)/,'會議保存必須在完整關聯鎖後走 durable block mutation');
 assert.match(page,/visibleVesselKey[\s\S]*\[selectedId, creating, editable, canViewAllMeetings, visibleVesselKey/,'会议编辑同步 effect 必须依赖稳定的船舶 ID 签名');
 assert.doesNotMatch(page,/\[selectedId, creating[^\]]*visibleVessels/,'会议编辑同步 effect 不得依赖每次资料更新都会重建的船舶数组引用');
 assert.match(app, /liveTask\.sourceMeetingId[\s\S]*meeting\.taskItems=meeting\.taskItems\.filter/, '明确删除会议关联待办时需同步移除会议事项，防止复活');

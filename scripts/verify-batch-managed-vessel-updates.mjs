@@ -45,6 +45,7 @@ assert.ok(app.includes('batchMutationSessionIsCurrent({renderedAuthorization') &
 assert.ok(!app.includes('if(!batchManagedOpen||batchLocalMode.current||!batchEditLocks.length)return'), '本機批量session也必須監聽雲端配置變更，不得跳過生命週期guard');
 assert.ok(app.includes('batchLockCoordinator.current.isCurrent') && app.includes('batchManagedSession.current===session') && app.includes('sameCloudConfig(getSupabaseConfig(),config)'), 'bundle claim必須重驗generation、modal session、authorization及immutable cloud config');
 assert.ok(app.includes('批量船舶協作鎖續期失敗') && app.includes('releaseBatchEditLockSnapshot') && app.includes('invalidateBatchManagedLocks'), '全部船舶鎖必須整組續期、失效與釋放');
+assert.ok(app.includes("runCloudSaveQueueRpc('批量船舶鎖續期'")&&app.includes('Promise.allSettled(snapshot.map'), '批量 heartbeat 必須並行、具硬逾時並等待整組續租全部 settled');
 assert.ok(app.includes('const discardConfigIsCurrent=()=>')&&app.includes('sessionAuthorization.cloudIdentity===cloudConfigIdentity(config)')&&app.includes('sameCloudConfig(getSupabaseConfig(),config)')&&app.includes('if(!batchManagedOperationIsCurrent(operation)||!discardConfigIsCurrent())throw new StaleAsyncConfigError()'), 'batch discard必須在fetch/release前核對captured full config，拒絕同分頁workspace或credential race');
 assert.ok(app.includes('if(await closeBatchManaged(renderedBatchManagedAuthorization))addTaskForVessel(id,false,true)'), '從批量清單轉入新增要事前必須以render時捕獲的session token先完成雲端保存及整組釋放，才可建立返回上下文');
 const closeStart=app.indexOf('const closeBatchManaged=async(expectedAuthorization:BatchManagedAuthorization|null)=>');
@@ -55,13 +56,18 @@ assert.ok(closeBranch.includes('const operation=beginBatchManagedOperation()')&&
 const enqueueStart=app.indexOf('const enqueueCloudSave =');
 const enqueueEnd=app.indexOf('\n  const flushCloudBeforeBatchRelease=',enqueueStart);
 const enqueueBranch=app.slice(enqueueStart,enqueueEnd);
-assert.ok(enqueueBranch.includes('isCurrent:()=>boolean=()=>true')&&enqueueBranch.includes('isCurrent};')&&enqueueBranch.includes('if(!isCurrent())continue;'), '雲端save queue每個pending snapshot必須攜帶caller operation guard，失效項目不得保存或更新新session');
+assert.ok(enqueueBranch.includes('isCurrent:()=>boolean=()=>true')&&enqueueBranch.includes('isCurrent});')&&enqueueBranch.includes('if(!isCurrent())throw new StaleAsyncConfigError()')&&enqueueBranch.includes('if(!isCurrent())break;'), '雲端save queue每個pending snapshot必須攜帶caller operation guard，失效項目不得保存或更新新session');
 assert.ok(app.includes('enqueueCloudSave(snapshot,()=>batchManagedOperationIsCurrent(operation))'), '批量flush必須把不可變operation guard傳入雲端save queue');
+const flushStart=app.indexOf('const flushCloudBeforeBatchRelease=async(operation:BatchManagedOperation)=>');
+const flushEnd=app.indexOf('\n\n  useEffect(() => {',flushStart);
+const flushBranch=app.slice(flushStart,flushEnd);
+assert.ok(flushStart>=0&&!flushBranch.includes('snapshot.revision<=lastCloudRevision.current'), '批量釋鎖前不得以全域revision較大作為本批內容已durable的證明');
+assert.ok(flushBranch.includes('const confirmedSnapshot=confirmedCloudData.current;')&&flushBranch.includes('if(confirmedSnapshot&&appDataContentEqual(snapshot,confirmedSnapshot))return true;'), '只有目前批量snapshot內容已等同confirmed snapshot時才可免排隊釋鎖');
 assert.ok(app.includes('batchManagedWriteSuspendedRef.current=true') && app.includes('if(batchManagedWriteSuspendedRef.current)return false'), 'close開始後必須以同步ref立即阻擋最後一個stale render mutation callback');
 assert.ok(batch.includes("saving?'雲端確認中…':readOnly?'重試保存並關閉':'完成並關閉'"), '雲端保存失敗時modal需保持鎖定且提供重試關閉，不得假裝已完成');
 assert.ok(batch.includes('放棄本批修改並釋鎖')&&batch.includes('onClick={discard}'), '雲端衝突後modal需提供明確放棄並釋鎖的恢復動作');
 const discardStart=app.indexOf('const discardBatchManagedChanges=async(expectedAuthorization:BatchManagedAuthorization|null)=>');
-const discardEnd=app.indexOf('\n  const openBatchManagedVessels=',discardStart);
+const discardEnd=app.indexOf('\n  const refreshBatchAfterLeaseBundle=',discardStart);
 const discardBranch=app.slice(discardStart,discardEnd);
 assert.ok(discardBranch.includes('expectedAuthorization!==batchManagedAuthorization.current')&&app.includes('discard={()=>void discardBatchManagedChanges(renderedBatchManagedAuthorization)}'), 'old discard callback亦不得操作successor batch session');
 const discardRelease=discardBranch.indexOf('const released=await releaseBatchEditLockSnapshot(operation.locks,false)');
@@ -72,7 +78,8 @@ const discardCatch=discardBranch.slice(discardBranch.indexOf('}catch(error:any){
 assert.ok(discardCatch.includes('releasedDuringDiscard')&&discardCatch.includes('本機資料未被舊工作區remote取代')&&discardCatch.includes('船舶鎖仍保留'), '放棄流程失敗時不得發布舊remote；未釋鎖則保留modal/locks，已釋鎖才安全關閉失去locks的modal');
 const discardFinally=discardBranch.slice(discardBranch.indexOf('}finally{'));
 assert.ok(discardFinally.includes('cloudSyncInFlight.current=false')&&discardFinally.includes('setCloudSyncing(false)')&&!discardFinally.includes('configIoCoordinator.current.isCurrent'), 'discard own exclusive sync operation must always clear global sync flags even when config changes during release');
-const openBranch=app.slice(discardEnd);
+const openStart=app.indexOf('\n  const openBatchManagedVessels=',discardEnd);
+const openBranch=app.slice(openStart);
 const nonOwnedBranch=openBranch.slice(openBranch.indexOf("if(result.status!=='owned')"),openBranch.indexOf("if(!sessionIsCurrent()||!batchLockCoordinator.current.isCurrent(generation)){"));
 assert.ok(nonOwnedBranch.indexOf('if(!sessionIsCurrent()||!batchLockCoordinator.current.isCurrent(generation))return')<nonOwnedBranch.indexOf('batchManagedRequested.current=false'), '舊bundle claim完成不得清除新session requested狀態');
 assert.ok(app.includes('registerTrackedLease(batchLeaseReleaseState.current,request,config)')&&app.includes('result.cleanupUnresolved.length')&&app.includes('pendingTrackedLeases(batchLeaseReleaseState.current)'), 'claim前需保存immutable config，rollback unresolved token需進入下次開啟前重試流程');
