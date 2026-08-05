@@ -20,8 +20,9 @@ assert.ok(types.includes("kind?: 'daily-morning' | 'ad-hoc'"),'報告記錄必�
 assert.ok(types.includes('businessDate?: string'),'每日早會記錄必須保存台北業務日期');
 assert.ok(types.includes('snapshot?: MorningReportSnapshot'),'每日早會記錄必須保存不可被來源資料回寫的快照');
 
-assert.match(styles,/\.morning-workspace\{[^}]*height:calc\(100dvh\s*-\s*[^)]+\)/,'早會桌面工作區高度必須由動態viewport推導');
-assert.match(styles,/\.temporary-meeting-workspace\{[^}]*height:calc\(100dvh\s*-\s*[^)]+\)/,'臨會桌面工作區高度必須由動態viewport推導');
+assert.match(styles,/\.morning-workspace\{[^}]*height:auto[^}]*min-height:0[^}]*align-items:stretch/,'早會桌面工作區必須完整顯示船舶並讓三欄等高');
+assert.match(styles,/\.temporary-meeting-workspace\{[^}]*height:auto[^}]*min-height:0[^}]*max-height:none/,'臨會桌面工作區必須使用自然頁面高度');
+assert.doesNotMatch(styles,/\.(?:morning-workspace|temporary-meeting-workspace)\{[^}]*height:calc\(100dvh/,'早會及臨會工作區不得再鎖定動態viewport高度');
 assert.doesNotMatch(styles,/\.morning-workspace\{[^}]*height:1120px/,'早會工作區不得固定為單一超高像素值');
 assert.doesNotMatch(styles,/\.temporary-meeting-workspace\{[^}]*height:1180px/,'臨會工作區不得固定為單一超高像素值');
 assert.match(styles,/@media\(max-width:900px\)\{[^}]*\.morning-workspace,\.temporary-meeting-workspace\{[^}]*height:auto/,'窄螢幕必須回到自然高度');

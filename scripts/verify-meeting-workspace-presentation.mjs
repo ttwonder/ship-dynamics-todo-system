@@ -10,10 +10,11 @@ assert.match(styles, /\.vessel-rail-tools \.vessel-filter-pills \.filter-pill\{[
 assert.match(styles, /\.morning-supervisor-filter\{[^}]*grid-template-columns:minmax\(170px,1fr\) minmax\(170px,1fr\) max-content/, '早會桌面中央控制列必須是督導、船舶、新增待辦三欄同列');
 assert.match(styles, /\.morning-supervisor-filter>select\{[^}]*grid-column:2[^}]*grid-row:1/, '早會船舶選擇必須位於同列第二欄');
 assert.match(styles, /\.morning-supervisor-filter>\.btn\{[^}]*grid-column:3[^}]*grid-row:1/, '新增待辦按鈕必須位於同列第三欄');
-assert.match(styles, /\.morning-workspace\{[^}]*height:calc\(100dvh\s*-\s*[^)]+\)/, '早會三欄工作區桌面高度必須依目前視窗可用高度向下延伸');
-assert.match(styles, /\.temporary-meeting-workspace\{[^}]*height:calc\(100dvh\s*-\s*[^)]+\)[^}]*max-height:none/, '臨會／專題三欄工作區桌面高度必須依目前視窗可用高度向下延伸且取消舊上限');
-assert.match(styles, /\.morning-workspace>\.meeting-column,\.temporary-meeting-workspace>\.meeting-column\{[^}]*min-height:0[^}]*max-height:100%/, '三欄欄體必須尊重工作區固定高度，不能被長內容撐成整頁高度');
-assert.match(styles, /\.morning-workspace \.column-scroll,\.temporary-meeting-workspace \.column-scroll\{[^}]*max-height:none/, '加高後三欄內部內容必須使用完整可用高度，不得沿用過短視窗上限');
+assert.match(styles, /\.morning-workspace\{[^}]*height:auto[^}]*min-height:0[^}]*align-items:stretch/, '早會工作區必須由完整船舶清單自然撐高，三欄維持相同高度');
+assert.match(styles, /\.temporary-meeting-workspace\{[^}]*height:auto[^}]*min-height:0[^}]*max-height:none[^}]*align-items:start/, '臨會／專題工作區必須使用自然頁面高度');
+assert.match(styles, /\.morning-workspace>\.meeting-column,\.temporary-meeting-workspace>\.meeting-column\{[^}]*height:auto[^}]*min-height:0[^}]*max-height:none/, '早會與臨會欄體不得再鎖定viewport高度');
+assert.match(styles, /\.morning-workspace \.column-scroll,\.temporary-meeting-workspace \.column-scroll\{[^}]*max-height:none[^}]*overflow:visible/, '早會與臨會主內容不得使用欄內上下滾動條');
+assert.doesNotMatch(styles, /\.(?:morning-workspace|temporary-meeting-workspace)\{[^}]*height:calc\(100dvh/, '兩個工作區不得再以動態viewport鎖定高度');
 assert.match(styles, /@media\(max-width:900px\)\{[^}]*\.morning-workspace,\.temporary-meeting-workspace\{height:auto;min-height:0/, '窄螢幕工作區必須自然回到自動高度');
 
 assert.ok(meetings.includes('<th className="meeting-register-subject">會議主題</th>'), '總清單會議主題欄必須有專用樣式 class');
@@ -24,4 +25,4 @@ assert.match(styles, /\.meeting-register-subject>b\{[^}]*font-size:15px/, '會�
 assert.match(styles, /\.meeting-register-subject \.rich-text-content\{[^}]*font-size:14px/, '會議主題摘要與多行內容必須明顯放大');
 assert.doesNotMatch(styles, /\.meeting-register-filters[^}]*font-size:1[34]px/, '本次不得連帶放大上方搜尋篩選列');
 
-console.log('Morning and temporary-meeting workspace height, controls and register typography contracts passed.');
+console.log('Morning and temporary-meeting natural-height, controls and register typography contracts passed.');
