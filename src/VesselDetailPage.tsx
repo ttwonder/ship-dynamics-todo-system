@@ -11,6 +11,7 @@ import RichTextContent from './RichTextContent';
 import { meetingCreatesVesselAbnormalAlert } from './meetingVesselAttention';
 import { richTextToPlainText } from './richText';
 import { compareCreatedNewestFirst } from './recordSorting';
+import { formatTaipeiDateTime } from './taipeiTime';
 
 const attentionLabels: Record<string, string> = {
   'crew-operation': '換員操作', 'bunkering-water': '加油加水', 'materials-parts': '物料配件',
@@ -19,7 +20,7 @@ const attentionLabels: Record<string, string> = {
 const value = (text?: string | number) => text === '' || text === undefined || text === null ? '未設定' : String(text);
 const officerValue = (text?: string) => text?.trim() || '-';
 const sourceLabel = (source: string) => source === 'manual' ? '人工更新' : source === 'smart-ship-api' ? '智慧船舶 API' : '模擬智慧船舶資料';
-const dateTime = (text?: string) => text ? text.replace('T', ' ').slice(0, 16) : '未設定';
+const dateTime = (text?: string) => formatTaipeiDateTime(text, false, '未設定');
 const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
 const priorityRank: Record<TaskPriority, number> = { 急: 0, 高: 1, 中: 2, 低: 3 };
 
@@ -125,7 +126,7 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
         {(query||closedMode!=='all'||priority!=='all'||sort!=='created-desc')&&<button type="button" className="btn ghost small" onClick={()=>{setQuery('');setClosedMode('all');setPriority('all');setSort('created-desc');}}>清除篩選</button>}
       </div>
       {tasks.length?<div className="table-wrap"><table className="data-table vessel-detail-task-table"><thead><tr><th>結案</th><th>關注</th><th>事項內容</th><th>單船狀態</th><th>分類／部門</th><th>追蹤窗口</th><th>期限</th><th>來源</th><th className="no-print">操作</th></tr></thead><tbody>{tasks.map(task=>{const progress=taskProgressForVessel(task,vessel.id);return <tr key={task.id}><td><span className={`status-chip ${progress.isClosed?'closed':'open'}`}>{progress.isClosed?'已結案':'未結'}</span></td><td><span className={`badge ${priorityClass(task.priority)}`}>{task.priority}</span></td><td>{task.isAbnormal&&<span className="inline-abnormal">異常</span>}<RichTextContent compact value={task.description} fallback="尚未輸入事項內容"/></td><td><RichTextContent compact value={progress.status} fallback="尚未更新"/></td><td><small>{task.categories.join('、')||'未分類'}<br/>{task.departments.join('、')||'未指定部門'}</small></td><td>{task.ownerUserIds.map(ownerName).join('、')||'未指定'}</td><td>{task.expectedDate||'未設定'}</td><td>{taskSourceLabel(task)}</td><td className="no-print"><button type="button" className="btn small ghost" onClick={()=>onEditTask(task.id)}>{canEditTasks?'修改':'查看'}</button></td></tr>})}</tbody></table></div>:null}
-      {filteredStandaloneInternalCases.length>0&&<div className="table-wrap"><h3>未同步內控</h3><table className="data-table vessel-detail-task-table"><thead><tr><th>結案</th><th>關注</th><th>事項內容</th><th>狀態</th><th>分類／部門</th><th>來源</th><th className="no-print">操作</th></tr></thead><tbody>{filteredStandaloneInternalCases.map(item=><tr key={`internal-${item.id}`}><td><span className={`status-chip ${item.isClosed?'closed':'open'}`}>{item.isClosed?'已結案':'未結'}</span></td><td><span className={`badge ${priorityClass(item.priority)}`}>{item.priority}</span></td><td><RichTextContent compact value={item.description} fallback="尚未輸入事項內容"/></td><td><RichTextContent compact value={item.status} fallback="尚未更新"/></td><td><small>{item.category||'未分類'}<br/>{item.departments.join('、')||'未指定部門'}</small></td><td>未同步內控｜{item.reportSource}</td><td className="no-print"><button type="button" className="btn small ghost" onClick={onOpenInternalControl}>前往內控</button></td></tr>)}</tbody></table></div>}
+      {filteredStandaloneInternalCases.length>0&&<div className="table-wrap"><h3>未同步到要事的內控異常</h3><table className="data-table vessel-detail-task-table"><thead><tr><th>結案</th><th>關注</th><th>事項內容</th><th>狀態</th><th>分類／部門</th><th>來源</th><th className="no-print">操作</th></tr></thead><tbody>{filteredStandaloneInternalCases.map(item=><tr key={`internal-${item.id}`}><td><span className={`status-chip ${item.isClosed?'closed':'open'}`}>{item.isClosed?'已結案':'未結'}</span></td><td><span className={`badge ${priorityClass(item.priority)}`}>{item.priority}</span></td><td><RichTextContent compact value={item.description} fallback="尚未輸入事項內容"/></td><td><RichTextContent compact value={item.status} fallback="尚未更新"/></td><td><small>{item.category||'未分類'}<br/>{item.departments.join('、')||'未指定部門'}</small></td><td>未同步內控｜{item.reportSource}</td><td className="no-print"><button type="button" className="btn small ghost" onClick={onOpenInternalControl}>前往內控</button></td></tr>)}</tbody></table></div>}
       {!tasks.length&&!filteredStandaloneInternalCases.length&&<div className="empty-state compact">沒有符合目前條件的待辦／內控事項</div>}
     </section>
   </section>;

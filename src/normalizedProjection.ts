@@ -10,6 +10,7 @@ import type {
   InternalControlCase,
   RolePermissions,
   StatusLog,
+  TaskDismissal,
   TaskItem,
   TaskPriority,
   TemporaryMeeting,
@@ -103,6 +104,7 @@ const TABLES = {
     order: 'created_at',
   },
   notifications: { table: 'sd_notifications', selection: '*', order: 'created_at', limit: 500 },
+  taskDismissals: { table: 'sd_task_dismissals', selection: '*', order: 'dismissed_at', limit: 1000 },
   savedReports: { table: 'sd_saved_reports', selection: '*', order: 'created_at', limit: 500 },
   savedReportVessels: {
     table: 'sd_saved_report_vessels',
@@ -237,6 +239,7 @@ function allowedKeys(data: AppData): ReadonlySet<string> {
     ...data.meetings.map(meeting => `meeting:${meeting.id}`),
     ...data.internalControlCases.map(item => `internal-case:${item.id}`),
     ...data.notifications.map(item => `notification:${item.id}`),
+    ...data.taskDismissals.map(item=>`task-dismissals:${item.userId}`),
     ...data.agendaReports.map(item => `report:${item.id}`),
     'audit',
     'settings:departments',
@@ -502,6 +505,10 @@ export function projectNormalizedRows(
   let agendaReports: AgendaReport[] = rows.savedReports.map(row => {
     const reportId = text(row.id);
     versions.set(`report:${reportId}`, row.version);
+    const snapshot = jsonObject(row.snapshot);
+    const validSnapshot = Array.isArray(snapshot.vessels) && Array.isArray(snapshot.tasks) && Array.isArray(snapshot.meetings)
+      ? snapshot as unknown as AgendaReport['snapshot']
+      : undefined;
     return {
       id: reportId,
       title: text(row.title),
@@ -511,6 +518,11 @@ export function projectNormalizedRows(
       createdBy: text(row.created_by),
       createdAt: iso(row.created_at),
       taskCount: Number(row.task_count) || 0,
+      kind: row.report_kind === 'daily-morning' ? 'daily-morning' : 'ad-hoc',
+      businessDate: date(row.business_date) || undefined,
+      source: row.source === 'scheduled' ? 'scheduled' : 'manual',
+      updatedAt: iso(row.updated_at || row.created_at),
+      snapshot: validSnapshot,
     };
   });
 
@@ -529,6 +541,17 @@ export function projectNormalizedRows(
       readAt: text(row.read_at) || undefined,
     };
   });
+
+  let taskDismissals:TaskDismissal[]=rows.taskDismissals
+    .filter(row=>text(row.user_id)===actorId)
+    .map(row=>({
+      id:text(row.id),
+      userId:text(row.user_id),
+      itemKind:text(row.item_kind) as TaskDismissal['itemKind'],
+      itemId:text(row.item_id),
+      dismissedAt:iso(row.dismissed_at),
+      dismissedBy:text(row.dismissed_by),
+    }));
 
   let auditLogs: AuditLog[] = rows.auditEvents.map(row => {
     const detail = jsonObject(row.detail);
@@ -582,6 +605,7 @@ export function projectNormalizedRows(
     notifications = notifications.filter(item => item.userId === actorId
       && item.vesselId === allowedVesselId
       && (!item.taskId || allowedTaskIds.has(item.taskId)));
+    taskDismissals=taskDismissals.filter(item=>item.userId===actorId);
   }
 
   for (const row of rows.settings) versions.set(`settings:${text(row.section_key)}`, row.version);
@@ -636,6 +660,7 @@ export function projectNormalizedRows(
     internalControlCases,
     meetings,
     agendaReports,
+    taskDismissals,
     auditLogs,
     notifications,
     updatedAt: new Date().toISOString(),
@@ -895,6 +920,16 @@ export class NormalizedProjectionReader {
         'notifications',
         [workspaceFilter, ['id', id]],
         row => text(row.id) === id,
+      );
+      return;
+    }
+    if(entityKey.startsWith('task-dismissals:')){
+      const userId=entityKey.slice('task-dismissals:'.length);
+      await this.#replace(
+        rows,
+        'taskDismissals',
+        [workspaceFilter,['user_id',userId]],
+        row=>text(row.user_id)===userId,
       );
       return;
     }

@@ -844,6 +844,10 @@ export function realtimeEntityKeys(table: string, identity: JsonObject): string[
     case 'sd_priority_options': return ['settings:priorities'];
     case 'sd_equipment_options': return ['settings:equipment-options'];
     case 'sd_notifications': return id ? [`notification:${id}`] : [];
+    case 'sd_task_dismissals': {
+      const userId=typeof identity.user_id==='string'?identity.user_id:'';
+      return userId?[`task-dismissals:${userId}`]:[];
+    }
     case 'sd_saved_reports': return id ? [`report:${id}`] : [];
     case 'sd_saved_report_vessels': {
       const reportId = typeof identity.report_id === 'string' ? identity.report_id : '';
@@ -886,6 +890,7 @@ const INVALIDATION_TABLES = [
   'sd_priority_options',
   'sd_equipment_options',
   'sd_notifications',
+  'sd_task_dismissals',
   'sd_saved_reports',
   'sd_saved_report_vessels',
 ] as const;

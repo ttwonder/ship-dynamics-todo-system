@@ -93,13 +93,13 @@ try {
   );
   assert.ok(staleCloseDraft.internalControlCases.every(item => !item.isClosed), 'stale closure rejection must not partially close earlier cases');
 
-  assert.ok(workCenterSource.includes('const selectableInternalCases=(canComplete||canDelete||canPrint)?filteredInternalCases:[];'), '我的待辦 must let ordinary operators select internal-control rows for completion or selected PDF without granting delete permission');
+  assert.ok(workCenterSource.includes('const selectableInternalCases=filteredInternalCases;') && workCenterSource.includes('onDismiss(selectedTasks.map(task=>task.id),selectedInternalCases.map(item=>item.id))'), '我的待辦 must let ordinary operators select visible internal-control rows for personal dismissal, completion, or selected PDF without granting delete permission');
   assert.ok(workCenterSource.includes('aria-label={`選取內控') && workCenterSource.includes('onBatchComplete(completableSelectedTasks.map(task=>task.id),selectedInternalCases.map(item=>item.id))'), '我的待辦 batch completion must submit only completable task IDs while preserving the exact internal-case ID set');
   assert.ok(workCenterSource.includes('onBatchDelete(selectedTasks.map(task=>task.id),selectedInternalCases.map(item=>item.id))'), '我的待辦 mixed deletion must preserve typed task/internal-case ID sets');
   assert.ok(internalControlPageSource.includes('const canSelectCases=subpage!==\'stats\'&&((subpage===\'open\'&&canClose)||canDelete||canExport);'), 'internal-control list selection must be available for close, delete, or selected PDF capabilities rather than delete alone');
   assert.ok(internalControlPageSource.includes('全選目前結果') && internalControlPageSource.includes('已選 {selectedCases.length}') && internalControlPageSource.includes('批量結案（{selectedCases.length}）'), '內控未完 must expose select-all, count, and batch-close controls to close-authorized operators');
   assert.ok(internalControlPageSource.includes('aria-label={`選取內控案件') && internalControlPageSource.includes('onBatchClose(selectedCases.map(item=>item.id))'), 'every selectable internal-control row must reach the explicit batch-close handler');
-  assert.ok(appSource.includes('const batchDeleteTasks = async (taskIds: string[], internalControlCaseIds: string[] = []) =>') && appSource.includes('internalControlBatchLockKeys(snapshot,uniqueInternalControlCaseIds)'), 'App must atomically plan mixed task/internal-control lock closure');
+  assert.ok(appSource.includes('const batchDeleteTasks = async (taskIds: string[], internalControlCaseIds: string[] = [], permanentFromMyWork=false) =>') && appSource.includes('internalControlBatchLockKeys(snapshot,uniqueInternalControlCaseIds)'), 'App must atomically plan mixed task/internal-control lock closure while keeping personal dismissal separate from permanent deletion');
   const preLockAuthorizationStart=appSource.indexOf('const internalControlLockKeysForActor=');
   const preLockAuthorizationEnd=appSource.indexOf('\n    const totalSelected=',preLockAuthorizationStart);
   const preLockAuthorization=appSource.slice(preLockAuthorizationStart,preLockAuthorizationEnd);

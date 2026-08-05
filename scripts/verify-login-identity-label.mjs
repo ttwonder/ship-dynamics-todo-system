@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source=fs.readFileSync('src/App.tsx','utf8');
+const styles=fs.readFileSync('src/styles.css','utf8');
+const siteGateStart=source.indexOf('function SiteGate(');
+const siteGateEnd=source.indexOf('function OwnerSetup(',siteGateStart);
+assert.ok(siteGateStart>=0&&siteGateEnd>siteGateStart,'找不到進站密碼元件');
+const siteGate=source.slice(siteGateStart,siteGateEnd);
 const start=source.indexOf('function Login(');
 const end=source.indexOf('function ReportCenter(',start);
 assert.ok(start>=0&&end>start,'找不到人員登入元件');
@@ -16,4 +21,11 @@ assert.doesNotMatch(login,/disabled=\{!selectedUser\?\.passwordHash\}/,'密碼�
 assert.match(login,/const needsPassword=user\.role==='owner'\|\|user\.role==='admin'\|\|Boolean\(user\.passwordHash\)/,'登入密碼驗證應套用 Owner／管理員或已設定個人密碼者');
 assert.match(login,/if\(!needsPassword\)\{setCurrentUserId\(user\.id\);return;\}/,'沒有密碼的非管理角色必須在密碼比對前直接登入');
 assert.match(login,/Owner／管理員或已設定個人密碼者需輸入密碼/,'登入頁需提示已設定個人密碼者需輸入密碼');
+assert.match(siteGate,/className="field login-password-field"/,'進站密碼欄與登入按鈕之間必須使用專用間距 class');
+assert.match(login,/className="field login-password-field"/,'個人密碼欄與登入按鈕之間必須使用專用間距 class');
+assert.match(styles,/\.login-password-field\{margin-bottom:10px\}/,'兩個登入密碼欄位下方必須保留 10px 間距');
+assert.match(siteGate,/<div className="login-card-heading"><img className="login-logo" src=\{fpmcLogo\} alt="台塑 LOGO" \/><h2>船舶動態系統進站<\/h2><\/div>/,'進站密碼窗口標題必須顯示正式台塑 LOGO');
+assert.match(login,/<div className="login-card-heading"><img className="login-logo" src=\{fpmcLogo\} alt="台塑 LOGO" \/><h2>人員登入／切換<\/h2><\/div>/,'人員登入窗口標題必須顯示正式台塑 LOGO');
+assert.match(styles,/\.login-card-heading\{display:flex;align-items:center;gap:12px;margin-bottom:18px\}/,'兩個登入窗口必須共用緊湊的LOGO標題列');
+assert.match(styles,/\.login-logo\{display:block;width:56px;height:auto;flex:0 0 auto\}/,'登入窗口台塑LOGO必須保持原比例且不過度放大');
 console.log('Login identity labels show department and name without role level.');

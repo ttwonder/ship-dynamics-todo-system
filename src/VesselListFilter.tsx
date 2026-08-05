@@ -30,7 +30,7 @@ export default function VesselListFilter({ vessels, mode, selectedVesselIds, onC
   };
 
   return <details className="vessel-list-filter">
-    <summary aria-label={ariaLabel}><span>選擇船舶</span><b>{summary}</b></summary>
+    <summary aria-label={ariaLabel}><span>選擇船舶</span><b className={`ic-filter-state ${mode === 'all' ? 'inactive' : 'active'}`}>{summary}</b></summary>
     <div className="vessel-list-filter-panel">
       <div className="vessel-list-filter-modes">
         <label className={mode === 'all' ? 'selected' : ''}><input type="radio" name={radioName} checked={mode === 'all'} onChange={() => setMode('all')}/><span>全部</span></label>

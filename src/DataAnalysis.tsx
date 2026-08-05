@@ -9,6 +9,7 @@ import { meetingCreatesVesselAbnormalAlert } from './meetingVesselAttention';
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
 import { isMeetingTaskSource, taskCategoriesOf } from './taskCategories';
 import { dataAnalysisVesselAbnormalCount } from './dataAnalysisVesselAttention';
+import { taipeiMonthKey, taipeiRecentMonthKeys } from './taipeiTime';
 
 type ScopeMode = 'overall' | 'department' | 'person';
 type Metrics = {
@@ -56,18 +57,8 @@ const metricOf = (tasks: TaskItem[], proposed: number, proposalBase: number): Me
     abnormalRate: pct(abnormalTasks.filter(taskClosedForAnalysis).length, abnormalTasks.length),
   };
 };
-const localMonthKey = (value: string) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-};
-const monthKeys = () => Array.from({ length: 6 }, (_, index) => {
-  const date = new Date();
-  date.setDate(1);
-  date.setHours(0, 0, 0, 0);
-  date.setMonth(date.getMonth() - (5 - index));
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-});
+const localMonthKey = taipeiMonthKey;
+const monthKeys = () => taipeiRecentMonthKeys(6);
 
 export default function DataAnalysisView({ data, vessels }: { data: AppData; vessels: Vessel[] }) {
   const [scopeMode, setScopeMode] = useState<ScopeMode>('overall');

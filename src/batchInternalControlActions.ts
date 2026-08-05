@@ -6,6 +6,7 @@ import {
   type InternalControlDataDraft,
 } from './internalControlData';
 import { internalControlEditLockKey } from './exclusiveItemEditLock';
+import { taipeiDateKey } from './taipeiTime';
 
 export function sanitizeInternalControlSelection(
   selectedIds: string[],
@@ -115,7 +116,7 @@ export function closeInternalControlCaseBatchFromDraft(
     const current = draft.internalControlCases.find(item => item.id === selected.id)!;
     updateInternalControlCase(
       draft,
-      { ...current, isClosed: true, closedDate: at.slice(0, 10), closedBy: actor.id },
+      { ...current, isClosed: true, closedDate: taipeiDateKey(at), closedBy: actor.id },
       selected.updatedAt,
       actor,
       at,

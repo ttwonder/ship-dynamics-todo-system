@@ -9,6 +9,7 @@ import type {
 } from './types';
 import { vesselDisplayName } from './vesselDisplay';
 import RichTextContent from './RichTextContent';
+import { formatTaipeiDateTime, taipeiDateTimeLocalValue } from './taipeiTime';
 
 type Props = {
   data: AppData;
@@ -29,9 +30,7 @@ type Props = {
 const statuses: TemporaryMeetingStatus[] = ['待召開', '追蹤中', '已完成'];
 
 function nowLocalDateTime() {
-  const date = new Date();
-  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
-  return date.toISOString().slice(0, 16);
+  return taipeiDateTimeLocalValue();
 }
 
 function newMeeting(user: UserAccount, vesselIds: string[]): TemporaryMeeting {
@@ -324,7 +323,7 @@ export default function NormalizedMeetings({
             setEditing(structuredClone(meeting));
           }}>編輯</button>}
         </div>
-        <p>{meeting.meetingDate.replace('T', ' ').slice(0, 16)}｜{
+        <p>{formatTaipeiDateTime(meeting.meetingDate, false)}｜{
           meeting.vesselScopeMode === 'all'
             ? '全部授權船舶'
             : meeting.vesselScopeMode === 'types'
@@ -339,7 +338,7 @@ export default function NormalizedMeetings({
         {!!meeting.statusLogs?.length && <details>
           <summary>狀態歷程 {meeting.statusLogs.length}</summary>
           {meeting.statusLogs.map(log => <div className="status-history-row" key={log.id}>
-            <span>{log.at.replace('T', ' ').slice(0, 16)}｜{log.by}</span>
+            <span>{formatTaipeiDateTime(log.at,false)}｜{log.by}</span>
             <b>{log.text}</b>
             {canEdit && <button className="btn tiny ghost" onClick={async () => {
               const reason = prompt('請填寫更正原因');

@@ -113,6 +113,21 @@ try{
   const vesselCreateOps=patch.buildCloudBlockPatch(vesselCreateBase,vesselCreateNext);
   assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(vesselCreateBase,vesselCreateOps,vesselUser.id),'task order side effect must not require editBusinessContent when createTasks already authorizes the entity creation');
 
+  for(const collection of ['notifications','auditLogs']){
+    const sideEffectOrderBase=structuredClone(remote);
+    sideEffectOrderBase[collection]=[
+      {id:`${collection}-older`,userId:owner.id,at:'2026-08-04T11:00:00.000Z'},
+      {id:`${collection}-newer`,userId:owner.id,at:'2026-08-04T12:00:00.000Z'},
+    ];
+    const sideEffectOrderNext=structuredClone(sideEffectOrderBase);
+    sideEffectOrderNext[collection].reverse();
+    assert.deepEqual(
+      patch.buildCloudBlockPatch(sideEffectOrderBase,sideEffectOrderNext),
+      [],
+      `pure ${collection} presentation ordering must not create an unaccompanied cloud write`,
+    );
+  }
+
   const selfRevoked=structuredClone(remote);
   selfRevoked.users.find(user=>user.id===operator.id).isActive=false;
   assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(selfRevoked,ops,operator.id),auth.CloudPatchAuthorizationError,'inactive users cannot apply any block patch');
@@ -151,6 +166,78 @@ try{
   assert.doesNotThrow(()=>auth.assertActorAuthorizedForAppDataChange(normalizedLegacy,legacyOperationalNext,operator.id),'raw CAS defaults must not participate in authorization permission classification');
   assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(normalizedLegacy,patch.buildCloudBlockPatch(normalizedLegacy,legacyOperationalNext,rawLegacy),operator.id),auth.CloudPatchAuthorizationError,'probe must prove raw expected values would incorrectly require vessel-management permission');
   assert.equal(auth.appDataAuthorizationDomainChanged(remote,authNext),true,'real user changes must still require full authorization-domain fencing');
+
+  const sideEffectBase=structuredClone(remote);
+  const ownedTask=remote.tasks.find(task=>task.vesselId===remote.vessels[0].id)||remote.tasks[0];
+  assert.ok(ownedTask,'seed must contain a task in the operator vessel scope');
+  sideEffectBase.notifications=[
+    {id:'notice-existing',userId:operator.id,title:'既有通知',message:'既有',createdAt:'2026-08-04T11:00:00.000Z'},
+  ];
+  const primaryNoticeNext=structuredClone(sideEffectBase);
+  primaryNoticeNext.tasks.find(item=>item.id===ownedTask.id).status='primary-with-notice';
+  primaryNoticeNext.notifications.unshift({id:'notice-added',userId:operator.id,title:'新通知',message:'新',createdAt:'2026-08-04T12:00:00.000Z'});
+  const primaryNoticeOps=patch.buildCloudBlockPatch(sideEffectBase,primaryNoticeNext);
+  assert.ok(primaryNoticeOps.some(operation=>operation.kind==='order'&&operation.collection==='notifications'),'real notification membership changes must retain their order operation');
+  assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(sideEffectBase,primaryNoticeOps,operator.id),'derived order suppression must not bypass ordinary primary authorization');
+
+  const dismissalBase=structuredClone(remote);
+  dismissalBase.taskDismissals=[];
+  const dismissalNext=structuredClone(dismissalBase);
+  dismissalNext.taskDismissals=[{
+    id:`work-dismissal:${operator.id}:task:${ownedTask.id}`,
+    userId:operator.id,
+    itemKind:'task',
+    itemId:ownedTask.id,
+    dismissedAt:'2026-08-06T04:05:00.000Z',
+    dismissedBy:operator.id,
+  }];
+  const dismissalOps=patch.buildCloudBlockPatch(dismissalBase,dismissalNext);
+  assert.ok(dismissalOps.some(operation=>operation.kind==='entity'&&operation.collection==='taskDismissals'),'personal dismissal must persist as an actor-owned entity');
+  assert.equal(dismissalOps.some(operation=>operation.kind==='order'&&operation.collection==='taskDismissals'),false,'personal dismissal ordering is derived and must not create a rejected cloud order operation');
+  assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(dismissalBase,dismissalOps,operator.id),'actor-owned visible dismissal must pass cloud authorization');
+
+  const reassignedUser=remote.users.find(user=>user.id!==owner.id&&user.id!==operator.id);
+  assert.ok(reassignedUser,'seed must contain a third user for cross-user reassignment');
+  reassignedUser.role='operator';
+  reassignedUser.isActive=true;
+  reassignedUser.managedVesselIds=[];
+  const reassignmentBase=structuredClone(remote);
+  const reassignedBaseTask=reassignmentBase.tasks.find(task=>task.id===ownedTask.id);
+  reassignedBaseTask.ownerUserIds=(reassignedBaseTask.ownerUserIds||[]).filter(id=>id!==reassignedUser.id);
+  reassignmentBase.taskDismissals=[{
+    id:`work-dismissal:${reassignedUser.id}:task:${ownedTask.id}`,
+    userId:reassignedUser.id,itemKind:'task',itemId:ownedTask.id,
+    dismissedAt:'2026-08-05T01:00:00.000Z',dismissedBy:reassignedUser.id,
+  }];
+  const unauthorizedReset=structuredClone(reassignmentBase);
+  unauthorizedReset.taskDismissals=[];
+  assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(reassignmentBase,patch.buildCloudBlockPatch(reassignmentBase,unauthorizedReset),operator.id),auth.CloudPatchAuthorizationError,'one actor must not delete another user dismissal without an exact new assignment');
+  const reassignmentNext=structuredClone(reassignmentBase);
+  reassignmentNext.tasks.find(task=>task.id===ownedTask.id).ownerUserIds.push(reassignedUser.id);
+  reassignmentNext.taskDismissals=[];
+  const reassignmentOps=patch.buildCloudBlockPatch(reassignmentBase,reassignmentNext);
+  assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(reassignmentBase,reassignmentOps,operator.id),'an authorized task patch may clear exactly the dismissal of a user newly entering that task work-center scope');
+
+  const dailyBase=structuredClone(remote);
+  dailyBase.settings.rolePermissions.operator.exportReports=true;
+  dailyBase.settings.rolePermissions.operator.viewAllVessels=true;
+  const dailyReport={
+    id:'daily-morning-2026-08-06',title:'2026/08/06 早會內容',vesselIds:dailyBase.vessels.filter(v=>v.isActive).map(v=>v.id),
+    createdBy:owner.id,createdAt:'2026-08-06T01:00:00.000Z',taskCount:0,kind:'daily-morning',businessDate:'2026-08-06',source:'manual',updatedAt:'2026-08-06T01:00:00.000Z',
+    snapshot:{capturedAt:'2026-08-06T01:00:00.000Z',vessels:structuredClone(dailyBase.vessels.filter(v=>v.isActive)),tasks:[],meetings:[]},
+  };
+  const dailyNext=structuredClone(dailyBase);
+  dailyNext.agendaReports.unshift(dailyReport);
+  const dailyOps=patch.buildCloudBlockPatch(dailyBase,dailyNext);
+  assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(dailyBase,dailyOps,operator.id),auth.CloudPatchAuthorizationError,'exportReports alone must not authorize an official daily-morning snapshot');
+  assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(dailyBase,dailyOps,owner.id),'Owner may save a valid manual daily-morning snapshot');
+  const leakingDaily=structuredClone(dailyNext);
+  leakingDaily.agendaReports[0].snapshot.tasks=[{id:'hidden-internal',isInternalControl:true,vesselId:dailyBase.vessels[0].id}];
+  leakingDaily.agendaReports[0].taskCount=1;
+  assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(dailyBase,patch.buildCloudBlockPatch(dailyBase,leakingDaily),owner.id),auth.CloudPatchAuthorizationError,'daily-morning snapshots must never persist internal-control tasks');
+  const adHocNext=structuredClone(dailyBase);
+  adHocNext.agendaReports.unshift({id:'ad-hoc-report',title:'一般報表',vesselIds:[dailyBase.vessels[0].id],createdBy:operator.id,createdAt:'2026-08-06T01:00:00.000Z',taskCount:0,kind:'ad-hoc',source:'manual'});
+  assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(dailyBase,patch.buildCloudBlockPatch(dailyBase,adHocNext),operator.id),'ordinary report exports must retain their configured permission path');
 
   console.log('Actor-scoped authorization revalidation contracts passed.');
 }finally{

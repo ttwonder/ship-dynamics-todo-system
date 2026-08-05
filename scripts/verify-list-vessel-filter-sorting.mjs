@@ -58,6 +58,7 @@ try {
   assert.ok(workCenterSource.includes('value="vessel-asc"') && workCenterSource.includes('value="vessel-desc"'), '我的待辦上方排序必須提供船舶正反向');
   assert.ok(!workCenterSource.includes("if(taskVesselMode==='custom'&&!next.length)setTaskVesselMode('all')"), '權限變更不可把空的自訂船舶範圍擴張為全部');
   assert.ok(appSource.includes('<VesselListFilter') && appSource.includes('ariaLabel="待辦清單船舶篩選"'), '待辦總表與已結案共用FilterBar必須使用共用多船選擇器');
+  assert.ok(appSource.includes('<div className="field"><label>船舶</label><VesselListFilter vessels={visibleVessels}'), '待辦總表與已結案的船舶選擇器必須與關鍵字／日期欄使用相同field標籤基準對齊');
   assert.ok(appSource.includes("onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}") && appSource.includes("onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}"), '待辦總表與已結案的船舶／期限標題必須可點擊排序');
   assert.ok(internalControlSource.includes('<VesselListFilter') && internalControlSource.includes('ariaLabel="內控清單船舶篩選"'), '內控未完與結案必須使用共用多船選擇器');
   assert.ok(internalControlSource.includes("nextListColumnSort(columnSort,'vessel')") && internalControlSource.includes("nextListColumnSort(columnSort,'date')") && internalControlSource.includes("nextListColumnSort(columnSort,'closed-date')"), '內控表格必須可依船舶、報告日期及結案日期正反排序');

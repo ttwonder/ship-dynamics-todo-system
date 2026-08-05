@@ -235,6 +235,27 @@ export interface AgendaReport {
   createdBy: string;
   createdAt: string;
   taskCount: number;
+  kind?: 'daily-morning' | 'ad-hoc';
+  businessDate?: string;
+  source?: 'manual' | 'scheduled';
+  updatedAt?: string;
+  snapshot?: MorningReportSnapshot;
+}
+
+export interface MorningReportSnapshot {
+  capturedAt: string;
+  vessels: Vessel[];
+  tasks: TaskItem[];
+  meetings: TemporaryMeeting[];
+}
+
+export interface TaskDismissal {
+  id: string;
+  userId: string;
+  itemKind: 'task' | 'internal-control';
+  itemId: string;
+  dismissedAt: string;
+  dismissedBy: string;
 }
 
 export interface AuditLog {
@@ -276,6 +297,7 @@ export interface AppData {
   internalControlCases: InternalControlCase[];
   meetings: TemporaryMeeting[];
   agendaReports: AgendaReport[];
+  taskDismissals: TaskDismissal[];
   auditLogs: AuditLog[];
   notifications: UserNotification[];
   updatedAt: string;

@@ -1183,7 +1183,7 @@ begin
   if v_is_closed then
     v_closed_date := coalesce(
       public.sd_internal_iso_date(p_case ->> 'closedDate', false),
-      clock_timestamp()::date
+      public.sd_taipei_date(clock_timestamp())
     );
   end if;
 
@@ -1486,7 +1486,7 @@ begin
     perform public.sd_internal_assert_actor(p_workspace_id, 'closeTasks');
     v_closed_date := coalesce(
       public.sd_internal_iso_date(p_case ->> 'closedDate', false),
-      clock_timestamp()::date
+      public.sd_taipei_date(clock_timestamp())
     );
   end if;
 
@@ -2613,7 +2613,7 @@ begin
   update public.sd_internal_cases c
   set status = v_reminder,
       is_closed = true,
-      closed_date = clock_timestamp()::date,
+      closed_date = public.sd_taipei_date(clock_timestamp()),
       closed_by = v_actor,
       version = c.version + 1,
       updated_at = clock_timestamp(),
@@ -3266,7 +3266,7 @@ begin
       update public.sd_internal_cases c
       set status = v_reminder,
           is_closed = true,
-          closed_date = clock_timestamp()::date,
+          closed_date = public.sd_taipei_date(clock_timestamp()),
           closed_by = v_actor,
           version = c.version + 1,
           updated_at = clock_timestamp(),
@@ -3622,7 +3622,7 @@ begin
     if v_is_closed then
       v_closed_date := coalesce(
         public.sd_internal_iso_date(v_case ->> 'closedDate', false),
-        clock_timestamp()::date
+        public.sd_taipei_date(clock_timestamp())
       );
     end if;
 

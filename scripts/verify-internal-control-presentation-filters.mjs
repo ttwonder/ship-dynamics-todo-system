@@ -49,7 +49,8 @@ try {
 
 assert.ok(page.includes("import { vesselSupervisorOptions } from './vesselDashboardFilters';"), '內控督導候選必須復用正式船舶分管 helper');
 assert.ok(page.includes('<MultiFilter label="經管督導"'), '篩選區必須有經管督導姓名多選');
-assert.ok(page.includes('<span>是否和要事同步</span>'), '報告來源下方必須新增同步狀態篩選');
+assert.ok(page.includes('<span>是否同時被選中為要事</span>'), '同步狀態篩選必須使用確認後的精確名稱');
+assert.ok(!page.includes('<span>是否和要事同步</span>'), '畫面不得保留舊同步篩選名稱');
 for (const option of ['不限', '已同步要事', '未同步要事']) assert.ok(page.includes(`>${option}<`), `同步篩選必須提供「${option}」`);
 assert.ok(page.includes("item.linkedTaskId ? '已同步要事' : '未同步要事'"), '同步欄只可顯示二元人話狀態');
 assert.ok(!page.includes('<small>{item.linkedTaskId}</small>'), '同步欄不得再顯示長 task ID');
@@ -61,5 +62,8 @@ assert.match(styles, /\.ic-filter-options label\{[^}]*grid-template-columns:auto
 assert.match(styles, /\.ic-description-column,\.ic-status-column\{[^}]*font-size:15px[^}]*white-space:normal/, '事項內容與最新狀態文字必須放大且可換行');
 assert.match(styles, /\.ic-status-column\{[^}]*width:25%/, '同步欄釋出的空間必須優先分配給最新狀態');
 assert.match(styles, /\.ic-sync-column\{[^}]*width:7%/, '同步欄必須縮至緊湊寬度');
+assert.match(styles, /\.ic-filter-grid\{[^}]*grid-template-columns:repeat\(5,minmax\(0,1fr\)\)/, '內控桌面篩選必須改為每列五欄');
+assert.match(styles, /\.ic-filter-state\.active\{[^}]*color:/, '已套用篩選狀態必須醒目可辨');
+assert.match(styles, /\.ic-filter-state\.inactive\{[^}]*color:/, '不限狀態必須使用不同中性色');
 
 console.log('Internal-control supervisor/sync filters and readable list presentation contracts passed.');

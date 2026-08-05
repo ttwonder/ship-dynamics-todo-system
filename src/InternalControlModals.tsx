@@ -6,6 +6,7 @@ import { isEligibleTaskOwner } from './permissions';
 import MeetingPeoplePicker from './MeetingPeoplePicker';
 import { uid, todayDate } from './runtimeUtils';
 import { vesselDisplayName } from './vesselDisplay';
+import { formatTaipeiDateTime } from './taipeiTime';
 
 const REPORT_SOURCES: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))];
@@ -136,7 +137,7 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
       <section className="ic-status-add"><h3>加入狀態記錄</h3><div><textarea value={logText} onChange={event => setLogText(event.target.value)} placeholder="輸入本次最新進度、處理結果或備註…"/><button type="button" className="btn green" onClick={addLog}>加入狀態記錄</button></div></section>
       <label className="ic-close-toggle"><input type="checkbox" disabled={!canClose} checked={draft.isClosed} onChange={event => change({ isClosed: event.target.checked, closedDate: event.target.checked ? (draft.closedDate || todayDate()) : undefined })}/>點擊結案</label>
     </fieldset>
-    <section className="status-history"><h3>狀態歷程</h3>{draft.statusLogs.length ? draft.statusLogs.map(log => <article key={log.id}><b>{log.text}</b><small>{log.at ? new Date(log.at).toLocaleString('zh-TW') : '尚未保存'}｜{log.by || '目前使用者'}</small></article>) : <p className="muted">尚無狀態紀錄</p>}</section>
+    <section className="status-history"><h3>狀態歷程</h3>{draft.statusLogs.length ? draft.statusLogs.map(log => <article key={log.id}><b>{log.text}</b><small>{log.at ? formatTaipeiDateTime(log.at) : '尚未保存'}｜{log.by || '目前使用者'}</small></article>) : <p className="muted">尚無狀態紀錄</p>}</section>
     <div className="modal-actions ic-edit-actions">{canDelete && <button className="btn danger" onClick={async () => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`) && await onDelete(item)) close(); }}>刪除案件</button>}<span/><button className="btn ghost" onClick={close}>取消</button>{canEdit && <button className="btn primary" onClick={submit}>保存更新</button>}</div>
   </div></div>;
 }

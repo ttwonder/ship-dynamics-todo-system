@@ -36,6 +36,8 @@ for (const label of ['單船待辦關鍵字','單船待辦狀態篩選','單船�
 assert.ok(detail.includes('onEditVessel') && detail.includes('onEditTask') && detail.includes('onAddTask'), '详情页必须复用现有修改船舶／待办流程');
 assert.ok(app.includes('selectedVesselDetailId') && app.includes('<VesselDetailPage'), 'App 必须管理详情页导航状态');
 assert.ok(detail.includes('已勾選「分派到涉及船舶單船跟蹤」'), '單船詳情必須明確標示只有勾選分派的會議待辦才列入單船清單');
+assert.ok(detail.includes('<h3>未同步到要事的內控異常</h3>'), '單船詳情的獨立內控區塊必須清楚說明尚未同步到要事');
+assert.ok(detail.includes('<td>未同步內控｜{item.reportSource}</td>'), '內控列的來源欄仍須保留原有來源語意');
 
 console.log('Vessel detail task filtering and sorting contracts passed.');
 } finally {

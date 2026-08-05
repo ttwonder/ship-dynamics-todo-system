@@ -13,6 +13,7 @@ import type {
   TaskPriority,
   TemporaryMeeting,
   TemporaryMeetingStatus,
+  TaskDismissal,
   UserNotification,
   UserRole,
   VesselAttentionLevel,
@@ -25,6 +26,7 @@ import { isMeetingTaskSource, normalizeConfiguredMeetingTaskCategories, normaliz
 import { normalizeVesselDelegateManagers } from './vesselDelegation';
 import { canonicalizeMeetingTaskItemIds } from './meetingTaskItemIds';
 import { DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES, isValidInternalControlDate, sanitizeEquipmentFailureSubcategories, taskToInternalControlCase, validateInternalControlCase } from './internalControlWorkflow';
+import { taipeiDateKey } from './taipeiTime';
 
 const roles: UserRole[] = ['owner', 'admin', 'operator', 'vessel'];
 const INVALID_PASSWORD_HASH = '0'.repeat(64);
@@ -127,7 +129,7 @@ function normalizeInternalControlCases(value: unknown, timestamp: string): Inter
     const updatedAt = text(item.updatedAt, createdAt);
     const createdBy = text(item.createdBy);
     const updatedBy = text(item.updatedBy);
-    const reportDate = normalizeDateText(item.reportDate) || normalizeDateText(createdAt.slice(0, 10)) || timestamp.slice(0, 10);
+    const reportDate = normalizeDateText(item.reportDate) || taipeiDateKey(createdAt) || taipeiDateKey(timestamp);
     const isClosed = bool(item.isClosed);
     const requestedClosedDate = normalizeDateText(item.closedDate);
     const category = text(item.category) || strings(item.categories)[0] || '其他';
@@ -160,14 +162,42 @@ function normalizeInternalControlCases(value: unknown, timestamp: string): Inter
 }
 
 function normalizeAgendaReports(value: unknown): AgendaReport[] {
+  return objects(value).map(item => {
+    const snapshot = object(item.snapshot);
+    const validSnapshot = snapshot && Array.isArray(snapshot.vessels) && Array.isArray(snapshot.tasks) && Array.isArray(snapshot.meetings)
+      ? structuredClone(snapshot) as unknown as AgendaReport['snapshot']
+      : undefined;
+    const normalized: AgendaReport = {
+      id: text(item.id),
+      title: text(item.title),
+      vesselIds: strings(item.vesselIds),
+      createdBy: text(item.createdBy),
+      createdAt: text(item.createdAt),
+      taskCount: finite(item.taskCount),
+      kind: item.kind === 'daily-morning' || item.kind === 'ad-hoc' ? item.kind : undefined,
+      businessDate: text(item.businessDate) || undefined,
+      source: item.source === 'manual' || item.source === 'scheduled' ? item.source : undefined,
+      updatedAt: text(item.updatedAt) || undefined,
+      snapshot: validSnapshot,
+    };
+    return normalized;
+  }).filter(item => item.id);
+}
+
+function normalizeTaskDismissals(value: unknown): TaskDismissal[] {
+  const seen = new Set<string>();
   return objects(value).map(item => ({
     id: text(item.id),
-    title: text(item.title),
-    vesselIds: strings(item.vesselIds),
-    createdBy: text(item.createdBy),
-    createdAt: text(item.createdAt),
-    taskCount: finite(item.taskCount),
-  })).filter(item => item.id);
+    userId: text(item.userId),
+    itemKind: item.itemKind === 'internal-control' ? 'internal-control' as const : 'task' as const,
+    itemId: text(item.itemId),
+    dismissedAt: text(item.dismissedAt),
+    dismissedBy: text(item.dismissedBy),
+  })).filter(item => {
+    if (!item.id || !item.userId || !item.itemId || !item.dismissedAt || !item.dismissedBy || seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
 }
 
 function normalizeAuditLogs(value: unknown): AuditLog[] {
@@ -413,7 +443,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       description: text(item.description),
       status,
       expectedDate: text(item.expectedDate),
-      reportDate: normalizeDateText(item.reportDate) || normalizeDateText(text(item.createdAt, timestamp).slice(0, 10)) || timestamp.slice(0, 10),
+      reportDate: normalizeDateText(item.reportDate) || taipeiDateKey(text(item.createdAt, timestamp)) || taipeiDateKey(timestamp),
       departments: strings(item.departments),
       ownerUserIds: strings(item.ownerUserIds),
       isClosed,
@@ -434,6 +464,7 @@ export function normalizeAppData(value: unknown): AppData | null {
     internalControlCases: normalizeInternalControlCases(raw.internalControlCases, timestamp),
     meetings: normalizeMeetings(raw.meetings, timestamp, normalizedMeetingTaskCategories),
     agendaReports: normalizeAgendaReports(raw.agendaReports),
+    taskDismissals: normalizeTaskDismissals(raw.taskDismissals),
     auditLogs: normalizeAuditLogs(raw.auditLogs),
     notifications: normalizeNotifications(raw.notifications),
   };

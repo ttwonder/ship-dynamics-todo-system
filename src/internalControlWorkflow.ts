@@ -11,6 +11,7 @@ import type {
 import { hasActiveVesselDelegation } from './vesselDelegation';
 import { richTextToPlainText } from './richText';
 import { supervisorIdsForVessel } from './vesselDashboardFilters';
+import { taipeiDateKey } from './taipeiTime';
 
 export const INTERNAL_CONTROL_REPORT_SOURCES: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 
@@ -78,6 +79,13 @@ export const managedInternalControlVesselIds = (user: InternalControlUser, vesse
 
 export const defaultInternalControlVesselIds = (user: InternalControlUser, vessels: InternalControlVessel[]): string[] => {
   return managedInternalControlVesselIds(user, vessels);
+};
+
+export const defaultInternalControlVesselSelection = (user: InternalControlUser, vessels: InternalControlVessel[]) => {
+  const vesselIds = managedInternalControlVesselIds(user, vessels);
+  return vesselIds.length
+    ? { mode: 'mine' as const, vesselIds }
+    : { mode: 'all' as const, vesselIds: [] as string[] };
 };
 
 export const emptyInternalControlFilters = (vesselIds: string[] = []): InternalControlFilters => ({
@@ -255,7 +263,7 @@ export function taskToInternalControlCase(task: TaskItem, existing: InternalCont
   return {
     id,
     vesselId: task.vesselId,
-    reportDate: task.reportDate || task.createdAt.slice(0, 10),
+    reportDate: task.reportDate || taipeiDateKey(task.createdAt),
     reportSource: existing?.reportSource || options.reportSource || '日常',
     description: task.description,
     priority: task.priority,

@@ -1283,6 +1283,24 @@ export class NormalizedCommandClient {
     });
   }
 
+  dismissWorkCenterItems(
+    actorId:string,
+    items:Array<{itemKind:'task'|'internal-control';itemId:string}>,
+    operationId=uuid(),
+  ){
+    const request={items};
+    const targetKey=`task-dismissals:${actorId}:${md5Hex(postgresJsonbText(items))}`;
+    return this.#repository.executeCommand({
+      rpc:'command_ship_dynamics_dismiss_work_center_items',
+      command:'dismiss_work_center_items',
+      operationId,
+      entityKey:`task-dismissals:${actorId}`,
+      targetKey,
+      request,
+      args:{p_items:items},
+    });
+  }
+
   saveReport(input: {
     reportId: string;
     content: JsonObject;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import fpmcLogo from './assets/fpmc-logo.png';
 import type {
+  AgendaReport,
   AppData,
   InternalControlCase,
   TaskItem,
@@ -32,6 +33,8 @@ import { usesPerVesselProgress } from './taskVesselProgress';
 import { hasActiveVesselDelegation } from './vesselDelegation';
 import { dashboardMeetingAlerts } from './meetingVesselAttention';
 import { todayDate } from './runtimeUtils';
+import { formatTaipeiDateTime } from './taipeiTime';
+import { dailyMorningReports, upsertDailyMorningReport } from './morningHistory';
 import RichTextContent from './RichTextContent';
 import { vesselPositionCommandValue } from './normalizedAdapters';
 import SelectedTaskPrintTable from './SelectedTaskPrintTable';
@@ -427,21 +430,23 @@ function TaskList({
   </section>;
 }
 
-function ReportsView({ data, vessels }: { data: AppData; vessels: Vessel[] }) {
+function ReportsView({ data, vessels, user, onSaveDaily }: { data: AppData; vessels: Vessel[]; user:UserAccount; onSaveDaily:(report:AgendaReport)=>Promise<boolean> }) {
+  const history=dailyMorningReports(data.agendaReports);
+  const saveDaily=async()=>{const result=upsertDailyMorningReport(data,{actorUserId:user.id,source:'manual'});if(result.status==='not-business-day')return alert('每日正式早會只在台北工作日建立');if(await onSaveDaily(result.report))alert('今日早會快照已由伺服器確認保存。');};
   return <section><div className="page-heading"><div><h1>報表與保存紀錄</h1>
-    <p>報表內容只從目前授權的伺服器投影產生。</p></div>
-    <button className="btn primary" onClick={() => window.print()}>列印目前報表</button></div>
+    <p>台北工作日09:00由雲端排程建立每日早會；手動保存會更新同一天快照。</p></div><div className="heading-actions">{(user.role==='owner'||user.role==='admin')&&<button className="btn green" onClick={()=>void saveDaily()}>手動保存今日早會</button>}
+    <button className="btn primary" onClick={() => window.print()}>列印目前報表</button></div></div>
     <section className="panel"><h2>船舶摘要</h2>
       <div className="table-wrap"><table><thead><tr><th>船舶</th><th>位置</th><th>動態</th><th>未結待辦</th></tr></thead>
         <tbody>{vessels.map(vessel => <tr key={vessel.id}><td>{vessel.shortName || vessel.name}</td>
           <td>{vessel.position.location}</td><td>{vessel.note.recentDynamics}</td>
           <td>{data.tasks.filter(task => !task.isClosed && taskHasVessel(task, vessel.id)).length}</td></tr>)}</tbody>
       </table></div></section>
-    <section className="panel"><h2>已保存報表</h2>
-      {data.agendaReports.map(report => <div className="report-history-row" key={report.id}>
-        <b>{report.title}</b><span>{report.createdAt.replace('T', ' ').slice(0, 16)}｜{report.taskCount} 項</span>
+    <section className="panel"><h2>每日早會歷史</h2>
+      {history.map(report => <div className="report-history-row" key={report.id}>
+        <b>{report.title}</b><span>{report.businessDate}｜{report.source==='scheduled'?'09:00自動':'手動'}｜更新 {formatTaipeiDateTime(report.updatedAt||report.createdAt,false)}｜{report.taskCount} 項</span>
       </div>)}
-      {!data.agendaReports.length && <div className="empty-state">尚未保存報表</div>}
+      {!history.length && <div className="empty-state">尚無每日早會歷史</div>}
     </section>
   </section>;
 }
@@ -470,6 +475,7 @@ export default function NormalizedApp() {
   const [detailVesselId, setDetailVesselId] = useState('');
   const [editingVesselId, setEditingVesselId] = useState('');
   const [taskEditor, setTaskEditorState] = useState<NormalizedTaskEditorSession | null>(null);
+  const [requestedInternalControlCaseId,setRequestedInternalControlCaseId]=useState('');
   const taskEditorRef = useRef<NormalizedTaskEditorSession | null>(null);
   const recoveringDrafts = useRef(false);
   const runtimeView = useSyncExternalStore(
@@ -543,6 +549,7 @@ export default function NormalizedApp() {
   useEffect(() => {
     setEditingVesselId('');
     setDetailVesselId('');
+    setRequestedInternalControlCaseId('');
     setSelectedVessels([]);
     setBatchSelected([]);
     setDirectory(null);
@@ -812,20 +819,27 @@ export default function NormalizedApp() {
         onEditTask={(task, vesselId) => openTask(task, vesselId)}
         onAddTask={addTask} onOpenVessel={setDetailVesselId}
         onOpenTemporaryMeeting={() => setTab('meetings')} onOpenReport={() => setTab('reports')}
-        commit={mutate => {
-          const draft = structuredClone(data);
-          mutate(draft);
-          const report = draft.agendaReports.find(item =>
-            !data.agendaReports.some(existing => existing.id === item.id));
-          if (report) void run(() => controller.saveReport(report));
+        canSaveDailyMorning={user.role==='owner'||user.role==='admin'}
+        onSaveDailyMorning={async at => {
+          const result=upsertDailyMorningReport(data,{at,actorUserId:user.id,source:'manual'});
+          if(result.status==='not-business-day'){
+            alert('每日正式早會只在台北工作日建立');
+            return false;
+          }
+          return Boolean(await run(async()=>{await controller.saveReport(result.report);return true;}));
         }}/>
       : tab === 'work' ? <WorkCenter data={data} user={user} vessels={visibleVessels}
-        onOpenTask={task => openTask(task)} onOpenInternalControl={() => setTab('internal')}
+        onOpenTask={task => openTask(task)} onOpenInternalControl={caseId=>{if(caseId)setRequestedInternalControlCaseId(caseId);setTab('internal');}}
         onOpenVessel={setDetailVesselId}
         markAllRead={() => run(() => controller.markAllNotificationsRead(user)).then(() => undefined)}
         canComplete={canClose} canDelete={canDelete} canPrint={permission('exportReports')}
-        onPrint={() => window.print()}
+        onPrint={()=>{
+          document.body.classList.add('printing-work-center');
+          window.addEventListener('afterprint',()=>document.body.classList.remove('printing-work-center'),{once:true});
+          window.setTimeout(()=>window.print(),80);
+        }}
         onBatchComplete={completeNormalizedSelection}
+        onDismiss={(taskIds,caseIds)=>runBoolean(()=>controller.dismissWorkCenterItems(user,taskIds,caseIds||[]))}
         onBatchDelete={deleteNormalizedSelection}/>
       : tab === 'tasks' ? <TaskList data={{ ...data, tasks: visibleTasks }} user={user} vessels={visibleVessels}
         closed={false} onOpen={openTask} canComplete={canClose} canDelete={canDelete} canPrint={permission('exportReports')}
@@ -836,6 +850,8 @@ export default function NormalizedApp() {
       : tab === 'internal' ? <InternalControlPage data={data} user={user} vessels={visibleVessels}
         canCreate={canCreate} canEdit={canEdit} canClose={canClose} canDelete={canDelete}
         canExport={permission('exportReports')} authorizationEpoch={authorizationEpoch}
+        requestedCaseId={requestedInternalControlCaseId}
+        onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')}
         onCreate={async (items, _revision, projections) =>
           Boolean(await run(() => controller.createInternalCaseBatch(items, projections)))}
         onUpdate={async (item, _updatedAt, _revision, taskProjection) =>
@@ -854,7 +870,7 @@ export default function NormalizedApp() {
         onDelete={meetingId => runBoolean(() => controller.deleteMeeting(meetingId))}
         onCorrectStatus={input =>
           run(() => controller.correctMeetingStatus(input)).then(() => undefined)}/>
-      : tab === 'reports' ? <ReportsView data={data} vessels={visibleVessels}/>
+      : tab === 'reports' ? <ReportsView data={data} vessels={visibleVessels} user={user} onSaveDaily={report=>runBoolean(()=>controller.saveReport(report))}/>
       : tab === 'stats' ? <DataAnalysisView data={{ ...data, tasks: visibleTasks }} vessels={visibleVessels}/>
       : <NormalizedManagement data={data} user={user}
         canManageUsers={permission('manageUsers')} canManageVessels={permission('manageVessels')}

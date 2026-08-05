@@ -1,8 +1,11 @@
 import type { AppData } from './types';
 
 export const CLOUD_BLOCK_COLLECTIONS=[
-  'users','vessels','tasks','internalControlCases','meetings','agendaReports','notifications','auditLogs',
+  'users','vessels','tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs',
 ] as const;
+
+const UNORDERED_COLLECTIONS=new Set<CloudBlockCollection>(['taskDismissals']);
+const DERIVED_ORDER_COLLECTIONS=new Set<CloudBlockCollection>(['notifications','auditLogs']);
 
 export type CloudBlockCollection=typeof CLOUD_BLOCK_COLLECTIONS[number];
 
@@ -51,7 +54,12 @@ const canonical=(value:unknown):string=>{
 
 const equal=(left:unknown,right:unknown)=>canonical(left)===canonical(right);
 
-const entityArray=(snapshot:AppData,collection:CloudBlockCollection):JsonObject[]=>(snapshot[collection] as unknown as JsonObject[]);
+const entityArray=(snapshot:AppData,collection:CloudBlockCollection):JsonObject[]=>{
+  const value=(snapshot as unknown as Record<string,unknown>)[collection];
+  if(value===undefined&&collection==='taskDismissals')return[];
+  if(!Array.isArray(value))throw new TypeError(`${collection} must be a JSON array`);
+  return value as JsonObject[];
+};
 
 const indexEntities=(snapshot:AppData,collection:CloudBlockCollection)=>{
   const map=new Map<string,JsonObject>();
@@ -95,16 +103,22 @@ export function buildCloudBlockPatch(base:AppData,next:AppData,storageBase:AppDa
     const nextMap=indexEntities(jsonNext,collection);
     const storageMap=indexEntities(jsonStorageBase,collection);
     const ids=[...new Set([...baseMap.keys(),...nextMap.keys()])].sort((left,right)=>left.localeCompare(right));
+    let hasEntityOperation=false;
     for(const entityId of ids){
       const normalizedExpected=baseMap.get(entityId)||null;
       const expected=storageMap.get(entityId)||null;
       const value=nextMap.get(entityId)||null;
-      if(!equal(normalizedExpected,value))operations.push({kind:'entity',collection,entityId,expected:expected?clone(expected):null,value:value?clone(value):null});
+      if(!equal(normalizedExpected,value)){
+        operations.push({kind:'entity',collection,entityId,expected:expected?clone(expected):null,value:value?clone(value):null});
+        hasEntityOperation=true;
+      }
     }
     const normalizedExpectedIds=entityArray(jsonBase,collection).map(entity=>entity.id as string);
     const expectedIds=entityArray(jsonStorageBase,collection).map(entity=>entity.id as string);
     const valueIds=entityArray(jsonNext,collection).map(entity=>entity.id as string);
-    if(!equal(normalizedExpectedIds,valueIds))operations.push({kind:'order',collection,expectedIds:[...expectedIds],valueIds:[...valueIds]});
+    if(!equal(normalizedExpectedIds,valueIds)
+      && !UNORDERED_COLLECTIONS.has(collection)
+      && (!DERIVED_ORDER_COLLECTIONS.has(collection)||hasEntityOperation))operations.push({kind:'order',collection,expectedIds:[...expectedIds],valueIds:[...valueIds]});
   }
   operations.forEach(assertOperationShape);
   return operations;

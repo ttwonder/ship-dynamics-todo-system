@@ -18,6 +18,7 @@ assert.ok(styles.includes('body.printing-meeting-register .meeting-print-registe
 assert.ok(!styles.includes('body.printing-meetings .container>.print-only{display:none!important}'), '不得以更高權重隱藏臨會列印容器，否則 PDF 會空白');
 assert.ok(app.includes('className="print-only app-print-header"'), '一般頁面列印抬頭必須有獨立 class，才能在臨會列印時精準隱藏');
 assert.ok(styles.includes('body.printing-meetings .app-print-header{display:none!important}'), '臨會列印時只應隱藏一般頁面抬頭');
+assert.ok(styles.includes('body.printing-meetings>:not(#root){display:none!important}'), '臨會列印時必須排除外掛注入到 body 的兄弟節點，避免產生預設橫式空白頁');
 assert.match(meetings,/>導出本次會議 PDF</,'详情页必须提供当前会议 PDF 导出按钮');
 assert.match(meetings,/printMeetingDetail\(selected\.id\)/,'详情按钮必须明确锁定当前会议 ID');
 assert.match(meetings,/printMeetingIds/,'打印集合必须与总清单勾选状态分离，避免详情导出混入其他会议');

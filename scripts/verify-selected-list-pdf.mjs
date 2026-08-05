@@ -23,12 +23,14 @@ try{
     && workCenter.includes('導出 PDF（{selectionCount}）')
     && workCenter.includes('printInternalCases.map(')
     && workCenter.includes('printTasks.map('),'work center PDF must contain only explicitly selected ordinary and internal-control items');
-  assert.ok(workCenter.includes('const selectableTasks=filteredTasks.filter(task=>canPrint||canDelete||(canComplete&&!usesPerVesselProgress(task)));')
+  assert.ok(workCenter.includes('const selectableTasks=filteredTasks;')
+    && workCenter.includes('const selectableInternalCases=filteredInternalCases;')
     && workCenter.includes('const completableSelectedTasks=selectedTasks.filter(task=>!usesPerVesselProgress(task));')
     && workCenter.includes('onBatchComplete(completableSelectedTasks.map(task=>task.id),selectedInternalCases.map(item=>item.id))')
     && workCenter.includes('taskSelectable&&<label className="work-task-select"')
+    && workCenter.includes('從我的待辦移除（{selectionCount}）')
     && workCenter.includes('const projected=taskProjectedProgressForScope(task,scopedIds);')
-    && workCenter.includes("richTextToPlainText(projected.status)||'尚未更新'"),'distributed meeting tasks must remain selectable with scoped PDF status while batch completion receives only completable rows');
+    && workCenter.includes("richTextToPlainText(projected.status)||'尚未更新'"),'all visible rows must remain selectable for personal removal while completion and PDF retain their independent eligibility rules');
 
   assert.ok(app.includes('<SelectedTaskPrintTable title={title} tasks={selectedTasks}')
     && app.includes('disabled={!selectedTasks.length}')
@@ -52,6 +54,10 @@ try{
 
   assert.ok(styles.includes('.selected-task-print{display:none}')
     && styles.includes('.selected-task-print{display:block!important;'),'selected task print artifact must remain screen-hidden and print-visible');
+  assert.ok(app.includes('printing-work-center')
+    && styles.includes('body.printing-work-center .app-print-header')
+    && styles.includes('body.printing-work-center .work-center>.page-heading')
+    && styles.includes('@page work-center{size:A4 landscape'), 'work-center PDF must isolate the selected print artifact from screen headings, notifications, and mixed page rules');
   assert.ok(selectedTaskPrint.includes('taskProjectedProgressForScope(task,visibleVesselIds)')
     && selectedTaskPrint.includes('value={projected.status}')
     && selectedTaskPrint.includes("projected.isClosed ? projected.closedDate || '已結案' : '未結'"),'selected task PDF must use the same visible-vessel progress projection as the list instead of raw cross-vessel task status');

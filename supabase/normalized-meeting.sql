@@ -1156,7 +1156,7 @@ begin
         p_priority, 'meeting', 'meeting', v_item.item ->> 'id',
         coalesce(p_is_internal_control, false),
         coalesce(p_is_abnormal, false) or coalesce(p_is_internal_control, false),
-        true, false, p_expected_date, current_date, 1, v_actor, v_actor
+        true, false, p_expected_date, public.sd_taipei_date(clock_timestamp()), 1, v_actor, v_actor
       );
 
       insert into public.sd_task_vessels(
@@ -1464,7 +1464,7 @@ begin
           update public.sd_tasks t
           set status = 'Archived: meeting item removed',
               is_closed = true,
-              closed_date = current_date,
+              closed_date = public.sd_taipei_date(clock_timestamp()),
               closed_by = v_actor,
               version = t.version + 1,
               updated_at = clock_timestamp(),
@@ -1739,7 +1739,7 @@ begin
           p_priority, 'meeting', 'meeting', v_item.item ->> 'id',
           coalesce(p_is_internal_control, false),
           coalesce(p_is_abnormal, false) or coalesce(p_is_internal_control, false),
-          true, false, p_expected_date, current_date, 1, v_actor, v_actor
+          true, false, p_expected_date, public.sd_taipei_date(clock_timestamp()), 1, v_actor, v_actor
         );
 
         insert into public.sd_task_vessels(
@@ -2024,7 +2024,7 @@ begin
         update public.sd_tasks t
         set status = 'Archived: meeting deleted',
             is_closed = true,
-            closed_date = current_date,
+            closed_date = public.sd_taipei_date(clock_timestamp()),
             closed_by = v_actor,
             version = t.version + 1,
             updated_at = clock_timestamp(),

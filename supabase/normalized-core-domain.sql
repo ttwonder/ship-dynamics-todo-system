@@ -11,6 +11,17 @@ begin;
 -- and internal-control provenance is represented but can only be mutated by
 -- their future aggregate commands.
 
+create or replace function public.sd_taipei_date(p_at timestamptz)
+returns date
+language sql
+immutable
+parallel safe
+returns null on null input
+set search_path = public
+as $$
+  select (p_at at time zone 'Asia/Taipei')::date
+$$;
+
 alter table public.sd_tasks
   add column if not exists source_type text not null default 'morning',
   add column if not exists source_meeting_id text,
@@ -1157,12 +1168,19 @@ begin
   from unnest(v_departments) with ordinality item(value, ordinal);
 
   delete from public.sd_task_owners
+  where workspace_id = p_workspace_id
+    and task_id = p_task_id
+    and not (owner_id = any(v_owners));
+  update public.sd_task_owners
+  set ordinal = ordinal + 1000000
   where workspace_id = p_workspace_id and task_id = p_task_id;
   insert into public.sd_task_owners(
     workspace_id, task_id, owner_id, ordinal
   )
   select p_workspace_id, p_task_id, value, ordinal - 1
-  from unnest(v_owners) with ordinality item(value, ordinal);
+  from unnest(v_owners) with ordinality item(value, ordinal)
+  on conflict (workspace_id, task_id, owner_id) do update
+    set ordinal = excluded.ordinal;
 
   delete from public.sd_task_type_scopes
   where workspace_id = p_workspace_id and task_id = p_task_id;
@@ -1725,7 +1743,7 @@ begin
         else t.is_closed
       end,
       closed_date = case
-        when p_transition = 'close' then current_date
+        when p_transition = 'close' then public.sd_taipei_date(clock_timestamp())
         when p_transition = 'reopen' then null
         else t.closed_date
       end,
@@ -1751,7 +1769,7 @@ begin
     update public.sd_task_vessels tv
     set status = v_final_status,
         is_closed = p_transition = 'close',
-        closed_date = case when p_transition = 'close' then current_date else null end,
+        closed_date = case when p_transition = 'close' then public.sd_taipei_date(clock_timestamp()) else null end,
         closed_by = case when p_transition = 'close' then v_actor else null end,
         version = tv.version + 1,
         updated_at = clock_timestamp(),
@@ -1894,7 +1912,7 @@ begin
     set status_before_close = t.status,
         status = v_status,
         is_closed = true,
-        closed_date = current_date,
+        closed_date = public.sd_taipei_date(clock_timestamp()),
         closed_by = v_actor,
         version = t.version + 1,
         updated_at = clock_timestamp(),
@@ -2228,7 +2246,7 @@ begin
   set status = btrim(p_status),
       is_closed = p_is_closed,
       closed_date = case
-        when p_is_closed and not v_progress.is_closed then current_date
+        when p_is_closed and not v_progress.is_closed then public.sd_taipei_date(clock_timestamp())
         when p_is_closed then v_progress.closed_date
         else null
       end,
@@ -2882,7 +2900,14 @@ begin
       updated_by = v_actor
   where a.workspace_id = p_workspace_id
     and a.vessel_id = p_vessel_id
-    and a.is_active;
+    and a.is_active
+    and not exists (
+      select 1
+      from jsonb_array_elements(p_assignments) item
+      where (item ->> 'userId')::uuid = a.user_id
+        and item ->> 'assignmentKind' = a.assignment_kind
+        and (item ->> 'isActive')::boolean
+    );
   for v_item in select value from jsonb_array_elements(p_assignments)
   loop
     v_user_id := (v_item ->> 'userId')::uuid;
@@ -3457,7 +3482,7 @@ begin
       set status_before_close = t.status,
           status = v_status,
           is_closed = true,
-          closed_date = current_date,
+          closed_date = public.sd_taipei_date(clock_timestamp()),
           closed_by = v_actor,
           version = t.version + 1,
           updated_at = clock_timestamp(),

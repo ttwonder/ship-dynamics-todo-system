@@ -10,6 +10,7 @@ import {
 import { isMeetingTaskSource } from './taskCategories';
 import { taskVesselIds } from './taskVesselScope';
 import { isEligibleTaskOwner } from './permissions';
+import { taipeiDateKey } from './taipeiTime';
 
 export type InternalControlDataDraft = Pick<AppData, 'users' | 'vessels' | 'tasks' | 'internalControlCases'> & Partial<Pick<AppData, 'settings'>>;
 export type InternalControlActor = Pick<UserAccount, 'id' | 'name'>;
@@ -21,7 +22,7 @@ export type InternalControlTaskProjection = {
 };
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
-const dateAt = (at: string) => at.slice(0, 10);
+const dateAt = (at: string) => taipeiDateKey(at);
 const withoutClosureTransitionMetadata = ({
   updatedAt: _updatedAt,
   updatedBy: _updatedBy,

@@ -9,6 +9,7 @@ import type {
 } from './types';
 import type { ManageUserRecoverySummary } from './normalizedRuntime';
 import { vesselDisplayName } from './vesselDisplay';
+import { formatTaipeiDateTime } from './taipeiTime';
 
 type SettingsSection = 'departments' | 'task-categories' | 'meeting-task-categories'
   | 'priorities' | 'equipment-options';
@@ -198,7 +199,7 @@ export default function NormalizedManagement(props: Props) {
         : <div className="table-wrap"><table className="compact"><thead><tr>
           <th>時間</th><th>操作人</th><th>命令</th><th>實體</th><th>內容</th>
         </tr></thead><tbody>{data.auditLogs.map(log => <tr key={log.id}>
-          <td>{log.at.replace('T', ' ').slice(0, 19)}</td><td>{log.actorName}</td>
+          <td>{formatTaipeiDateTime(log.at)}</td><td>{log.actorName}</td>
           <td>{log.action}</td><td>{log.entityType}｜{log.entityId}</td><td>{log.detail}</td>
         </tr>)}</tbody></table></div>}
     </section>}

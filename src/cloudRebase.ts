@@ -1,7 +1,7 @@
 import type { AppData } from './types';
 import { actorAuthorizationUnchanged } from './cloudAuthorization';
 
-const COLLECTION_KEYS = ['users', 'vessels', 'tasks', 'internalControlCases', 'meetings', 'agendaReports', 'auditLogs', 'notifications'] as const;
+const COLLECTION_KEYS = ['users', 'vessels', 'tasks', 'internalControlCases', 'meetings', 'agendaReports', 'taskDismissals', 'auditLogs', 'notifications'] as const;
 type CollectionKey = typeof COLLECTION_KEYS[number];
 type SnapshotName = 'base' | 'local' | 'remote';
 type Identified = { id: string };

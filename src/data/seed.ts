@@ -3,6 +3,7 @@ import { localDate } from '../utils';
 import { DEFAULT_ROLE_PERMISSIONS } from '../permissions';
 import { REQUIRED_MEETING_TASK_CATEGORIES, REQUIRED_TASK_CATEGORIES } from '../taskCategories';
 import { DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES } from '../internalControlWorkflow';
+import { taipeiYesterdayDate } from '../taipeiTime';
 
 const rawPersonnel = [
   {
@@ -788,7 +789,7 @@ export function createInitialData(): AppData {
     description: `${v.fullName} 早會跟進事項 ${index + 1}`,
     status: '昨日已更新，早會追蹤中',
     expectedDate: nextWeek,
-    reportDate: yesterday.slice(0, 10),
+    reportDate: taipeiYesterdayDate(now),
     departments: [DEPARTMENTS[index % DEPARTMENTS.length]],
     ownerUserIds: [],
     isClosed: false,
@@ -822,6 +823,7 @@ export function createInitialData(): AppData {
     internalControlCases: [],
     meetings: [],
     agendaReports: [],
+    taskDismissals: [],
     auditLogs: [],
     notifications: [],
     updatedAt: now.toISOString(),

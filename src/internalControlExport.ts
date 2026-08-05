@@ -1,6 +1,7 @@
 import type { InternalControlCase, Vessel } from './types';
 import { vesselDisplayName } from './vesselDisplay';
 import { richTextToPlainText } from './richText';
+import { formatTaipeiDateTime, taipeiDateKey } from './taipeiTime';
 
 const escapeHtml = (value: unknown) => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -42,7 +43,7 @@ export function buildInternalControlExcelHtml(cases: InternalControlCase[], vess
       item.syncToTask ? '是' : '否',
       item.isClosed ? '已結案' : '未完',
       item.closedDate || '',
-      item.updatedAt.slice(0, 16).replace('T', ' '),
+      formatTaipeiDateTime(item.updatedAt, false),
     ];
     return `<tr>${values.map(value => `<td>${escapeHtml(excelSafe(value))}</td>`).join('')}</tr>`;
   }).join('');
@@ -52,11 +53,11 @@ export function buildInternalControlExcelHtml(cases: InternalControlCase[], vess
     .title{background:#173f63;color:#fff;font-size:20px;font-weight:700;text-align:left;padding:14px}
     .meta{background:#eaf2f8;color:#36536e;text-align:left}.header th{background:#2d6d8f;color:#fff;font-weight:700;white-space:nowrap}
     tr:nth-child(even) td{background:#f6f9fc}.urgent{color:#b42318}
-  </style></head><body><table><thead><tr><th class="title" colspan="16">${escapeHtml(title)}</th></tr><tr><th class="meta" colspan="16">匯出條件：${escapeHtml(filterSummary)}｜共 ${cases.length} 件｜匯出時間 ${escapeHtml(new Date().toLocaleString('zh-TW'))}</th></tr><tr class="header">${['序號','船舶','船型','報告日期','報告來源','關注程度','分類','設備故障細項','知曉事項','事項內容','解決計劃／最新狀態','涉及部門','同步到要事','案件狀態','結案日期','最後更新'].map(item => `<th>${item}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></body></html>`;
+  </style></head><body><table><thead><tr><th class="title" colspan="16">${escapeHtml(title)}</th></tr><tr><th class="meta" colspan="16">匯出條件：${escapeHtml(filterSummary)}｜共 ${cases.length} 件｜匯出時間 ${escapeHtml(formatTaipeiDateTime(new Date()))}</th></tr><tr class="header">${['序號','船舶','船型','報告日期','報告來源','關注程度','分類','設備故障細項','知曉事項','事項內容','解決計劃／最新狀態','涉及部門','同步到要事','案件狀態','結案日期','最後更新'].map(item => `<th>${item}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></body></html>`;
 }
 
 export function downloadInternalControlExcel(cases: InternalControlCase[], vessels: Vessel[], filterSummary: string): void {
-  const date = new Date().toISOString().slice(0, 10);
+  const date = taipeiDateKey();
   const html = buildInternalControlExcelHtml(cases, vessels, '內控異常清單', filterSummary);
   downloadBlob(html, 'application/vnd.ms-excel;charset=utf-8', `內控異常_${date}.xls`);
 }

@@ -601,7 +601,13 @@ begin
   where a.workspace_id = p_workspace_id
     and a.user_id = p_user_id
     and a.assignment_kind in ('manager', 'delegate')
-    and a.is_active;
+    and a.is_active
+    and not exists (
+      select 1
+      from jsonb_array_elements(v_assignments) item
+      where btrim(item ->> 'vesselId') = a.vessel_id
+        and item ->> 'assignmentKind' = a.assignment_kind
+    );
   insert into public.sd_vessel_assignments(
     workspace_id, vessel_id, user_id, assignment_kind,
     is_active, updated_at, updated_by

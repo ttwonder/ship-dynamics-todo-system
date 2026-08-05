@@ -565,7 +565,7 @@ begin
         return jsonb_build_object('ok',false,'code','block-conflict','conflict_key','settings');
       end if;
     elsif kind in ('entity','order') then
-      if collection_name is null or not (collection_name = any(array['users','vessels','tasks','internalControlCases','meetings','agendaReports','notifications','auditLogs'])) then
+      if collection_name is null or not (collection_name = any(array['users','vessels','tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs'])) then
         return jsonb_build_object('ok',false,'code','invalid-collection');
       end if;
       current_array := coalesce(working_payload -> collection_name, '[]'::jsonb);

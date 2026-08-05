@@ -1,4 +1,5 @@
 import type { AppData, UserAccount, UserRole } from './types';
+import { taipeiDateKey, taipeiDaysDiff, taipeiYesterdayDate } from './taipeiTime';
 
 export const STORAGE_KEY = 'ship-dynamics-app-data-v1';
 export const SESSION_SITE_UNLOCK = 'ship-dynamics-site-unlocked-v1';
@@ -22,25 +23,12 @@ export function uid(prefix: string) {
 }
 
 export function localDate(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return taipeiDateKey(date);
 }
-export function todayDate() { return localDate(); }
-export function yesterdayDate() {
-  const date = new Date();
-  date.setDate(date.getDate() - 1);
-  return localDate(date);
-}
+export function todayDate() { return taipeiDateKey(); }
+export function yesterdayDate() { return taipeiYesterdayDate(); }
 export function daysDiff(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return null;
-  const [year, month, day] = value.split('-').map(Number);
-  const target = new Date(year, month - 1, day);
-  if (target.getFullYear() !== year || target.getMonth() !== month - 1 || target.getDate() !== day) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - today.getTime()) / 86400000);
+  return taipeiDaysDiff(value);
 }
 
 export function roleLabel(role?: UserRole | 'system') {
@@ -100,6 +88,7 @@ export function isAppDataLike(value: unknown): value is AppData {
     && Array.isArray(data.tasks)
     && (data.meetings === undefined || Array.isArray(data.meetings))
     && (data.agendaReports === undefined || Array.isArray(data.agendaReports))
+    && (data.taskDismissals === undefined || Array.isArray(data.taskDismissals))
     && (data.auditLogs === undefined || Array.isArray(data.auditLogs));
 }
 

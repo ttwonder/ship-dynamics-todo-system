@@ -1,7 +1,9 @@
-import type { AppData, PermissionKey, UserAccount } from './types';
+import type { AppData, PermissionKey, TaskItem, UserAccount } from './types';
 import { canAccessAllVessels, hasPermission, normalizeRolePermissions } from './permissions';
 import { hasActiveVesselDelegation } from './vesselDelegation';
 import { buildCloudBlockPatch, type CloudBlockCollection, type CloudBlockPatchOperation } from './cloudBlockPatch';
+import { taskBelongsToUserWorkCenter } from './workCenterScope';
+import { isTaipeiBusinessDay, taipeiDateKey } from './taipeiTime';
 
 export class CloudPatchAuthorizationError extends Error{
   constructor(readonly reason:string){super(`Cloud patch authorization rejected: ${reason}`);this.name='CloudPatchAuthorizationError';}
@@ -124,7 +126,56 @@ export function cloudBlockPatchTouchesAuthorizationDomain(operations:readonly Cl
   });
 }
 
-function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extract<CloudBlockPatchOperation,{kind:'entity'}>){
+const taskDismissalResetKey=(userId:string,taskId:string)=>`${userId}\u0000${taskId}`;
+
+function assertDailyMorningReportAuthorization(actor:UserAccount,expected:Record<string,unknown>|null,value:Record<string,unknown>|null){
+  const dailyMorning=expected?.kind==='daily-morning'||value?.kind==='daily-morning';
+  if(!dailyMorning)return;
+  if(actor.role!=='owner'&&actor.role!=='admin')throw new CloudPatchAuthorizationError('daily-morning-owner-admin-only');
+  if(!value)return;
+  const businessDate=String(value.businessDate||'');
+  const snapshot=value.snapshot as Record<string,unknown>|undefined;
+  const capturedAt=String(snapshot?.capturedAt||'');
+  const vesselIds=Array.isArray(value.vesselIds)?value.vesselIds.map(String):[];
+  const snapshotVessels=Array.isArray(snapshot?.vessels)?snapshot.vessels as Array<Record<string,unknown>>:[];
+  const snapshotTasks=Array.isArray(snapshot?.tasks)?snapshot.tasks as Array<Record<string,unknown>>:[];
+  const snapshotMeetings=Array.isArray(snapshot?.meetings)?snapshot.meetings as Array<Record<string,unknown>>:[];
+  const snapshotVesselIds=snapshotVessels.map(vessel=>String(vessel.id||''));
+  const sameVesselScope=equal([...new Set(vesselIds)].sort(),[...new Set(snapshotVesselIds)].sort());
+  if(value.kind!=='daily-morning'
+    || value.source!=='manual'
+    || !/^\d{4}-\d{2}-\d{2}$/.test(businessDate)
+    || value.id!==`daily-morning-${businessDate}`
+    || !capturedAt
+    || taipeiDateKey(capturedAt)!==businessDate
+    || !isTaipeiBusinessDay(capturedAt)
+    || !sameVesselScope
+    || snapshotVesselIds.some(id=>!id)
+    || Number(value.taskCount)!==snapshotTasks.length
+    || snapshotTasks.some(task=>task.isInternalControl===true)
+    || snapshotMeetings.some(meeting=>meeting.isInternalControl===true)){
+    throw new CloudPatchAuthorizationError('invalid-daily-morning-report');
+  }
+}
+
+function authorizedCrossUserTaskDismissalResets(data:AppData,operations:readonly CloudBlockPatchOperation[]){
+  const resets=new Set<string>();
+  for(const operation of operations){
+    if(operation.kind!=='entity'||operation.collection!=='tasks'||!operation.value)continue;
+    const before=data.tasks.find(task=>task.id===operation.entityId);
+    if(!before)continue;
+    const after=operation.value as unknown as TaskItem;
+    for(const user of data.users){
+      if(!user.isActive)continue;
+      const belongedBefore=taskBelongsToUserWorkCenter(before,user,data.vessels,data.meetings);
+      const belongsAfter=taskBelongsToUserWorkCenter(after,user,data.vessels,data.meetings);
+      if(!belongedBefore&&belongsAfter)resets.add(taskDismissalResetKey(user.id,operation.entityId));
+    }
+  }
+  return resets;
+}
+
+function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extract<CloudBlockPatchOperation,{kind:'entity'}>,crossUserTaskDismissalResets:Set<string>){
   const {collection,expected,value}=operation;
   const fields=changedFields(expected,value);
   if(collection==='users'){
@@ -169,7 +220,28 @@ function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extra
   }
   if(collection==='agendaReports'){
     permission(data,actor,'exportReports');
+    assertDailyMorningReportAuthorization(actor,expected,value);
     assertEntityScope(data,actor,collection,expected,value);
+    return;
+  }
+  if(collection==='taskDismissals'){
+    const dismissal=((value||expected)||{}) as Record<string,unknown>;
+    const itemKind=String(dismissal.itemKind||'');
+    const itemId=String(dismissal.itemId||'');
+    const dismissalUserId=String(dismissal.userId||'');
+    const actorOwned=dismissalUserId===actor.id&&dismissal.dismissedBy===actor.id;
+    const exactCrossUserReset=Boolean(!value&&expected&&itemKind==='task'&&dismissal.dismissedBy===dismissalUserId&&crossUserTaskDismissalResets.has(taskDismissalResetKey(dismissalUserId,itemId)));
+    if(!actorOwned&&!exactCrossUserReset)throw new CloudPatchAuthorizationError('task-dismissal-must-belong-to-actor');
+    if(exactCrossUserReset)return;
+    if(itemKind==='task'){
+      const task=data.tasks.find(item=>item.id===itemId);
+      if(!task)throw new CloudPatchAuthorizationError('task-dismissal-target-missing');
+      assertEntityScope(data,actor,'tasks',task as unknown as Record<string,unknown>,task as unknown as Record<string,unknown>);
+    }else if(itemKind==='internal-control'){
+      const item=data.internalControlCases.find(candidate=>candidate.id===itemId);
+      if(!item)throw new CloudPatchAuthorizationError('task-dismissal-target-missing');
+      assertEntityScope(data,actor,'internalControlCases',item as unknown as Record<string,unknown>,item as unknown as Record<string,unknown>);
+    }else throw new CloudPatchAuthorizationError('invalid-task-dismissal-kind');
     return;
   }
 }
@@ -180,12 +252,14 @@ function authorizeOrderOperation(data:AppData,actor:UserAccount,collection:Cloud
   else if(collection==='tasks'||collection==='internalControlCases')permission(data,actor,'editBusinessContent');
   else if(collection==='meetings')permission(data,actor,'manageMeetings');
   else if(collection==='agendaReports')permission(data,actor,'exportReports');
+  else if(collection==='taskDismissals')throw new CloudPatchAuthorizationError('task-dismissal-order-without-entity');
 }
 
 export function assertActorAuthorizedForCloudBlockPatch(data:AppData,operations:readonly CloudBlockPatchOperation[],actorUserId:string):void{
   const actor=data.users.find(user=>user.id===actorUserId&&user.isActive);
   if(!actor)throw new CloudPatchAuthorizationError('actor-missing-or-inactive');
   const sideEffects:CloudBlockPatchOperation[]=[];
+  const crossUserTaskDismissalResets=authorizedCrossUserTaskDismissalResets(data,operations);
   const entityOperationCollections=new Set(operations.filter((operation):operation is Extract<CloudBlockPatchOperation,{kind:'entity'}>=>operation.kind==='entity').map(operation=>operation.collection));
   let authorizedPrimary=false;
   for(const operation of operations){
@@ -198,7 +272,7 @@ export function assertActorAuthorizedForCloudBlockPatch(data:AppData,operations:
       if([...fields].some(field=>field!=='rolePermissions'&&field!=='lastCloudSyncAt'))permission(data,actor,'manageSystemSettings');
       authorizedPrimary=true;
     }else if(operation.kind==='entity'){
-      authorizeEntityOperation(data,actor,operation);
+      authorizeEntityOperation(data,actor,operation,crossUserTaskDismissalResets);
       authorizedPrimary=true;
     }else{
       if(!entityOperationCollections.has(operation.collection))authorizeOrderOperation(data,actor,operation.collection);

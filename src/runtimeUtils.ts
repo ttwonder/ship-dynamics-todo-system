@@ -1,3 +1,5 @@
+import { taipeiDateKey, taipeiDaysDiff, taipeiYesterdayDate } from './taipeiTime';
+
 export function nowIso() {
   return new Date().toISOString();
 }
@@ -11,32 +13,17 @@ export function uid(prefix: string) {
 }
 
 export function localDate(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return taipeiDateKey(date);
 }
 
 export function todayDate() {
-  return localDate();
+  return taipeiDateKey();
 }
 
 export function yesterdayDate() {
-  const date = new Date();
-  date.setDate(date.getDate() - 1);
-  return localDate(date);
+  return taipeiYesterdayDate();
 }
 
 export function daysDiff(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return null;
-  const [year, month, day] = value.split('-').map(Number);
-  const target = new Date(year, month - 1, day);
-  if (
-    target.getFullYear() !== year
-    || target.getMonth() !== month - 1
-    || target.getDate() !== day
-  ) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
+  return taipeiDaysDiff(value);
 }

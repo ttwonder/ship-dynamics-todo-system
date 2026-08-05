@@ -4,6 +4,7 @@ import { userManagesInternalControlVessel } from './internalControlWorkflow';
 import { taskVesselIds } from './taskVesselScope';
 import { taskIsClosedForScope } from './taskVesselProgress';
 import { hasActiveVesselDelegation } from './vesselDelegation';
+import { isWorkCenterItemDismissed } from './taskDismissals';
 
 const meetingInvolvesUser = (meeting: TemporaryMeeting | undefined, userId: string) => Boolean(
   meeting && ((meeting.trackingUserIds || []).includes(userId) || meeting.responsibleUserIds.includes(userId)),
@@ -34,9 +35,10 @@ export function taskBelongsToUserWorkCenter(
   return explicitlyResponsible || assignedToScopedVessel;
 }
 
-export function selectUserWorkCenterTasks(data: Pick<AppData, 'tasks' | 'meetings'>, user: UserAccount, visibleVessels: Vessel[]): TaskItem[] {
+export function selectUserWorkCenterTasks(data: Pick<AppData, 'tasks' | 'meetings' | 'taskDismissals'>, user: UserAccount, visibleVessels: Vessel[]): TaskItem[] {
   const visibleVesselIds = new Set(visibleVessels.map(vessel => vessel.id));
   return data.tasks.filter(task => {
+    if (isWorkCenterItemDismissed({ taskDismissals: data.taskDismissals || [] }, user.id, 'task', task.id)) return false;
     if (!taskBelongsToUserWorkCenter(task, user, visibleVessels, data.meetings)) return false;
     const scopedIds = taskVesselIds(task).filter(id => visibleVesselIds.has(id));
     return scopedIds.length ? !taskIsClosedForScope(task, scopedIds) : !task.isClosed;
@@ -44,13 +46,14 @@ export function selectUserWorkCenterTasks(data: Pick<AppData, 'tasks' | 'meeting
 }
 
 export function selectUserWorkCenterInternalCases(
-  data: Pick<AppData, 'internalControlCases'>,
+  data: Pick<AppData, 'internalControlCases' | 'taskDismissals'>,
   user: Pick<UserAccount, 'id' | 'role' | 'managedVesselIds'>,
   visibleVessels: Vessel[],
 ): InternalControlCase[] {
   if (user.role === 'vessel') return [];
   const vesselMap = new Map(visibleVessels.map(vessel => [vessel.id, vessel]));
   return data.internalControlCases.filter(item => {
+    if (isWorkCenterItemDismissed({ taskDismissals: data.taskDismissals || [] }, user.id, 'internal-control', item.id)) return false;
     if (item.isClosed || item.linkedTaskId) return false;
     const vessel = vesselMap.get(item.vesselId);
     return Boolean(vessel && userManagesInternalControlVessel(user, vessel));

@@ -1,4 +1,5 @@
 import type {
+  AgendaReport,
   AppData,
   InternalControlCase,
   TaskItem,
@@ -1346,18 +1347,31 @@ export class NormalizedUiController {
     await this.runtime.refreshEntities(notifications.map(item => `notification:${item.id}`));
   }
 
-  async saveReport(report: {
-    id: string;
-    title: string;
-    vesselIds: string[];
-    taskCount: number;
-  }) {
+  async dismissWorkCenterItems(
+    actor:UserAccount,
+    taskIds:string[],
+    internalControlCaseIds:string[],
+  ){
+    const items=[
+      ...Array.from(new Set(taskIds)).map(itemId=>({itemKind:'task' as const,itemId})),
+      ...Array.from(new Set(internalControlCaseIds)).map(itemId=>({itemKind:'internal-control' as const,itemId})),
+    ];
+    if(!items.length)throw new Error('請先選擇要從我的待辦移除的項目。');
+    await this.runtime.commands.dismissWorkCenterItems(actor.id,items);
+    await this.runtime.refreshEntities([`task-dismissals:${actor.id}`,'audit']);
+  }
+
+  async saveReport(report: AgendaReport) {
     await this.runtime.commands.saveReport({
       reportId: report.id,
       content: {
         title: report.title,
         vesselIds: report.vesselIds,
         taskCount: report.taskCount,
+        kind: report.kind || 'ad-hoc',
+        businessDate: report.businessDate || null,
+        source: report.source || 'manual',
+        snapshot: report.snapshot || null,
       },
     });
     await this.runtime.refreshEntities([`report:${report.id}`]);

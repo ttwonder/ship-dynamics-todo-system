@@ -3,6 +3,7 @@ import RichTextContent from './RichTextContent';
 import { taskVesselLabel } from './taskVesselScope';
 import { taskProjectedProgressForScope } from './taskVesselProgress';
 import { taskSourceLabel } from './taskWorkflow';
+import { formatTaipeiDateTime } from './taipeiTime';
 
 export default function SelectedTaskPrintTable({
   title,
@@ -21,7 +22,7 @@ export default function SelectedTaskPrintTable({
   const visibleVesselIds = vessels.map(vessel => vessel.id);
   return <section className="selected-task-print print-only">
     <h1>{title}（所選項目）</h1>
-    <p>匯出人：{exportedBy}｜匯出時間：{new Date().toLocaleString('zh-TW')}｜所選 {tasks.length} 件</p>
+    <p>匯出人：{exportedBy}｜匯出時間：{formatTaipeiDateTime(new Date())}｜所選 {tasks.length} 件</p>
     <table>
       <thead><tr><th>船舶</th><th>關注</th><th>來源</th><th>分類／事項</th><th>部門</th><th>追蹤窗口</th><th>期限</th><th>最新狀態</th><th>結案</th></tr></thead>
       <tbody>{tasks.map(task => { const projected=taskProjectedProgressForScope(task,visibleVesselIds); return <tr key={task.id}>
