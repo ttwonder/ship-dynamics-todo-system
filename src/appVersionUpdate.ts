@@ -12,6 +12,7 @@ export type AppUpdateBlockReason='unsaved'|'saving'|'editing';
 export type AppUpdateSafetySnapshot={
   hasUnsavedWork:boolean;
   pendingSaveCount:number;
+  pendingTaskCreations?: number;
   saveInFlight:boolean;
   syncInFlight:boolean;
   saveTimerScheduled:boolean;
@@ -46,7 +47,7 @@ export async function checkForAppVersion(input:{currentVersion:string;baseUrl:st
 
 export function appUpdateBlockReason(snapshot:AppUpdateSafetySnapshot):AppUpdateBlockReason|null{
   if(snapshot.hasUnsavedWork||snapshot.savePhase==='dirty')return 'unsaved';
-  if(snapshot.pendingSaveCount>0||snapshot.saveInFlight||snapshot.syncInFlight||snapshot.saveTimerScheduled||snapshot.savePhase==='queued'||snapshot.savePhase==='saving')return 'saving';
+  if((snapshot.pendingTaskCreations||0)>0||snapshot.pendingSaveCount>0||snapshot.saveInFlight||snapshot.syncInFlight||snapshot.saveTimerScheduled||snapshot.savePhase==='queued'||snapshot.savePhase==='saving')return 'saving';
   if(snapshot.hasActiveEditLock||snapshot.batchEditorActive)return 'editing';
   return null;
 }

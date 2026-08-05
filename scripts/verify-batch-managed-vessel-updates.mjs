@@ -25,7 +25,7 @@ for (const label of ['目前位置','上一港','下一港','航行狀態','速�
 for (const status of ['航行','拋錨','進港中','出港中','停泊','漂航']) {
   assert.ok(batch.includes(`<option>${status}</option>`), `批量更新航行狀態需提供「${status}」`);
 }
-assert.ok(app.includes('batchTargetVesselsFor(activeVessels,currentUser,batchSelectedVesselIds)'), 'App 必須先解析正式經管／有效代管與人工選取的exact target聯集');
+assert.ok(app.includes('batchTargetVesselsFor(activeVessels,currentUser,batchSelectedVesselIds)'), 'App 必須把人工勾選解析成exact target，不得把經管船舶自動加入本次操作');
 assert.ok(!batch.includes("currentUser.role === 'owner' || currentUser.role === 'admin' ? vessels"), 'Owner／管理員不得因全船可見權限而把所有船舶誤納入自管批量清單');
 assert.ok(batch.includes('ScheduleDateTimeField'), '批量清單需沿用 ETA／ETB／ETD 日期＋可選時間欄位');
 assert.ok(batch.includes('composeScheduleValue'), '批量清單需保存純日期或日期時間');
@@ -35,8 +35,8 @@ assert.ok(batch.includes("commit(draft =>") && batch.includes("'批量更新自�
 assert.ok(batch.includes('lockedVesselIds') && batch.includes('已鎖定') && !batch.includes('開始編輯'), '批量清單開啟時全部船舶應已鎖定，不應再逐船開始編輯');
 assert.ok(batch.includes('<fieldset disabled={readOnly||!lockedVesselIds.includes(vessel.id)}') && batch.includes('if(readOnly||!lockedVesselIds.includes(vesselId))return'), '未持有該船bundle lease或雲端尚未確認時，欄位與mutation callback都必須fail closed');
 assert.ok(app.includes('acquireEditLockBundle(') && app.includes("result.status!=='owned'"), 'App 必須以bundle原子取得全部目標船舶協作鎖，任一失敗不得開啟');
-assert.ok(app.includes('batchSelectedVesselIds') && app.includes('batchTargetVesselIds'), '批量目標需由正式經管／有效代管與人工選取船舶組成');
-assert.ok(app.includes("alert('未有經管船舶或未選中船舶')"), '兩種批量來源皆為空時必須顯示指定提示');
+assert.ok(app.includes('batchSelectedVesselIds') && app.includes('batchTargetVesselIds'), '批量目標需由本次人工勾選船舶組成並凍結exact IDs');
+assert.ok(app.includes("alert('請先在船舶看板逐船勾選本次要批量更新的船舶')"), '沒有人工勾選船舶時必須顯示清楚提示，不得退回自動選取經管船舶');
 assert.ok(app.includes('batchTargetVesselIdsRef.current=new Set') && app.includes('batchTargetVesselIdsRef.current.has(vesselId)'), '開啟時必須凍結exact target IDs，mutation不得擴到未選船舶');
 assert.ok(app.includes('requests=[...batchTargetVessels]'), '雲端bundle只能claim本次exact target船舶');
 assert.ok(app.includes('commit={batchVesselCommit}') && app.includes("batchMutationLeaseIsOwned(`vessel:${entityId}`,prev,mutationAuthorization)"), 'App 必須在每次批量mutation boundary以最新AppData及原render session token驗證exact vessel bundle lease');
@@ -116,7 +116,9 @@ try {
   assert.deepEqual(batchSessionVesselsFor(manualCandidates,openingTargetIds).map(item=>item.id), manualCandidates.slice(0,2).map(item=>item.id), '開啟後即使checkbox準備了下一次選取，當前modal membership仍須使用凍結opening IDs');
   manualCandidates[0].assignedUserIds=[manualUser.id];
   manualCandidates[1].delegateManagers=[{ userId:manualUser.id, isActive:true }];
-  assert.deepEqual(batchTargetVesselsFor(manualCandidates,manualUser,manualCandidates.map(item=>item.id)).map(item=>item.id), manualCandidates.slice(0,3).map(item=>item.id), '批量目標必須是經管、有效代管與人工選取的去重聯集，inactive人工選取需排除');
+  assert.deepEqual(batchTargetVesselsFor(manualCandidates,manualUser,[]).map(item=>item.id), [], '即使有正式經管或有效代管船舶，未人工勾選時本次批量目標仍必須為空');
+  assert.deepEqual(batchTargetVesselsFor(manualCandidates,manualUser,[manualCandidates[2].id]).map(item=>item.id), [manualCandidates[2].id], '人工只勾選一艘時只能鎖定並更新該船，不得聯集經管船舶');
+  assert.deepEqual(batchTargetVesselsFor(manualCandidates,manualUser,[manualCandidates[3].id]).map(item=>item.id), [], 'inactive人工選取必須排除');
   const operationAuthorization = { session:1, authorizationEpoch:'epoch-1', userId:manualUser.id, cloudIdentity:'workspace-1' };
   const operation = { id:1, session:1, authorization:operationAuthorization, locks:[{sectionKey:'vessel:old',leaseOwnerId:'old-lease'}] };
   assert.equal(batchManagedOperationMatches(operation,1,1,operationAuthorization,true), true);

@@ -10,6 +10,7 @@ import {
 } from './internalControlWorkflow';
 import { downloadInternalControlExcel } from './internalControlExport';
 import { paginateItems } from './pagination';
+import { sortRecordsNewestCreated } from './recordSorting';
 import PaginationControls from './PaginationControls';
 import { BatchCreateModal, CaseEditModal } from './InternalControlModals';
 import type { InternalControlTaskProjection } from './internalControlData';
@@ -65,7 +66,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const scopedCases = data.internalControlCases.filter(item => visibleVesselIds.has(item.vesselId));
   const activeClosure: InternalControlFilters['closureMode'] = subpage === 'open' ? 'open' : subpage === 'closed' ? 'closed' : 'all';
   const effectiveFilters = { ...filters, closureMode: activeClosure };
-  const filtered = filterInternalControlCases(scopedCases, vessels, effectiveFilters, data.users);
+  const filtered = sortRecordsNewestCreated(filterInternalControlCases(scopedCases, vessels, effectiveFilters, data.users));
   const paged = paginateItems(filtered, page, 30);
   const stats = buildInternalControlStats(filtered, vessels);
   const visibleEditing=Boolean(editing&&editorAuthorizationEpoch===authorizationEpoch&&scopedCases.some(item=>item.id===editing.id));

@@ -10,6 +10,7 @@ import { formatScheduleDisplay } from './scheduleTime';
 import RichTextContent from './RichTextContent';
 import { meetingCreatesVesselAbnormalAlert } from './meetingVesselAttention';
 import { richTextToPlainText } from './richText';
+import { compareCreatedNewestFirst } from './recordSorting';
 
 const attentionLabels: Record<string, string> = {
   'crew-operation': '換員操作', 'bunkering-water': '加油加水', 'materials-parts': '物料配件',
@@ -41,9 +42,9 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
   const [query, setQuery] = useState('');
   const [closedMode, setClosedMode] = useState<VesselTaskClosedMode>('all');
   const [priority, setPriority] = useState<'all' | TaskPriority>('all');
-  const [sort, setSort] = useState<VesselTaskSort>('priority');
+  const [sort, setSort] = useState<VesselTaskSort>('created-desc');
   const tasks = useMemo(() => selectVesselDetailTasks(data.tasks, vessel.id, { query, closedMode, priority, sort }), [data.tasks, vessel.id, query, closedMode, priority, sort]);
-  const allVesselTasks = useMemo(() => selectVesselDetailTasks(data.tasks, vessel.id, { query: '', closedMode: 'all', priority: 'all', sort: 'priority' }), [data.tasks, vessel.id]);
+  const allVesselTasks = useMemo(() => selectVesselDetailTasks(data.tasks, vessel.id, { query: '', closedMode: 'all', priority: 'all', sort: 'created-desc' }), [data.tasks, vessel.id]);
   const standaloneInternalCases = canViewInternalControl ? data.internalControlCases.filter(item => !item.linkedTaskId && item.vesselId === vessel.id) : [];
   const filteredStandaloneInternalCases = standaloneInternalCases.filter(item => {
     if (closedMode === 'open' && item.isClosed) return false;
@@ -51,7 +52,7 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
     if (priority !== 'all' && item.priority !== priority) return false;
     const normalizedQuery = query.trim().toLowerCase();
     return !normalizedQuery || [richTextToPlainText(item.description), richTextToPlainText(item.status), item.category, ...item.departments].join(' ').toLowerCase().includes(normalizedQuery);
-  }).sort((left, right) => sort === 'updated-desc' ? right.updatedAt.localeCompare(left.updatedAt) : priorityRank[left.priority] - priorityRank[right.priority] || right.updatedAt.localeCompare(left.updatedAt));
+  }).sort((left, right) => sort === 'created-desc' ? compareCreatedNewestFirst(left,right) : sort === 'updated-desc' ? right.updatedAt.localeCompare(left.updatedAt) : priorityRank[left.priority] - priorityRank[right.priority] || compareCreatedNewestFirst(left,right));
   const openTaskCount = allVesselTasks.filter(task => !taskIsClosedForVessel(task,vessel.id)).length;
   const openCount = openTaskCount + standaloneInternalCases.filter(item => !item.isClosed).length;
   const closedCount = allVesselTasks.length - openTaskCount + standaloneInternalCases.filter(item => item.isClosed).length;
@@ -120,8 +121,8 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
         <input aria-label="單船待辦關鍵字" value={query} onChange={event=>setQuery(event.target.value)} placeholder="搜尋內容、狀態、分類、部門…" />
         <select aria-label="單船待辦狀態篩選" value={closedMode} onChange={event=>setClosedMode(event.target.value as VesselTaskClosedMode)}><option value="all">全部狀態</option><option value="open">未結</option><option value="closed">已結案</option></select>
         <select aria-label="單船待辦關注程度篩選" value={priority} onChange={event=>setPriority(event.target.value as 'all'|TaskPriority)}><option value="all">全部關注程度</option>{data.settings.priorities.map(item=><option key={item}>{item}</option>)}</select>
-        <select aria-label="單船待辦排序" value={sort} onChange={event=>setSort(event.target.value as VesselTaskSort)}><option value="priority">關注程度：急到低</option><option value="due-asc">期限：近到遠</option><option value="updated-desc">最近更新</option></select>
-        {(query||closedMode!=='all'||priority!=='all'||sort!=='priority')&&<button type="button" className="btn ghost small" onClick={()=>{setQuery('');setClosedMode('all');setPriority('all');setSort('priority');}}>清除篩選</button>}
+        <select aria-label="單船待辦排序" value={sort} onChange={event=>setSort(event.target.value as VesselTaskSort)}><option value="created-desc">建立時間：最新到最舊</option><option value="priority">關注程度：急到低</option><option value="due-asc">期限：近到遠</option><option value="updated-desc">最近更新</option></select>
+        {(query||closedMode!=='all'||priority!=='all'||sort!=='created-desc')&&<button type="button" className="btn ghost small" onClick={()=>{setQuery('');setClosedMode('all');setPriority('all');setSort('created-desc');}}>清除篩選</button>}
       </div>
       {tasks.length?<div className="table-wrap"><table className="data-table vessel-detail-task-table"><thead><tr><th>結案</th><th>關注</th><th>事項內容</th><th>單船狀態</th><th>分類／部門</th><th>追蹤窗口</th><th>期限</th><th>來源</th><th className="no-print">操作</th></tr></thead><tbody>{tasks.map(task=>{const progress=taskProgressForVessel(task,vessel.id);return <tr key={task.id}><td><span className={`status-chip ${progress.isClosed?'closed':'open'}`}>{progress.isClosed?'已結案':'未結'}</span></td><td><span className={`badge ${priorityClass(task.priority)}`}>{task.priority}</span></td><td>{task.isAbnormal&&<span className="inline-abnormal">異常</span>}<RichTextContent compact value={task.description} fallback="尚未輸入事項內容"/></td><td><RichTextContent compact value={progress.status} fallback="尚未更新"/></td><td><small>{task.categories.join('、')||'未分類'}<br/>{task.departments.join('、')||'未指定部門'}</small></td><td>{task.ownerUserIds.map(ownerName).join('、')||'未指定'}</td><td>{task.expectedDate||'未設定'}</td><td>{taskSourceLabel(task)}</td><td className="no-print"><button type="button" className="btn small ghost" onClick={()=>onEditTask(task.id)}>{canEditTasks?'修改':'查看'}</button></td></tr>})}</tbody></table></div>:null}
       {filteredStandaloneInternalCases.length>0&&<div className="table-wrap"><h3>未同步內控</h3><table className="data-table vessel-detail-task-table"><thead><tr><th>結案</th><th>關注</th><th>事項內容</th><th>狀態</th><th>分類／部門</th><th>來源</th><th className="no-print">操作</th></tr></thead><tbody>{filteredStandaloneInternalCases.map(item=><tr key={`internal-${item.id}`}><td><span className={`status-chip ${item.isClosed?'closed':'open'}`}>{item.isClosed?'已結案':'未結'}</span></td><td><span className={`badge ${priorityClass(item.priority)}`}>{item.priority}</span></td><td><RichTextContent compact value={item.description} fallback="尚未輸入事項內容"/></td><td><RichTextContent compact value={item.status} fallback="尚未更新"/></td><td><small>{item.category||'未分類'}<br/>{item.departments.join('、')||'未指定部門'}</small></td><td>未同步內控｜{item.reportSource}</td><td className="no-print"><button type="button" className="btn small ghost" onClick={onOpenInternalControl}>前往內控</button></td></tr>)}</tbody></table></div>}

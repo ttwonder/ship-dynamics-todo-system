@@ -502,7 +502,7 @@ try {
   assert.ok(compactAppSource.includes("exportconstcloudIdentity=cloudWorkspaceIdentity")&&compactAppSource.includes('cloudConfigIdentity(getSupabaseConfig())'), '資料workspace identity必須排除anon key，但operation/config token仍須包含key');
   assert.ok(compactAppSource.includes('creationTaskCommitMatches(submittedTask,recoveredTask)')&&compactAppSource.includes('已確認先前回應遺失的新增要事已保存雲端'), 'creation CAS回應遺失時必須以穩定ID與可信建立provenance確認既有remote commit');
   assert.ok(appSource.includes('同步最新（安全合併）'), '雲端工具列必須明示同步採安全合併語義');
-  assert.ok(appSource.includes('請按「同步最新（安全合併）」重試；真正同欄位衝突時本機內容仍會保留'), '保存阻擋提示不得再暗示直接採用雲端版本');
+  assert.ok(appSource.includes('請先點擊「同步最新（安全合併）」')&&appSource.includes('同步完成後，再點擊「重新保存」')&&appSource.includes('直到畫面顯示「已保存到雲端」'), '保存阻擋提示必須要求安全合併、重新保存及等待雲端確認，不得暗示直接覆蓋');
   const enqueueStart=appSource.indexOf('const enqueueCloudSave =');
   const enqueueEnd=appSource.indexOf('\n  const flushCloudBeforeBatchRelease=',enqueueStart);
   const enqueueSource=appSource.slice(enqueueStart,enqueueEnd);

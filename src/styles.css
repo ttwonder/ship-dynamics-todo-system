@@ -274,3 +274,18 @@
 /* Second-batch internal-control filters and readable list */
 .ic-filter-select{display:flex;flex-direction:column;justify-content:center;gap:8px;min-height:58px}.ic-filter-select>span{font-weight:850}.ic-filter-select select{width:100%;min-height:36px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:7px 9px;color:var(--ink)}.ic-filter-options{overflow-x:hidden;overflow-y:auto}.ic-filter-options label{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;width:100%;min-width:0}.ic-filter-options label input{margin:0}.ic-filter-options label span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ic-table{table-layout:fixed;min-width:1180px}.ic-table th,.ic-table td{overflow-wrap:anywhere}.ic-description-column,.ic-status-column{font-size:15px;line-height:1.55;white-space:normal;overflow-wrap:anywhere}.ic-description-column{width:24%}.ic-description-column>b{font-size:15px;line-height:1.55}.ic-status-column{width:25%}.ic-sync-column{width:7%;text-align:center!important;white-space:normal}.ic-sync-column>b{font-size:12px;line-height:1.4}.ic-closure-column{width:8%;text-align:center!important}.ic-table .table-actions{flex-wrap:wrap}
+
+/* Nine-item feedback: readable filters, vertical status entry and no-selection rows */
+.vessel-supervisor-option-name{color:var(--ink);opacity:1;visibility:visible}
+.vessel-supervisor-options label{grid-template-columns:18px minmax(0,1fr)}
+.vessel-supervisor-options input[type="checkbox"]{width:18px;min-width:18px;height:18px;padding:0}
+.work-task-row.no-selection-row{grid-template-columns:minmax(0,1fr) auto}
+.quick-status-bar{display:grid;grid-template-columns:1fr;align-items:start;gap:8px}
+.quick-status-bar textarea{width:100%;min-height:92px;padding:9px;border:1px solid var(--line);border-radius:9px;background:#fffafd;color:var(--ink);resize:vertical}
+.quick-status-bar .btn{justify-self:start}
+.ic-status-add>div{display:grid;grid-template-columns:1fr;align-items:start;gap:8px}
+.ic-status-add textarea{width:100%;min-height:100px}
+.ic-status-add .btn{justify-self:start}
+.unsaved-work-guidance{display:grid;gap:7px;margin:-3px 0 12px;padding:12px 14px;border:2px solid #e05b68;border-radius:13px;background:#fff3f4;color:#7f1d2d;box-shadow:0 8px 20px rgba(160,45,61,.1)}
+.unsaved-work-guidance b,.unsaved-work-guidance strong{display:block}.unsaved-work-guidance ol{display:grid;gap:4px;margin:0;padding-left:22px}.unsaved-work-guidance strong{font-size:13px}.guidance-active{outline:3px solid rgba(224,91,104,.24);outline-offset:2px}
+@media(max-width:700px){.work-task-row.no-selection-row{grid-template-columns:1fr}.work-task-row.no-selection-row .work-task-actions{grid-column:1;justify-content:flex-start;border-left:0;border-top:1px solid var(--line)}}

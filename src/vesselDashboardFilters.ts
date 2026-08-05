@@ -27,6 +27,10 @@ export interface VesselSupervisorOption {
   department: string;
 }
 
+export function vesselSupervisorDisplayName(user: Pick<UserAccount, 'id' | 'name' | 'username'>): string {
+  return user.name.trim() || user.username.trim() || `未命名督導（${user.id}）`;
+}
+
 export function emptyVesselFilterState(): VesselFilterState {
   return {
     selfManagedOnly: false,
@@ -77,7 +81,7 @@ export function vesselSupervisorOptions(vessels: Array<Pick<Vessel, 'id' | 'assi
   const visibleSupervisorIds = new Set(vessels.flatMap(vessel => supervisorIdsForVessel(vessel, users)));
   return users
     .filter(user => visibleSupervisorIds.has(user.id))
-    .map(user => ({ id: user.id, name: user.name, department: user.department }));
+    .map(user => ({ id: user.id, name: vesselSupervisorDisplayName(user), department: user.department }));
 }
 
 export function matchesVesselFilterGroups(vessel: VesselFilterFacts, filters: VesselFilterState): boolean {

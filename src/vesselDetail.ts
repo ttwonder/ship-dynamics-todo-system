@@ -2,9 +2,10 @@ import type { TaskItem, TaskPriority } from './types';
 import { appearsInSingleVesselTasks } from './taskAttention';
 import { taskHasVessel } from './taskVesselScope';
 import { taskIsClosedForVessel, taskProgressForVessel } from './taskVesselProgress';
+import { compareCreatedNewestFirst } from './recordSorting';
 
 export type VesselTaskClosedMode = 'all' | 'open' | 'closed';
-export type VesselTaskSort = 'priority' | 'due-asc' | 'updated-desc';
+export type VesselTaskSort = 'created-desc' | 'priority' | 'due-asc' | 'updated-desc';
 
 export interface VesselDetailTaskFilters {
   closedMode: VesselTaskClosedMode;
@@ -34,6 +35,7 @@ export function selectVesselDetailTasks(tasks: TaskItem[], vesselId: string, fil
     return [task.description, progress.status, task.expectedDate, ...(task.categories || []), ...(task.departments || [])]
       .join(' ').toLowerCase().includes(query);
   }).sort((left, right) => {
+    if (filters.sort === 'created-desc') return compareCreatedNewestFirst(left, right);
     if (filters.sort === 'due-asc') return compareDate(left.expectedDate, right.expectedDate) || priorityRank[left.priority] - priorityRank[right.priority];
     if (filters.sort === 'updated-desc') return right.updatedAt.localeCompare(left.updatedAt) || priorityRank[left.priority] - priorityRank[right.priority];
     return priorityRank[left.priority] - priorityRank[right.priority] || Number(taskIsClosedForVessel(left,vesselId)) - Number(taskIsClosedForVessel(right,vesselId)) || compareDate(left.expectedDate, right.expectedDate);

@@ -21,6 +21,7 @@ import { vesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskShipTypeLabel, taskVesselIds, taskVesselLabel } from './taskVesselScope';
 import { taskIsClosedForScope } from './taskVesselProgress';
 import { canonicalizeMeetingTaskItemIds } from './meetingTaskItemIds';
+import { sortRecordsNewestCreated } from './recordSorting';
 import MeetingPeoplePicker from './MeetingPeoplePicker';
 import { paginateItems } from './pagination';
 import PaginationControls from './PaginationControls';
@@ -138,7 +139,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const visibleIds = new Set(visibleVessels.map(vessel => vessel.id));
   const visibleVesselKey = [...visibleIds].sort().join('\u0000');
   const appliesToUser = (meeting: TemporaryMeeting) => meetingAppliesToUser(meeting, visibleVessels, canViewAllMeetings, currentUser.id);
-  const accessibleMeetings = data.meetings.filter(appliesToUser);
+  const accessibleMeetings = sortRecordsNewestCreated(data.meetings.filter(appliesToUser));
   const initialMeeting = accessibleMeetings[0];
   const [selectedId, setSelectedId] = useState(initialMeeting?.id || '');
   const [creating, setCreating] = useState(false);
@@ -796,7 +797,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
           </div>
           {!creating && <section className="meeting-status-update">
             <div className="meeting-status-update-title"><div><h3>加入狀態記錄</h3><p>快速更新本次臨會／專題的最新進度；加入後請按「保存變更」。</p></div>{draft.latestStatus&&<span>最新：{draft.latestStatus}</span>}</div>
-            <div className="quick-status-bar"><input aria-label="會議最新狀態" value={quickStatus} onChange={event=>setQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();addStatus();}}} placeholder="快速輸入最新狀態…"/><button type="button" className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>
+            <div className="quick-status-bar"><textarea aria-label="會議最新狀態" value={quickStatus} onChange={event=>setQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();addStatus();}}} placeholder="快速輸入最新狀態…"/><button type="button" className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>
           </section>}
           {!creating && <section className="status-history meeting-status-history"><h3>狀態歷程</h3>{draft.statusLogs.length?draft.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{new Date(log.at).toLocaleString('zh-TW')}｜{log.by}</small>{canDeleteMeetingStatusLog(log)&&<button type="button" className="btn small ghost no-print" onClick={()=>deleteStatusLog(log.id)}>刪除記錄</button>}</article>):<p className="muted">尚無狀態紀錄</p>}</section>}
         </fieldset>
