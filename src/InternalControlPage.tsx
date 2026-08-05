@@ -17,6 +17,7 @@ import { internalControlEditLockKey } from './exclusiveItemEditLock';
 import { vesselSupervisorOptions } from './vesselDashboardFilters';
 import { sanitizeInternalControlSelection } from './batchInternalControlActions';
 import VesselListFilter from './VesselListFilter';
+import { selectedListRecords } from './selectedListExport';
 import {
   matchesListVesselSelection,
   nextListColumnSort,
@@ -42,6 +43,7 @@ type Props = {
   onCreate: (items: InternalControlCase[], expectedRevision: number, projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean>;
   onUpdate: (item: InternalControlCase, expectedUpdatedAt: string, expectedRevision: number, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>;
   onDelete: (item: InternalControlCase, expectedRevision: number) => boolean | Promise<boolean>;
+  onBatchClose: (caseIds: string[]) => boolean | Promise<boolean>;
   onBatchDelete: (caseIds: string[]) => boolean | Promise<boolean>;
   onOpenTask: (taskId: string) => void;
   claimItemLease?: (sectionKey:string,label:string)=>Promise<AppData|null>;
@@ -63,7 +65,7 @@ const optionList = (values: string[]): MultiOption[] => values.filter(Boolean).m
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
 const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
 
-export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, onCreate, onUpdate, onDelete, onBatchDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
+export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, onCreate, onUpdate, onDelete, onBatchClose, onBatchDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
   const [subpage, setSubpage] = useState<Subpage>('open');
   const [filters, setFilters] = useState<InternalControlFilters>(() => emptyFilters(defaultInternalControlVesselIds(user, vessels)));
   const [batchOpen, setBatchOpen] = useState(false);
@@ -73,6 +75,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const [page, setPage] = useState(1);
   const [columnSort,setColumnSort]=useState<ListColumnSort>('created-desc');
   const [selectedCaseIds,setSelectedCaseIds]=useState<string[]>([]);
+  const [batchClosing,setBatchClosing]=useState(false);
   const [batchDeleting,setBatchDeleting]=useState(false);
   const visibleVesselIds = useMemo(() => new Set(vessels.map(vessel => vessel.id)), [vessels]);
   const scopedCases = data.internalControlCases.filter(item => visibleVesselIds.has(item.vesselId));
@@ -90,9 +93,12 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   );
   const paged = paginateItems(filtered, page, 30);
   const stats = buildInternalControlStats(filtered, vessels);
-  const selectableCases=canDelete?filtered:[];
+  const canSelectCases=subpage!=='stats'&&((subpage==='open'&&canClose)||canDelete||canExport);
+  const selectableCases=canSelectCases?filtered:[];
+  const selectableCaseIdsKey=selectableCases.map(item=>item.id).join('\u0000');
   const selectedSet=new Set(selectedCaseIds);
-  const selectedCases=selectableCases.filter(item=>selectedSet.has(item.id));
+  const selectedCases=selectedListRecords(selectableCases,selectedCaseIds);
+  const printCases=subpage==='stats'?filtered:selectedCases;
   const allSelected=selectableCases.length>0&&selectableCases.every(item=>selectedSet.has(item.id));
   const visibleEditing=Boolean(editing&&editorAuthorizationEpoch===authorizationEpoch&&scopedCases.some(item=>item.id===editing.id));
   const visibleBatch=Boolean(batchOpen&&batchAuthorizationEpoch===authorizationEpoch&&canCreate&&vessels.length);
@@ -106,7 +112,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
       const next=sanitizeInternalControlSelection(previous,selectableCases);
       return next.length===previous.length&&next.every((id,index)=>id===previous[index])?previous:next;
     });
-  },[data.internalControlCases,subpage,JSON.stringify(filters),canDelete,user.id,vessels]);
+  },[selectableCaseIdsKey]);
   useEffect(()=>{setEditing(null);setBatchOpen(false);setEditorAuthorizationEpoch('');setBatchAuthorizationEpoch('');},[authorizationEpoch]);
   useEffect(() => {
     setFilters(previous => {
@@ -130,7 +136,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const vesselSummary=filters.ownerMode==='all'?'全部':filters.ownerMode==='mine'?'只看我的經管':selectedVesselNames.length?selectedVesselNames.join('、'):'未選船舶';
   const summary = `船舶 ${vesselSummary}；日期 ${filters.fromDate || '不限'}～${filters.toDate || '不限'}；${subpage === 'open' ? '未完' : subpage === 'closed' ? '已結案' : '全部案件'}`;
   const print = () => {
-    if (!canExport) return;
+    if (!canExport||(subpage!=='stats'&&!selectedCases.length)) return;
     document.body.classList.add('printing-internal-control');
     window.addEventListener('afterprint', () => document.body.classList.remove('printing-internal-control'), { once: true });
     window.setTimeout(() => window.print(), 80);
@@ -153,8 +159,14 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   };
   const toggleAllCases=()=>setSelectedCaseIds(allSelected?[]:selectableCases.map(item=>item.id));
   const toggleCase=(id:string)=>setSelectedCaseIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);
+  const closeSelectedCases=async()=>{
+    if(batchClosing||batchDeleting||subpage!=='open'||!selectedCases.length)return;
+    setBatchClosing(true);
+    try{if(await onBatchClose(selectedCases.map(item=>item.id)))setSelectedCaseIds([]);}
+    finally{setBatchClosing(false);}
+  };
   const deleteSelectedCases=async()=>{
-    if(batchDeleting||!selectedCases.length)return;
+    if(batchClosing||batchDeleting||!selectedCases.length)return;
     setBatchDeleting(true);
     try{if(await onBatchDelete(selectedCases.map(item=>item.id)))setSelectedCaseIds([]);}
     finally{setBatchDeleting(false);}
@@ -165,7 +177,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   };
 
   return <section className="internal-control-page">
-    <div className="page-heading"><div><h1>內控異常</h1><p>督導日常、訪船、隨船及外部發現事項的獨立登記、跟進、結案與統計。</p></div><div className="heading-actions no-print">{canCreate && <button className="btn green" onClick={() => {setBatchAuthorizationEpoch(authorizationEpoch);setBatchOpen(true);}}>＋ 批量新增</button>}{canExport && <button className="btn ghost" disabled={!filtered.length} onClick={() => downloadInternalControlExcel(filtered, vessels, summary)}>導出 Excel</button>}{canExport && <button className="btn primary" disabled={!filtered.length} onClick={print}>導出 PDF</button>}</div></div>
+    <div className="page-heading"><div><h1>內控異常</h1><p>督導日常、訪船、隨船及外部發現事項的獨立登記、跟進、結案與統計。</p></div><div className="heading-actions no-print">{canCreate && <button className="btn green" onClick={() => {setBatchAuthorizationEpoch(authorizationEpoch);setBatchOpen(true);}}>＋ 批量新增</button>}{canExport && <button className="btn ghost" disabled={!filtered.length} onClick={() => downloadInternalControlExcel(filtered, vessels, summary)}>導出 Excel</button>}{canExport && <button className="btn primary" disabled={subpage==='stats'?!filtered.length:!selectedCases.length} onClick={print}>{subpage==='stats'?'導出 PDF':`導出所選 PDF（${selectedCases.length}）`}</button>}</div></div>
     <div className="ic-tabs no-print" role="tablist"><button className={subpage === 'open' ? 'active' : ''} onClick={() => changeSubpage('open')}>內控未完清單 <b>{scopedCases.filter(item => !item.isClosed).length}</b></button><button className={subpage === 'closed' ? 'active' : ''} onClick={() => changeSubpage('closed')}>內控結案清單 <b>{scopedCases.filter(item => item.isClosed).length}</b></button><button className={subpage === 'stats' ? 'active' : ''} onClick={() => changeSubpage('stats')}>數據統計</button></div>
 
     <section className="panel ic-filter-panel no-print">
@@ -175,13 +187,13 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
     </section>
 
     {subpage !== 'stats' ? <section className="panel ic-list-panel">
-      <div className="panel-title ic-batch-toolbar no-print"><h2>{subpage==='open'?'內控未完清單':'內控結案清單'} <span className="muted">目前 {filtered.length} 件</span></h2>{canDelete&&<div className="heading-actions"><button type="button" className="btn small ghost" onClick={toggleAllCases} disabled={batchDeleting||!selectableCases.length}>{allSelected?'取消全選':'全選目前結果'}</button><span className="batch-selection-count">已選 {selectedCases.length}</span><button type="button" className="btn small red" onClick={()=>void deleteSelectedCases()} disabled={batchDeleting||!selectedCases.length}>{batchDeleting?'刪除中…':<>批量刪除（{selectedCases.length}）</>}</button></div>}</div>
+      <div className="panel-title ic-batch-toolbar no-print"><h2>{subpage==='open'?'內控未完清單':'內控結案清單'} <span className="muted">目前 {filtered.length} 件</span></h2>{canSelectCases&&<div className="heading-actions"><button type="button" className="btn small ghost" onClick={toggleAllCases} disabled={batchClosing||batchDeleting||!selectableCases.length}>{allSelected?'取消全選':'全選目前結果'}</button><span className="batch-selection-count">已選 {selectedCases.length}</span>{subpage==='open'&&canClose&&<button type="button" className="btn small green" onClick={()=>void closeSelectedCases()} disabled={batchClosing||batchDeleting||!selectedCases.length}>{batchClosing?'結案中…':<>批量結案（{selectedCases.length}）</>}</button>}{canDelete&&<button type="button" className="btn small red" onClick={()=>void deleteSelectedCases()} disabled={batchClosing||batchDeleting||!selectedCases.length}>{batchDeleting?'刪除中…':<>批量刪除（{selectedCases.length}）</>}</button>}</div>}</div>
       <div className="table-wrap"><table className="compact ic-table"><thead><tr>
-        {canDelete&&<th className="no-print ic-select-column"><input type="checkbox" aria-label="選取目前全部內控案件" checked={allSelected} onChange={toggleAllCases} disabled={batchDeleting||!selectableCases.length}/></th>}<th className="ic-vessel-date-column"><span className="table-sort-pair"><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}>船舶 <span>{columnSort==='vessel-asc'?'↑':columnSort==='vessel-desc'?'↓':'↕'}</span></button><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}>報告日期 <span>{columnSort==='date-asc'?'↑':columnSort==='date-desc'?'↓':'↕'}</span></button></span></th><th>來源</th><th>關注</th><th className="ic-description-column">事項內容</th><th>分類／部門</th><th className="ic-status-column">最新狀態</th>{subpage === 'closed' ? <th className="ic-closure-column"><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'closed-date'))}>結案日期 <span>{columnSort==='closed-date-asc'?'↑':columnSort==='closed-date-desc'?'↓':'↕'}</span></button></th> : <th className="ic-sync-column">同步</th>}<th className="no-print">操作</th>
+        {canSelectCases&&<th className="no-print ic-select-column"><input type="checkbox" aria-label="選取目前全部內控案件" checked={allSelected} onChange={toggleAllCases} disabled={batchClosing||batchDeleting||!selectableCases.length}/></th>}<th className="ic-vessel-date-column"><span className="table-sort-pair"><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}>船舶 <span>{columnSort==='vessel-asc'?'↑':columnSort==='vessel-desc'?'↓':'↕'}</span></button><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}>報告日期 <span>{columnSort==='date-asc'?'↑':columnSort==='date-desc'?'↓':'↕'}</span></button></span></th><th>來源</th><th>關注</th><th className="ic-description-column">事項內容</th><th>分類／部門</th><th className="ic-status-column">最新狀態</th>{subpage === 'closed' ? <th className="ic-closure-column"><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'closed-date'))}>結案日期 <span>{columnSort==='closed-date-asc'?'↑':columnSort==='closed-date-desc'?'↓':'↕'}</span></button></th> : <th className="ic-sync-column">同步</th>}<th className="no-print">操作</th>
       </tr></thead><tbody>{paged.items.map(item => {
         const vessel = vessels.find(entry => entry.id === item.vesselId);
         return <tr key={item.id} className={selectedSet.has(item.id)?'batch-selected-row':''}>
-          {canDelete&&<td className="no-print ic-select-column"><input type="checkbox" aria-label={`選取內控案件 ${richTextToPlainText(item.description)||item.id}`} checked={selectedSet.has(item.id)} onChange={()=>toggleCase(item.id)} disabled={batchDeleting}/></td>}
+          {canSelectCases&&<td className="no-print ic-select-column"><input type="checkbox" aria-label={`選取內控案件 ${richTextToPlainText(item.description)||item.id}`} checked={selectedSet.has(item.id)} onChange={()=>toggleCase(item.id)} disabled={batchClosing||batchDeleting}/></td>}
           <td><b>{vessel ? vesselDisplayName(vessel) : item.vesselId}</b><small>{vessel?.shipType || '未填船型'}｜{item.reportDate}</small></td>
           <td>{item.reportSource}{item.isAware && <small>知曉事項</small>}</td>
           <td><span className={`priority-pill ${priorityClass(item.priority)}`}>{item.priority}</span></td>
@@ -195,7 +207,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
       {!filtered.length && <div className="empty-state">目前篩選條件沒有案件</div>}<PaginationControls page={paged.page} pageCount={paged.pageCount} total={paged.total} from={paged.from} to={paged.to} onPageChange={setPage} ariaLabel="內控異常分頁"/>
     </section> : <InternalControlStatsView stats={stats}/>}
 
-    <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單' : subpage === 'closed' ? '結案清單' : '統計報告'}</h1><p>{summary}｜共 {filtered.length} 件｜匯出人 {user.name}｜{new Date().toLocaleString('zh-TW')}</p>{subpage === 'stats' ? <InternalControlStatsView stats={stats}/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{filtered.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? vesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
+    <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單（所選項目）' : subpage === 'closed' ? '結案清單（所選項目）' : '統計報告'}</h1><p>{summary}｜共 {printCases.length} 件｜匯出人 {user.name}｜{new Date().toLocaleString('zh-TW')}</p>{subpage === 'stats' ? <InternalControlStatsView stats={stats}/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{printCases.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? vesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
 
     {visibleBatch && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={async (items, projections) => { if (await onCreate(items, data.revision, projections)) { setBatchOpen(false); return true; } return false; }}/>}
     {visibleEditing && editing && <CaseEditModal

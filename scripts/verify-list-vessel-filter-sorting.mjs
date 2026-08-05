@@ -64,7 +64,7 @@ try {
   assert.ok(normalizedSource.includes("'歸一化已結案船舶篩選':'歸一化待辦清單船舶篩選'"), 'normalized待辦總表與已結案必須使用授權船舶共用選擇器');
   assert.ok(normalizedSource.includes("nextListColumnSort(columnSort,'vessel')") && normalizedSource.includes("nextListColumnSort(columnSort,'date')"), 'normalized待辦總表與已結案必須提供相同船舶／期限表頭排序');
   assert.ok(normalizedSource.includes('<td>{taskVesselLabel(task,vessels)}</td>') && !normalizedSource.includes("?.shortName || id).join('、')"), 'normalized清單列不得輸出不在授權集合內的船舶ID');
-  assert.ok(workCenterSource.includes('sanitizeTaskSelection(previous,actionableTasks)') && internalControlSource.includes('sanitizeInternalControlSelection(previous,selectableCases)') && appSource.includes('sanitizeTaskSelection(previous,tasks)'), '篩選後已勾選項目只能依目前結果縮減，不得自動擴張');
+  assert.ok(workCenterSource.includes('sanitizeTaskSelection(previous,selectableTasks)') && internalControlSource.includes('sanitizeInternalControlSelection(previous,selectableCases)') && appSource.includes('sanitizeTaskSelection(previous,tasks)'), '篩選後已勾選項目只能依目前可執行動作的結果縮減，不得自動擴張');
   assert.equal((appSource.match(/<ListPanel title=/g) || []).length, 2, '共用ListPanel接線必須只覆蓋待辦總表與已結案兩頁');
 
   console.log('Five-list vessel multi-filter and header sorting contracts passed.');

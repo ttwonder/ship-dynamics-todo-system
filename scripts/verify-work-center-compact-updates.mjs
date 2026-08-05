@@ -14,8 +14,8 @@ assert.ok(source.includes('selectUserWorkCenterTasks(data,user,vessels)'), '我�
 assert.ok(source.includes('導出 PDF') && source.includes('onPrint') && source.includes('work-print-list'), '我的待辦必須提供導出 PDF 清單功能與 print-only 清單內容');
 assert.match(styles,/\.work-print-list\{display:none\}/,'我的待辦 PDF 清單平時必須隱藏');
 assert.match(styles,/@media print[\s\S]*\.work-print-list\s*\{display:block!important/,'列印時必須顯示我的待辦 PDF 清單');
-assert.ok(source.includes('!multiMeeting&&<label className="work-task-select"'), '多船会议待办不得出现批量操作复选框');
-assert.ok(source.includes("multiMeeting?'multi-vessel-task-row':''"),'无复选框的多船会议卡片必须使用专属两栏布局');
+assert.ok(source.includes('taskSelectable&&<label className="work-task-select"') && source.includes('const completableSelectedTasks=selectedTasks.filter(task=>!usesPerVesselProgress(task));'), '多船會議待辦可供PDF／刪除選取，但必須排除於批量完成集合');
+assert.ok(source.includes("multiMeeting&&!taskSelectable?'multi-vessel-task-row':''"),'確實無任何可選動作的多船會議卡片才使用專屬兩欄布局');
 assert.match(styles,/\.work-task-main\{display:grid/,'新待办主体容器必须接收原卡片内距与布局');
 assert.match(styles,/\.task-link\{display:block[\s\S]*?background:transparent/,'task-link 必须重置按钮默认外观');
 assert.match(styles,/\.work-task-actions\{display:flex/,'新操作区必须有 flex 布局与间距');

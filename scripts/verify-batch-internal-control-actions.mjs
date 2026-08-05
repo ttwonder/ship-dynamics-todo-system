@@ -8,6 +8,7 @@ try {
   const workCenterSource = await readFile(new URL('../src/WorkCenter.tsx', import.meta.url), 'utf8');
   const internalControlPageSource = await readFile(new URL('../src/InternalControlPage.tsx', import.meta.url), 'utf8');
   const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const normalizedAppSource = await readFile(new URL('../src/NormalizedApp.tsx', import.meta.url), 'utf8');
 
   const standalone = { id: 'case-a', vesselId: 'v1', updatedAt: '2026-08-05T01:00:00.000Z', syncToTask: false, isClosed: false };
   const linked = { id: 'case-b', vesselId: 'v1', updatedAt: '2026-08-05T02:00:00.000Z', syncToTask: true, linkedTaskId: 'task-b', isClosed: false };
@@ -50,9 +51,54 @@ try {
   assert.equal(staleDraft.internalControlCases.length, 2, 'stale preflight rejection must not partially mutate the draft');
   assert.equal(staleDraft.tasks.length, 1, 'stale preflight rejection must retain linked tasks');
 
-  assert.ok(workCenterSource.includes('aria-label={`選取內控') && workCenterSource.includes('onBatchDelete(selectedTasks.map(task=>task.id),selectedInternalCases.map(item=>item.id))'), '我的待辦 must select standalone internal-control rows and submit task/case IDs together');
-  assert.ok(internalControlPageSource.includes('全選目前結果') && internalControlPageSource.includes('已選 {selectedCases.length}') && internalControlPageSource.includes('批量刪除（{selectedCases.length}）'), '內控未完與結案共用清單 must expose select-all, count, and batch-delete controls');
-  assert.ok(internalControlPageSource.includes('aria-label={`選取內控案件') && internalControlPageSource.includes('onBatchDelete(selectedCases.map(item=>item.id))'), 'every internal-control row must have an accessible checkbox and use the batch handler');
+  const closeFixture = (id, updatedAt) => ({
+    id,
+    vesselId: 'v1',
+    reportDate: '2026-08-05',
+    reportSource: '日常',
+    description: `待結案 ${id}`,
+    priority: '中',
+    category: '安全管理',
+    isAware: false,
+    status: '改善完成',
+    departments: ['海務'],
+    syncToTask: false,
+    origin: 'manual',
+    isClosed: false,
+    createdBy: 'u1',
+    updatedBy: 'u1',
+    createdAt: '2026-08-05T01:00:00.000Z',
+    updatedAt,
+    statusLogs: [],
+  });
+  const closeA = closeFixture('close-a', '2026-08-05T05:00:00.000Z');
+  const closeB = closeFixture('close-b', '2026-08-05T06:00:00.000Z');
+  const closeDraft = { users: [], vessels: [], internalControlCases: structuredClone([closeA, closeB]), tasks: [] };
+  const closedBatch = batch.closeInternalControlCaseBatchFromDraft(
+    closeDraft,
+    [closeA, closeB],
+    { id: 'operator-1', name: '一般操作員' },
+    '2026-08-05T07:00:00.000Z',
+  );
+  assert.deepEqual(closedBatch, { caseIds: ['close-a', 'close-b'], taskIds: [] }, 'batch closure must report exactly the selected internal-control cases');
+  assert.ok(closeDraft.internalControlCases.every(item => item.isClosed), 'batch closure must close every selected open internal-control case');
+  assert.ok(closeDraft.internalControlCases.every(item => item.closedDate === '2026-08-05' && item.closedBy === 'operator-1'), 'batch closure must derive trusted closure metadata from the live actor and operation time');
+  assert.ok(closeDraft.internalControlCases.every(item => item.updatedAt === '2026-08-05T07:00:00.000Z'), 'batch closure must apply one trusted operation timestamp');
+
+  const staleCloseDraft = { users: [], vessels: [], internalControlCases: structuredClone([closeA, closeB]), tasks: [] };
+  assert.throws(
+    () => batch.closeInternalControlCaseBatchFromDraft(staleCloseDraft, [closeA, { ...closeB, updatedAt: 'stale' }], { id: 'operator-1', name: '一般操作員' }, '2026-08-05T07:00:00.000Z'),
+    /已由其他人更新/,
+    'a stale selected case must reject the whole closure before mutation',
+  );
+  assert.ok(staleCloseDraft.internalControlCases.every(item => !item.isClosed), 'stale closure rejection must not partially close earlier cases');
+
+  assert.ok(workCenterSource.includes('const selectableInternalCases=(canComplete||canDelete||canPrint)?filteredInternalCases:[];'), '我的待辦 must let ordinary operators select internal-control rows for completion or selected PDF without granting delete permission');
+  assert.ok(workCenterSource.includes('aria-label={`選取內控') && workCenterSource.includes('onBatchComplete(completableSelectedTasks.map(task=>task.id),selectedInternalCases.map(item=>item.id))'), '我的待辦 batch completion must submit only completable task IDs while preserving the exact internal-case ID set');
+  assert.ok(workCenterSource.includes('onBatchDelete(selectedTasks.map(task=>task.id),selectedInternalCases.map(item=>item.id))'), '我的待辦 mixed deletion must preserve typed task/internal-case ID sets');
+  assert.ok(internalControlPageSource.includes('const canSelectCases=subpage!==\'stats\'&&((subpage===\'open\'&&canClose)||canDelete||canExport);'), 'internal-control list selection must be available for close, delete, or selected PDF capabilities rather than delete alone');
+  assert.ok(internalControlPageSource.includes('全選目前結果') && internalControlPageSource.includes('已選 {selectedCases.length}') && internalControlPageSource.includes('批量結案（{selectedCases.length}）'), '內控未完 must expose select-all, count, and batch-close controls to close-authorized operators');
+  assert.ok(internalControlPageSource.includes('aria-label={`選取內控案件') && internalControlPageSource.includes('onBatchClose(selectedCases.map(item=>item.id))'), 'every selectable internal-control row must reach the explicit batch-close handler');
   assert.ok(appSource.includes('const batchDeleteTasks = async (taskIds: string[], internalControlCaseIds: string[] = []) =>') && appSource.includes('internalControlBatchLockKeys(snapshot,uniqueInternalControlCaseIds)'), 'App must atomically plan mixed task/internal-control lock closure');
   const preLockAuthorizationStart=appSource.indexOf('const internalControlLockKeysForActor=');
   const preLockAuthorizationEnd=appSource.indexOf('\n    const totalSelected=',preLockAuthorizationStart);
@@ -63,6 +109,14 @@ try {
     && preLockAuthorization.includes('canCancelInternalControl(actor,vessel)')
     && preLockAuthorization.includes('return internalControlBatchLockKeys(snapshot,uniqueInternalControlCaseIds)'), 'identity, permission, scope, and updatedAt must be revalidated on the fresh cloud snapshot before planning any selected internal-control lock');
   assert.ok(appSource.includes("'批量刪除內控異常'") && appSource.includes('onBatchDelete={batchDeleteTasks}'), 'each deleted internal-control case must be audited and both pages must use the centralized handler');
+  assert.ok(appSource.includes('const batchCompleteTasks = async (taskIds: string[], internalControlCaseIds: string[] = []) =>')
+    && appSource.includes('closeInternalControlCaseBatchFromDraft(draft,liveSelectedInternalCases,liveUser,at)')
+    && appSource.includes("'批量結案內控異常'"), 'legacy batch completion must atomically close exact selected internal cases with per-case audits');
+  assert.ok(normalizedAppSource.includes('const completeNormalizedSelection = async (taskIds: string[], caseIds: string[]) =>')
+    && normalizedAppSource.includes('selectedCases.some(item => !item || item.isClosed)')
+    && normalizedAppSource.includes('controller.updateInternalCase({ ...item, isClosed: true, closedDate })'), 'normalized compatibility path must prevalidate every selected open case and reuse the authoritative single-case command');
+  assert.ok(normalizedAppSource.includes('onBatchComplete={completeNormalizedSelection}')
+    && normalizedAppSource.includes('onBatchClose={caseIds => completeNormalizedSelection([], caseIds)}'), 'normalized work-center and internal list must both pass exact typed selections to the compatibility handler');
 
   console.log('Batch internal-control selection, deletion, and lock contracts passed.');
 } finally {

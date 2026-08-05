@@ -117,6 +117,7 @@
 
 /* Scoped print refinements: meeting detail portrait + work-center PDF list */
 .work-print-list{display:none}
+.selected-task-print{display:none}
 @page meeting-detail{size:A4 portrait;margin:10mm}
 @page meeting-register{size:A4 landscape;margin:8mm}
 @media print{
@@ -148,6 +149,12 @@
   .work-print-list table{width:100%;border-collapse:collapse;border:1px solid #d8cedc}
   .work-print-list th{background:#6f5b86!important;color:#fff!important}
   .work-print-list th,.work-print-list td{border:1px solid #d8cedc;padding:2.2mm;font-size:9pt;vertical-align:top}
+  .selected-task-print{display:block!important;margin:0;color:#222}
+  .selected-task-print h1{margin:0 0 3mm;padding-bottom:3mm;border-bottom:3px solid #79608f;font-size:18pt}
+  .selected-task-print p{margin:0 0 4mm;color:#666;font-size:9pt}
+  .selected-task-print table{width:100%;border-collapse:collapse;border:1px solid #d8cedc;table-layout:fixed}
+  .selected-task-print th{background:#6f5b86!important;color:#fff!important}
+  .selected-task-print th,.selected-task-print td{border:1px solid #d8cedc;padding:2.2mm;font-size:8.5pt;vertical-align:top;overflow-wrap:anywhere}
   .work-task-panel>.work-task-list,.work-task-panel>.pagination-controls{display:none!important}
   .batch-task-table{width:100%;table-layout:fixed}
   .batch-task-table .task-vessel-column{width:9%;min-width:0!important;max-width:none!important}

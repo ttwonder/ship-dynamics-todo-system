@@ -1,5 +1,6 @@
 import type { TaskItem, TaskVesselProgress } from './types';
 import { taskVesselIds } from './taskVesselScope';
+import { richTextToPlainText } from './richText';
 
 type UpdateMeta = { at: string; actorId: string };
 
@@ -26,6 +27,15 @@ export function taskProgressForVessel(task: TaskItem, vesselId: string): TaskVes
   }
   const progress=task.vesselProgress?.find(item=>item.vesselId===vesselId);
   return progress ? structuredClone(progress) : emptyTaskVesselProgress(vesselId);
+}
+
+export function taskProjectedProgressForScope(task: TaskItem, scopeVesselIds: string[]) {
+  const scopedIds=taskVesselIds(task).filter(id=>scopeVesselIds.includes(id));
+  if(scopedIds.length===1)return taskProgressForVessel(task,scopedIds[0]);
+  const visibleStatuses=usesPerVesselProgress(task)?scopedIds.map(id=>taskProgressForVessel(task,id).status).filter(status=>richTextToPlainText(status).trim()):[];
+  const visibleUpdates=usesPerVesselProgress(task)?scopedIds.map(id=>taskProgressForVessel(task,id).updatedAt).filter(Boolean).sort():[];
+  const projectedStatus=usesPerVesselProgress(task)&&scopedIds.length>1?(visibleStatuses.join('<br/>')||'尚無單船狀態'):task.status;
+  return { vesselId: scopedIds[0]||task.vesselId, status: projectedStatus, isClosed: scopedIds.length?taskIsClosedForScope(task,scopedIds):task.isClosed, closedDate: task.closedDate, closedBy: task.closedBy, updatedAt: visibleUpdates[visibleUpdates.length-1]||task.updatedAt, updatedBy: task.updatedBy, statusLogs: task.statusLogs };
 }
 
 function cloneProgress(progress: TaskVesselProgress): TaskVesselProgress {

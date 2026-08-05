@@ -1,5 +1,10 @@
 import type { InternalControlCase, TaskItem } from './types';
-import { deleteInternalControlCase, type InternalControlDataDraft } from './internalControlData';
+import {
+  deleteInternalControlCase,
+  updateInternalControlCase,
+  type InternalControlActor,
+  type InternalControlDataDraft,
+} from './internalControlData';
 import { internalControlEditLockKey } from './exclusiveItemEditLock';
 
 export function sanitizeInternalControlSelection(
@@ -84,6 +89,38 @@ export function deleteInternalControlCaseBatchFromDraft(
   for (const selected of selectedCases) {
     const deleted = deleteInternalControlCase(draft, selected.id, selected.updatedAt);
     if (deleted.taskId) taskIds.push(deleted.taskId);
+  }
+  return { caseIds, taskIds };
+}
+
+export function closeInternalControlCaseBatchFromDraft(
+  draft: InternalControlDataDraft,
+  selectedCases: Pick<InternalControlCase, 'id' | 'updatedAt'>[],
+  actor: InternalControlActor,
+  at: string,
+): { caseIds: string[]; taskIds: string[] } {
+  const caseIds = selectedCases.map(item => item.id);
+  if (caseIds.some(id => !id) || new Set(caseIds).size !== caseIds.length) {
+    throw new Error('批量結案的內控案件識別碼空白或重複');
+  }
+  for (const selected of selectedCases) {
+    const matches = draft.internalControlCases.filter(item => item.id === selected.id);
+    if (matches.length !== 1) throw new Error(`內控案件不存在或識別碼重複：${selected.id}`);
+    if (matches[0].updatedAt !== selected.updatedAt) throw new Error(`內控案件已由其他人更新：${selected.id}`);
+    if (matches[0].isClosed) throw new Error(`內控案件已結案：${selected.id}`);
+  }
+  internalControlBatchLockKeys(draft, caseIds);
+  const taskIds: string[] = [];
+  for (const selected of selectedCases) {
+    const current = draft.internalControlCases.find(item => item.id === selected.id)!;
+    updateInternalControlCase(
+      draft,
+      { ...current, isClosed: true, closedDate: at.slice(0, 10), closedBy: actor.id },
+      selected.updatedAt,
+      actor,
+      at,
+    );
+    if (current.linkedTaskId) taskIds.push(current.linkedTaskId);
   }
   return { caseIds, taskIds };
 }

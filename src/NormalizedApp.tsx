@@ -28,11 +28,14 @@ import NormalizedManagement from './NormalizedManagement';
 import { TaskEditModal } from './EditModals';
 import { canAccessAllVessels, hasPermission } from './permissions';
 import { taskHasVessel, taskVesselIds, taskVesselLabel } from './taskVesselScope';
+import { usesPerVesselProgress } from './taskVesselProgress';
 import { hasActiveVesselDelegation } from './vesselDelegation';
 import { dashboardMeetingAlerts } from './meetingVesselAttention';
 import { todayDate } from './runtimeUtils';
 import RichTextContent from './RichTextContent';
 import { vesselPositionCommandValue } from './normalizedAdapters';
+import SelectedTaskPrintTable from './SelectedTaskPrintTable';
+import { selectedListRecords } from './selectedListExport';
 import type { NormalizedApplicationProjection } from './normalizedProjection';
 import VesselListFilter from './VesselListFilter';
 import {
@@ -349,16 +352,27 @@ function TaskList({
   vessels,
   closed,
   onOpen,
+  canComplete,
+  canDelete,
+  canPrint,
+  onBatchComplete,
+  onBatchDelete,
 }: {
   data: AppData;
   user: UserAccount;
   vessels: Vessel[];
   closed: boolean;
   onOpen: (task: TaskItem) => void;
+  canComplete: boolean;
+  canDelete: boolean;
+  canPrint: boolean;
+  onBatchComplete: (ids: string[]) => boolean | Promise<boolean>;
+  onBatchDelete: (ids: string[]) => boolean | Promise<boolean>;
 }) {
   const [vesselMode,setVesselMode]=useState<VesselListFilterMode>('all');
   const [selectedVesselIds,setSelectedVesselIds]=useState<string[]>([]);
   const [columnSort,setColumnSort]=useState<ListColumnSort>('created-desc');
+  const [selectedIds,setSelectedIds]=useState<string[]>([]);
   const visibleVesselIds = new Set(vessels.map(vessel => vessel.id));
   const managedVesselIds=managedListVesselIds(user,vessels);
   const vesselSelection={mode:vesselMode,vesselIds:selectedVesselIds};
@@ -378,20 +392,38 @@ function TaskList({
   );
   const hasListControls=vesselMode!=='all'||columnSort!=='created-desc';
   const resetListControls=()=>{setVesselMode('all');setSelectedVesselIds([]);setColumnSort('created-desc');};
+  const canSelect=(!closed&&canComplete)||canDelete||canPrint;
+  const selectableTasks=canSelect?tasks.filter(task=>canDelete||canPrint||(!closed&&canComplete&&!usesPerVesselProgress(task))):[];
+  const selectableSet=new Set(selectableTasks.map(task=>task.id));
+  const selectedTasks=selectedListRecords(selectableTasks,selectedIds);
+  const selectedSet=new Set(selectedIds);
+  const completableSelectedIds=selectedTasks.filter(task=>!task.isClosed&&!usesPerVesselProgress(task)).map(task=>task.id);
+  const allSelected=selectableTasks.length>0&&selectableTasks.every(task=>selectedSet.has(task.id));
+  useEffect(()=>{
+    setSelectedIds(previous=>{
+      const next=selectedListRecords(selectableTasks,previous).map(task=>task.id);
+      return next.length===previous.length&&next.every((id,index)=>id===previous[index])?previous:next;
+    });
+  },[data.tasks,closed,vesselMode,selectedVesselIds,vessels,user.id,canComplete,canDelete,canPrint]);
+  const toggleAll=()=>setSelectedIds(allSelected?[]:selectableTasks.map(task=>task.id));
+  const toggleOne=(id:string)=>setSelectedIds(previous=>previous.includes(id)?previous.filter(value=>value!==id):[...previous,id]);
+  const completeSelected=async()=>{if(await onBatchComplete(completableSelectedIds))setSelectedIds([]);};
+  const deleteSelected=async()=>{if(await onBatchDelete(selectedTasks.map(task=>task.id)))setSelectedIds([]);};
   return <section>
-    <div className="page-heading"><div><h1>{closed ? '已結案待辦' : '全部未結待辦'}</h1>
+    <div className="page-heading no-print"><div><h1>{closed ? '已結案待辦' : '全部未結待辦'}</h1>
       <p>資料由歸一化實體投影即時讀取。</p></div></div>
     <section className="panel normalized-list-controls no-print"><VesselListFilter vessels={vessels} mode={vesselMode} selectedVesselIds={selectedVesselIds} onChange={selection=>{setVesselMode(selection.mode);setSelectedVesselIds(selection.vesselIds);}} ariaLabel={closed?'歸一化已結案船舶篩選':'歸一化待辦清單船舶篩選'}/>{hasListControls&&<button type="button" className="btn small ghost" onClick={resetListControls}>清除篩選與排序</button>}</section>
-    <section className="panel"><div className="table-wrap"><table className="compact"><thead><tr>
-      <th>關注</th><th><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}>船舶 <span>{columnSort==='vessel-asc'?'↑':columnSort==='vessel-desc'?'↓':'↕'}</span></button></th><th>內容</th><th>部門</th><th><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}>期限 <span>{columnSort==='date-asc'?'↑':columnSort==='date-desc'?'↓':'↕'}</span></button></th><th>最新狀態</th><th>操作</th>
-    </tr></thead><tbody>{tasks.map(task => <tr key={task.id}>
+    <section className="panel selected-task-list-panel"><div className="panel-title no-print"><h2>{closed?'已結案清單':'待辦總表'} <span className="muted">({tasks.length})</span></h2>{canSelect&&<div className="heading-actions"><button className="btn small ghost" onClick={toggleAll} disabled={!selectableTasks.length}>{allSelected?'取消全選':'全選目前結果'}</button><span className="batch-selection-count">已選 {selectedTasks.length}</span>{!closed&&<button className="btn small green" onClick={completeSelected} disabled={!canComplete||!completableSelectedIds.length}>批量完成（{completableSelectedIds.length}）</button>}{canDelete&&<button className="btn small red" onClick={deleteSelected} disabled={!selectedTasks.length}>批量刪除（{selectedTasks.length}）</button>}{canPrint&&<button className="btn primary" onClick={()=>window.print()} disabled={!selectedTasks.length} title={!selectedTasks.length?'請先勾選要輸出的項目':''}>導出 PDF（{selectedTasks.length}）</button>}</div>}</div><div className="table-wrap no-print"><table className="compact"><thead><tr>
+      {canSelect&&<th className="batch-select-cell"><input type="checkbox" aria-label="全選目前結果" checked={allSelected} disabled={!selectableTasks.length} onChange={toggleAll}/></th>}<th>關注</th><th><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}>船舶 <span>{columnSort==='vessel-asc'?'↑':columnSort==='vessel-desc'?'↓':'↕'}</span></button></th><th>內容</th><th>部門</th><th><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}>期限 <span>{columnSort==='date-asc'?'↑':columnSort==='date-desc'?'↓':'↕'}</span></button></th><th>最新狀態</th><th>操作</th>
+    </tr></thead><tbody>{tasks.map(task => <tr key={task.id} className={selectedSet.has(task.id)?'batch-selected-row':''}>
+      {canSelect&&<td className="batch-select-cell">{selectableSet.has(task.id)&&<input type="checkbox" aria-label={`選取待辦 ${task.id}`} checked={selectedSet.has(task.id)} onChange={()=>toggleOne(task.id)}/>}</td>}
       <td><span className="badge">{task.priority}</span></td>
       <td>{taskVesselLabel(task,vessels)}</td>
       <td><RichTextContent compact value={task.description}/></td>
       <td>{task.departments.join('、')||'未指定'}</td><td>{task.expectedDate || '未設定'}</td>
       <td><RichTextContent compact value={task.status} fallback="尚未更新"/></td>
       <td><button className="btn small primary" onClick={() => onOpen(task)}>查看／編輯</button></td>
-    </tr>)}</tbody></table></div>{!tasks.length && <div className="empty-state">目前沒有資料</div>}</section>
+    </tr>)}</tbody></table></div>{!tasks.length && <div className="empty-state no-print">目前沒有資料</div>}<SelectedTaskPrintTable title={closed ? '已結案清單' : '待辦總表'} tasks={selectedTasks} vessels={vessels} users={data.users} exportedBy={user.name}/></section>
   </section>;
 }
 
@@ -648,6 +680,31 @@ export default function NormalizedApp() {
     }
     return true;
   };
+  const completeNormalizedSelection = async (taskIds: string[], caseIds: string[]) => {
+    if (!canClose || projection.vesselAccount) return false;
+    const uniqueTaskIds = [...new Set(taskIds)];
+    const uniqueCaseIds = [...new Set(caseIds)];
+    const selectedTasks = uniqueTaskIds.map(id => visibleTasks.find(task => task.id === id));
+    const selectedCases = uniqueCaseIds.map(id => visibleCases.find(item => item.id === id));
+    if (!uniqueTaskIds.length && !uniqueCaseIds.length) return false;
+    if (selectedTasks.some(task => !task || task.isClosed || usesPerVesselProgress(task))
+      || selectedCases.some(item => !item || item.isClosed)) {
+      alert('所選項目已變更、已結案或不在目前可管理範圍，請重新選擇');
+      return false;
+    }
+    if (selectedTasks.some(task => selectedCases.some(item => item && task
+      && (item.linkedTaskId === task.id || task.internalControlCaseId === item.id)))) {
+      alert('同一組雙向關聯不可同時以待辦與內控案件重複選取');
+      return false;
+    }
+    if (!confirm(`確定批量完成所選 ${uniqueTaskIds.length + uniqueCaseIds.length} 筆項目（待辦 ${uniqueTaskIds.length}、內控 ${uniqueCaseIds.length}）？`)) return false;
+    if (uniqueTaskIds.length && !await runBoolean(() => controller.batchTransitionTasks(uniqueTaskIds, 'close'))) return false;
+    const closedDate = todayDate();
+    for (const item of selectedCases) {
+      if (!item || !await runBoolean(() => controller.updateInternalCase({ ...item, isClosed: true, closedDate }))) return false;
+    }
+    return true;
+  };
   const authorizationEpoch = editorAuthorization?.authorizationEpoch || '';
   const creatingTask = taskEditor?.creating === true;
   const taskProgressVesselId = taskEditor?.progressVesselId || '';
@@ -768,12 +825,14 @@ export default function NormalizedApp() {
         markAllRead={() => run(() => controller.markAllNotificationsRead(user)).then(() => undefined)}
         canComplete={canClose} canDelete={canDelete} canPrint={permission('exportReports')}
         onPrint={() => window.print()}
-        onBatchComplete={ids => runBoolean(() => controller.batchTransitionTasks(ids, 'close'))}
+        onBatchComplete={completeNormalizedSelection}
         onBatchDelete={deleteNormalizedSelection}/>
       : tab === 'tasks' ? <TaskList data={{ ...data, tasks: visibleTasks }} user={user} vessels={visibleVessels}
-        closed={false} onOpen={openTask}/>
+        closed={false} onOpen={openTask} canComplete={canClose} canDelete={canDelete} canPrint={permission('exportReports')}
+        onBatchComplete={ids=>completeNormalizedSelection(ids,[])} onBatchDelete={ids=>deleteNormalizedSelection(ids,[])}/>
       : tab === 'closed' ? <TaskList data={{ ...data, tasks: visibleTasks }} user={user} vessels={visibleVessels}
-        closed onOpen={openTask}/>
+        closed onOpen={openTask} canComplete={canClose} canDelete={canDelete} canPrint={permission('exportReports')}
+        onBatchComplete={ids=>completeNormalizedSelection(ids,[])} onBatchDelete={ids=>deleteNormalizedSelection(ids,[])}/>
       : tab === 'internal' ? <InternalControlPage data={data} user={user} vessels={visibleVessels}
         canCreate={canCreate} canEdit={canEdit} canClose={canClose} canDelete={canDelete}
         canExport={permission('exportReports')} authorizationEpoch={authorizationEpoch}
@@ -782,6 +841,7 @@ export default function NormalizedApp() {
         onUpdate={async (item, _updatedAt, _revision, taskProjection) =>
           Boolean(await run(() => controller.updateInternalCase(item, taskProjection)))}
         onDelete={item => runBoolean(() => controller.deleteInternalCase(item))}
+        onBatchClose={caseIds => completeNormalizedSelection([], caseIds)}
         onBatchDelete={caseIds => deleteNormalizedSelection([], caseIds)}
         onOpenTask={taskId => {
           const task = visibleTasks.find(item => item.id === taskId);

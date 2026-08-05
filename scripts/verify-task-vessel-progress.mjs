@@ -19,6 +19,7 @@ try{
 } finally {await server.close();}
 
 const app=fs.readFileSync('src/App.tsx','utf8');
+const progressSource=fs.readFileSync('src/taskVesselProgress.ts','utf8');
 const editor=fs.readFileSync('src/EditModals.tsx','utf8');
 const detail=fs.readFileSync('src/VesselDetailPage.tsx','utf8');
 const morning=fs.readFileSync('src/MorningWorkspace.tsx','utf8');
@@ -27,9 +28,9 @@ assert.ok(editor.includes('單船進度')&&editor.includes('總體進度'),'会�
 assert.ok(detail.includes('taskProgressForVessel'),'单船详情必须显示该船自己的进度');
 assert.ok(morning.includes("onEditTask(task,scopeIds.length===1&&taskIds.includes(scopeIds[0])?scopeIds[0]:'')") || morning.includes("onEditTask(t,scopeIds.length===1&&taskIds.includes(scopeIds[0])?scopeIds[0]:'')"),'早会单船范围必须把当前讨论船传入编辑器');
 assert.ok(app.includes("!taskIsClosedForVessel(t,v.id)"),'默认重点船选择必须按该船进度判断未结案');
-assert.ok(app.includes('taskProjectedProgressForScope'),'總表必須先把事項投影到目前可見船舶範圍');
-assert.ok(app.includes('Number(taskProjectedProgressForScope(a,visibleIds).isClosed)'),'總表排序必須使用投影後結案狀態而非頂層 isClosed');
-assert.ok(app.includes('visibleStatuses.join') && app.includes('taskProgressForVessel(task,id).status') && app.includes('尚無單船狀態') && !app.includes("visibleStatuses.join('<br/>')||task.status"), '多船可見範圍狀態必須彙整逐船狀態，不得直接回退頂層 status');
+assert.ok(progressSource.includes('export function taskProjectedProgressForScope') && app.includes('taskProjectedProgressForScope'),'總表必須從共用helper把事項投影到目前可見船舶範圍');
+assert.ok(app.includes('!taskProjectedProgressForScope(task,visibleScopeIds).isClosed') && app.includes('const projected=taskProjectedProgressForScope(t,visibleScopeIds)'), '總表批量完成資格與列狀態必須使用投影後結案狀態而非頂層 isClosed');
+assert.ok(progressSource.includes('visibleStatuses.join') && progressSource.includes('taskProgressForVessel(task,id).status') && progressSource.includes('尚無單船狀態') && !progressSource.includes("visibleStatuses.join('<br/>')||task.status"), '多船可見範圍狀態必須彙整逐船狀態，不得直接回退頂層 status');
 assert.ok(app.includes('const visibleStatusTexts=usesPerVesselProgress(t)&&visibleVessels.length?visibleVessels.map(v=>taskProgressForVessel(t,v.id).status):[t.status]') && app.includes('...visibleStatusTexts.map(richTextToPlainText)'), '總表 keyword 搜尋必須納入可見船舶逐船狀態，而非只搜頂層 status');
 assert.ok(app.includes('const projected=taskProjectedProgressForScope(t,visibleScopeIds)') && app.includes('projected.isClosed') && app.includes('projected.status'), '總表列狀態必須顯示投影後狀態而非頂層狀態');
 assert.ok(!app.includes("t=>t.isClosed&&taskMatchesFilters(t,closedFilters"),'已結案清單不得用頂層 isClosed 覆蓋單船作用域狀態');
