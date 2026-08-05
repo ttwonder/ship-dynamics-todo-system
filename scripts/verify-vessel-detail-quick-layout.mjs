@@ -17,9 +17,15 @@ for (const [label, field] of [
   assert.ok(detail.includes(`<dt>${label}</dt><dd>{officerValue(vessel.note.${field})}</dd>`), `單船基本資料必須直接顯示 ${label} 的 VesselNote 欄位`);
 }
 assert.ok(detail.includes("const officerValue = (text?: string) => text?.trim() || '-';"), '四位姓名未填時必須顯示半形 -');
-assert.match(desktopDetailStyles, /\.vessel-detail-grid\{[^}]*grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/, '桌面版單船大型資訊面板必須使用三欄');
-assert.match(desktopDetailStyles, /\.vessel-detail-grid\{[^}]*align-items:start/, '桌面版單船資訊卡必須依自身內容高度收合，不能把較短卡片拉出大片空白');
+assert.ok(detail.includes('<div className="vessel-detail-column vessel-detail-primary-column">'), '基本資料與貨載資訊必須放在同一個獨立直欄中緊貼排列');
+assert.ok(detail.includes('<div className="vessel-detail-secondary-column">'), '航行、時間及動態區必須放在獨立右側欄中，不能受左側高卡片列高拖動');
+assert.ok(detail.includes('<div className="vessel-detail-secondary-top">'), '航行與時間卡必須保留桌面同列的兩欄外觀');
+assert.ok(detail.indexOf('<h2>貨載資訊</h2>') < detail.indexOf('<div className="vessel-detail-secondary-column">'), '貨載資訊必須緊接在左側基本資料後，而不是等待共用 Grid row');
+assert.match(desktopDetailStyles, /\.vessel-detail-grid\{[^}]*grid-template-columns:minmax\(0,1fr\) minmax\(0,2fr\)/, '桌面版必須以一欄加右側兩欄維持三欄比例');
+assert.match(desktopDetailStyles, /\.vessel-detail-primary-column,\.vessel-detail-secondary-column\{[^}]*display:flex[^}]*flex-direction:column[^}]*gap:9px/, '左右容器必須各自垂直緊貼排列，不共用卡片列高');
+assert.match(desktopDetailStyles, /\.vessel-detail-secondary-top\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)/, '右側頂部必須保留航行與時間兩欄');
 assert.match(styles, /@media\(max-width:1180px\)\{[^}]*\.vessel-detail-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/, '中等螢幕單船詳情必須自然降為兩欄');
+assert.ok(styles.includes('.vessel-detail-secondary-top{grid-template-columns:1fr}'), '中等螢幕右側卡片必須改為單欄緊貼，避免內容被擠窄');
 assert.match(styles, /@media\(max-width:700px\)\{[^}]*\.vessel-detail-grid\{grid-template-columns:1fr/, '窄螢幕單船詳情必須自然降為一欄');
 assert.match(lastRule('.vessel-info-panel h2'), /font-size:19px/, '單船資訊面板標題必須放大');
 assert.match(lastRule('.vessel-info-panel dt'), /font-size:12px/, '單船欄位名稱必須放大');

@@ -74,37 +74,43 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
     </div>
 
     <div className="vessel-detail-grid">
-      <section className="panel vessel-info-panel"><h2>船舶基本資料</h2><dl>
-        <div><dt>顯示船名</dt><dd>{vesselDisplayName(vessel)}</dd></div><div><dt>簡稱</dt><dd>{value(vessel.shortName)}</dd></div>
-        <div><dt>完整船名</dt><dd>{value(vessel.fullName)}</dd></div><div><dt>船種</dt><dd>{value(vessel.shipType)}</dd></div>
-        <div><dt>船隊類別</dt><dd>{value(vessel.fleetCategory)}</dd></div><div><dt>船隊標籤</dt><dd>{vessel.fleetTags.join('、') || '未設定'}</dd></div>
-        <div><dt>啟用狀態</dt><dd>{vessel.isActive ? '啟用' : '停用'}</dd></div><div><dt>經管人員</dt><dd>{assignedNames.join('、') || '未指派'}</dd></div>
-        <div><dt>船長</dt><dd>{officerValue(vessel.note.captain)}</dd></div><div><dt>大副</dt><dd>{officerValue(vessel.note.chiefOfficer)}</dd></div>
-        <div><dt>輪機長</dt><dd>{officerValue(vessel.note.chiefEngineer)}</dd></div><div><dt>大管輪</dt><dd>{officerValue(vessel.note.firstEngineer)}</dd></div>
-        <div><dt>建立時間</dt><dd>{dateTime(vessel.createdAt)}</dd></div><div><dt>最後更新</dt><dd>{dateTime(vessel.updatedAt)}</dd></div>
-      </dl></section>
-      <section className="panel vessel-info-panel"><h2>航行與港口</h2><dl>
-        <div><dt>目前位置</dt><dd>{value(vessel.position.location)}</dd></div><div><dt>航行狀態</dt><dd>{value(vessel.position.navigationStatus)}</dd></div>
-        <div><dt>速度</dt><dd>{vessel.position.speedKnots || 0} kn</dd></div><div><dt>上一港</dt><dd>{value(vessel.position.lastPort)}</dd></div>
-        <div><dt>下一港</dt><dd>{value(vessel.position.nextPort)}</dd></div><div className="span-2"><dt>航線</dt><dd>{value(vessel.position.lastPort)} → {value(vessel.position.nextPort)}</dd></div>
-      </dl></section>
-      <section className="panel vessel-info-panel"><h2>時間與資料來源</h2><dl>
-        <div><dt>ETA</dt><dd>{formatScheduleDisplay(vessel.position.eta)||'未設定'}</dd></div><div><dt>ETB</dt><dd>{formatScheduleDisplay(vessel.position.etb)||'未設定'}</dd></div>
-        <div><dt>ETD</dt><dd>{formatScheduleDisplay(vessel.position.etd)||'未設定'}</dd></div><div><dt>位置資料來源</dt><dd>{sourceLabel(vessel.position.source)}</dd></div>
-        <div><dt>位置資料更新時間</dt><dd>{dateTime(vessel.position.updatedAt)}</dd></div><div><dt>貨載資料更新時間</dt><dd>{dateTime(vessel.cargo.updatedAt)}</dd></div>
-      </dl></section>
-      <section className="panel vessel-info-panel"><h2>貨載資訊</h2><dl>
-        <div><dt>載況</dt><dd>{value(vessel.cargo.loadStatus)}</dd></div><div><dt>資料來源</dt><dd>{sourceLabel(vessel.cargo.source)}</dd></div>
-        <div className="span-2"><dt>貨名／貨量</dt><dd>{vessel.cargo.items.length ? vessel.cargo.items.map((item,index)=><span className="detail-cargo-line" key={`${item.name}-${index}`}>{value(item.name)}{item.quantity ? `｜${item.quantity}` : ''}</span>) : `${value(vessel.cargo.name)}${vessel.cargo.quantity ? `｜${vessel.cargo.quantity}` : ''}`}</dd></div>
-      </dl></section>
-      <section className="panel vessel-info-panel vessel-note-panel"><h2>動態與備註</h2><dl>
-        <div><dt>船舶狀態</dt><dd>{vessel.note.statusList.join('、') || '未設定'}</dd></div><div><dt>人工關注程度</dt><dd>{value(vessel.manualAttentionLevel)}</dd></div>
-        <div className="span-2"><dt>未來一週關注</dt><dd>{vessel.weeklyAttention.map(item=>attentionLabels[item]||item).join('、') || '無'}</dd></div>
-        <div className="span-2"><dt>人工動態備註</dt><dd>{value(vessel.position.manualRemark)}</dd></div>
-        <div className="span-2"><dt>近期／後續動態</dt><dd>{value(vessel.note.recentDynamics)}</dd></div>
-        {vessel.note.subsequentDynamics&&<div className="span-2"><dt>後續動態（舊資料）</dt><dd>{vessel.note.subsequentDynamics}</dd></div>}
-        <div><dt>動態更新時間</dt><dd>{dateTime(vessel.note.updatedAt)}</dd></div><div><dt>目前查看人</dt><dd>{currentUser.name}</dd></div>
-      </dl></section>
+      <div className="vessel-detail-column vessel-detail-primary-column">
+        <section className="panel vessel-info-panel"><h2>船舶基本資料</h2><dl>
+          <div><dt>顯示船名</dt><dd>{vesselDisplayName(vessel)}</dd></div><div><dt>簡稱</dt><dd>{value(vessel.shortName)}</dd></div>
+          <div><dt>完整船名</dt><dd>{value(vessel.fullName)}</dd></div><div><dt>船種</dt><dd>{value(vessel.shipType)}</dd></div>
+          <div><dt>船隊類別</dt><dd>{value(vessel.fleetCategory)}</dd></div><div><dt>船隊標籤</dt><dd>{vessel.fleetTags.join('、') || '未設定'}</dd></div>
+          <div><dt>啟用狀態</dt><dd>{vessel.isActive ? '啟用' : '停用'}</dd></div><div><dt>經管人員</dt><dd>{assignedNames.join('、') || '未指派'}</dd></div>
+          <div><dt>船長</dt><dd>{officerValue(vessel.note.captain)}</dd></div><div><dt>大副</dt><dd>{officerValue(vessel.note.chiefOfficer)}</dd></div>
+          <div><dt>輪機長</dt><dd>{officerValue(vessel.note.chiefEngineer)}</dd></div><div><dt>大管輪</dt><dd>{officerValue(vessel.note.firstEngineer)}</dd></div>
+          <div><dt>建立時間</dt><dd>{dateTime(vessel.createdAt)}</dd></div><div><dt>最後更新</dt><dd>{dateTime(vessel.updatedAt)}</dd></div>
+        </dl></section>
+        <section className="panel vessel-info-panel"><h2>貨載資訊</h2><dl>
+          <div><dt>載況</dt><dd>{value(vessel.cargo.loadStatus)}</dd></div><div><dt>資料來源</dt><dd>{sourceLabel(vessel.cargo.source)}</dd></div>
+          <div className="span-2"><dt>貨名／貨量</dt><dd>{vessel.cargo.items.length ? vessel.cargo.items.map((item,index)=><span className="detail-cargo-line" key={`${item.name}-${index}`}>{value(item.name)}{item.quantity ? `｜${item.quantity}` : ''}</span>) : `${value(vessel.cargo.name)}${vessel.cargo.quantity ? `｜${vessel.cargo.quantity}` : ''}`}</dd></div>
+        </dl></section>
+      </div>
+      <div className="vessel-detail-secondary-column">
+        <div className="vessel-detail-secondary-top">
+          <section className="panel vessel-info-panel"><h2>航行與港口</h2><dl>
+            <div><dt>目前位置</dt><dd>{value(vessel.position.location)}</dd></div><div><dt>航行狀態</dt><dd>{value(vessel.position.navigationStatus)}</dd></div>
+            <div><dt>速度</dt><dd>{vessel.position.speedKnots || 0} kn</dd></div><div><dt>上一港</dt><dd>{value(vessel.position.lastPort)}</dd></div>
+            <div><dt>下一港</dt><dd>{value(vessel.position.nextPort)}</dd></div><div><dt>航線</dt><dd>{value(vessel.position.lastPort)} → {value(vessel.position.nextPort)}</dd></div>
+          </dl></section>
+          <section className="panel vessel-info-panel"><h2>時間與資料來源</h2><dl>
+            <div><dt>ETA</dt><dd>{formatScheduleDisplay(vessel.position.eta)||'未設定'}</dd></div><div><dt>ETB</dt><dd>{formatScheduleDisplay(vessel.position.etb)||'未設定'}</dd></div>
+            <div><dt>ETD</dt><dd>{formatScheduleDisplay(vessel.position.etd)||'未設定'}</dd></div><div><dt>位置資料來源</dt><dd>{sourceLabel(vessel.position.source)}</dd></div>
+            <div><dt>位置資料更新時間</dt><dd>{dateTime(vessel.position.updatedAt)}</dd></div><div><dt>貨載資料更新時間</dt><dd>{dateTime(vessel.cargo.updatedAt)}</dd></div>
+          </dl></section>
+        </div>
+        <section className="panel vessel-info-panel vessel-note-panel"><h2>動態與備註</h2><dl>
+          <div><dt>船舶狀態</dt><dd>{vessel.note.statusList.join('、') || '未設定'}</dd></div><div><dt>人工關注程度</dt><dd>{value(vessel.manualAttentionLevel)}</dd></div>
+          <div className="span-2"><dt>未來一週關注</dt><dd>{vessel.weeklyAttention.map(item=>attentionLabels[item]||item).join('、') || '無'}</dd></div>
+          <div className="span-2"><dt>人工動態備註</dt><dd>{value(vessel.position.manualRemark)}</dd></div>
+          <div className="span-2"><dt>近期／後續動態</dt><dd>{value(vessel.note.recentDynamics)}</dd></div>
+          {vessel.note.subsequentDynamics&&<div className="span-2"><dt>後續動態（舊資料）</dt><dd>{vessel.note.subsequentDynamics}</dd></div>}
+          <div><dt>動態更新時間</dt><dd>{dateTime(vessel.note.updatedAt)}</dd></div><div><dt>目前查看人</dt><dd>{currentUser.name}</dd></div>
+        </dl></section>
+      </div>
     </div>
 
     <section className="panel vessel-detail-tasks">
