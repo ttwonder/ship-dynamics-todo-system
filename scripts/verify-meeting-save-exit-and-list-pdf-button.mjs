@@ -25,6 +25,19 @@ assert.match(meetings, /建立並退出編輯/, '新增臨會保存按鈕需明�
 assert.match(meetings, /setDraft\(structuredClone\(baseline\)\)/, '取消既有臨會修改時必須還原進入編輯前的 draft');
 assert.match(meetings, /saveReachedLocalStateRef\.current[\s\S]*為避免誤刪/, '已進入本機待同步的保存不得被取消流程直接丟棄');
 
+const viewMeetingIndex = meetings.indexOf('const viewMeeting = (meeting: TemporaryMeeting) =>');
+const beginEditingIndex = meetings.indexOf('const beginEditing = async (meeting: TemporaryMeeting) =>');
+const startNewIndex = meetings.indexOf('const startNew = async () =>');
+assert.ok(viewMeetingIndex >= 0 && beginEditingIndex > viewMeetingIndex && startNewIndex > beginEditingIndex, '查看會議與取得編輯權必須是兩個獨立流程');
+const viewMeetingSource = meetings.slice(viewMeetingIndex, beginEditingIndex);
+const beginEditingSource = meetings.slice(beginEditingIndex, startNewIndex);
+assert.doesNotMatch(viewMeetingSource, /claimItemLease/, '點擊會議只可唯讀查看，不得自動取得 lease');
+assert.match(beginEditingSource, /claimItemLease\(meetingEditLockKey\(meeting\.id\)/, '只有取得編輯權流程才可申請會議 lease');
+assert.match(meetings, /onClick=\{\(\) => viewMeeting\(meeting\)\}>進入詳情/, '總清單進入詳情必須只切換唯讀檢視');
+assert.match(meetings, /onClick=\{\(\) => viewMeeting\(meeting\)\}/, '左側會議選取必須只切換唯讀檢視');
+assert.match(meetings, /onClick=\{\(\)=>void beginEditing\(selected\)\}>取得編輯權/, '必須由明確的取得編輯權按鈕開始編輯');
+assert.doesNotMatch(meetings, /selectMeeting/, '不得再以同一個選取函式同時查看並取得編輯權');
+
 const durableIndex = meetings.indexOf("const durable=await runDurableRelatedMutation(sectionKey,'臨會/專題保存',apply)");
 const durableFailureIndex = meetings.indexOf('if(!durable||!applied||!persistedDraft)', durableIndex);
 const releaseAfterSaveIndex = meetings.indexOf('const released=await releaseItemLease(sectionKey)', durableFailureIndex);
