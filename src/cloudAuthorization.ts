@@ -85,9 +85,16 @@ const assertEntityScope=(data:AppData,actor:UserAccount,collection:CloudBlockCol
 };
 
 const VESSEL_MANAGEMENT_FIELDS=new Set(['id','name','shortName','fullName','fleet','fleetId','fleetCategory','shipType','isActive','assignedUserIds','managedByUserIds','delegateManagers']);
+const VESSEL_NON_COLLABORATIVE_FIELDS=new Set([...VESSEL_MANAGEMENT_FIELDS,'updatedAt','updatedBy']);
 const VESSEL_AUTHORIZATION_FIELDS=new Set(['isActive','assignedUserIds','delegateManagers']);
 const STATUS_FIELDS=new Set(['status','statusLogs','isClosed','closedDate','closedBy','reopenedAt','reopenedBy']);
 const SENSITIVE_SETTING_FIELDS=new Set(['sitePasswordHash','rolePermissions','nonOwnerPasswordResetVersion']);
+
+export function vesselPatchRequiresCollaborationLock(expected:Record<string,unknown>|null,value:Record<string,unknown>|null){
+  if(!expected)return false;
+  if(!value)return true;
+  return[...changedFields(expected,value)].some(field=>!VESSEL_NON_COLLABORATIVE_FIELDS.has(field));
+}
 
 export function authorizationDomainGuard(data:AppData){
   return{

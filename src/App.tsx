@@ -56,6 +56,7 @@ import { actorStorageAuthorizationGuard, appDataAuthorizationDomainChanged, asse
 import { classifyCloudSyncFailure } from './cloudSyncError';
 import { relatedEntityLockKeysForSection, taskInternalControlCreationLockKeys, taskRelationLockKeys } from './collaborationLockPlan';
 import { cloudWakeupAction } from './realtimeSync';
+import { CloudSaveRecoveryLockConflictError, runWithCloudSaveRecoveryLocks } from './cloudSaveLockRecovery';
 
 type BatchManagedOperation = { id: number; session: number; authorization: BatchManagedAuthorization | null; locks: TrackedLeaseToken[] };
 
@@ -369,7 +370,9 @@ export default function App() {
     const contextChanged=error instanceof StaleAsyncConfigError||error instanceof CloudSaveQueueCancelledError||message.includes('雲端工作區 identity 已變更');
     const detail=contextChanged
       ? `${message}；修改仍保留，請不要關閉頁面，先按「同步最新（安全合併）」確認目前工作區後再保存。`
-      : error instanceof CloudSaveQueueTimeoutError
+      : error instanceof CloudSaveRecoveryLockConflictError
+        ? `多人協作鎖衝突：${error.sectionKey} 目前由 ${error.lockedByName} 編輯；修改仍保留，請等待對方保存或關閉後再按「重新保存」。${error.cleanupFailed?'部分短時鎖將於租期屆滿後自動釋放。':''}`
+        : error instanceof CloudSaveQueueTimeoutError
         ? `${message}；修改仍保留，請稍後再按「立即保存」，並先不要關閉頁面。`
       : error instanceof CloudConflictError||error instanceof CloudRebaseConflictError
         ? `${message}；修改仍保留，請不要關閉頁面，先按「同步最新（安全合併）」。`
@@ -694,11 +697,22 @@ export default function App() {
                 if(!actorGuard)throw new CloudRebaseConflictError(['authorization-domain']);
                 const strictAuthorizationGuard=appDataAuthorizationDomainChanged(remote,candidate)?authorizationDomainGuard(storageRemote):null;
                 try{
-                  persisted=await configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
-                    '原子區塊保存',
-                    signal=>applyCloudBlockPatchRpc(operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,lockGuards,config,signal),
-                    12_000,
-                  ));
+                  const recovery=await runWithCloudSaveRecoveryLocks({
+                    operations,
+                    existingGuards:lockGuards,
+                    createLeaseOwnerId:()=>uid('cloud-save-recovery-lease'),
+                    stillCurrent:()=>isCurrent()&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig())&&hasCurrentCloudIdentity(),
+                    renew:request=>runCloudSaveQueueRpc('續期原子保存協作鎖',signal=>renewEditLock(request.sectionKey,request.leaseOwnerId,75,turnConfig,signal),8_000),
+                    claim:request=>runCloudSaveQueueRpc('取得原子保存恢復鎖',signal=>claimEditLock(request.sectionKey,request.leaseOwnerId,savedBy,75,turnConfig,signal),8_000),
+                    release:request=>runCloudSaveQueueRpc('釋放原子保存恢復鎖',signal=>releaseEditLock(request.sectionKey,request.leaseOwnerId,turnConfig,signal),8_000),
+                    run:guards=>configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
+                      '原子區塊保存',
+                      signal=>applyCloudBlockPatchRpc(operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,config,signal),
+                      12_000,
+                    )),
+                  });
+                  persisted=recovery.value;
+                  if(recovery.cleanupFailed)queueLeaseWarning='內容已保存，但部分短時恢復鎖將於租期屆滿後自動釋放';
                 }catch(error){
                   if(!isCurrent())break;
                   if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();

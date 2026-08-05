@@ -1,4 +1,5 @@
 import type { CloudBlockCollection, CloudBlockPatchOperation } from './cloudBlockPatch';
+import { vesselPatchRequiresCollaborationLock } from './cloudAuthorization';
 import { internalControlCreationLockKey } from './exclusiveItemEditLock';
 
 type TaskRelationSnapshot={
@@ -22,6 +23,7 @@ export function existingEntityLockKeysForPatch(operations:readonly CloudBlockPat
   const keys=new Set<string>();
   for(const operation of operations){
     if(operation.kind!=='entity'||operation.expected===null)continue;
+    if(operation.collection==='vessels'&&!vesselPatchRequiresCollaborationLock(operation.expected,operation.value))continue;
     const key=lockKeyForExistingEntity(operation.collection,operation.entityId);
     if(key)keys.add(key);
   }

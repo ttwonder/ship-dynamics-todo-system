@@ -5,6 +5,7 @@ const app=fs.readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8');
 const meetings=fs.readFileSync(new URL('../src/TemporaryMeetings.tsx',import.meta.url),'utf8');
 const modals=fs.readFileSync(new URL('../src/EditModals.tsx',import.meta.url),'utf8');
 const dashboard=fs.readFileSync(new URL('../src/Dashboard.tsx',import.meta.url),'utf8');
+const vesselFilters=fs.readFileSync(new URL('../src/VesselFilterControls.tsx',import.meta.url),'utf8');
 
 assert.match(app,/TemporaryMeetingsPage[^>]*canExportReports=\{canExportReports\}/,'会议页必须接收导出权限');
 assert.match(meetings,/if \(!canExportReports\) return alert\('目前角色未获授权导出会议资料'\)/,'会议列印执行函数必须重验权限');
@@ -29,6 +30,9 @@ assert.match(app,/const closeRef=useRef\(close\);[\s\S]*closeRef\.current=close/
 assert.match(app,/previousFocusRef\.current\?\.focus\(\);\};[\s\S]{0,40}\},\[\]\);/,'报告预览焦点监听只可随 modal mount／unmount 安装');
 assert.match(app,/previousFocusRef\.current\?\.focus/,'报告预览关闭后必须恢复焦点');
 assert.match(modals,/triggerRef\.current\?\.focus/,'owner picker Escape 后必须恢复 trigger 焦点');
-assert.match(dashboard,/aria-pressed=\{fleetFilter === key\}/,'Dashboard toggle 必须公开选取状态');
+assert.match(dashboard,/<VesselFilterControls[^>]*filters=\{vesselFilters\}/,'Dashboard 必须接入共用船舶篩選控制');
+assert.match(vesselFilters,/aria-pressed=\{filters\.shipTypes\.includes\(shipType\)\}/,'船型篩選 toggle 必須公開選取狀態');
+assert.match(vesselFilters,/aria-pressed=\{filters\.attentionGroups\.includes\('urgent-high'\)\}/,'關注程度 toggle 必須公開選取狀態');
+assert.match(vesselFilters,/aria-pressed=\{filters\.meetingOnly\}/,'選入會議 toggle 必須公開選取狀態');
 assert.match(app,/selectAllRef\.current\.indeterminate/,'批量表头必须公开部分选取状态');
 console.log('Export permission and accessibility contracts passed.');

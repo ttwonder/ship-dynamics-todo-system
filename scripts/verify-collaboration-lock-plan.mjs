@@ -8,7 +8,7 @@ try{
     {kind:'entity',collection:'tasks',entityId:'task-b',expected:{id:'task-b'},value:{id:'task-b',status:'closed'}},
     {kind:'entity',collection:'meetings',entityId:'meeting-a',expected:{id:'meeting-a'},value:{id:'meeting-a',subject:'updated'}},
     {kind:'entity',collection:'internalControlCases',entityId:'case-c',expected:{id:'case-c'},value:null},
-    {kind:'entity',collection:'vessels',entityId:'vessel-z',expected:{id:'vessel-z'},value:{id:'vessel-z'}},
+    {kind:'entity',collection:'vessels',entityId:'vessel-z',expected:{id:'vessel-z',position:'before'},value:{id:'vessel-z',position:'after'}},
     {kind:'entity',collection:'tasks',entityId:'new-task',expected:null,value:{id:'new-task'}},
     {kind:'entity',collection:'meetings',entityId:'new-meeting',expected:null,value:{id:'new-meeting'}},
     {kind:'entity',collection:'auditLogs',entityId:'audit-1',expected:null,value:{id:'audit-1'}},
@@ -24,6 +24,9 @@ try{
   assert.deepEqual(plan.existingEntityLockKeysForPatch([
     {kind:'entity',collection:'meetings',entityId:'created-only',expected:null,value:{id:'created-only'}},
   ]),[],'absent-value creates use their creation session and must not masquerade as an existing-item lock');
+  assert.deepEqual(plan.existingEntityLockKeysForPatch([
+    {kind:'entity',collection:'vessels',entityId:'metadata-only',expected:{id:'metadata-only',shortName:'Old'},value:{id:'metadata-only',shortName:'New'}},
+  ]),[],'Management-only vessel metadata stays on authorization CAS and must not acquire a collaboration lease');
   assert.equal(plan.lockKeyForExistingEntity('tasks','t-1'),'task:t-1');
   assert.equal(plan.lockKeyForExistingEntity('internalControlCases','ic-1'),'internal-control:ic-1');
   assert.equal(plan.lockKeyForExistingEntity('users','u-1'),null);
