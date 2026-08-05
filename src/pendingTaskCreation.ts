@@ -41,6 +41,32 @@ export interface TaskCreationStorage {
   removeItem(key: string): void;
 }
 
+export const PENDING_TASK_CREATION_STORAGE_LOCK_NAME = 'ship-dynamics.pending-task-creation-storage.v1';
+
+export interface PendingTaskCreationLockManager {
+  request<T>(name: string, options: { mode: 'exclusive' }, callback: () => T | Promise<T>): Promise<T>;
+}
+
+export class PendingTaskCreationStorageLockUnavailableError extends Error {
+  constructor() {
+    super('此瀏覽器不支援待同步資料所需的跨分頁鎖；已拒絕不安全的本機寫入');
+    this.name = 'PendingTaskCreationStorageLockUnavailableError';
+  }
+}
+
+function browserPendingTaskCreationLockManager(): PendingTaskCreationLockManager | null {
+  const browserNavigator = (globalThis as typeof globalThis & { navigator?: { locks?: PendingTaskCreationLockManager } }).navigator;
+  return browserNavigator?.locks || null;
+}
+
+export async function withPendingTaskCreationStorageLock<T>(
+  operation: () => T | Promise<T>,
+  lockManager: PendingTaskCreationLockManager | null = browserPendingTaskCreationLockManager(),
+): Promise<T> {
+  if (!lockManager) throw new PendingTaskCreationStorageLockUnavailableError();
+  return lockManager.request(PENDING_TASK_CREATION_STORAGE_LOCK_NAME, { mode:'exclusive' }, operation);
+}
+
 export interface PendingTaskCreationAppStateGuard<T> {
   expectedLive: T;
   expectedConfirmed: T;
@@ -129,6 +155,97 @@ export function readPendingTaskCreations(storage: TaskCreationStorage): PendingT
   return restored.sort((left,right)=>left.createdAt.localeCompare(right.createdAt)||left.intentId.localeCompare(right.intentId));
 }
 
+function readPendingTaskCreation(storage: TaskCreationStorage, intentId: string): PendingTaskCreationIntent | null {
+  try {
+    const value = JSON.parse(storage.getItem(pendingTaskCreationStorageKey(intentId)) || 'null');
+    return validIntent(value) && value.intentId === intentId ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(item => stableJson(item)).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .filter(key => record[key] !== undefined)
+    .sort()
+    .map(key => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(',')}}`;
+}
+
+export function pendingTaskCreationTaskPayloadEqual(left: TaskItem, right: TaskItem): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
+export async function upsertPendingTaskCreationForTask(
+  storage: TaskCreationStorage,
+  workspaceIdentity: string,
+  userId: string,
+  taskId: string,
+  create: (current: PendingTaskCreationIntent | undefined) => PendingTaskCreationIntent,
+  lockManager?: PendingTaskCreationLockManager | null,
+): Promise<PendingTaskCreationIntent> {
+  return withPendingTaskCreationStorageLock(() => {
+    const current = findPendingTaskCreationForTask(readPendingTaskCreations(storage), workspaceIdentity, userId, taskId);
+    const next = create(current ? structuredClone(current) : undefined);
+    if (next.workspaceIdentity !== workspaceIdentity || next.userId !== userId || next.taskId !== taskId) {
+      throw new Error('拒絕跨工作區、跨使用者或改變task識別的待同步寫入');
+    }
+    writePendingTaskCreation(storage, next);
+    return structuredClone(next);
+  }, lockManager === undefined ? browserPendingTaskCreationLockManager() : lockManager);
+}
+
+export type PendingTaskCreationUpdateResult =
+  | { status: 'updated'; intent: PendingTaskCreationIntent }
+  | { status: 'missing' }
+  | { status: 'superseded'; intent: PendingTaskCreationIntent };
+
+export async function updatePendingTaskCreationIfPresent(
+  storage: TaskCreationStorage,
+  next: PendingTaskCreationIntent,
+  options: { replaceTask?: boolean; expectedTask?: TaskItem } = {},
+  lockManager?: PendingTaskCreationLockManager | null,
+): Promise<PendingTaskCreationUpdateResult> {
+  return withPendingTaskCreationStorageLock(() => {
+    const current = readPendingTaskCreation(storage, next.intentId);
+    if (!current) return { status:'missing' };
+    if (current.workspaceIdentity !== next.workspaceIdentity || current.userId !== next.userId || current.taskId !== next.taskId) {
+      throw new Error('待同步意圖的工作區、使用者或task識別已變更');
+    }
+    if (options.expectedTask && !pendingTaskCreationTaskPayloadEqual(current.task, options.expectedTask)) {
+      return { status:'superseded', intent:structuredClone(current) };
+    }
+    const updated:PendingTaskCreationIntent = {
+      ...current,
+      state:next.state,
+      attempts:Math.max(current.attempts,next.attempts),
+      updatedAt:next.updatedAt,
+      nextAttemptAt:next.nextAttemptAt,
+      lastError:next.lastError,
+      task:options.replaceTask ? structuredClone(next.task) : structuredClone(current.task),
+    };
+    writePendingTaskCreation(storage, updated);
+    return { status:'updated', intent:structuredClone(updated) };
+  }, lockManager === undefined ? browserPendingTaskCreationLockManager() : lockManager);
+}
+
+export async function acknowledgePendingTaskCreation(
+  storage: TaskCreationStorage,
+  intentId: string,
+  expectedTask: TaskItem,
+  lockManager?: PendingTaskCreationLockManager | null,
+): Promise<{ removed: boolean; remaining: PendingTaskCreationIntent[] }> {
+  return withPendingTaskCreationStorageLock(() => {
+    const current = readPendingTaskCreation(storage, intentId);
+    const removed = Boolean(current && pendingTaskCreationTaskPayloadEqual(current.task, expectedTask));
+    if (removed) removePendingTaskCreation(storage, intentId);
+    return { removed, remaining:readPendingTaskCreations(storage) };
+  }, lockManager === undefined ? browserPendingTaskCreationLockManager() : lockManager);
+}
+
 export function removePendingTaskCreation(storage: TaskCreationStorage, intentId: string): void {
   storage.removeItem(pendingTaskCreationStorageKey(intentId));
 }
@@ -173,5 +290,7 @@ export function pendingTaskCreationRetryDelayMs(attempts: number): number {
 }
 
 export function taskCreationAlreadyCommitted(intent: PendingTaskCreationIntent, remoteTask: TaskItem | undefined): boolean {
-  return creationTaskCommitMatches(intent.task, remoteTask);
+  if (!remoteTask) return false;
+  return creationTaskCommitMatches(intent.task, remoteTask)
+    && pendingTaskCreationTaskPayloadEqual(intent.task, remoteTask);
 }

@@ -62,8 +62,8 @@ import { CloudSaveRecoveryLockConflictError, runWithCloudSaveRecoveryLocks } fro
 import { sortRecordsNewestCreated } from './recordSorting';
 import {
   PENDING_TASK_CREATION_STORAGE_PREFIX,
+  acknowledgePendingTaskCreation,
   createPendingTaskCreationIntent,
-  findPendingTaskCreationForTask,
   markPendingTaskCreationAttention,
   markPendingTaskCreationRetrying,
   markPendingTaskCreationWaiting,
@@ -72,10 +72,11 @@ import {
   pendingTaskCreationMayRetry,
   pendingTaskCreationRetryDelayMs,
   readPendingTaskCreations,
-  removePendingTaskCreation,
   replacePendingTaskCreationTask,
   taskCreationAlreadyCommitted,
-  writePendingTaskCreation,
+  updatePendingTaskCreationIfPresent,
+  upsertPendingTaskCreationForTask,
+  withPendingTaskCreationStorageLock,
   type PendingTaskCreationIntent,
 } from './pendingTaskCreation';
 
@@ -83,7 +84,7 @@ type BatchManagedOperation = { id: number; session: number; authorization: Batch
 
 type Tab = 'dashboard' | 'morning' | 'total' | 'reports' | 'stats' | 'management' | 'meeting' | 'closed' | 'internalControl' | 'work';
 type ActiveEditLock = { sectionKey: string; label: string; status: 'owned' | 'blocked' | 'error'; ownerUserId: string; ownerUserName: string; leaseOwnerId: string; generation: number; authorizationEpoch: string; validatedUntilMs: number; lockedByName?: string };
-type PendingCreationRunContext={creationLock:ActiveEditLock;config:ResolvedSupabaseConfig;isCurrent:()=>boolean;adoptRemoteBase:(snapshot:AppData)=>void;adoptCommittedLive:(snapshot:AppData)=>void;updateSubmittedTask:(task:TaskItem)=>void;mutationApplied:boolean};
+type PendingCreationRunContext={creationLock:ActiveEditLock;config:ResolvedSupabaseConfig;isCurrent:()=>boolean;adoptRemoteBase:(snapshot:AppData)=>void;adoptCommittedLive:(snapshot:AppData)=>void;updateSubmittedTask:(task:TaskItem)=>Promise<void>;mutationApplied:boolean};
 type EditLockClaimResult = 'owned' | 'blocked' | 'unavailable';
 type TaskOpenResult='opened'|'failed'|'cancelled';
 type TaskReturnDestination={vesselId:string;batchManaged:boolean};
@@ -2296,24 +2297,25 @@ export default function App() {
           try{
             const queuedAt=nowIso();
             const queuedWorkspaceIdentity=cloudIdentity(capturedCreationConfig);
-            const existingIntent=findPendingTaskCreationForTask(readPendingTaskCreations(window.localStorage),queuedWorkspaceIdentity,currentUser.id,candidate.id);
-            const intent=existingIntent
-              ? markPendingTaskCreationWaiting(
-                  replacePendingTaskCreationTask(existingIntent,(existingIntent.task.statusLogs||[]).length?existingIntent.task:clone(candidate),queuedAt),
-                  waitingDetail,
-                  queuedAt,
-                  0,
-                )
-              : createPendingTaskCreationIntent({
-                  intentId:uid('task-create-intent'),
-                  workspaceIdentity:queuedWorkspaceIdentity,
-                  userId:currentUser.id,
-                  task:clone(candidate),
-                  primaryVesselId:candidate.vesselId,
-                  vesselIds:taskVesselIds(candidate),
-                  baseRevision:Math.max(0,lastCloudRevision.current),
-                },queuedAt);
-            writePendingTaskCreation(window.localStorage,intent);
+            const intent=await upsertPendingTaskCreationForTask(window.localStorage,queuedWorkspaceIdentity,currentUser.id,candidate.id,existingIntent=>{
+              if(!creationIsCurrent()||localStorage.getItem(CURRENT_USER_KEY)!==currentUser.id||!sameCloudConfig(getSupabaseConfig(),capturedCreationConfig))throw new StaleAsyncConfigError();
+              return existingIntent
+                ? markPendingTaskCreationWaiting(
+                    replacePendingTaskCreationTask(existingIntent,(existingIntent.task.statusLogs||[]).length?existingIntent.task:clone(candidate),queuedAt),
+                    waitingDetail,
+                    queuedAt,
+                    0,
+                  )
+                : createPendingTaskCreationIntent({
+                    intentId:uid('task-create-intent'),
+                    workspaceIdentity:queuedWorkspaceIdentity,
+                    userId:currentUser.id,
+                    task:clone(candidate),
+                    primaryVesselId:candidate.vesselId,
+                    vesselIds:taskVesselIds(candidate),
+                    baseRevision:Math.max(0,lastCloudRevision.current),
+                  },queuedAt);
+            });
             refreshPendingTaskCreations();
             hasUnsavedWork.current=true;
             setSavePhase('queued');
@@ -2384,7 +2386,7 @@ export default function App() {
         if(existingAttempt&&existingAttempt.leaseOwnerId===creationLock.leaseOwnerId)Object.assign(submittedCreationTask,withStableCreationAttemptProvenance(existingAttempt.task,submittedCreationTask));
         creationAttempts.current.set(candidate.id,{leaseOwnerId:creationLock.leaseOwnerId,task:clone(submittedCreationTask)});
         latestCreationDrafts.current.set(candidate.id,{leaseOwnerId:creationLock.leaseOwnerId,task:clone(submittedCreationTask)});
-        pendingRun?.updateSubmittedTask(clone(submittedCreationTask));
+        if(pendingRun)await pendingRun.updateSubmittedTask(clone(submittedCreationTask));
         let recoveredCreation=false;
         let creationCommitHasSuccessorChanges=false;
         const durable=await runDurableCreationHandoff({
@@ -2500,7 +2502,7 @@ export default function App() {
     if(pendingTaskCreationInFlight.current)return;
     const config=getSupabaseConfig();
     const actor=currentUser;
-    if(!cloudBootstrapped||!config||!actor||actor.role==='vessel'||activeEditLockRef.current||batchManagedOpenRef.current||batchManagedRequested.current||cloudSaveInFlight.current||cloudSyncInFlight.current||saveTimer.current||pendingCloudData.current.size()>0)return;
+    if(!cloudBootstrapped||!config||!actor||localStorage.getItem(CURRENT_USER_KEY)!==actor.id||actor.role==='vessel'||activeEditLockRef.current||batchManagedOpenRef.current||batchManagedRequested.current||cloudSaveInFlight.current||cloudSyncInFlight.current||saveTimer.current||pendingCloudData.current.size()>0)return;
     const confirmed=confirmedCloudData.current;
     if(!confirmed||!appDataContentEqual(liveData.current,confirmed))return;
     let stored:PendingTaskCreationIntent[];
@@ -2523,13 +2525,11 @@ export default function App() {
     let creationValidatedUntilMs=0;
     let creationGuardKey='';
     let runContext:PendingCreationRunContext|null=null;
-    const persist=(next:PendingTaskCreationIntent,replaceTask=false)=>{
-      const durableCurrent=readPendingTaskCreations(window.localStorage).find(item=>item.intentId===next.intentId);
-      if(!durableCurrent)throw new Error('待同步意圖已由其他分頁完成或移除');
-      if(!replaceTask)next={...next,task:durableCurrent.task};
-      else if((durableCurrent.task.statusLogs||[]).length>(next.task.statusLogs||[]).length)next={...next,task:durableCurrent.task};
-      intent=next;
-      writePendingTaskCreation(window.localStorage,next);
+    const persist=async(next:PendingTaskCreationIntent,replaceTask=false,expectedTask?:TaskItem)=>{
+      const result=await updatePendingTaskCreationIfPresent(window.localStorage,next,{replaceTask,expectedTask});
+      if(result.status==='missing')throw new Error('待同步意圖已由其他分頁完成或移除');
+      if(result.status==='superseded')throw new Error('待同步草稿已由其他分頁更新，本次舊retry已停止');
+      intent=result.intent;
       const refreshed=readPendingTaskCreations(window.localStorage);
       pendingTaskCreationsRef.current=refreshed;
       setPendingTaskCreations(refreshed);
@@ -2540,6 +2540,7 @@ export default function App() {
     const runIsCurrent=()=>Boolean(
       pendingTaskCreationRunGeneration.current===runGeneration
       &&liveCurrentUserId.current===intent.userId
+      &&localStorage.getItem(CURRENT_USER_KEY)===intent.userId
       &&sameCloudConfig(getSupabaseConfig(),config)
       &&stillStored()
       &&!creationHeartbeatFailure
@@ -2562,29 +2563,40 @@ export default function App() {
       try{await runCloudSaveQueueRpc('釋放待同步新增要事協作鎖',signal=>releaseEditLock(creationSectionKey,creationLeaseOwnerId,config,signal),8_000);}catch{/* lease will expire */}
     };
     try{
-      persist(intent);
+      await persist(intent);
       setSavePhase('queued');
       setCloudStatus('正在重讀最新雲端資料，準備保存待同步新增要事…');
       const remote=await fetchCloudData(config);
-      if(!remote||!runIsCurrent()){waitAgain('工作區或登入身份已變更，暫停自動重試');return;}
-      if(remote.revision<intent.baseRevision){needsAttention('雲端revision早於草稿建立基線，已停止自動保存');return;}
+      if(!remote||!runIsCurrent()){await waitAgain('工作區或登入身份已變更，暫停自動重試');return;}
+      if(remote.revision<intent.baseRevision){await needsAttention('雲端revision早於草稿建立基線，已停止自動保存');return;}
       assertRemoteExtendsDurableHistory(workspaceIdentity,confirmed,remote);
       const remoteTask=remote.tasks.find(task=>task.id===intent.taskId);
       if(remoteTask){
-        if(!taskCreationAlreadyCommitted(intent,remoteTask)){needsAttention('雲端已有相同識別碼但內容來源無法確認，已停止自動保存');return;}
+        if(!taskCreationAlreadyCommitted(intent,remoteTask)){await needsAttention('雲端已有相同識別碼但內容來源無法確認，已停止自動保存');return;}
         lastCloudRevision.current=remote.revision;
         confirmCloudSnapshot(workspaceIdentity,remote);
         liveData.current=remote;
         flushSync(()=>setData(remote));
-        removePendingTaskCreation(window.localStorage,intent.intentId);
-        const remaining=readPendingTaskCreations(window.localStorage);
+        const acknowledgement=await acknowledgePendingTaskCreation(window.localStorage,intent.intentId,intent.task);
+        const remaining=acknowledgement.remaining;
         pendingTaskCreationsRef.current=remaining;setPendingTaskCreations(remaining);
-        hasUnsavedWork.current=remaining.length>0;
+        const newerDraftPending=remaining.some(item=>item.intentId===intent.intentId);
+        if(newerDraftPending){
+          hasUnsavedWork.current=true;
+          setCloudWriteBlocked(false);
+          setSavePhase('queued');
+          clearStaleSaveSuccessToast();
+          setCloudStatus('雲端已確認較早版本；同一要事的較新草稿尚未保存到雲端');
+          showSaveToast('warning','較新草稿尚未保存','請保持本頁開啟；系統不會把較早版本誤當成目前草稿已保存。');
+          return;
+        }
+        const otherUnsaved=Boolean(saveTimer.current||pendingCloudData.current.size()>0||cloudSyncInFlight.current||!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current));
+        hasUnsavedWork.current=remaining.length>0||otherUnsaved;
         setCloudWriteBlocked(false);
-        setSavePhase(remaining.length?'queued':'saved');
-        if(remaining.length){
-          setCloudStatus(`這筆新增要事已保存到雲端；另有 ${remaining.length} 筆新增要事仍在等待保存`);
-          showSaveToast('info','這筆新增要事已保存','其他待同步新增要事尚未保存到雲端，請保持本頁開啟。');
+        setSavePhase(otherUnsaved?'dirty':remaining.length?'queued':'saved');
+        if(otherUnsaved||remaining.length){
+          setCloudStatus(otherUnsaved?'這筆新增要事已保存到雲端；等待期間的其他本機修改尚未完成雲端保存':`這筆新增要事已保存到雲端；另有 ${remaining.length} 筆新增要事仍在等待保存`);
+          showSaveToast('info','這筆新增要事已保存','其他修改尚未全部保存到雲端，請保持本頁開啟。');
         }else{
           setCloudStatus(savedStatus('新增要事已保存到雲端',remote.updatedAt));
           showSaveToast('success','已保存到雲端','雲端已確認新增要事，現在可以安全關閉或重新整理頁面。');
@@ -2594,8 +2606,8 @@ export default function App() {
       const liveActor=remote.users.find(user=>user.id===intent.userId&&user.isActive);
       const candidateVesselIds=taskVesselIds(intent.task).sort();
       const authorizedVessels=remote.vessels.filter(vessel=>candidateVesselIds.includes(vessel.id)&&vessel.isActive);
-      if(!liveActor||liveActor.role==='vessel'||!hasPermission(remote.settings.rolePermissions,liveActor,'createTasks')){needsAttention('登入身份已失效或新增要事權限已撤銷');return;}
-      if(candidateVesselIds.join('\u0000')!==intent.vesselIds.join('\u0000')||authorizedVessels.length!==candidateVesselIds.length||!canAccessAllVessels(remote.settings.rolePermissions,liveActor,authorizedVessels)){needsAttention('最新雲端權限已無法涵蓋草稿的全部涉船範圍');return;}
+      if(!liveActor||liveActor.role==='vessel'||!hasPermission(remote.settings.rolePermissions,liveActor,'createTasks')){await needsAttention('登入身份已失效或新增要事權限已撤銷');return;}
+      if(candidateVesselIds.join('\u0000')!==intent.vesselIds.join('\u0000')||authorizedVessels.length!==candidateVesselIds.length||!canAccessAllVessels(remote.settings.rolePermissions,liveActor,authorizedVessels)){await needsAttention('最新雲端權限已無法涵蓋草稿的全部涉船範圍');return;}
       lastCloudRevision.current=remote.revision;
       confirmCloudSnapshot(workspaceIdentity,remote);
       liveData.current=remote;
@@ -2605,7 +2617,7 @@ export default function App() {
       creationSectionKey=taskCreationLockKey(intent.primaryVesselId,intent.taskId);
       creationLeaseOwnerId=uid('pending-task-create-lease');
       const claimed=await runCloudSaveQueueRpc('取得待同步新增要事協作鎖',signal=>claimEditLock(creationSectionKey,creationLeaseOwnerId,liveActor.name,75,config,signal),8_000);
-      if(!claimed.ok){waitAgain(claimed.lockedByName?`${claimed.lockedByName} 正在處理相同新增要事`:'新增要事協作鎖暫時不可用');return;}
+      if(!claimed.ok){await waitAgain(claimed.lockedByName?`${claimed.lockedByName} 正在處理相同新增要事`:'新增要事協作鎖暫時不可用');return;}
       creationValidatedUntilMs=conservativeLeaseDeadline(claimed.expiresAt);
       creationGuardKey=`${creationSectionKey}|${creationLeaseOwnerId}`;
       transientCloudBlockLockGuards.current.set(`${creationSectionKey}|${creationLeaseOwnerId}`,{guard:{section_key:creationSectionKey,locked_by:creationLeaseOwnerId},config});
@@ -2624,7 +2636,7 @@ export default function App() {
         adoptRemoteBase:snapshot=>{expectedLiveSnapshot=clone(snapshot);expectedConfirmedSnapshot=clone(snapshot);},
         adoptCommittedLive:snapshot=>{expectedLiveSnapshot=clone(snapshot);},
         mutationApplied:false,
-        updateSubmittedTask:task=>persist(replacePendingTaskCreationTask(intent,task,nowIso()),true),
+        updateSubmittedTask:task=>persist(replacePendingTaskCreationTask(intent,task,nowIso()),true,clone(intent.task)),
       };
       setSavePhase('saving');
       setCloudStatus('正在把待同步新增要事安全保存到雲端…');
@@ -2632,9 +2644,19 @@ export default function App() {
       await stopCreationHeartbeat();
       if(durable){
         await releaseCreationSentinel();
-        removePendingTaskCreation(window.localStorage,intent.intentId);
-        const remaining=readPendingTaskCreations(window.localStorage);
+        const acknowledgement=await acknowledgePendingTaskCreation(window.localStorage,intent.intentId,intent.task);
+        const remaining=acknowledgement.remaining;
         pendingTaskCreationsRef.current=remaining;setPendingTaskCreations(remaining);
+        const newerDraftPending=remaining.some(item=>item.intentId===intent.intentId);
+        if(newerDraftPending){
+          hasUnsavedWork.current=true;
+          setCloudWriteBlocked(false);
+          setSavePhase('queued');
+          clearStaleSaveSuccessToast();
+          setCloudStatus('雲端已確認較早版本；同一要事的較新草稿尚未保存到雲端');
+          showSaveToast('warning','較新草稿尚未保存','請保持本頁開啟；系統不會把較早版本誤當成目前草稿已保存。');
+          return;
+        }
         const otherUnsaved=Boolean(
           saveTimer.current
           ||pendingCloudData.current.size()>0
@@ -2657,14 +2679,14 @@ export default function App() {
         }
       }else{
         if(!runContext.mutationApplied)await releaseCreationSentinel();
-        waitAgain(runContext.mutationApplied?'雲端確認尚未完成，系統會重新查證':'相關船舶仍由其他人更新，系統會自動重試');
+        await waitAgain(runContext.mutationApplied?'雲端確認尚未完成，系統會重新查證':'相關船舶仍由其他人更新，系統會自動重試');
         hasUnsavedWork.current=true;
         setSavePhase('queued');
       }
     }catch(error:any){
       await stopCreationHeartbeat();
       if(!runContext?.mutationApplied)await releaseCreationSentinel();
-      try{waitAgain(error.message||String(error));}catch{/* retain the original durable record */}
+      try{await waitAgain(error.message||String(error));}catch{/* retain the original durable record */}
       hasUnsavedWork.current=true;
       setSavePhase('queued');
       setCloudStatus(`新增要事仍在等待雲端保存｜${error.message||error}`);
@@ -3208,9 +3230,23 @@ export default function App() {
       return false;
     }
     if(!await ensureCloudDurableBeforeLeaseRelease('cloud-config-change'))return false;
-    saveSupabaseConfig(config);
-    window.location.reload();
-    return true;
+    try{
+      const changed=await withPendingTaskCreationStorageLock(()=>{
+        const durablePending=readPendingTaskCreations(window.localStorage);
+        pendingTaskCreationsRef.current=durablePending;
+        setPendingTaskCreations(durablePending);
+        if(durablePending.length||activeEditLockRef.current||batchManagedOpenRef.current)return false;
+        pendingTaskCreationRunGeneration.current+=1;
+        saveSupabaseConfig(config);
+        window.location.reload();
+        return true;
+      });
+      if(!changed)alert('等待期間出現新的待同步要事或編輯作業；已取消更改 Supabase 設定，請先等待全部保存完成。');
+      return changed;
+    }catch(error:any){
+      alert(`無法安全更改 Supabase 設定：${error.message||error}`);
+      return false;
+    }
   };
   const leaveCurrentIdentity = async () => {
     if(activeEditLockRef.current||batchManagedOpenRef.current){
@@ -3233,23 +3269,41 @@ export default function App() {
     const batchAuthorization=batchManagedAuthorization.current;
     if(batchAuthorization&&batchManagedOpenRef.current&&!await closeBatchManaged(batchAuthorization))return;
     if(batchManagedOpenRef.current)invalidateBatchManagedLocks('');
-    taskOpenRequests.current.invalidate();
-    setTab('dashboard');
-    setSelectedVesselDetailId('');
-    setEditingVesselId('');
-    setEditingTaskId('');
-    setTaskEditorRequestGeneration(0);
-    setTaskEditorAuthorizationEpoch('');
-    setTaskProgressVesselId('');
-    setTaskReadOnlyData(null);
-    setTaskReadOnlyReason('');
-    setCreatingTask(null);
-    setAgendaSelection([]);
-    setBatchSelectedVesselIds([]);
-    setReportPreviewOpen(false);
-    setPasswordModalOpen(false);
-    setPrintTitle('');
-    setCurrentUserId('');
+    try{
+      const identityMayChange=await withPendingTaskCreationStorageLock(()=>{
+        const durablePending=readPendingTaskCreations(window.localStorage);
+        pendingTaskCreationsRef.current=durablePending;
+        setPendingTaskCreations(durablePending);
+        if(durablePending.length)return false;
+        pendingTaskCreationRunGeneration.current+=1;
+        taskOpenRequests.current.invalidate();
+        setTab('dashboard');
+        setSelectedVesselDetailId('');
+        setEditingVesselId('');
+        setEditingTaskId('');
+        setTaskEditorRequestGeneration(0);
+        setTaskEditorAuthorizationEpoch('');
+        setTaskProgressVesselId('');
+        setTaskReadOnlyData(null);
+        setTaskReadOnlyReason('');
+        setCreatingTask(null);
+        setAgendaSelection([]);
+        setBatchSelectedVesselIds([]);
+        setReportPreviewOpen(false);
+        setPasswordModalOpen(false);
+        setPrintTitle('');
+        localStorage.removeItem(CURRENT_USER_KEY);
+        setCurrentUserId('');
+        return true;
+      });
+      if(!identityMayChange){
+        alert('等待期間出現新的待同步新增要事；已取消切換身份，請先等待雲端保存完成。');
+        return;
+      }
+    }catch(error:any){
+      alert(`無法安全切換身份：${error.message||error}`);
+      return;
+    }
   };
   const readOnlyTask=taskEditorAuthorizationEpoch===authorizationEpoch?taskReadOnlyData?.tasks.find(task=>task.id===editingTaskId):undefined;
   const editingTask=taskEditorAuthorizationEpoch===authorizationEpoch?(readOnlyTask||(creatingTask&&canCreateTasks?selectTasksVisibleToUser([creatingTask],currentUser,taskVisibilityRelationships)[0]:roleVisibleTasks.find(task=>task.id===editingTaskId))):undefined;
