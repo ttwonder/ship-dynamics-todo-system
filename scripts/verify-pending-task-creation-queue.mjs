@@ -55,6 +55,21 @@ try {
   assert.equal(queue.pendingTaskCreationMayRetry(waiting,Date.parse('2026-08-05T08:02:05.999Z')),false);
   assert.equal(queue.pendingTaskCreationMayRetry(waiting,Date.parse('2026-08-05T08:02:06.000Z')),true);
 
+  const equalVersion = (left, right) => left.version === right.version;
+  const exactState = {
+    expectedLive:{version:1},
+    expectedConfirmed:{version:1},
+    currentLive:{version:1},
+    currentConfirmed:{version:1},
+    mutationApplied:false,
+    equals:equalVersion,
+  };
+  assert.equal(queue.pendingTaskCreationAppStateIsCurrent(exactState),true,'未變更的精確基線應允許重試');
+  assert.equal(queue.pendingTaskCreationAppStateIsCurrent({...exactState,currentLive:{version:2}}),false,'fetch等待期間的本機修改必須使remote套用失效');
+  assert.equal(queue.pendingTaskCreationAppStateIsCurrent({...exactState,currentConfirmed:{version:2}}),false,'自身mutation前的confirmed基線漂移必須使重試失效');
+  assert.equal(queue.pendingTaskCreationAppStateIsCurrent({...exactState,currentConfirmed:{version:2},mutationApplied:true}),true,'自身mutation後可接受自身cloud confirmation，但live仍須精確匹配');
+  assert.equal(queue.pendingTaskCreationAppStateIsCurrent({...exactState,currentLive:{version:2},currentConfirmed:{version:2},mutationApplied:true}),false,'自身mutation後仍不得忽略其他本機修改');
+
   queue.removePendingTaskCreation(storage,intent.intentId);
   assert.equal(queue.readPendingTaskCreations(storage).length,0);
 
@@ -67,6 +82,10 @@ try {
   assert.ok(app.includes('writePendingTaskCreation(window.localStorage'), '被船舶鎖阻擋時必須先耐久寫入獨立本機意圖');
   assert.ok(app.includes('findPendingTaskCreationForTask'), '同一workspace／使用者／task重複點保存時必須重用既有intent');
   assert.ok(app.includes('if(!replaceTask)next={...next,task:durableCurrent.task}'), 'retry／waiting狀態回寫不得覆蓋另一分頁剛保存的較新草稿payload');
+  assert.ok(app.includes('pendingTaskCreationAppStateIsCurrent'), 'pending重試每個remote套用／ack邊界必須核對精確AppData基線');
+  assert.ok(app.includes('pendingRun?.adoptRemoteBase(creationBase)'), 'saveTask接受更新的remote建立基線後必須同步更新pending guard');
+  assert.ok(app.includes("const otherUnsaved=Boolean("), '新增要事durable後仍須獨立判斷是否有其他未保存修改');
+  assert.ok(app.includes("setSavePhase(otherUnsaved?'dirty':remaining.length?'queued':'saved')"), '存在其他本機修改時不得宣稱整頁已保存');
   assert.ok(app.includes('removePendingTaskCreation(window.localStorage'), '只有雲端確認或確認已存在後才可移除待同步意圖');
   assert.ok(version.includes("pendingTaskCreations?: number"), '版本更新原因必須明確理解待同步要事數量');
 } finally {

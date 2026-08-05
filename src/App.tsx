@@ -67,6 +67,7 @@ import {
   markPendingTaskCreationAttention,
   markPendingTaskCreationRetrying,
   markPendingTaskCreationWaiting,
+  pendingTaskCreationAppStateIsCurrent,
   pendingTaskCreationMatchesContext,
   pendingTaskCreationMayRetry,
   pendingTaskCreationRetryDelayMs,
@@ -82,7 +83,7 @@ type BatchManagedOperation = { id: number; session: number; authorization: Batch
 
 type Tab = 'dashboard' | 'morning' | 'total' | 'reports' | 'stats' | 'management' | 'meeting' | 'closed' | 'internalControl' | 'work';
 type ActiveEditLock = { sectionKey: string; label: string; status: 'owned' | 'blocked' | 'error'; ownerUserId: string; ownerUserName: string; leaseOwnerId: string; generation: number; authorizationEpoch: string; validatedUntilMs: number; lockedByName?: string };
-type PendingCreationRunContext={creationLock:ActiveEditLock;config:ResolvedSupabaseConfig;isCurrent:()=>boolean;updateSubmittedTask:(task:TaskItem)=>void;mutationApplied:boolean};
+type PendingCreationRunContext={creationLock:ActiveEditLock;config:ResolvedSupabaseConfig;isCurrent:()=>boolean;adoptRemoteBase:(snapshot:AppData)=>void;adoptCommittedLive:(snapshot:AppData)=>void;updateSubmittedTask:(task:TaskItem)=>void;mutationApplied:boolean};
 type EditLockClaimResult = 'owned' | 'blocked' | 'unavailable';
 type TaskOpenResult='opened'|'failed'|'cancelled';
 type TaskReturnDestination={vesselId:string;batchManaged:boolean};
@@ -2371,6 +2372,7 @@ export default function App() {
         confirmCloudSnapshot(cloudIdentity(capturedCreationConfig),creationBase);
         liveData.current=creationBase;
         flushSync(()=>setData(creationBase));
+        pendingRun?.adoptRemoteBase(creationBase);
         const snapshot=applyTaskSave(creationBase);
         creationMutationApplied=applied;
         if(pendingRun)pendingRun.mutationApplied=applied;
@@ -2430,6 +2432,8 @@ export default function App() {
             });
           },
           commit:confirmed=>flushSync(()=>{
+            liveData.current=confirmed;
+            pendingRun?.adoptCommittedLive(confirmed);
             setData(confirmed);
             if(creationCommitHasSuccessorChanges){
               clearStaleSaveSuccessToast();
@@ -2506,6 +2510,8 @@ export default function App() {
     const workspaceIdentity=cloudIdentity(config);
     const initial=stored.find(intent=>pendingTaskCreationMatchesContext(intent,workspaceIdentity,actor.id)&&pendingTaskCreationMayRetry(intent));
     if(!initial)return;
+    let expectedLiveSnapshot=clone(confirmed);
+    let expectedConfirmedSnapshot=clone(confirmed);
     pendingTaskCreationInFlight.current=true;
     const runGeneration=++pendingTaskCreationRunGeneration.current;
     let intent=markPendingTaskCreationRetrying(initial,nowIso());
@@ -2538,6 +2544,14 @@ export default function App() {
       &&stillStored()
       &&!creationHeartbeatFailure
       &&(!creationLeaseOwnerId||Date.now()<creationValidatedUntilMs)
+      &&pendingTaskCreationAppStateIsCurrent({
+        expectedLive:expectedLiveSnapshot,
+        expectedConfirmed:expectedConfirmedSnapshot,
+        currentLive:liveData.current,
+        currentConfirmed:confirmedCloudData.current,
+        mutationApplied:Boolean(runContext?.mutationApplied),
+        equals:appDataContentEqual,
+      })
     );
     const stopCreationHeartbeat=async()=>{
       if(creationHeartbeatTimer!==null){window.clearInterval(creationHeartbeatTimer);creationHeartbeatTimer=null;}
@@ -2568,8 +2582,13 @@ export default function App() {
         hasUnsavedWork.current=remaining.length>0;
         setCloudWriteBlocked(false);
         setSavePhase(remaining.length?'queued':'saved');
-        setCloudStatus(savedStatus('新增要事已保存到雲端',remote.updatedAt));
-        showSaveToast('success','已保存到雲端','雲端已確認新增要事，現在可以安全關閉或重新整理頁面。');
+        if(remaining.length){
+          setCloudStatus(`這筆新增要事已保存到雲端；另有 ${remaining.length} 筆新增要事仍在等待保存`);
+          showSaveToast('info','這筆新增要事已保存','其他待同步新增要事尚未保存到雲端，請保持本頁開啟。');
+        }else{
+          setCloudStatus(savedStatus('新增要事已保存到雲端',remote.updatedAt));
+          showSaveToast('success','已保存到雲端','雲端已確認新增要事，現在可以安全關閉或重新整理頁面。');
+        }
         return;
       }
       const liveActor=remote.users.find(user=>user.id===intent.userId&&user.isActive);
@@ -2581,6 +2600,8 @@ export default function App() {
       confirmCloudSnapshot(workspaceIdentity,remote);
       liveData.current=remote;
       flushSync(()=>setData(remote));
+      expectedLiveSnapshot=clone(remote);
+      expectedConfirmedSnapshot=clone(remote);
       creationSectionKey=taskCreationLockKey(intent.primaryVesselId,intent.taskId);
       creationLeaseOwnerId=uid('pending-task-create-lease');
       const claimed=await runCloudSaveQueueRpc('取得待同步新增要事協作鎖',signal=>claimEditLock(creationSectionKey,creationLeaseOwnerId,liveActor.name,75,config,signal),8_000);
@@ -2600,6 +2621,8 @@ export default function App() {
         creationLock:{sectionKey:creationSectionKey,label:'待同步新增要事',status:'owned',ownerUserId:liveActor.id,ownerUserName:liveActor.name,leaseOwnerId:creationLeaseOwnerId,generation:-runGeneration,authorizationEpoch:authorizationEpochFor(remote,liveActor),validatedUntilMs:creationValidatedUntilMs},
         config,
         isCurrent:runIsCurrent,
+        adoptRemoteBase:snapshot=>{expectedLiveSnapshot=clone(snapshot);expectedConfirmedSnapshot=clone(snapshot);},
+        adoptCommittedLive:snapshot=>{expectedLiveSnapshot=clone(snapshot);},
         mutationApplied:false,
         updateSubmittedTask:task=>persist(replacePendingTaskCreationTask(intent,task,nowIso()),true),
       };
@@ -2612,11 +2635,26 @@ export default function App() {
         removePendingTaskCreation(window.localStorage,intent.intentId);
         const remaining=readPendingTaskCreations(window.localStorage);
         pendingTaskCreationsRef.current=remaining;setPendingTaskCreations(remaining);
-        hasUnsavedWork.current=remaining.length>0||pendingCloudData.current.size()>0;
+        const otherUnsaved=Boolean(
+          saveTimer.current
+          ||pendingCloudData.current.size()>0
+          ||cloudSyncInFlight.current
+          ||!confirmedCloudData.current
+          ||!appDataContentEqual(liveData.current,confirmedCloudData.current)
+        );
+        hasUnsavedWork.current=remaining.length>0||otherUnsaved;
         setCloudWriteBlocked(false);
-        setSavePhase(remaining.length?'queued':'saved');
-        setCloudStatus(savedStatus('新增要事已保存到雲端',confirmedCloudData.current?.updatedAt));
-        showSaveToast('success','已保存到雲端','雲端已確認新增要事，現在可以安全關閉或重新整理頁面。');
+        setSavePhase(otherUnsaved?'dirty':remaining.length?'queued':'saved');
+        if(otherUnsaved||remaining.length){
+          clearStaleSaveSuccessToast();
+          setCloudStatus(otherUnsaved
+            ? '新增要事已保存到雲端；等待期間的其他本機修改尚未完成雲端保存'
+            : `這筆新增要事已保存到雲端；另有 ${remaining.length} 筆新增要事仍在等待保存`);
+          showSaveToast('info','這筆新增要事已保存','其他修改尚未全部保存到雲端，請保持本頁開啟。');
+        }else{
+          setCloudStatus(savedStatus('新增要事已保存到雲端',confirmedCloudData.current?.updatedAt));
+          showSaveToast('success','已保存到雲端','雲端已確認新增要事，現在可以安全關閉或重新整理頁面。');
+        }
       }else{
         if(!runContext.mutationApplied)await releaseCreationSentinel();
         waitAgain(runContext.mutationApplied?'雲端確認尚未完成，系統會重新查證':'相關船舶仍由其他人更新，系統會自動重試');

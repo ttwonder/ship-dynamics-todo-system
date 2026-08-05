@@ -41,6 +41,21 @@ export interface TaskCreationStorage {
   removeItem(key: string): void;
 }
 
+export interface PendingTaskCreationAppStateGuard<T> {
+  expectedLive: T;
+  expectedConfirmed: T;
+  currentLive: T;
+  currentConfirmed: T | null;
+  mutationApplied: boolean;
+  equals(left: T, right: T): boolean;
+}
+
+export function pendingTaskCreationAppStateIsCurrent<T>(guard: PendingTaskCreationAppStateGuard<T>): boolean {
+  if (!guard.equals(guard.currentLive, guard.expectedLive)) return false;
+  if (guard.mutationApplied) return true;
+  return guard.currentConfirmed !== null && guard.equals(guard.currentConfirmed, guard.expectedConfirmed);
+}
+
 function nonEmpty(value: unknown): value is string {
   return typeof value === 'string' && Boolean(value.trim());
 }
