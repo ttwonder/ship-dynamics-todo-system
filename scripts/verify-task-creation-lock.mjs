@@ -4,6 +4,7 @@ import { createServer } from 'vite';
 
 const app = fs.readFileSync('src/App.tsx', 'utf8');
 const editor = fs.readFileSync('src/EditModals.tsx', 'utf8');
+const batchEditor = fs.readFileSync('src/BatchManagedVesselModal.tsx', 'utf8');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
 
@@ -140,7 +141,7 @@ try {
   const automaticQuarantine=app.slice(app.indexOf('const quarantineCreationDraftForLock='),app.indexOf('const closeEditorForLock=',app.indexOf('const quarantineCreationDraftForLock=')));
   assert.ok(automaticQuarantine.includes('setQuarantinedCreationDrafts')&&!automaticQuarantine.includes('clearCreationAttempt('),'automatic invalidation must preserve latest draft and lost-ack provenance; only exact user cancel may clear them');
   assert.ok(app.includes("if(isTaskCreationLockKey(lock.sectionKey)&&liveCreatingTaskId.current)")&&app.includes("草稿已唯讀保留")&&app.includes('mutationLeaseIsOwned(taskCreationLockKey(editingTask!.vesselId,editingTask!.id))||preservedCreationDraft'), 'a task-create renewal loss after handoff settlement must preserve the draft visibly in read-only mode instead of unmounting it');
-  assert.match(app, /onAddTask=\{async id=>\{if\(await closeBatchManaged\(renderedBatchManagedAuthorization\)\)addTaskForVessel\(id,false,true\);\}\}/, 'batch-managed add-task must release the exact captured batch session bundle, then use the common creation-lock entry');
+  assert.ok(batchEditor.includes('if(await save(structuredClone(draftVessels)))afterSave?.();')&&batchEditor.includes('void submit(()=>onAddTask(vessel.id))')&&app.includes('return closeBatchManaged(mutationAuthorization);')&&app.includes('onAddTask={id=>{void addTaskForVessel(id,false,true);}}'), 'batch-managed add-task must save and release the exact captured batch session bundle before using the common creation-lock entry');
   assert.ok(app.includes('此新增要事草稿正在由'), 'blocked creation must explain the exact draft conflict without falsely blocking all drafts on the vessel');
   assert.equal(pkg.scripts['test:task-creation-lock'], 'node scripts/verify-task-creation-lock.mjs');
 

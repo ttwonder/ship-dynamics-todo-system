@@ -93,6 +93,9 @@ try {
   assert.ok(editor.includes('label="涉及部門" required={creating||draft.isInternalControl}') && editor.includes('label="追蹤窗口"'), '新增要事必須使用「追蹤窗口」標籤');
   const vesselEditor = editor.slice(editor.indexOf('export function VesselEditModal'), editor.indexOf('export function TaskEditModal'));
   const taskEditor = editor.slice(editor.indexOf('export function TaskEditModal'));
+  assert.ok(vesselEditor.includes('取消並關閉') && vesselEditor.includes('保存並關閉'), '單船快速更新必須提供取消並關閉與保存並關閉兩個明確按鍵');
+  assert.ok(vesselEditor.includes('const [draft,setDraft]=useState<Vessel|null>') && vesselEditor.includes('setDraft(previous=>') && vesselEditor.includes('await onSave(clone(draft))'), '單船快速更新必須先編輯modal草稿，只有保存按鍵才提交');
+  assert.ok(vesselEditor.includes('useEscapeClose(cancel)') && !vesselEditor.includes('修改後立即保存'), '單船快速更新按Esc必須等同取消草稿，不得繼續宣稱逐欄立即保存');
   assert.ok(!vesselEditor.includes('經管／負責人'), '船舶快速更新不得显示或修改管理页经管／负责人');
   assert.ok(!taskEditor.includes('label="經管／負責人"'), '要事编辑器不得把事项涉及人员标为船舶经管／负责人');
   assert.ok(taskEditor.includes("currentUser.role!=='vessel'&&<MeetingPeoplePicker") && taskEditor.includes('disabled={globalReadOnly}'), '追蹤窗口需在新增與更新要事显示，并在只读模式明确禁用');

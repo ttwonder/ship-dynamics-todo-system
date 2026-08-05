@@ -31,15 +31,16 @@ assert.ok(batch.includes('ScheduleDateTimeField'), '批量清單需沿用 ETA／
 assert.ok(batch.includes('composeScheduleValue'), '批量清單需保存純日期或日期時間');
 assert.ok(batch.includes('parseCargoLines') && batch.includes('cargoLines'), '批量清單需支援貨名貨量多行編輯');
 assert.ok(batch.includes('onAddTask(vessel.id)'), '每艘船最後需提供新增要事按鈕');
-assert.ok(batch.includes("commit(draft =>") && batch.includes("'批量更新自管船舶'"), '批量清單每次修改需透過正式 commit 保存並留痕');
+assert.ok(batch.includes('const [draftVessels,setDraftVessels]=useState<Vessel[]>') && batch.includes('setDraftVessels(previous=>'), '批量清單欄位必須只更新modal草稿，不得逐欄寫入AppData');
+assert.ok(batch.includes('await save(structuredClone(draftVessels))') && app.includes('const saveBatchManagedDrafts=async('), '批量清單只有保存按鍵才可把整批草稿交給App層提交');
 assert.ok(batch.includes('lockedVesselIds') && batch.includes('已鎖定') && !batch.includes('開始編輯'), '批量清單開啟時全部船舶應已鎖定，不應再逐船開始編輯');
-assert.ok(batch.includes('<fieldset disabled={readOnly||!lockedVesselIds.includes(vessel.id)}') && batch.includes('if(readOnly||!lockedVesselIds.includes(vesselId))return'), '未持有該船bundle lease或雲端尚未確認時，欄位與mutation callback都必須fail closed');
+assert.ok(batch.includes('<fieldset disabled={readOnly||busy||!lockedVesselIds.includes(vessel.id)}') && batch.includes('if(readOnly||busy||!lockedVesselIds.includes(vesselId))return'), '未持有該船bundle lease、正在保存或雲端尚未確認時，欄位與modal草稿callback都必須fail closed');
 assert.ok(app.includes('acquireEditLockBundle(') && app.includes("result.status!=='owned'"), 'App 必須以bundle原子取得全部目標船舶協作鎖，任一失敗不得開啟');
 assert.ok(app.includes('batchSelectedVesselIds') && app.includes('batchTargetVesselIds'), '批量目標需由本次人工勾選船舶組成並凍結exact IDs');
 assert.ok(app.includes("alert('請先在船舶看板逐船勾選本次要批量更新的船舶')"), '沒有人工勾選船舶時必須顯示清楚提示，不得退回自動選取經管船舶');
 assert.ok(app.includes('batchTargetVesselIdsRef.current=new Set') && app.includes('batchTargetVesselIdsRef.current.has(vesselId)'), '開啟時必須凍結exact target IDs，mutation不得擴到未選船舶');
 assert.ok(app.includes('requests=[...batchTargetVessels]'), '雲端bundle只能claim本次exact target船舶');
-assert.ok(app.includes('commit={batchVesselCommit}') && app.includes("batchMutationLeaseIsOwned(`vessel:${entityId}`,prev,mutationAuthorization)"), 'App 必須在每次批量mutation boundary以最新AppData及原render session token驗證exact vessel bundle lease');
+assert.ok(app.includes('save={saveBatchManagedDrafts}') && app.includes("candidates.some(candidate=>!batchMutationLeaseIsOwned(`vessel:${candidate.id}`,prev,mutationAuthorization))"), 'App 必須在整批草稿保存boundary以最新AppData及原render session token驗證每一艘exact vessel bundle lease');
 assert.ok(app.includes('setData(prev=>{') && app.includes('authorizationEpochFor(snapshot,liveUser)') && app.includes('const renderedBatchManagedAuthorization=batchManagedAuthorization.current'), '批量mutation必須在render時捕獲不可變session token，並在setData updater內以最新身份、權限及經管範圍原子重驗');
 assert.ok(app.includes('batchMutationSessionIsCurrent({renderedAuthorization') && app.includes("cloudConfigIdentity(getSupabaseConfig())"), '批量mutation必須執行session行為guard，且本機開啟後出現雲端配置或credential輪替時立即fail closed');
 assert.ok(!app.includes('if(!batchManagedOpen||batchLocalMode.current||!batchEditLocks.length)return'), '本機批量session也必須監聽雲端配置變更，不得跳過生命週期guard');
@@ -47,12 +48,17 @@ assert.ok(app.includes('batchLockCoordinator.current.isCurrent') && app.includes
 assert.ok(app.includes('批量船舶協作鎖續期失敗') && app.includes('releaseBatchEditLockSnapshot') && app.includes('invalidateBatchManagedLocks'), '全部船舶鎖必須整組續期、失效與釋放');
 assert.ok(app.includes("runCloudSaveQueueRpc('批量船舶鎖續期'")&&app.includes('Promise.allSettled(snapshot.map'), '批量 heartbeat 必須並行、具硬逾時並等待整組續租全部 settled');
 assert.ok(app.includes('const discardConfigIsCurrent=()=>')&&app.includes('sessionAuthorization.cloudIdentity===cloudConfigIdentity(config)')&&app.includes('sameCloudConfig(getSupabaseConfig(),config)')&&app.includes('if(!batchManagedOperationIsCurrent(operation)||!discardConfigIsCurrent())throw new StaleAsyncConfigError()'), 'batch discard必須在fetch/release前核對captured full config，拒絕同分頁workspace或credential race');
-assert.ok(app.includes('if(await closeBatchManaged(renderedBatchManagedAuthorization))addTaskForVessel(id,false,true)'), '從批量清單轉入新增要事前必須以render時捕獲的session token先完成雲端保存及整組釋放，才可建立返回上下文');
+assert.ok(batch.includes('void submit(()=>onAddTask(vessel.id))')&&app.includes('onAddTask={id=>{void addTaskForVessel(id,false,true);}}'), '從批量清單轉入新增要事前必須先保存整批modal草稿並釋放整組鎖，成功後才可建立返回上下文');
 const closeStart=app.indexOf('const closeBatchManaged=async(expectedAuthorization:BatchManagedAuthorization|null)=>');
-const closeEnd=app.indexOf('\n  const discardBatchManagedChanges=',closeStart);
+const closeEnd=app.indexOf('\n  const cancelBatchManagedDrafts=',closeStart);
 const closeBranch=app.slice(closeStart,closeEnd);
 assert.ok(closeBranch.includes('expectedAuthorization!==batchManagedAuthorization.current')&&closeBranch.includes('expectedAuthorization.session!==batchManagedSession.current')&&app.includes('close={()=>void closeBatchManaged(renderedBatchManagedAuthorization)}'), 'old modal close callback必須攜帶opaque authorization/session token，不能在successor render中重新取得current session');
 assert.ok(closeBranch.includes('const operation=beginBatchManagedOperation()')&&closeBranch.indexOf('await flushCloudBeforeBatchRelease(operation)')<closeBranch.indexOf('await releaseBatchEditLockSnapshot(operation.locks,false)')&&closeBranch.indexOf('await releaseBatchEditLockSnapshot(operation.locks,false)')<closeBranch.lastIndexOf('batchManagedOperationIsCurrent(operation)')&&closeBranch.lastIndexOf('batchManagedOperationIsCurrent(operation)')<closeBranch.indexOf('detachBatchManagedState(')&&closeBranch.includes('return released'), 'close必須捕獲own session/locks，等雲端ack及釋鎖後重驗，stale操作不得detach新session');
+const cancelStart=app.indexOf('const cancelBatchManagedDrafts=async(expectedAuthorization:BatchManagedAuthorization|null)=>');
+const cancelEnd=app.indexOf('\n  const discardBatchManagedChanges=',cancelStart);
+const cancelBranch=app.slice(cancelStart,cancelEnd);
+assert.ok(cancelBranch.includes('expectedAuthorization!==batchManagedAuthorization.current')&&cancelBranch.includes('const operation=beginBatchManagedOperation()')&&cancelBranch.indexOf('await releaseBatchEditLockSnapshot(operation.locks,false)')<cancelBranch.indexOf('if(!batchManagedOperationIsCurrent(operation))return false')&&cancelBranch.indexOf('if(!batchManagedOperationIsCurrent(operation))return false')<cancelBranch.indexOf('detachBatchManagedState('), 'cancel必須捕獲own session/locks，釋鎖後重驗，stale操作不得關閉新session');
+assert.ok(!cancelBranch.includes('flushCloudBeforeBatchRelease')&&!cancelBranch.includes('setData(')&&app.includes('cancel={()=>void cancelBatchManagedDrafts(renderedBatchManagedAuthorization)}'), '正常取消只能放棄modal草稿並釋鎖，不得保存或改寫AppData');
 const enqueueStart=app.indexOf('const enqueueCloudSave =');
 const enqueueEnd=app.indexOf('\n  const flushCloudBeforeBatchRelease=',enqueueStart);
 const enqueueBranch=app.slice(enqueueStart,enqueueEnd);
@@ -64,8 +70,9 @@ const flushBranch=app.slice(flushStart,flushEnd);
 assert.ok(flushStart>=0&&!flushBranch.includes('snapshot.revision<=lastCloudRevision.current'), '批量釋鎖前不得以全域revision較大作為本批內容已durable的證明');
 assert.ok(flushBranch.includes('const confirmedSnapshot=confirmedCloudData.current;')&&flushBranch.includes('if(confirmedSnapshot&&appDataContentEqual(snapshot,confirmedSnapshot))return true;'), '只有目前批量snapshot內容已等同confirmed snapshot時才可免排隊釋鎖');
 assert.ok(app.includes('batchManagedWriteSuspendedRef.current=true') && app.includes('if(batchManagedWriteSuspendedRef.current)return false'), 'close開始後必須以同步ref立即阻擋最後一個stale render mutation callback');
-assert.ok(batch.includes("saving?'雲端確認中…':readOnly?'重試保存並關閉':'完成並關閉'"), '雲端保存失敗時modal需保持鎖定且提供重試關閉，不得假裝已完成');
-assert.ok(batch.includes('放棄本批修改並釋鎖')&&batch.includes('onClick={discard}'), '雲端衝突後modal需提供明確放棄並釋鎖的恢復動作');
+assert.ok(batch.includes('取消並關閉')&&batch.includes('保存並關閉'), '批量更新必須提供取消並關閉與保存並關閉兩個明確按鍵');
+assert.ok(batch.includes('onClick={readOnly?discard:cancel}')&&batch.includes("readOnly?'重試保存並關閉':'保存並關閉'"), '正常取消只能放棄modal草稿；雲端保存失敗後則須沿用安全discard與重試保存流程');
+assert.ok(app.includes('const cancelBatchManagedDrafts=async('), '批量取消必須只釋放本次bundle leases並關閉，不得提交modal草稿');
 const discardStart=app.indexOf('const discardBatchManagedChanges=async(expectedAuthorization:BatchManagedAuthorization|null)=>');
 const discardEnd=app.indexOf('\n  const refreshBatchAfterLeaseBundle=',discardStart);
 const discardBranch=app.slice(discardStart,discardEnd);
@@ -89,6 +96,7 @@ const server = await createServer({ server: { middlewareMode: true }, appType: '
 try {
   const { userCanManageVesselByAssignmentOrDelegation } = await server.ssrLoadModule('/src/vesselDelegation.ts');
   const { createBatchManagedAuthorization, batchMutationSessionIsCurrent } = await server.ssrLoadModule('/src/batchManagedAuthorization.ts');
+  const { applyVesselOperationalDraft, vesselOperationalDraftEquals } = await server.ssrLoadModule('/src/vesselOperationalDraft.ts');
   const { authorizationEpochFor, batchTargetVesselsFor, batchSessionVesselsFor, batchManagedOperationMatches } = await server.ssrLoadModule('/src/App.tsx');
   const { createInitialData } = await server.ssrLoadModule('/src/data/seed.ts');
   const { default: BatchManagedVesselModal } = await server.ssrLoadModule('/src/BatchManagedVesselModal.tsx');
@@ -108,6 +116,21 @@ try {
   );
 
   const initial = createInitialData();
+  const operationalTarget=structuredClone(initial.vessels[0]);
+  const operationalSource=structuredClone(initial.vessels[0]);
+  operationalSource.position.location='草稿位置';
+  operationalSource.cargo.items=[{name:'草稿貨物',quantity:'1,000 MT'}];
+  operationalSource.note.recentDynamics='草稿動態';
+  operationalSource.assignedUserIds=['不得覆蓋經管人'];
+  operationalSource.delegateManagers=[{userId:'不得覆蓋代管',isActive:true}];
+  operationalSource.weeklyAttention=['PSC'];
+  assert.equal(vesselOperationalDraftEquals(operationalTarget,operationalSource),false,'可編輯船舶動態有差異時必須辨識為待保存');
+  applyVesselOperationalDraft(operationalTarget,operationalSource,'2026-08-05T00:00:00.000Z');
+  assert.equal(vesselOperationalDraftEquals(operationalTarget,operationalSource),true,'保存後位置、貨況及船舶動態必須與modal草稿一致');
+  assert.deepEqual(operationalTarget.assignedUserIds,initial.vessels[0].assignedUserIds,'快速／批量保存不得覆蓋經管人');
+  assert.deepEqual(operationalTarget.delegateManagers,initial.vessels[0].delegateManagers,'快速／批量保存不得覆蓋代管關係');
+  assert.deepEqual(operationalTarget.weeklyAttention,initial.vessels[0].weeklyAttention,'快速／批量保存不得覆蓋關注度');
+  assert.throws(()=>applyVesselOperationalDraft(operationalTarget,{...operationalSource,id:'other-vessel'},'2026-08-05T00:00:00.000Z'),/不同船舶/,'草稿ID不符時必須拒絕跨船套用');
   const manualUser = { ...initial.users[0], id:'manual-supervisor', role:'admin', isActive:true, managedVesselIds:[] };
   const manualCandidates = initial.vessels.slice(0,4).map((item,index) => ({ ...item, isActive:index!==3, assignedUserIds:[], delegateManagers:[] }));
   assert.deepEqual(batchTargetVesselsFor(manualCandidates,manualUser,[]).map(item=>item.id), [], '沒有經管／有效代管且沒有人工選取時，批量目標必須為空');
@@ -135,8 +158,10 @@ try {
     lockedVesselIds:pagingVessels.map(item=>item.id),
     readOnly:false,
     saving:false,
-    commit:()=>{},
+    save:async()=>true,
+    cancel:()=>{},
     close:()=>{},
+    discard:()=>{},
     onAddTask:()=>{},
   }));
   const renderedCards = (pagingHtml.match(/class="batch-managed-card"/g)||[]).length;
