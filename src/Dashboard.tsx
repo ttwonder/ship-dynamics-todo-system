@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { InternalControlCase, ScheduleKind, TaskItem, UserAccount, Vessel, WeeklyAttentionKey } from './types';
 import { daysDiff, todayDate } from './runtimeUtils';
+import { taipeiDateKey } from './taipeiTime';
 import { dashboardVesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention, unlinkedInternalControlCasesForVessel, vesselAttentionClass, vesselAttentionLabel, vesselAttentionPriorityCount } from './vesselAttention';
@@ -96,7 +97,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
   const openTasks = tasks.filter(task => appearsInSingleVesselTasks(task) && taskVesselIds(task).some(id => visibleVesselIds.has(id)) && !taskIsClosedForScope(task,[...visibleVesselIds]));
   const urgentHighCount = openTasks.filter(task => task.priority === '急' || task.priority === '高').length;
   const overdueCount = openTasks.filter(task => (daysDiff(task.expectedDate) ?? 0) < 0).length;
-  const updatedToday = vessels.filter(vessel => (vessel.updatedAt || vessel.position.updatedAt).slice(0, 10) === todayDate()).length;
+  const updatedToday = vessels.filter(vessel => taipeiDateKey(vessel.updatedAt || vessel.position.updatedAt) === todayDate()).length;
   const toggleMeeting = (id: string) => setSelected(selected.includes(id) ? selected.filter(item => item !== id) : [...selected, id]);
   const cycleSchedule = (vesselId: string) => setScheduleByVessel(previous => {
     const current = previous[vesselId] || 'ETA';
