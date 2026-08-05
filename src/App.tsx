@@ -55,6 +55,7 @@ import { buildCloudBlockPatch, CloudBlockPatchConflictError } from './cloudBlock
 import { actorStorageAuthorizationGuard, appDataAuthorizationDomainChanged, assertActorAuthorizedForAppDataChange, authorizationDomainGuard } from './cloudAuthorization';
 import { classifyCloudSyncFailure } from './cloudSyncError';
 import { runStaleBrowserRecovery, shouldOfferStaleBrowserRecovery } from './staleBrowserRecovery';
+import { APP_VERSION_CHECK_INTERVAL_MS, appUpdateBlockReason, appVersionReloadUrl, checkForAppVersion } from './appVersionUpdate';
 import { relatedEntityLockKeysForSection, taskInternalControlCreationLockKeys, taskRelationLockKeys } from './collaborationLockPlan';
 import { cloudWakeupAction } from './realtimeSync';
 import { CloudSaveRecoveryLockConflictError, runWithCloudSaveRecoveryLocks } from './cloudSaveLockRecovery';
@@ -283,6 +284,7 @@ export default function App() {
   const [cloudWakeupRevision,setCloudWakeupRevision]=useState(-1);
   const [saveToast,setSaveToast]=useState<SaveToast|null>(null);
   const [staleBrowserRecoveryOffered,setStaleBrowserRecoveryOffered]=useState(false);
+  const [availableAppVersion,setAvailableAppVersion]=useState('');
   const saveToastRef=useRef<SaveToast|null>(null);
   const [activeEditLock, setActiveEditLock] = useState<ActiveEditLock | null>(null);
   const activeEditLockRef=useRef<ActiveEditLock|null>(null);
@@ -954,6 +956,30 @@ export default function App() {
     return()=>window.removeEventListener('beforeunload',handleBeforeUnload);
   },[]);
   useEffect(()=>{
+    let cancelled=false;
+    let checking=false;
+    const checkVersion=async()=>{
+      if(checking)return;
+      checking=true;
+      try{
+        const result=await checkForAppVersion({currentVersion:__SHIP_DYNAMICS_BUILD_VERSION__,baseUrl:import.meta.env.BASE_URL,nonce:Date.now()});
+        if(!cancelled&&result.status==='available')setAvailableAppVersion(result.version);
+      }finally{checking=false;}
+    };
+    const handleFocus=()=>{void checkVersion();};
+    const handleVisibilityChange=()=>{if(document.visibilityState==='visible')void checkVersion();};
+    void checkVersion();
+    const interval=window.setInterval(()=>{if(document.visibilityState==='visible')void checkVersion();},APP_VERSION_CHECK_INTERVAL_MS);
+    window.addEventListener('focus',handleFocus);
+    document.addEventListener('visibilitychange',handleVisibilityChange);
+    return()=>{
+      cancelled=true;
+      window.clearInterval(interval);
+      window.removeEventListener('focus',handleFocus);
+      document.removeEventListener('visibilitychange',handleVisibilityChange);
+    };
+  },[]);
+  useEffect(()=>{
     if(cloudBootstrapped&&cloudWriteBlocked&&!cloudSyncing&&!cloudSyncInFlight.current)setSavePhase('error');
   },[cloudBootstrapped,cloudWriteBlocked,cloudSyncing]);
 
@@ -1548,6 +1574,26 @@ export default function App() {
   const savePhaseLabel:Record<SavePhase,string>={saved:'已安全保存',dirty:'尚未保存',queued:'等待保存',saving:'正在保存',error:'保存未完成'};
   const saveButtonLabel=savePhase==='queued'?'等待保存中…':savePhase==='saving'?'正在保存…':savePhase==='error'?'重新保存':'立即保存';
   const isSaveBusy=savePhase==='queued'||savePhase==='saving'||Boolean(cloudSaveInFlight.current);
+  const currentAppUpdateBlockReason=()=>appUpdateBlockReason({
+    hasUnsavedWork:hasUnsavedWork.current,
+    pendingSaveCount:pendingCloudData.current.size(),
+    saveInFlight:Boolean(cloudSaveInFlight.current),
+    syncInFlight:cloudSyncInFlight.current||cloudSyncing,
+    saveTimerScheduled:Boolean(saveTimer.current),
+    savePhase,
+    hasActiveEditLock:Boolean(activeEditLockRef.current),
+    batchEditorActive:batchManagedRequested.current||batchManagedOpenRef.current||batchManagedCloseInFlight.current,
+  });
+  const versionUpdateBlockReason=availableAppVersion?currentAppUpdateBlockReason():null;
+  const applyAppUpdate=()=>{
+    if(!availableAppVersion)return;
+    if(currentAppUpdateBlockReason())return alert('目前有未保存內容或正在編輯，系統不會重新載入。請先完成並保存。');
+    if(document.querySelector('[role="dialog"],.modal-backdrop'))return alert('請先關閉正在填寫或查看的視窗，再更新系統。');
+    if(!confirm('系統將重新載入新版。請確認沒有尚未提交的表單內容；確定立即更新嗎？'))return;
+    if(currentAppUpdateBlockReason()||document.querySelector('[role="dialog"],.modal-backdrop'))return alert('頁面狀態已變更，為避免遺失內容，本次未重新載入。請完成保存後再試。');
+    window.location.assign(appVersionReloadUrl(window.location.href,availableAppVersion));
+  };
+  const appVersionUpdateNotice=availableAppVersion&&<aside className={`app-version-update no-print ${versionUpdateBlockReason?'blocked':'ready'}`} role="status" aria-live="polite"><div><b>系統已有新版本</b><small>{versionUpdateBlockReason?'目前有未保存內容或正在編輯，系統不會重新載入。請先完成並保存。':'目前未偵測到保存中或未保存修改；更新不會清除雲端或瀏覽器App資料。'}</small></div><button type="button" className="btn primary small" onClick={applyAppUpdate} disabled={Boolean(versionUpdateBlockReason)}>{versionUpdateBlockReason?'完成保存後更新':'立即更新'}</button></aside>;
   const dashboardMeetings = useMemo(()=>dashboardMeetingAlerts(
     roleVisibleMeetings,
     activeVessels.map(vessel=>vessel.id),
@@ -1587,7 +1633,7 @@ export default function App() {
   const statsTasks = useMemo(() => roleVisibleTasks.filter(t=>taskMatchesFilters(t,filters,vesselMap,currentUser,false,canViewAllVessels,Boolean(currentUser&&t.ownerUserIds.includes(currentUser.id)))),[roleVisibleTasks,vesselMap,currentUser,filters,canViewAllVessels]);
   const closedTasks = useMemo(() => roleVisibleTasks.filter(t=>taskMatchesFilters(t,closedFilters,vesselMap,currentUser,true,canViewAllVessels,Boolean(currentUser&&t.ownerUserIds.includes(currentUser.id)))),[roleVisibleTasks,vesselMap,currentUser,closedFilters,canViewAllVessels]);
 
-  if (!cloudBootstrapped) return <div className="login-page"><div className="login-card loading-card"><h2>正在載入雲端主資料</h2><p className="muted">請稍候，完成前不會寫入或覆蓋資料。</p></div></div>;
+  if (!cloudBootstrapped) return <>{appVersionUpdateNotice}<div className="login-page"><div className="login-card loading-card"><h2>正在載入雲端主資料</h2><p className="muted">請稍候，完成前不會寫入或覆蓋資料。</p></div></div></>;
   const firstRunInitializationAllowed=mayOfferFirstRunInitialization({
     cloudConfigured:Boolean(getSupabaseConfig()),
     cloudBootstrapped,
@@ -1598,11 +1644,11 @@ export default function App() {
     localInitializationAllowed:import.meta.env.DEV,
   });
   const productionCloudUnavailable=!getSupabaseConfig()&&!import.meta.env.DEV;
-  if(productionCloudUnavailable||((!data.settings.sitePasswordHash||!ownerExists)&&!firstRunInitializationAllowed))return <div className="login-page"><div className="login-card loading-card"><h2>雲端主資料尚未通過首次初始化安全檢查</h2><p className="warn">已阻止設定進站密碼或建立 Owner。</p><p className="muted">{cloudStatus}</p><p className="muted">請確認網路與 Supabase 設定後重新載入；系統不會使用內建初始資料取代正式資料。</p></div></div>;
-  if (!siteUnlocked || !data.settings.sitePasswordHash) return <SiteGate data={data} setData={setData} onUnlock={() => { sessionStorage.setItem(SESSION_SITE_UNLOCK,'1'); setSiteUnlocked(true); }} />;
-  if (!ownerExists && !currentUser) return <Login data={data} setCurrentUserId={setCurrentUserId} />;
-  if (!ownerExists && currentUser) return <OwnerSetup currentUser={currentUser} setData={setData} setCurrentUserId={setCurrentUserId} />;
-  if (!currentUser) return <Login data={data} setCurrentUserId={setCurrentUserId} />;
+  if(productionCloudUnavailable||((!data.settings.sitePasswordHash||!ownerExists)&&!firstRunInitializationAllowed))return <>{appVersionUpdateNotice}<div className="login-page"><div className="login-card loading-card"><h2>雲端主資料尚未通過首次初始化安全檢查</h2><p className="warn">已阻止設定進站密碼或建立 Owner。</p><p className="muted">{cloudStatus}</p><p className="muted">請確認網路與 Supabase 設定後重新載入；系統不會使用內建初始資料取代正式資料。</p></div></div></>;
+  if (!siteUnlocked || !data.settings.sitePasswordHash) return <>{appVersionUpdateNotice}<SiteGate data={data} setData={setData} onUnlock={() => { sessionStorage.setItem(SESSION_SITE_UNLOCK,'1'); setSiteUnlocked(true); }} /></>;
+  if (!ownerExists && !currentUser) return <>{appVersionUpdateNotice}<Login data={data} setCurrentUserId={setCurrentUserId} /></>;
+  if (!ownerExists && currentUser) return <>{appVersionUpdateNotice}<OwnerSetup currentUser={currentUser} setData={setData} setCurrentUserId={setCurrentUserId} /></>;
+  if (!currentUser) return <>{appVersionUpdateNotice}<Login data={data} setCurrentUserId={setCurrentUserId} /></>;
 
   const clearBlockedTaskLock = (taskId = '') => {
     setActiveEditLock(previous => {
@@ -3197,6 +3243,7 @@ export default function App() {
       </nav>
       <div className="user-chip"><span className="cloud-dot"/><button type="button" className="user-name-btn" onClick={() => setPasswordModalOpen(true)} title="修改個人密碼">{currentUser.name}｜{roleLabel(currentUser.role)}</button><button className="btn small ghost" onClick={() => void leaveCurrentIdentity()}>切換/退出</button></div>
     </div></header>
+    {appVersionUpdateNotice}
     {saveToast&&<div className="save-toast-layer no-print" aria-live="assertive" aria-atomic="true"><div className={`save-toast ${saveToast.kind}`} role="status"><span className="save-toast-icon">{saveToast.kind==='success'?'✓':saveToast.kind==='error'?'!':saveToast.kind==='warning'?'⚠':'↻'}</span><span><b>{saveToast.title}</b><small>{saveToast.detail}</small></span><button type="button" aria-label="關閉保存提醒" onClick={dismissSaveToast}>×</button><i /></div></div>}
     <main className="container">
       <div className={`cloud-strip save-status-strip no-print ${savePhase}`} aria-live="polite"><span className="save-phase"><b>{savePhaseLabel[savePhase]}</b><small>{visibleCloudStatus}</small></span><span className="spacer"/>{staleBrowserRecoveryOffered&&<button className="btn red small" onClick={repairStaleBrowser} disabled={isSaveBusy} title="清除這台瀏覽器的舊App暫存並重新載入雲端資料">修復此瀏覽器</button>}<button className="btn ghost small" onClick={syncLatest} disabled={isSaveBusy}>同步最新（安全合併）</button><button className={`btn small ${savePhase==='error'?'red':savePhase==='dirty'?'primary':'green'}`} onClick={saveChanges} disabled={isSaveBusy}>{saveButtonLabel}</button></div>
