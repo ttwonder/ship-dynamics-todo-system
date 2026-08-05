@@ -600,6 +600,23 @@ export default function NormalizedApp() {
     if (outcome === 'drafted') alert('目前離線：船端進度已保存為個人草稿。');
     return true;
   };
+  const deleteNormalizedSelection = async (taskIds: string[], caseIds: string[]) => {
+    if (!canDelete) return false;
+    const uniqueTaskIds = [...new Set(taskIds)];
+    const uniqueCaseIds = [...new Set(caseIds)];
+    const selectedCases = uniqueCaseIds.map(id => visibleCases.find(item => item.id === id));
+    if (uniqueTaskIds.some(id => !visibleTasks.some(task => task.id === id)) || selectedCases.some(item => !item)) {
+      alert('所選項目已變更或不在目前可管理範圍，請重新選擇');
+      return false;
+    }
+    if (!uniqueTaskIds.length && !uniqueCaseIds.length) return false;
+    if (!confirm(`確定刪除所選 ${uniqueTaskIds.length + uniqueCaseIds.length} 筆項目？此動作無法復原。`)) return false;
+    if (uniqueTaskIds.length && !await runBoolean(() => controller.batchTransitionTasks(uniqueTaskIds, 'delete'))) return false;
+    for (const item of selectedCases) {
+      if (!item || !await runBoolean(() => controller.deleteInternalCase(item))) return false;
+    }
+    return true;
+  };
   const authorizationEpoch = editorAuthorization?.authorizationEpoch || '';
   const creatingTask = taskEditor?.creating === true;
   const taskProgressVesselId = taskEditor?.progressVesselId || '';
@@ -721,10 +738,7 @@ export default function NormalizedApp() {
         canComplete={canClose} canDelete={canDelete} canPrint={permission('exportReports')}
         onPrint={() => window.print()}
         onBatchComplete={ids => runBoolean(() => controller.batchTransitionTasks(ids, 'close'))}
-        onBatchDelete={async ids => {
-          if (!confirm(`確定刪除 ${ids.length} 筆待辦？`)) return false;
-          return runBoolean(() => controller.batchTransitionTasks(ids, 'delete'));
-        }}/>
+        onBatchDelete={deleteNormalizedSelection}/>
       : tab === 'tasks' ? <TaskList data={{ ...data, tasks: visibleTasks }} vessels={visibleVessels}
         closed={false} onOpen={openTask}/>
       : tab === 'closed' ? <TaskList data={{ ...data, tasks: visibleTasks }} vessels={visibleVessels}
@@ -737,6 +751,7 @@ export default function NormalizedApp() {
         onUpdate={async (item, _updatedAt, _revision, taskProjection) =>
           Boolean(await run(() => controller.updateInternalCase(item, taskProjection)))}
         onDelete={item => runBoolean(() => controller.deleteInternalCase(item))}
+        onBatchDelete={caseIds => deleteNormalizedSelection([], caseIds)}
         onOpenTask={taskId => {
           const task = visibleTasks.find(item => item.id === taskId);
           if (task) openTask(task);

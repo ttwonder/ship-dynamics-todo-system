@@ -16,6 +16,7 @@ import { BatchCreateModal, CaseEditModal } from './InternalControlModals';
 import type { InternalControlTaskProjection } from './internalControlData';
 import { internalControlEditLockKey } from './exclusiveItemEditLock';
 import { vesselSupervisorOptions } from './vesselDashboardFilters';
+import { sanitizeInternalControlSelection } from './batchInternalControlActions';
 
 const REPORT_SOURCES: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 type Subpage = 'open' | 'closed' | 'stats';
@@ -34,6 +35,7 @@ type Props = {
   onCreate: (items: InternalControlCase[], expectedRevision: number, projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean>;
   onUpdate: (item: InternalControlCase, expectedUpdatedAt: string, expectedRevision: number, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>;
   onDelete: (item: InternalControlCase, expectedRevision: number) => boolean | Promise<boolean>;
+  onBatchDelete: (caseIds: string[]) => boolean | Promise<boolean>;
   onOpenTask: (taskId: string) => void;
   claimItemLease?: (sectionKey:string,label:string)=>Promise<AppData|null>;
   requireItemLease?: (sectionKey:string)=>boolean;
@@ -54,7 +56,7 @@ const optionList = (values: string[]): MultiOption[] => values.filter(Boolean).m
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
 const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
 
-export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, onCreate, onUpdate, onDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
+export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, onCreate, onUpdate, onDelete, onBatchDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
   const [subpage, setSubpage] = useState<Subpage>('open');
   const [filters, setFilters] = useState<InternalControlFilters>(() => emptyFilters(defaultInternalControlVesselIds(user, vessels)));
   const [batchOpen, setBatchOpen] = useState(false);
@@ -62,6 +64,8 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const [editorAuthorizationEpoch,setEditorAuthorizationEpoch]=useState('');
   const [batchAuthorizationEpoch,setBatchAuthorizationEpoch]=useState('');
   const [page, setPage] = useState(1);
+  const [selectedCaseIds,setSelectedCaseIds]=useState<string[]>([]);
+  const [batchDeleting,setBatchDeleting]=useState(false);
   const visibleVesselIds = useMemo(() => new Set(vessels.map(vessel => vessel.id)), [vessels]);
   const scopedCases = data.internalControlCases.filter(item => visibleVesselIds.has(item.vesselId));
   const activeClosure: InternalControlFilters['closureMode'] = subpage === 'open' ? 'open' : subpage === 'closed' ? 'closed' : 'all';
@@ -69,6 +73,10 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const filtered = sortRecordsNewestCreated(filterInternalControlCases(scopedCases, vessels, effectiveFilters, data.users));
   const paged = paginateItems(filtered, page, 30);
   const stats = buildInternalControlStats(filtered, vessels);
+  const selectableCases=canDelete?filtered:[];
+  const selectedSet=new Set(selectedCaseIds);
+  const selectedCases=selectableCases.filter(item=>selectedSet.has(item.id));
+  const allSelected=selectableCases.length>0&&selectableCases.every(item=>selectedSet.has(item.id));
   const visibleEditing=Boolean(editing&&editorAuthorizationEpoch===authorizationEpoch&&scopedCases.some(item=>item.id===editing.id));
   const visibleBatch=Boolean(batchOpen&&batchAuthorizationEpoch===authorizationEpoch&&canCreate&&vessels.length);
   const canMutateItem=canEdit||canClose||canDelete;
@@ -76,6 +84,12 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const editorWritable=!canMutateItem||!itemLeaseEnforced||Boolean(editing&&activeItemLeaseKey===internalControlEditLockKey(editing.id));
 
   useEffect(() => setPage(1), [subpage, JSON.stringify(filters)]);
+  useEffect(()=>{
+    setSelectedCaseIds(previous=>{
+      const next=sanitizeInternalControlSelection(previous,selectableCases);
+      return next.length===previous.length&&next.every((id,index)=>id===previous[index])?previous:next;
+    });
+  },[data.internalControlCases,subpage,JSON.stringify(filters),canDelete,user.id,vessels]);
   useEffect(()=>{setEditing(null);setBatchOpen(false);setEditorAuthorizationEpoch('');setBatchAuthorizationEpoch('');},[authorizationEpoch]);
   useEffect(() => {
     setFilters(previous => {
@@ -117,6 +131,14 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
     if(editing&&canMutateItem&&activeItemLeaseKey===internalControlEditLockKey(editing.id)&&releaseItemLease&&!await releaseItemLease(internalControlEditLockKey(editing.id)))return;
     setEditing(null);
   };
+  const toggleAllCases=()=>setSelectedCaseIds(allSelected?[]:selectableCases.map(item=>item.id));
+  const toggleCase=(id:string)=>setSelectedCaseIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);
+  const deleteSelectedCases=async()=>{
+    if(batchDeleting||!selectedCases.length)return;
+    setBatchDeleting(true);
+    try{if(await onBatchDelete(selectedCases.map(item=>item.id)))setSelectedCaseIds([]);}
+    finally{setBatchDeleting(false);}
+  };
 
   return <section className="internal-control-page">
     <div className="page-heading"><div><h1>內控異常</h1><p>督導日常、訪船、隨船及外部發現事項的獨立登記、跟進、結案與統計。</p></div><div className="heading-actions no-print">{canCreate && <button className="btn green" onClick={() => {setBatchAuthorizationEpoch(authorizationEpoch);setBatchOpen(true);}}>＋ 批量新增</button>}{canExport && <button className="btn ghost" disabled={!filtered.length} onClick={() => downloadInternalControlExcel(filtered, vessels, summary)}>導出 Excel</button>}{canExport && <button className="btn primary" disabled={!filtered.length} onClick={print}>導出 PDF</button>}</div></div>
@@ -129,11 +151,13 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
     </section>
 
     {subpage !== 'stats' ? <section className="panel ic-list-panel">
+      <div className="panel-title ic-batch-toolbar no-print"><h2>{subpage==='open'?'內控未完清單':'內控結案清單'} <span className="muted">目前 {filtered.length} 件</span></h2>{canDelete&&<div className="heading-actions"><button type="button" className="btn small ghost" onClick={toggleAllCases} disabled={batchDeleting||!selectableCases.length}>{allSelected?'取消全選':'全選目前結果'}</button><span className="batch-selection-count">已選 {selectedCases.length}</span><button type="button" className="btn small red" onClick={()=>void deleteSelectedCases()} disabled={batchDeleting||!selectedCases.length}>{batchDeleting?'刪除中…':<>批量刪除（{selectedCases.length}）</>}</button></div>}</div>
       <div className="table-wrap"><table className="compact ic-table"><thead><tr>
-        <th>船舶／日期</th><th>來源</th><th>關注</th><th className="ic-description-column">事項內容</th><th>分類／部門</th><th className="ic-status-column">最新狀態</th>{subpage === 'closed' ? <th className="ic-closure-column">結案</th> : <th className="ic-sync-column">同步</th>}<th className="no-print">操作</th>
+        {canDelete&&<th className="no-print ic-select-column"><input type="checkbox" aria-label="選取目前全部內控案件" checked={allSelected} onChange={toggleAllCases} disabled={batchDeleting||!selectableCases.length}/></th>}<th>船舶／日期</th><th>來源</th><th>關注</th><th className="ic-description-column">事項內容</th><th>分類／部門</th><th className="ic-status-column">最新狀態</th>{subpage === 'closed' ? <th className="ic-closure-column">結案</th> : <th className="ic-sync-column">同步</th>}<th className="no-print">操作</th>
       </tr></thead><tbody>{paged.items.map(item => {
         const vessel = vessels.find(entry => entry.id === item.vesselId);
-        return <tr key={item.id}>
+        return <tr key={item.id} className={selectedSet.has(item.id)?'batch-selected-row':''}>
+          {canDelete&&<td className="no-print ic-select-column"><input type="checkbox" aria-label={`選取內控案件 ${richTextToPlainText(item.description)||item.id}`} checked={selectedSet.has(item.id)} onChange={()=>toggleCase(item.id)} disabled={batchDeleting}/></td>}
           <td><b>{vessel ? vesselDisplayName(vessel) : item.vesselId}</b><small>{vessel?.shipType || '未填船型'}｜{item.reportDate}</small></td>
           <td>{item.reportSource}{item.isAware && <small>知曉事項</small>}</td>
           <td><span className={`priority-pill ${priorityClass(item.priority)}`}>{item.priority}</span></td>

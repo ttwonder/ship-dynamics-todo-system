@@ -61,11 +61,11 @@ try {
   const bundleEnd=app.indexOf('\n  const batchCompleteTasks',bundleStart);
   const bundleBranch=app.slice(bundleStart,bundleEnd);
   const planningFetch=bundleBranch.indexOf('const fetched=await fetchCloudData(config)');
-  const planningKeys=bundleBranch.indexOf('plannedLockKeys=taskRelationLockKeys(planningRemote,uniqueIds)');
+  const planningKeys=bundleBranch.indexOf('plannedLockKeys=[...new Set([...taskRelationLockKeys(planningRemote,uniqueIds),...additionalLockKeys(planningRemote)])]');
   const bundleClaim=bundleBranch.indexOf('const result=await acquireEditLockBundle(');
   assert.ok(planningFetch>=0&&planningFetch<planningKeys&&planningKeys<bundleClaim,'batch task operations must plan the complete task/meeting/internal-control lock closure from fresh cloud data before claiming');
   assert.ok(bundleBranch.includes('plannedLockKeys.map')&&!bundleBranch.includes('uniqueIds.map(id=>({sectionKey:`task:${id}`'),'the bundle must claim every planned related key rather than only selected task keys');
-  assert.ok(bundleBranch.includes('taskRelationLockKeys(remote,uniqueIds)')&&bundleBranch.includes('sameLockKeySet'),'the post-lock refresh must reject a relation set that changed while locks were being acquired');
+  assert.ok(bundleBranch.includes('refreshedLockKeys=[...new Set([...taskRelationLockKeys(remote,uniqueIds),...additionalLockKeys(remote)])]')&&bundleBranch.includes('sameLockKeySet(refreshedLockKeys,plannedLockKeys)'),'the post-lock refresh must reject any task or additional internal-control relation set that changed while locks were being acquired');
   assert.ok(bundleBranch.includes("runCloudSaveQueueRpc('批量關聯鎖續期'")&&bundleBranch.includes('renewEditLock(')&&bundleBranch.includes('Promise.allSettled'),'the complete related bundle must renew concurrently for the whole mutation');
   assert.ok(app.includes('batchCompleteTasks') && app.includes('batchDeleteTasks'), 'App 必須集中處理批量完成與刪除');
   assert.ok(app.includes("只有 Owner／管理員可以批量刪除待辦"), '批量刪除 handler 必須有角色防護');

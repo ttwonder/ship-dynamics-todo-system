@@ -18,6 +18,7 @@ try {
   const dataAnalysisSource = await readFile(new URL('../src/DataAnalysis.tsx', import.meta.url), 'utf8');
   const workCenterSource = await readFile(new URL('../src/WorkCenter.tsx', import.meta.url), 'utf8');
   const internalControlPageSource = await readFile(new URL('../src/InternalControlPage.tsx', import.meta.url), 'utf8');
+  const batchInternalControlSource = await readFile(new URL('../src/batchInternalControlActions.ts', import.meta.url), 'utf8');
   const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
   const cloudSource = await readFile(new URL('../src/cloud.ts', import.meta.url), 'utf8');
   const editModalsSource = await readFile(new URL('../src/EditModals.tsx', import.meta.url), 'utf8');
@@ -105,7 +106,10 @@ try {
   const removeInternalCaseEnd=appSource.indexOf('\n  const saveTask =',removeInternalCaseStart);
   const removeInternalCaseBranch=appSource.slice(removeInternalCaseStart,removeInternalCaseEnd);
   assert.ok(removeInternalCaseBranch.includes('if(!internalControlDeletionAuthorized({') && !removeInternalCaseBranch.includes('if(!previous.isClosed&&!internalControlDeletionAuthorized'), 'open and already-closed internal-control case deletion must both require delete, close, and scope-cancellation authorization');
-  assert.ok(appSource.includes('try{deleteTaskBatchFromDraft(draft,liveSelection.tasks,liveUser,nowIso());}') && !appSource.includes('liveSelection.tasks.forEach(task=>closeLinkedInternalControlCaseAfterTaskDelete'), 'batch deletion must remove each linked task before checking the next global linkage invariant');
+  assert.ok(appSource.includes('deleteTaskBatchFromDraft(draft,liveSelection.tasks,liveUser,nowIso());')
+    && appSource.includes('deleteInternalControlCaseBatchFromDraft(draft,liveSelectedInternalCases);')
+    && batchInternalControlSource.includes('const deleted = deleteInternalControlCase(draft, selected.id, selected.updatedAt);')
+    && !appSource.includes('liveSelection.tasks.forEach(task=>closeLinkedInternalControlCaseAfterTaskDelete'), 'batch deletion must preserve the original task cleanup and apply each selected internal-control relation through the invariant-checking single-case deletion helper');
   assert.ok(appSource.includes("normalizedProgress.status!==previousProgress.status&&newProgressLogCount<1") && appSource.includes("newProgressLogCount>0&&normalizedProgress.statusLogs[0]?.text.trim()!==normalizedProgress.status.trim()"), 'per-vessel status changes must require matching newest history');
 
   const ordinaryVisibleTask = { id: 'ordinary', isInternalControl: false, vesselId: 'vessel-a', sourceType: 'morning', attentionDimension: 'task', ownerUserIds: [] };
