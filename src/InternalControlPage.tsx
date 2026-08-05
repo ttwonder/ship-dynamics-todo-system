@@ -10,13 +10,20 @@ import {
 } from './internalControlWorkflow';
 import { downloadInternalControlExcel } from './internalControlExport';
 import { paginateItems } from './pagination';
-import { sortRecordsNewestCreated } from './recordSorting';
 import PaginationControls from './PaginationControls';
 import { BatchCreateModal, CaseEditModal } from './InternalControlModals';
 import type { InternalControlTaskProjection } from './internalControlData';
 import { internalControlEditLockKey } from './exclusiveItemEditLock';
 import { vesselSupervisorOptions } from './vesselDashboardFilters';
 import { sanitizeInternalControlSelection } from './batchInternalControlActions';
+import VesselListFilter from './VesselListFilter';
+import {
+  matchesListVesselSelection,
+  nextListColumnSort,
+  sanitizeListVesselIds,
+  sortListRecords,
+  type ListColumnSort,
+} from './listVesselControls';
 
 const REPORT_SOURCES: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 type Subpage = 'open' | 'closed' | 'stats';
@@ -44,7 +51,7 @@ type Props = {
 };
 
 const emptyFilters = (vesselIds: string[]): InternalControlFilters => ({
-  keyword: '', vesselIds, shipTypes: [], priorities: [], categories: [], departments: [], reportSources: [], equipmentSubcategories: [], supervisorIds: [], syncMode: 'all', fromDate: '', toDate: '', awareMode: 'all', closureMode: 'all',
+  keyword: '', ownerMode: 'mine', vesselIds, shipTypes: [], priorities: [], categories: [], departments: [], reportSources: [], equipmentSubcategories: [], supervisorIds: [], syncMode: 'all', fromDate: '', toDate: '', awareMode: 'all', closureMode: 'all',
 });
 
 function MultiFilter({ label, options, selected, onChange }: { label: string; options: MultiOption[]; selected: string[]; onChange: (values: string[]) => void }) {
@@ -64,13 +71,23 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const [editorAuthorizationEpoch,setEditorAuthorizationEpoch]=useState('');
   const [batchAuthorizationEpoch,setBatchAuthorizationEpoch]=useState('');
   const [page, setPage] = useState(1);
+  const [columnSort,setColumnSort]=useState<ListColumnSort>('created-desc');
   const [selectedCaseIds,setSelectedCaseIds]=useState<string[]>([]);
   const [batchDeleting,setBatchDeleting]=useState(false);
   const visibleVesselIds = useMemo(() => new Set(vessels.map(vessel => vessel.id)), [vessels]);
   const scopedCases = data.internalControlCases.filter(item => visibleVesselIds.has(item.vesselId));
+  const managedVesselIds=managedInternalControlVesselIds(user,vessels);
+  const vesselSelection={mode:filters.ownerMode,vesselIds:filters.vesselIds};
+  const vesselFilteredCases=scopedCases.filter(item=>matchesListVesselSelection([item.vesselId],vesselSelection,managedVesselIds,user.id));
   const activeClosure: InternalControlFilters['closureMode'] = subpage === 'open' ? 'open' : subpage === 'closed' ? 'closed' : 'all';
   const effectiveFilters = { ...filters, closureMode: activeClosure };
-  const filtered = sortRecordsNewestCreated(filterInternalControlCases(scopedCases, vessels, effectiveFilters, data.users));
+  const filtered = sortListRecords(
+    filterInternalControlCases(vesselFilteredCases, vessels, effectiveFilters, data.users),
+    columnSort,
+    item=>vesselDisplayName(vessels.find(vessel=>vessel.id===item.vesselId)),
+    item=>item.reportDate,
+    item=>item.closedDate,
+  );
   const paged = paginateItems(filtered, page, 30);
   const stats = buildInternalControlStats(filtered, vessels);
   const selectableCases=canDelete?filtered:[];
@@ -83,7 +100,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const itemLeaseEnforced=activeItemLeaseKey!==undefined;
   const editorWritable=!canMutateItem||!itemLeaseEnforced||Boolean(editing&&activeItemLeaseKey===internalControlEditLockKey(editing.id));
 
-  useEffect(() => setPage(1), [subpage, JSON.stringify(filters)]);
+  useEffect(() => setPage(1), [subpage, JSON.stringify(filters),columnSort]);
   useEffect(()=>{
     setSelectedCaseIds(previous=>{
       const next=sanitizeInternalControlSelection(previous,selectableCases);
@@ -93,22 +110,25 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   useEffect(()=>{setEditing(null);setBatchOpen(false);setEditorAuthorizationEpoch('');setBatchAuthorizationEpoch('');},[authorizationEpoch]);
   useEffect(() => {
     setFilters(previous => {
-      const allowed = previous.vesselIds.filter(id => visibleVesselIds.has(id));
-      if (allowed.length || previous.vesselIds.length === 0) return previous;
-      return { ...previous, vesselIds: defaultInternalControlVesselIds(user, vessels) };
+      const vesselIds=previous.ownerMode==='mine'
+        ? defaultInternalControlVesselIds(user,vessels)
+        : previous.ownerMode==='all'
+          ? []
+          : sanitizeListVesselIds(previous.vesselIds,vessels);
+      if(vesselIds.length===previous.vesselIds.length&&vesselIds.every((id,index)=>id===previous.vesselIds[index]))return previous;
+      return {...previous,vesselIds};
     });
   }, [user.id, data.revision, vessels]);
 
   const shipTypes = unique(vessels.map(vessel => vessel.shipType));
   const categories = unique([...data.settings.taskCategories, ...scopedCases.map(item => item.category), '設備故障']);
   const departments = unique([...data.settings.departments, ...scopedCases.flatMap(item => item.departments)]);
-  const vesselOptions = vessels.map(vessel => ({ value: vessel.id, label: vesselDisplayName(vessel) }));
   const supervisorOptions = vesselSupervisorOptions(vessels, data.users).map(option => ({ value: option.id, label: option.name }));
   const setFilter = <K extends keyof InternalControlFilters>(key: K, value: InternalControlFilters[K]) => setFilters(previous => ({ ...previous, [key]: value }));
-  const reset = () => setFilters(emptyFilters(defaultInternalControlVesselIds(user, vessels)));
-  const selfManaged = () => setFilter('vesselIds', managedInternalControlVesselIds(user, vessels));
+  const reset = () => {setFilters(emptyFilters(defaultInternalControlVesselIds(user, vessels)));setColumnSort('created-desc');};
   const selectedVesselNames = filters.vesselIds.map(id => vessels.find(vessel => vessel.id === id)).filter((vessel): vessel is Vessel => Boolean(vessel)).map(vesselDisplayName);
-  const summary = `船舶 ${selectedVesselNames.length ? selectedVesselNames.join('、') : '全部'}；日期 ${filters.fromDate || '不限'}～${filters.toDate || '不限'}；${subpage === 'open' ? '未完' : subpage === 'closed' ? '已結案' : '全部案件'}`;
+  const vesselSummary=filters.ownerMode==='all'?'全部':filters.ownerMode==='mine'?'只看我的經管':selectedVesselNames.length?selectedVesselNames.join('、'):'未選船舶';
+  const summary = `船舶 ${vesselSummary}；日期 ${filters.fromDate || '不限'}～${filters.toDate || '不限'}；${subpage === 'open' ? '未完' : subpage === 'closed' ? '已結案' : '全部案件'}`;
   const print = () => {
     if (!canExport) return;
     document.body.classList.add('printing-internal-control');
@@ -139,21 +159,25 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
     try{if(await onBatchDelete(selectedCases.map(item=>item.id)))setSelectedCaseIds([]);}
     finally{setBatchDeleting(false);}
   };
+  const changeSubpage=(next:Subpage)=>{
+    setSubpage(next);
+    if(next!=='closed'&&(columnSort==='closed-date-asc'||columnSort==='closed-date-desc'))setColumnSort('created-desc');
+  };
 
   return <section className="internal-control-page">
     <div className="page-heading"><div><h1>內控異常</h1><p>督導日常、訪船、隨船及外部發現事項的獨立登記、跟進、結案與統計。</p></div><div className="heading-actions no-print">{canCreate && <button className="btn green" onClick={() => {setBatchAuthorizationEpoch(authorizationEpoch);setBatchOpen(true);}}>＋ 批量新增</button>}{canExport && <button className="btn ghost" disabled={!filtered.length} onClick={() => downloadInternalControlExcel(filtered, vessels, summary)}>導出 Excel</button>}{canExport && <button className="btn primary" disabled={!filtered.length} onClick={print}>導出 PDF</button>}</div></div>
-    <div className="ic-tabs no-print" role="tablist"><button className={subpage === 'open' ? 'active' : ''} onClick={() => setSubpage('open')}>內控未完清單 <b>{scopedCases.filter(item => !item.isClosed).length}</b></button><button className={subpage === 'closed' ? 'active' : ''} onClick={() => setSubpage('closed')}>內控結案清單 <b>{scopedCases.filter(item => item.isClosed).length}</b></button><button className={subpage === 'stats' ? 'active' : ''} onClick={() => setSubpage('stats')}>數據統計</button></div>
+    <div className="ic-tabs no-print" role="tablist"><button className={subpage === 'open' ? 'active' : ''} onClick={() => changeSubpage('open')}>內控未完清單 <b>{scopedCases.filter(item => !item.isClosed).length}</b></button><button className={subpage === 'closed' ? 'active' : ''} onClick={() => changeSubpage('closed')}>內控結案清單 <b>{scopedCases.filter(item => item.isClosed).length}</b></button><button className={subpage === 'stats' ? 'active' : ''} onClick={() => changeSubpage('stats')}>數據統計</button></div>
 
     <section className="panel ic-filter-panel no-print">
-      <div className="panel-title"><h2>篩選條件 <span className="muted">目前 {filtered.length} 件</span></h2><div><button className="btn small ghost" onClick={selfManaged}>經管船舶</button><button className="btn small ghost" onClick={reset}>重設（全部經管船）</button></div></div>
+      <div className="panel-title"><h2>篩選條件 <span className="muted">目前 {filtered.length} 件</span></h2><div><button className="btn small ghost" onClick={reset}>重設（我的經管）</button></div></div>
       <div className="ic-filter-primary"><input aria-label="內控異常關鍵字" value={filters.keyword} onChange={event => setFilter('keyword', event.target.value)} placeholder="搜尋事項、狀態、船舶、分類、部門…"/><label>報告日期起<input type="date" value={filters.fromDate} onChange={event => setFilter('fromDate', event.target.value)}/></label><label>報告日期迄<input type="date" value={filters.toDate} onChange={event => setFilter('toDate', event.target.value)}/></label><label>知曉事項<select value={filters.awareMode} onChange={event => setFilter('awareMode', event.target.value as InternalControlFilters['awareMode'])}><option value="all">不限</option><option value="aware">是</option><option value="not-aware">否</option></select></label></div>
-      <div className="ic-filter-grid"><MultiFilter label="船舶名稱" options={vesselOptions} selected={filters.vesselIds} onChange={value => setFilter('vesselIds', value)}/><MultiFilter label="船舶類型" options={optionList(shipTypes)} selected={filters.shipTypes} onChange={value => setFilter('shipTypes', value)}/><MultiFilter label="重要程度" options={optionList(data.settings.priorities)} selected={filters.priorities} onChange={value => setFilter('priorities', value as TaskPriority[])}/><MultiFilter label="事項分類" options={optionList(categories)} selected={filters.categories} onChange={value => setFilter('categories', value)}/><MultiFilter label="涉及部門" options={optionList(departments)} selected={filters.departments} onChange={value => setFilter('departments', value)}/><MultiFilter label="報告來源" options={optionList(REPORT_SOURCES)} selected={filters.reportSources} onChange={value => setFilter('reportSources', value as InternalControlReportSource[])}/><MultiFilter label="設備故障細項" options={optionList(data.settings.equipmentFailureSubcategories)} selected={filters.equipmentSubcategories} onChange={value => setFilter('equipmentSubcategories', value)}/><MultiFilter label="經管督導" options={supervisorOptions} selected={filters.supervisorIds} onChange={value => setFilter('supervisorIds', value)}/><label className="ic-filter-group ic-filter-select"><span>是否和要事同步</span><select aria-label="是否和要事同步" value={filters.syncMode} onChange={event => setFilter('syncMode', event.target.value as InternalControlFilters['syncMode'])}><option value="all">不限</option><option value="synced">已同步要事</option><option value="not-synced">未同步要事</option></select></label></div>
+      <div className="ic-filter-grid"><VesselListFilter vessels={vessels} mode={filters.ownerMode} selectedVesselIds={filters.vesselIds} onChange={selection=>setFilters(previous=>({...previous,ownerMode:selection.mode,vesselIds:selection.vesselIds}))} ariaLabel="內控清單船舶篩選"/><MultiFilter label="船舶類型" options={optionList(shipTypes)} selected={filters.shipTypes} onChange={value => setFilter('shipTypes', value)}/><MultiFilter label="重要程度" options={optionList(data.settings.priorities)} selected={filters.priorities} onChange={value => setFilter('priorities', value as TaskPriority[])}/><MultiFilter label="事項分類" options={optionList(categories)} selected={filters.categories} onChange={value => setFilter('categories', value)}/><MultiFilter label="涉及部門" options={optionList(departments)} selected={filters.departments} onChange={value => setFilter('departments', value)}/><MultiFilter label="報告來源" options={optionList(REPORT_SOURCES)} selected={filters.reportSources} onChange={value => setFilter('reportSources', value as InternalControlReportSource[])}/><MultiFilter label="設備故障細項" options={optionList(data.settings.equipmentFailureSubcategories)} selected={filters.equipmentSubcategories} onChange={value => setFilter('equipmentSubcategories', value)}/><MultiFilter label="經管督導" options={supervisorOptions} selected={filters.supervisorIds} onChange={value => setFilter('supervisorIds', value)}/><label className="ic-filter-group ic-filter-select"><span>是否和要事同步</span><select aria-label="是否和要事同步" value={filters.syncMode} onChange={event => setFilter('syncMode', event.target.value as InternalControlFilters['syncMode'])}><option value="all">不限</option><option value="synced">已同步要事</option><option value="not-synced">未同步要事</option></select></label></div>
     </section>
 
     {subpage !== 'stats' ? <section className="panel ic-list-panel">
       <div className="panel-title ic-batch-toolbar no-print"><h2>{subpage==='open'?'內控未完清單':'內控結案清單'} <span className="muted">目前 {filtered.length} 件</span></h2>{canDelete&&<div className="heading-actions"><button type="button" className="btn small ghost" onClick={toggleAllCases} disabled={batchDeleting||!selectableCases.length}>{allSelected?'取消全選':'全選目前結果'}</button><span className="batch-selection-count">已選 {selectedCases.length}</span><button type="button" className="btn small red" onClick={()=>void deleteSelectedCases()} disabled={batchDeleting||!selectedCases.length}>{batchDeleting?'刪除中…':<>批量刪除（{selectedCases.length}）</>}</button></div>}</div>
       <div className="table-wrap"><table className="compact ic-table"><thead><tr>
-        {canDelete&&<th className="no-print ic-select-column"><input type="checkbox" aria-label="選取目前全部內控案件" checked={allSelected} onChange={toggleAllCases} disabled={batchDeleting||!selectableCases.length}/></th>}<th>船舶／日期</th><th>來源</th><th>關注</th><th className="ic-description-column">事項內容</th><th>分類／部門</th><th className="ic-status-column">最新狀態</th>{subpage === 'closed' ? <th className="ic-closure-column">結案</th> : <th className="ic-sync-column">同步</th>}<th className="no-print">操作</th>
+        {canDelete&&<th className="no-print ic-select-column"><input type="checkbox" aria-label="選取目前全部內控案件" checked={allSelected} onChange={toggleAllCases} disabled={batchDeleting||!selectableCases.length}/></th>}<th className="ic-vessel-date-column"><span className="table-sort-pair"><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}>船舶 <span>{columnSort==='vessel-asc'?'↑':columnSort==='vessel-desc'?'↓':'↕'}</span></button><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}>報告日期 <span>{columnSort==='date-asc'?'↑':columnSort==='date-desc'?'↓':'↕'}</span></button></span></th><th>來源</th><th>關注</th><th className="ic-description-column">事項內容</th><th>分類／部門</th><th className="ic-status-column">最新狀態</th>{subpage === 'closed' ? <th className="ic-closure-column"><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'closed-date'))}>結案日期 <span>{columnSort==='closed-date-asc'?'↑':columnSort==='closed-date-desc'?'↓':'↕'}</span></button></th> : <th className="ic-sync-column">同步</th>}<th className="no-print">操作</th>
       </tr></thead><tbody>{paged.items.map(item => {
         const vessel = vessels.find(entry => entry.id === item.vesselId);
         return <tr key={item.id} className={selectedSet.has(item.id)?'batch-selected-row':''}>

@@ -27,13 +27,22 @@ import NormalizedMeetings from './NormalizedMeetings';
 import NormalizedManagement from './NormalizedManagement';
 import { TaskEditModal } from './EditModals';
 import { canAccessAllVessels, hasPermission } from './permissions';
-import { taskHasVessel, taskVesselIds } from './taskVesselScope';
+import { taskHasVessel, taskVesselIds, taskVesselLabel } from './taskVesselScope';
 import { hasActiveVesselDelegation } from './vesselDelegation';
 import { dashboardMeetingAlerts } from './meetingVesselAttention';
 import { todayDate } from './runtimeUtils';
 import RichTextContent from './RichTextContent';
 import { vesselPositionCommandValue } from './normalizedAdapters';
 import type { NormalizedApplicationProjection } from './normalizedProjection';
+import VesselListFilter from './VesselListFilter';
+import {
+  managedListVesselIds,
+  matchesListVesselSelection,
+  nextListColumnSort,
+  sortListRecords,
+  type ListColumnSort,
+  type VesselListFilterMode,
+} from './listVesselControls';
 import {
   cleanupNormalizedTaskEditorDraft,
   createNormalizedAuthorizationEpoch,
@@ -336,28 +345,50 @@ function VesselEditor({
 
 function TaskList({
   data,
+  user,
   vessels,
   closed,
   onOpen,
 }: {
   data: AppData;
+  user: UserAccount;
   vessels: Vessel[];
   closed: boolean;
   onOpen: (task: TaskItem) => void;
 }) {
-  const vesselIds = new Set(vessels.map(vessel => vessel.id));
-  const tasks = data.tasks.filter(task =>
-    task.isClosed === closed && taskVesselIds(task).some(id => vesselIds.has(id)));
+  const [vesselMode,setVesselMode]=useState<VesselListFilterMode>('all');
+  const [selectedVesselIds,setSelectedVesselIds]=useState<string[]>([]);
+  const [columnSort,setColumnSort]=useState<ListColumnSort>('created-desc');
+  const visibleVesselIds = new Set(vessels.map(vessel => vessel.id));
+  const managedVesselIds=managedListVesselIds(user,vessels);
+  const vesselSelection={mode:vesselMode,vesselIds:selectedVesselIds};
+  const sourceTasks = data.tasks.filter(task =>
+    task.isClosed === closed && taskVesselIds(task).some(id => visibleVesselIds.has(id)));
+  const tasks=sortListRecords(
+    sourceTasks.filter(task=>matchesListVesselSelection(
+      taskVesselIds(task).filter(id=>visibleVesselIds.has(id)),
+      vesselSelection,
+      managedVesselIds,
+      user.id,
+      task.ownerUserIds,
+    )),
+    columnSort,
+    task=>taskVesselLabel(task,vessels),
+    task=>task.expectedDate,
+  );
+  const hasListControls=vesselMode!=='all'||columnSort!=='created-desc';
+  const resetListControls=()=>{setVesselMode('all');setSelectedVesselIds([]);setColumnSort('created-desc');};
   return <section>
     <div className="page-heading"><div><h1>{closed ? '已結案待辦' : '全部未結待辦'}</h1>
       <p>資料由歸一化實體投影即時讀取。</p></div></div>
+    <section className="panel normalized-list-controls no-print"><VesselListFilter vessels={vessels} mode={vesselMode} selectedVesselIds={selectedVesselIds} onChange={selection=>{setVesselMode(selection.mode);setSelectedVesselIds(selection.vesselIds);}} ariaLabel={closed?'歸一化已結案船舶篩選':'歸一化待辦清單船舶篩選'}/>{hasListControls&&<button type="button" className="btn small ghost" onClick={resetListControls}>清除篩選與排序</button>}</section>
     <section className="panel"><div className="table-wrap"><table className="compact"><thead><tr>
-      <th>關注</th><th>船舶</th><th>內容</th><th>部門／期限</th><th>最新狀態</th><th>操作</th>
+      <th>關注</th><th><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}>船舶 <span>{columnSort==='vessel-asc'?'↑':columnSort==='vessel-desc'?'↓':'↕'}</span></button></th><th>內容</th><th>部門</th><th><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}>期限 <span>{columnSort==='date-asc'?'↑':columnSort==='date-desc'?'↓':'↕'}</span></button></th><th>最新狀態</th><th>操作</th>
     </tr></thead><tbody>{tasks.map(task => <tr key={task.id}>
       <td><span className="badge">{task.priority}</span></td>
-      <td>{taskVesselIds(task).map(id => vessels.find(vessel => vessel.id === id)?.shortName || id).join('、')}</td>
+      <td>{taskVesselLabel(task,vessels)}</td>
       <td><RichTextContent compact value={task.description}/></td>
-      <td>{task.departments.join('、')}<small>{task.expectedDate || '未設定'}</small></td>
+      <td>{task.departments.join('、')||'未指定'}</td><td>{task.expectedDate || '未設定'}</td>
       <td><RichTextContent compact value={task.status} fallback="尚未更新"/></td>
       <td><button className="btn small primary" onClick={() => onOpen(task)}>查看／編輯</button></td>
     </tr>)}</tbody></table></div>{!tasks.length && <div className="empty-state">目前沒有資料</div>}</section>
@@ -739,9 +770,9 @@ export default function NormalizedApp() {
         onPrint={() => window.print()}
         onBatchComplete={ids => runBoolean(() => controller.batchTransitionTasks(ids, 'close'))}
         onBatchDelete={deleteNormalizedSelection}/>
-      : tab === 'tasks' ? <TaskList data={{ ...data, tasks: visibleTasks }} vessels={visibleVessels}
+      : tab === 'tasks' ? <TaskList data={{ ...data, tasks: visibleTasks }} user={user} vessels={visibleVessels}
         closed={false} onOpen={openTask}/>
-      : tab === 'closed' ? <TaskList data={{ ...data, tasks: visibleTasks }} vessels={visibleVessels}
+      : tab === 'closed' ? <TaskList data={{ ...data, tasks: visibleTasks }} user={user} vessels={visibleVessels}
         closed onOpen={openTask}/>
       : tab === 'internal' ? <InternalControlPage data={data} user={user} vessels={visibleVessels}
         canCreate={canCreate} canEdit={canEdit} canClose={canClose} canDelete={canDelete}

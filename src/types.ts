@@ -283,6 +283,7 @@ export interface AppData {
 
 export interface InternalControlFilters {
   keyword: string;
+  ownerMode: 'all' | 'mine' | 'custom';
   vesselIds: string[];
   shipTypes: string[];
   priorities: TaskPriority[];
@@ -306,7 +307,7 @@ export interface FilterState {
   priorities: TaskPriority[];
   categories: string[];
   meetingCategories: string[];
-  ownerMode: 'all' | 'mine';
+  ownerMode: 'all' | 'mine' | 'custom';
   fromDate: string;
   toDate: string;
   closedMode: 'all' | 'open' | 'closed';

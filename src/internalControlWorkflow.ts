@@ -82,6 +82,7 @@ export const defaultInternalControlVesselIds = (user: InternalControlUser, vesse
 
 export const emptyInternalControlFilters = (vesselIds: string[] = []): InternalControlFilters => ({
   keyword: '',
+  ownerMode: vesselIds.length ? 'custom' : 'all',
   vesselIds: [...vesselIds],
   shipTypes: [],
   priorities: [],
