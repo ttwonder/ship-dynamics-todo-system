@@ -158,14 +158,18 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const [printMode, setPrintMode] = useState<'meetings' | 'register' | ''>('');
   const [notice, setNotice] = useState('');
   const [quickStatus, setQuickStatus] = useState('');
+  const [editingSessionActive, setEditingSessionActive] = useState(false);
   const savingRef = useRef(false);
+  const editBaselineRef = useRef<MeetingDraft | null>(null);
+  const saveReachedLocalStateRef = useRef(false);
   const printInFlightRef = useRef(false);
 
   const selected = accessibleMeetings.find(meeting => meeting.id === selectedId);
   const editorWritable=Boolean(
-    creating
+    editingSessionActive && (creating
       ?creatingId&&activeItemLeaseKey===meetingCreationLockKey(creatingId)
       :editable&&selected&&activeItemLeaseKey===meetingEditLockKey(selected.id)
+    )
   );
   const linkedTasks = selected ? data.tasks.filter(task => task.sourceMeetingId === selectedId && taskVesselIds(task).some(id => visibleIds.has(id))) : [];
   const persistedInternalControlTasks = selected ? data.tasks.filter(task => task.sourceMeetingId === selected.id && task.isInternalControl) : [];
@@ -226,6 +230,9 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   useEffect(() => {
     if (creating && !editable) {
       const next = accessibleMeetings[0];
+      setEditingSessionActive(false);
+      editBaselineRef.current=null;
+      saveReachedLocalStateRef.current=false;
       setCreating(false);
       setSelectedId(next?.id || '');
       setDraft(draftFrom(next, data.tasks, data.settings.meetingTaskCategories));
@@ -293,10 +300,14 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       snapshot=latest;
       fresh=latestMeeting;
     }
+    const nextDraft=draftFrom(fresh, snapshot.tasks, snapshot.settings.meetingTaskCategories);
+    editBaselineRef.current=structuredClone(nextDraft);
+    saveReachedLocalStateRef.current=false;
+    setEditingSessionActive(true);
     setCreating(false);
     setCreatingId('');
     setSelectedId(fresh.id);
-    setDraft(draftFrom(fresh, snapshot.tasks, snapshot.settings.meetingTaskCategories));
+    setDraft(nextDraft);
     setBaseMeetingUpdatedAt(fresh.updatedAt||'');
     setQuickStatus('');
     setViewMode('workspace');
@@ -307,10 +318,14 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     const draftId=uid('meet');
     const snapshot=await claimItemLease(meetingCreationLockKey(draftId),'新增臨會/專題草稿');
     if(!snapshot)return;
+    const nextDraft=blankDraft();
+    editBaselineRef.current=structuredClone(nextDraft);
+    saveReachedLocalStateRef.current=false;
+    setEditingSessionActive(true);
     setCreating(true);
     setCreatingId(draftId);
     setSelectedId('');
-    setDraft(blankDraft());
+    setDraft(nextDraft);
     setBaseMeetingUpdatedAt('');
     setQuickStatus('');
     setViewMode('workspace');
@@ -378,6 +393,40 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     setDraft(previous => completedDate
       ? { ...previous, status: '已完成', completedDate, completedBy: previous.completedBy || currentUser.id }
       : { ...previous, status: previous.status === '已完成' ? '追蹤中' : previous.status, completedDate: '', completedBy: '' });
+  };
+
+  const cancelEditing = async () => {
+    if (!editorWritable) return;
+    if (savingRef.current) return alert('正在保存臨會/專題，請等待目前操作完成');
+    if (saveReachedLocalStateRef.current) {
+      alert('本次修改已進入本機待同步狀態。為避免誤刪可能已上傳但尚未回傳確認的資料，不能直接取消；請點擊「保存並退出編輯」重新完成雲端確認。');
+      return;
+    }
+    if (!window.confirm('確定放棄本次尚未保存的修改並退出編輯？')) return;
+    const wasCreating=creating;
+    const id=wasCreating?creatingId:selectedId;
+    const baseline=editBaselineRef.current;
+    if(!id)return alert('編輯識別碼已失效，未放棄任何資料');
+    if(!wasCreating&&(!selected||!baseline))return alert('找不到進入編輯前的資料，為避免誤刪，本次未退出');
+    const sectionKey=wasCreating?meetingCreationLockKey(id):meetingEditLockKey(id);
+    if(!await releaseItemLease(sectionKey))return;
+    setEditingSessionActive(false);
+    setCreating(false);
+    setCreatingId('');
+    saveReachedLocalStateRef.current=false;
+    if(wasCreating){
+      const next=accessibleMeetings[0];
+      setSelectedId(next?.id||'');
+      setDraft(draftFrom(next,data.tasks,data.settings.meetingTaskCategories));
+      setBaseMeetingUpdatedAt(next?.updatedAt||'');
+    }else{
+      setSelectedId(selected!.id);
+      setDraft(structuredClone(baseline));
+      setBaseMeetingUpdatedAt(selected!.updatedAt||'');
+    }
+    editBaselineRef.current=null;
+    setQuickStatus('');
+    setNotice('✓ 已取消修改並退出編輯');
   };
 
   const save = async () => {
@@ -568,17 +617,24 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     };
     const durable=await runDurableRelatedMutation(sectionKey,'臨會/專題保存',apply);
     if(!durable||!applied||!persistedDraft){
+      if(applied)saveReachedLocalStateRef.current=true;
       savingRef.current=false;
       if(attempted&&!applied)alert(failure);
       return;
     }
-    setDraft({...persistedDraft,taskItems:persistedDraft.taskItems.length?persistedDraft.taskItems:[{id:uid('meeting-task-item'),description:'',categories:normalizeMeetingTaskCategoryList([],data.settings.meetingTaskCategories),distributeToVessels:false}]});
+    const persistedEditorDraft={...persistedDraft,taskItems:persistedDraft.taskItems.length?persistedDraft.taskItems:[{id:uid('meeting-task-item'),description:'',categories:normalizeMeetingTaskCategoryList([],data.settings.meetingTaskCategories),distributeToVessels:false}]};
+    setDraft(persistedEditorDraft);
     setBaseMeetingUpdatedAt(persistedUpdatedAt);
-    if(wasCreating)await releaseItemLease(sectionKey);
+    editBaselineRef.current=structuredClone(persistedEditorDraft);
+    saveReachedLocalStateRef.current=false;
+    const released=await releaseItemLease(sectionKey);
+    setEditingSessionActive(false);
     setCreating(false);
     setCreatingId('');
     setSelectedId(id);
-    setNotice(`✓ ${wasCreating?'臨會/專題已建立':'臨會/專題已保存'}`);
+    editBaselineRef.current=null;
+    if(released)setNotice(`✓ ${wasCreating?'臨會/專題已建立並退出編輯':'臨會/專題已保存並退出編輯'}`);
+    else setNotice(`✓ ${wasCreating?'臨會/專題已建立':'臨會/專題已保存'}；雲端已確認，編輯鎖將自動釋放`);
     window.setTimeout(()=>{savingRef.current=false;},0);
   };
 
@@ -678,6 +734,9 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     const durable=await runDurableRelatedMutation(meetingEditLockKey(meeting.id),'臨會/專題刪除',apply);
     if (!durable||!applied) {if(attempted&&!applied)alert(failure);return;}
     if(!await releaseItemLease(meetingEditLockKey(meeting.id)))return;
+    setEditingSessionActive(false);
+    editBaselineRef.current=null;
+    saveReachedLocalStateRef.current=false;
     setCreating(false);
     setSelectedId(nextMeeting?.id || '');
     setDraft(draftFrom(nextMeeting, deleteSnapshot.tasks, deleteSnapshot.settings.meetingTaskCategories));
@@ -748,7 +807,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       </aside>
 
       <section className="meeting-column temporary-editor-column">
-        <div className="column-title"><div><h2>{creating ? '新增臨會/專題' : draft.subject || '會議資料'}</h2><span>{editorWritable?(creating ? '建立基本資訊與會議範圍' : '修改後請按保存變更'):'唯讀檢視；同一項目只允許一人編輯'}</span></div><div className="heading-actions no-print">{editable&&!creating&&selected&&!editorWritable&&<button className="btn primary" onClick={()=>void selectMeeting(selected)}>取得編輯權</button>}{!creating&&selected&&canDeleteMeetings&&<button className="btn red" onClick={() => void deleteMeeting(selected)}>刪除會議</button>}{canExportReports&&selected&&<button className="btn primary" onClick={() => printMeetingDetail(selected.id)}>導出本次會議 PDF</button>}{editorWritable&&<button className="btn green" onClick={save}>{creating ? '建立會議' : '保存變更'}</button>}</div></div>
+        <div className="column-title"><div><h2>{creating ? '新增臨會/專題' : draft.subject || '會議資料'}</h2><span>{editorWritable?(creating ? '建立基本資訊與會議範圍' : '修改後請按保存並退出編輯'):'唯讀檢視；同一項目只允許一人編輯'}</span></div><div className="heading-actions no-print">{editable&&!creating&&selected&&!editorWritable&&<button className="btn primary" onClick={()=>void selectMeeting(selected)}>取得編輯權</button>}{!creating&&selected&&canDeleteMeetings&&<button className="btn red" onClick={() => void deleteMeeting(selected)}>刪除會議</button>}{canExportReports&&selected&&<button className="btn primary" onClick={() => printMeetingDetail(selected.id)}>導出本次會議 PDF</button>}{editorWritable&&<button type="button" className="btn small ghost" onClick={()=>void cancelEditing()}>取消修改退出編輯</button>}{editorWritable&&<button type="button" className="btn small green" onClick={()=>void save()}>{creating ? '建立並退出編輯' : '保存並退出編輯'}</button>}</div></div>
         <fieldset disabled={!editorWritable} className={`column-scroll temporary-form ${!editorWritable?'readonly-form':''}`} aria-readonly={!editorWritable}>
           <div className="grid cols-3">
             <div className="field span-2"><label>會議主題 <span className="required-mark">*</span></label><input required aria-required="true" value={draft.subject} onChange={event => setDraft({ ...draft, subject: event.target.value })} placeholder="例如：颱風避風臨時協調會" /></div>
@@ -797,7 +856,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
             <MeetingPeoplePicker label="負責人" users={responsiblePeople} departments={data.settings.departments} selectedIds={draft.responsibleUserIds} onChange={responsibleUserIds => setDraft(previous => ({ ...previous, responsibleUserIds }))} />
           </div>
           {!creating && <section className="meeting-status-update">
-            <div className="meeting-status-update-title"><div><h3>加入狀態記錄</h3><p>快速更新本次臨會／專題的最新進度；加入後請按「保存變更」。</p></div>{draft.latestStatus&&<span>最新：{draft.latestStatus}</span>}</div>
+            <div className="meeting-status-update-title"><div><h3>加入狀態記錄</h3><p>快速更新本次臨會／專題的最新進度；加入後請按「保存並退出編輯」。</p></div>{draft.latestStatus&&<span>最新：{draft.latestStatus}</span>}</div>
             <div className="quick-status-bar"><textarea aria-label="會議最新狀態" value={quickStatus} onChange={event=>setQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();addStatus();}}} placeholder="快速輸入最新狀態…"/><button type="button" className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>
           </section>}
           {!creating && <section className="status-history meeting-status-history"><h3>狀態歷程</h3>{draft.statusLogs.length?draft.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{formatTaipeiDateTime(log.at)}｜{log.by}</small>{canDeleteMeetingStatusLog(log)&&<button type="button" className="btn small ghost no-print" onClick={()=>deleteStatusLog(log.id)}>刪除記錄</button>}</article>):<p className="muted">尚無狀態紀錄</p>}</section>}
