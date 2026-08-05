@@ -476,7 +476,7 @@ try {
   const syncLatestSource=appSource.slice(syncLatestStart,saveChangesStart);
   assert.ok(syncLatestSource.includes('prepareCloudSyncSnapshot('), '同步最新必須先以可信base合併本機dirty snapshot');
   assert.ok(syncLatestSource.includes('appDataContentEqual(localSnapshot,baseSnapshot)'), 'App必須以本機與可信base的內容差異判定dirty，不能只比較revision');
-  assert.ok(syncLatestSource.includes('classifyCloudSyncFailure(error).message'), '同步錯誤必須區分真欄位衝突、權限撤銷及安全基線阻擋');
+  assert.ok(syncLatestSource.includes('classifyCloudSyncFailure(error)')&&syncLatestSource.includes('failure.message'), '同步錯誤必須區分真欄位衝突、權限撤銷及安全基線阻擋');
   const compactSyncLatestSource=syncLatestSource.replace(/\s+/g,'');
   assert.ok(compactSyncLatestSource.includes('constcachedCloudIdentity=cachedCloudIdentityFor(syncConfig)'), '同步必須透過migration-aware helper讀取本機資料cache identity，不能信任bootstrap已切到新設定的active ref');
   assert.ok(compactSyncLatestSource.includes("consthasUnboundLocalCache=!cachedCloudIdentity&&localStorage.getItem(STORAGE_KEY)!==null"), '沒有identity的既有本機cache必須被視為未綁定資料，而非自動視作目前workspace');

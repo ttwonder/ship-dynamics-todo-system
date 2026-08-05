@@ -8,7 +8,7 @@ export function classifyCloudSyncFailure(error:unknown):{kind:CloudSyncFailureKi
     :[];
   if(conflicts.includes('authorization-domain'))return{
     kind:'authorization',
-    message:'最新雲端身份、角色、權限或涉船範圍已變更；本機修改仍保留，但已拒絕用舊權限保存。請重新登入或與管理員確認。',
+    message:'最新雲端身份、角色、權限或涉船範圍已變更；已拒絕用舊權限保存，本機修改仍保留。若不需要保留未上傳修改，請按「修復此瀏覽器」重新載入雲端；如需保留，請聯絡管理員。',
   };
   if(conflicts.length){
     const detail=conflicts.join('、');

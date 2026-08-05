@@ -54,6 +54,7 @@ import { resolveItemEditSession } from './itemEditSession';
 import { buildCloudBlockPatch, CloudBlockPatchConflictError } from './cloudBlockPatch';
 import { actorStorageAuthorizationGuard, appDataAuthorizationDomainChanged, assertActorAuthorizedForAppDataChange, authorizationDomainGuard } from './cloudAuthorization';
 import { classifyCloudSyncFailure } from './cloudSyncError';
+import { runStaleBrowserRecovery, shouldOfferStaleBrowserRecovery } from './staleBrowserRecovery';
 import { relatedEntityLockKeysForSection, taskInternalControlCreationLockKeys, taskRelationLockKeys } from './collaborationLockPlan';
 import { cloudWakeupAction } from './realtimeSync';
 import { CloudSaveRecoveryLockConflictError, runWithCloudSaveRecoveryLocks } from './cloudSaveLockRecovery';
@@ -281,6 +282,7 @@ export default function App() {
   const [savePhase,setSavePhase]=useState<SavePhase>('saved');
   const [cloudWakeupRevision,setCloudWakeupRevision]=useState(-1);
   const [saveToast,setSaveToast]=useState<SaveToast|null>(null);
+  const [staleBrowserRecoveryOffered,setStaleBrowserRecoveryOffered]=useState(false);
   const saveToastRef=useRef<SaveToast|null>(null);
   const [activeEditLock, setActiveEditLock] = useState<ActiveEditLock | null>(null);
   const activeEditLockRef=useRef<ActiveEditLock|null>(null);
@@ -366,6 +368,8 @@ export default function App() {
   };
   const reportCloudSaveFailure=(error:unknown)=>{
     const message=error instanceof Error?error.message:String(error);
+    const failure=classifyCloudSyncFailure(error);
+    if(shouldOfferStaleBrowserRecovery(failure.kind))setStaleBrowserRecoveryOffered(true);
     hasUnsavedWork.current=true;
     const contextChanged=error instanceof StaleAsyncConfigError||error instanceof CloudSaveQueueCancelledError||message.includes('雲端工作區 identity 已變更');
     const detail=contextChanged
@@ -734,6 +738,7 @@ export default function App() {
               rebaseAttempts=0;
               lastCloudRevision.current = persisted.revision;
               confirmCloudSnapshot(activeCloudIdentity.current,persisted);
+              setStaleBrowserRecoveryOffered(false);
               rememberCloudIdentity();
               setCloudWriteBlocked(false);
               if(pending.renderRebase&&appDataContentEqual(liveData.current,next)){
@@ -2737,6 +2742,31 @@ export default function App() {
     if (!canExportReports) return alert('目前角色未獲授權預覽或匯出報告');
     setReportPreviewOpen(true);
   };
+  const repairStaleBrowser=()=>{
+    const result=runStaleBrowserRecovery({
+      storage:localStorage,
+      confirm:message=>window.confirm(message),
+      beforeReload:()=>{
+        if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
+        pendingCloudData.current.rejectAll(new StaleAsyncConfigError());
+        configIoCoordinator.current.invalidate();
+        lockCoordinator.current.invalidate();
+        batchLockCoordinator.current.invalidate();
+        taskOpenRequests.current.invalidate();
+        identitySessionGeneration.current+=1;
+        liveCurrentUserId.current='';
+        hasUnsavedWork.current=false;
+      },
+      reload:()=>window.location.reload(),
+    });
+    if(result.status==='failed'){
+      hasUnsavedWork.current=true;
+      const detail='無法清除這台瀏覽器的舊暫存；頁面未重新載入。請保持頁面開啟並聯絡管理員。';
+      setSavePhase('error');
+      setCloudStatus(detail);
+      showSaveToast('error','瀏覽器修復未完成',detail);
+    }
+  };
   const syncLatest = async () => {
     const syncConfig = getSupabaseConfig();
     if (!syncConfig) return setCloudStatus('本機模式：尚未配置 Supabase，無法同步雲端');
@@ -2787,6 +2817,7 @@ export default function App() {
           setCloudStatus(savedStatus('已同步雲端', remote.updatedAt));
           showSaveToast('success','已同步雲端最新資料','本頁沒有未保存修改，現在可以安全關閉或重新整理。');
         }
+        setStaleBrowserRecoveryOffered(false);
       } else {
         if(durableRevisionFloor>=0)throw new CloudRebaseConflictError([`雲端主資料遺失，但此工作區已有durable revision ${durableRevisionFloor}，拒絕以本機資料重新初始化`]);
         throw new CloudRebaseConflictError(['雲端工作區沒有主資料，已禁止從瀏覽器初始化']);
@@ -2795,7 +2826,9 @@ export default function App() {
       hasUnsavedWork.current=syncStartedWithUnsavedWork;
       setCloudWriteBlocked(true);
       setSavePhase('error');
-      const detail=classifyCloudSyncFailure(error).message;
+      const failure=classifyCloudSyncFailure(error);
+      if(shouldOfferStaleBrowserRecovery(failure.kind))setStaleBrowserRecoveryOffered(true);
+      const detail=failure.message;
       setCloudStatus(detail);
       showSaveToast('error','同步未完成',`${detail} 請先不要關閉頁面。`);
     } finally {
@@ -3166,7 +3199,7 @@ export default function App() {
     </div></header>
     {saveToast&&<div className="save-toast-layer no-print" aria-live="assertive" aria-atomic="true"><div className={`save-toast ${saveToast.kind}`} role="status"><span className="save-toast-icon">{saveToast.kind==='success'?'✓':saveToast.kind==='error'?'!':saveToast.kind==='warning'?'⚠':'↻'}</span><span><b>{saveToast.title}</b><small>{saveToast.detail}</small></span><button type="button" aria-label="關閉保存提醒" onClick={dismissSaveToast}>×</button><i /></div></div>}
     <main className="container">
-      <div className={`cloud-strip save-status-strip no-print ${savePhase}`} aria-live="polite"><span className="save-phase"><b>{savePhaseLabel[savePhase]}</b><small>{visibleCloudStatus}</small></span><span className="spacer"/><button className="btn ghost small" onClick={syncLatest} disabled={isSaveBusy}>同步最新（安全合併）</button><button className={`btn small ${savePhase==='error'?'red':savePhase==='dirty'?'primary':'green'}`} onClick={saveChanges} disabled={isSaveBusy}>{saveButtonLabel}</button></div>
+      <div className={`cloud-strip save-status-strip no-print ${savePhase}`} aria-live="polite"><span className="save-phase"><b>{savePhaseLabel[savePhase]}</b><small>{visibleCloudStatus}</small></span><span className="spacer"/>{staleBrowserRecoveryOffered&&<button className="btn red small" onClick={repairStaleBrowser} disabled={isSaveBusy} title="清除這台瀏覽器的舊App暫存並重新載入雲端資料">修復此瀏覽器</button>}<button className="btn ghost small" onClick={syncLatest} disabled={isSaveBusy}>同步最新（安全合併）</button><button className={`btn small ${savePhase==='error'?'red':savePhase==='dirty'?'primary':'green'}`} onClick={saveChanges} disabled={isSaveBusy}>{saveButtonLabel}</button></div>
       {currentUser.role!=='vessel'&&activeEditLock&&authorizedEditLockKeys.has(activeEditLock.sectionKey)&&activeEditLock.authorizationEpoch===authorizationEpoch&&activeEditLock.ownerUserId===currentUser.id && <div className={`collaboration-banner no-print ${activeEditLock.status}`}><b>多人協作安全</b><span>{activeEditLock.status==='owned' ? `你正在編輯：${activeEditLock.label}；系統已建立短時鎖定，保存仍會做 revision 衝突檢查。` : activeEditLock.status==='blocked' ? `此項目正在由 ${activeEditLock.lockedByName || '其他使用者'} 編輯，已阻止打開以避免覆蓋對方內容。` : preservedCreationDraft ? '新增要事協作鎖已失效；草稿仍以唯讀方式保留，請複製內容後關閉並重新取得協作鎖。' : `無法確認 ${activeEditLock.label} 的編輯鎖；編輯器已關閉，請重試釋放。`}</span>{activeEditLock.status!=='owned'&&<button className="btn small ghost" onClick={resolveEditLockNotice}>{activeEditLock.status==='blocked'?'知道了':preservedCreationDraft?'關閉唯讀草稿':'重試釋放並關閉'}</button>}</div>}
       <div className="print-only app-print-header"><h2>{printTitle || data.settings.systemTitle}</h2><p>列印時間：{new Date().toLocaleString()}｜列印人：{currentUser.name}</p></div>
       {canAccessTab(currentUser,tab) && <>{tab==='dashboard' && selectedVesselDetail && <VesselDetailPage vessel={selectedVesselDetail} data={roleVisibleData} currentUser={currentUser} onBack={closeVesselDetail} onOpenInternalControl={()=>{if(!canAccessTab(currentUser,'internalControl'))return;navigateToTab('internalControl');}} onEditVessel={()=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(selectedVesselDetail.id);}} onAddTask={()=>addTaskForVessel(selectedVesselDetail.id)} onEditTask={id=>{const task=roleVisibleTasks.find(item=>item.id===id);if(task)openTask(task,selectedVesselDetail.id);}} canEditVessel={canEditBusinessContent} canCreateTasks={canCreateTasks} canEditTasks={canEditBusinessContent&&currentUser.role!=='vessel'} canViewInternalControl={canAccessTab(currentUser,'internalControl')} />}
