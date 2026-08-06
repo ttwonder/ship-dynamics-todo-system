@@ -34,7 +34,7 @@ import { dashboardMeetingAlerts, meetingCreatesVesselAbnormalAlert } from './mee
 import { canEditTemporaryMeetings, meetingAppliesToUser } from './meetingAccess';
 import { completeSelectedTasks, sanitizeTaskSelection, validateBatchTaskSelection } from './batchTaskActions';
 import { closeInternalControlCaseBatchFromDraft, deleteInternalControlCaseBatchFromDraft, internalControlBatchLockKeys, validateBatchInternalControlSelection } from './batchInternalControlActions';
-import { meetingTaskLinkIsValidForMutation, resolveMeetingTaskItemIdForDeletion, synchronizeLinkedMeetingDecisionLifecycle, transitionLinkedMeetingDecision } from './meetingTaskWorkflow';
+import { meetingDecisionCompletionSummary, meetingDecisionLifecycleIsConsistent, meetingTaskLinkIsValidForMutation, resolveMeetingTaskItemIdForDeletion, synchronizeLinkedMeetingDecisionLifecycle, transitionLinkedMeetingDecision } from './meetingTaskWorkflow';
 import { paginateItems } from './pagination';
 import PaginationControls from './PaginationControls';
 import { appearsInSingleVesselTasks, canonicalTaskAttentionForSave, isMeetingAttentionTask, isVesselDelegatedMeetingTask, vesselAttentionTasks } from './taskAttention';
@@ -3067,12 +3067,15 @@ export default function App() {
       alert('會議待辦不存在、重複或關聯已失效，請重新整理後再試');
       return false;
     }
-    if(usesPerVesselProgress(initialTask)){
+    const initialCompletion=meetingDecisionCompletionSummary(initialMeeting,data.tasks).items.find(item=>item.task?.id===taskId);
+    if(!initialCompletion){alert('會議待辦關聯重複或不明確，未執行任何變更');return false;}
+    const repairingLifecycle=initialCompletion?.lifecycleConflict===true;
+    if(usesPerVesselProgress(initialTask)&&!repairingLifecycle){
       alert('此為分船待辦，請依各船進度分別完成；全部船舶完成後會議頁會自動顯示完成');
       return false;
     }
     const initiallyClosed=taskIsClosedForScope(initialTask,taskVesselIds(initialTask));
-    if((transition==='complete'&&initiallyClosed)||(transition==='reopen'&&!initiallyClosed)){
+    if(!repairingLifecycle&&((transition==='complete'&&initiallyClosed)||(transition==='reopen'&&!initiallyClosed))){
       alert(transition==='complete'?'此待辦已完成':'此待辦尚未完成');
       return false;
     }
@@ -3080,8 +3083,9 @@ export default function App() {
       alert('請先重新開啟整場會議，再重新開啟其中的待辦');
       return false;
     }
-    const actionLabel=transition==='complete'?'完成臨會/專題待辦':'重新開啟臨會/專題待辦';
-    if(!confirm(transition==='complete'?`確定將「${richTextToPlainText(initialTask.description)||'此待辦'}」標記完成？`:`確定重新開啟「${richTextToPlainText(initialTask.description)||'此待辦'}」？`))return false;
+    const actionLabel=repairingLifecycle?'同步臨會/專題待辦關聯狀態':transition==='complete'?'完成臨會/專題待辦':'重新開啟臨會/專題待辦';
+    const confirmation=repairingLifecycle?`確定同步「${richTextToPlainText(initialTask.description)||'此待辦'}」的父會議狀態？`:transition==='complete'?`確定將「${richTextToPlainText(initialTask.description)||'此待辦'}」標記完成？`:`確定重新開啟「${richTextToPlainText(initialTask.description)||'此待辦'}」？`;
+    if(!confirm(confirmation))return false;
     const expectedUpdatedAt=initialTask.updatedAt;
     const expectedMeetingUpdatedAt=initialMeeting.updatedAt;
     return runTaskMutationWithLockBundle([taskId],actionLabel,fresh=>{
@@ -3096,12 +3100,15 @@ export default function App() {
         const liveMeeting=liveTask?.sourceMeetingId?prev.meetings.find(meeting=>meeting.id===liveTask.sourceMeetingId):undefined;
         if(!liveTask||!liveMeeting||liveTask.updatedAt!==expectedUpdatedAt||!meetingTaskLinkIsValidForMutation(liveTask,prev.meetings)){failure='會議待辦已變更、重複或關聯失效';return prev;}
         if(liveMeeting.updatedAt!==expectedMeetingUpdatedAt){failure='父會議已由其他人修改，請重新整理後再試';return prev;}
-        if(usesPerVesselProgress(liveTask)){failure='分船待辦必須依各船進度完成';return prev;}
+        const liveCompletion=meetingDecisionCompletionSummary(liveMeeting,prev.tasks).items.find(item=>item.task?.id===taskId);
+        if(!liveCompletion){failure='會議待辦關聯重複或不明確';return prev;}
+        const liveRepairingLifecycle=liveCompletion?.lifecycleConflict===true;
+        if(usesPerVesselProgress(liveTask)&&!liveRepairingLifecycle){failure='分船待辦必須依各船進度完成';return prev;}
         const scopeIds=taskVesselIds(liveTask);
         const visibleIds=batchVisibleVesselIds(prev,liveUser);
         if(!scopeIds.length||scopeIds.some(id=>!visibleIds.has(id))){failure='目前身份不具備完整涉船範圍權限';return prev;}
         const isClosed=taskIsClosedForScope(liveTask,scopeIds);
-        if((transition==='complete'&&isClosed)||(transition==='reopen'&&!isClosed)){failure=transition==='complete'?'待辦已完成':'待辦已重新開啟';return prev;}
+        if(!liveRepairingLifecycle&&((transition==='complete'&&isClosed)||(transition==='reopen'&&!isClosed))){failure=transition==='complete'?'待辦已完成':'待辦已重新開啟';return prev;}
         if(transition==='reopen'&&liveMeeting.status==='已完成'){failure='請先重新開啟整場會議';return prev;}
         const at=nowIso();
         const closedDate=todayDate();
@@ -3110,21 +3117,25 @@ export default function App() {
         const meetingIndex=draft.meetings.findIndex(meeting=>meeting.id===liveMeeting.id);
         let updatedTask:TaskItem;
         let targetMeeting:TemporaryMeeting;
+        let repairedOnly=false;
         try{
           const transitioned=transitionLinkedMeetingDecision(liveMeeting,liveTask,transition,{actorId:liveUser.id,actorName:liveUser.name,at,closedDate});
           updatedTask=transitioned.task;
           targetMeeting=transitioned.meeting;
+          repairedOnly=transitioned.repairedOnly;
         }
         catch(error:any){failure=error.message||String(error);return prev;}
         draft.tasks[taskIndex]=updatedTask;
         draft.meetings[meetingIndex]=targetMeeting;
+        if(!meetingDecisionLifecycleIsConsistent(targetMeeting,draft.tasks,taskId)){failure='父會議與關聯待辦狀態同步未完成';return prev;}
         const vessels=taskVessels(updatedTask,draft.vessels);
         const noticeTask={...updatedTask,ownerUserIds:updatedTask.ownerUserIds.filter(id=>isEligibleTaskOwner(draft.settings.rolePermissions,draft.users.find(user=>user.id===id),vessels))};
         const notices=buildTaskNotificationsForVessels(draft.users,vessels,liveUser.id,noticeTask,'task_updated',liveUser.name,draft.settings.rolePermissions);
         draft.notifications=[...notices,...draft.notifications].slice(0,1000);
         applied=true;
-        const auditedTask=withAudit(draft,liveUser,transition==='complete'?'完成臨會/專題待辦':'重新開啟臨會/專題待辦','task',taskId,richTextToPlainText(updatedTask.description)||taskId);
-        return withAudit(auditedTask,liveUser,transition==='complete'?'同步完成會議決議待辦':'同步重新開啟會議決議待辦','meeting',targetMeeting.id,richTextToPlainText(updatedTask.description)||taskId);
+        const auditAction=repairedOnly?'修復臨會/專題待辦關聯狀態':transition==='complete'?'完成臨會/專題待辦':'重新開啟臨會/專題待辦';
+        const auditedTask=withAudit(draft,liveUser,auditAction,'task',taskId,richTextToPlainText(updatedTask.description)||taskId);
+        return withAudit(auditedTask,liveUser,repairedOnly?'同步父會議決議待辦狀態':transition==='complete'?'同步完成會議決議待辦':'同步重新開啟會議決議待辦','meeting',targetMeeting.id,richTextToPlainText(updatedTask.description)||taskId);
       }));
       if(!applied)alert(failure);
       return applied;

@@ -153,13 +153,7 @@ export const meetingTaskItems = (
   meeting: MeetingWithTaskItems,
   tasks: MeetingTaskProjection[] = [],
   meetingTaskCategories?: string[],
-): MeetingTaskItem[] => persistedMeetingTaskItems(meeting,tasks,meetingTaskCategories).map(item=>{
-  const matches=tasks.filter(task=>task.sourceMeetingId===meeting.id&&task.sourceMeetingItemId===item.id);
-  if(matches.length!==1)return item;
-  const task=matches[0] as TaskItem;
-  const lifecycle=meetingDecisionLifecycleFromTask(task);
-  return {...item,...lifecycle};
-});
+): MeetingTaskItem[] => persistedMeetingTaskItems(meeting,tasks,meetingTaskCategories);
 
 export type MeetingDecisionCompletionState = 'open' | 'closed' | 'missing' | 'duplicate' | 'invalid';
 
@@ -167,6 +161,7 @@ export interface MeetingDecisionCompletionItem {
   item: MeetingTaskItem;
   task?: TaskItem;
   state: MeetingDecisionCompletionState;
+  lifecycleConflict?: boolean;
   distributed: boolean;
   completedVesselCount: number;
   vesselCount: number;
@@ -243,6 +238,7 @@ export function meetingDecisionCompletionSummary(
         item,
         task,
         state:'invalid',
+        lifecycleConflict:true,
         distributed,
         completedVesselCount:0,
         vesselCount:vesselIds.length,
@@ -272,6 +268,19 @@ export function meetingDecisionCompletionSummary(
   };
 }
 
+export function meetingDecisionLifecycleIsConsistent(
+  meeting: MeetingWithTaskItems,
+  tasks: TaskItem[],
+  taskId: string,
+): boolean {
+  const task=tasks.find(item=>item.id===taskId);
+  if(!task)return false;
+  const completion=meetingDecisionCompletionSummary(meeting,tasks).items.find(item=>item.task?.id===taskId);
+  if(!completion)return false;
+  const expectedState=meetingDecisionLifecycleFromTask(task).isClosed?'closed':'open';
+  return completion.state===expectedState&&completion.lifecycleConflict!==true;
+}
+
 export type MeetingDecisionTaskTransition = 'complete' | 'reopen';
 
 export interface MeetingDecisionTaskTransitionContext {
@@ -294,8 +303,10 @@ export function synchronizeLinkedMeetingDecisionLifecycle(
   const nextItem=matches[0];
   nextItem.isClosed=lifecycle.isClosed;
   if(lifecycle.isClosed){
-    nextItem.closedDate=lifecycle.closedDate||context.closedDate;
-    nextItem.closedBy=lifecycle.closedBy||context.actorId;
+    if(lifecycle.closedDate)nextItem.closedDate=lifecycle.closedDate;
+    else delete nextItem.closedDate;
+    if(lifecycle.closedBy)nextItem.closedBy=lifecycle.closedBy;
+    else delete nextItem.closedBy;
   }else{
     delete nextItem.closedDate;
     delete nextItem.closedBy;
@@ -351,10 +362,25 @@ export function transitionLinkedMeetingDecision(
   task: TaskItem,
   transition: MeetingDecisionTaskTransition,
   context: MeetingDecisionTaskTransitionContext,
-): { meeting: TemporaryMeeting; task: TaskItem } {
+): { meeting: TemporaryMeeting; task: TaskItem; repairedOnly: boolean } {
+  const verifiedResult=(nextMeeting:TemporaryMeeting,nextTask:TaskItem,repairedOnly:boolean)=>{
+    if(!meetingDecisionLifecycleIsConsistent(nextMeeting,[nextTask],nextTask.id))throw new Error('父會議與關聯待辦狀態同步未完成');
+    return {meeting:nextMeeting,task:nextTask,repairedOnly};
+  };
+  const lifecycle=meetingDecisionLifecycleFromTask(task);
+  const parentItem=meeting.taskItems.find(item=>item.id===task.sourceMeetingItemId);
+  const parentMatches=Boolean(parentItem
+    &&parentItem.isClosed===lifecycle.isClosed
+    &&String(parentItem.closedDate||'')===String(lifecycle.closedDate||'')
+    &&String(parentItem.closedBy||'')===String(lifecycle.closedBy||''));
+  const desiredClosed=transition==='complete';
+  if(lifecycle.isClosed===desiredClosed&&!parentMatches){
+    const nextTask=structuredClone(task);
+    return verifiedResult(synchronizeLinkedMeetingDecisionLifecycle(meeting,nextTask,context),nextTask,true);
+  }
   const nextTask = transitionMeetingDecisionTask(task, transition, context);
   const nextMeeting=synchronizeLinkedMeetingDecisionLifecycle(meeting,nextTask,context);
-  return { meeting: nextMeeting, task: nextTask };
+  return verifiedResult(nextMeeting,nextTask,false);
 }
 
 export const meetingTaskDescription = (

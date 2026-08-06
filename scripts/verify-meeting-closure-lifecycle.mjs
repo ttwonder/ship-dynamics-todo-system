@@ -80,6 +80,7 @@ try {
   );
   assert.equal(divergentLifecycle.items[0].state, 'invalid');
   assert.equal(divergentLifecycle.allCompleted, false, '父item與有效Task完成狀態分歧時不得以Task投影掩蓋並誤結案');
+  assert.equal(workflow.meetingTaskItems({ ...meeting, taskItems: [{ ...meeting.taskItems[0], isClosed: false }] },[task({ id: 'task-divergent', itemId: 'item-open', isClosed: true })])[0].isClosed,false,'一般UI與PDF不得由Task反向投影覆蓋父item生命週期');
   const validTypeScope = workflow.meetingDecisionCompletionSummary(
     { ...meeting, vesselScopeMode: 'types', vesselTypeScopes: ['Bulk'], taskItems: [{ ...meeting.taskItems[0], isClosed: true }] },
     [{ ...task({ id: 'task-valid-type', itemId: 'item-open', isClosed: true }), vesselScopeMode: 'types', vesselTypeScopes: ['Bulk'] }],
@@ -280,9 +281,8 @@ try {
   const normalizedHistorical = normalizeAppData({ ...createInitialData(), meetings: [historicalMeeting] });
   assert.equal(normalizedHistorical.meetings[0].taskItems[0].isClosed, false, '歷史資料缺少結案欄位時需安全預設未完成');
   const normalizedHistoricalLinked = normalizeAppData({ ...createInitialData(), meetings: [historicalMeeting], tasks: [linkedCompleted.task] });
-  assert.equal(normalizedHistoricalLinked.meetings[0].taskItems[0].isClosed, true, '歷史item缺欄位但有效linked Task已完成時需一次性回填');
-  assert.equal(normalizedHistoricalLinked.meetings[0].taskItems[0].closedDate, '2026-08-06');
-  assert.equal(normalizedHistoricalLinked.meetings[0].taskItems[0].closedBy, 'owner-1');
+  assert.equal(normalizedHistoricalLinked.meetings[0].taskItems[0].isClosed, false, '歷史item缺欄位即使linked Task已完成仍需預設未完成');
+  assert.equal(workflow.meetingDecisionCompletionSummary(normalizedHistoricalLinked.meetings[0],normalizedHistoricalLinked.tasks).items[0].state,'invalid','歷史缺欄位與已完成Task的差異需明示為關聯異常');
   const explicitOpenMeeting=structuredClone(linkedCompleted.meeting);
   explicitOpenMeeting.taskItems[0].isClosed=false;
   delete explicitOpenMeeting.taskItems[0].closedDate;
@@ -290,6 +290,27 @@ try {
   const normalizedExplicitMismatch=normalizeAppData({...createInitialData(),meetings:[explicitOpenMeeting],tasks:[linkedCompleted.task]});
   assert.equal(normalizedExplicitMismatch.meetings[0].taskItems[0].isClosed,false,'明確保存的未完成狀態不得被normalize靜默覆寫');
   assert.equal(workflow.meetingDecisionCompletionSummary(normalizedExplicitMismatch.meetings[0],normalizedExplicitMismatch.tasks).items[0].state,'invalid');
+  const repairedLifecycle=workflow.transitionLinkedMeetingDecision(explicitOpenMeeting,linkedCompleted.task,'complete',{actorId:'owner-1',actorName:'Owner',at:'2026-08-06T05:00:00.000Z',closedDate:'2026-08-06'});
+  assert.equal(repairedLifecycle.task.isClosed,true,'明確修復父item時不得重做或反轉已完成Task');
+  assert.equal(repairedLifecycle.meeting.taskItems[0].isClosed,true,'明確授權修復需把父item同步為Task狀態');
+  assert.equal(repairedLifecycle.repairedOnly,true);
+  const closedTaskWithoutMetadata=structuredClone(linkedCompleted.task);
+  delete closedTaskWithoutMetadata.closedDate;
+  delete closedTaskWithoutMetadata.closedBy;
+  const repairedWithoutInventedMetadata=workflow.transitionLinkedMeetingDecision(explicitOpenMeeting,closedTaskWithoutMetadata,'complete',{actorId:'owner-1',actorName:'Owner',at:'2026-08-06T05:02:00.000Z',closedDate:'2026-08-06'});
+  const repairedWithoutMetadataSummary=workflow.meetingDecisionCompletionSummary(repairedWithoutInventedMetadata.meeting,[repairedWithoutInventedMetadata.task]);
+  assert.equal(repairedWithoutInventedMetadata.task.closedDate,undefined,'修復不得捏造歷史Task完成日期');
+  assert.equal(repairedWithoutInventedMetadata.meeting.taskItems[0].closedDate,undefined,'父item需精確鏡像Task現有metadata');
+  assert.equal(repairedWithoutMetadataSummary.items[0].state,'closed','缺少歷史metadata但父子一致時修復後需解除invalid');
+  assert.equal(repairedWithoutMetadataSummary.hasLinkConflict,false);
+  assert.equal(repairedWithoutMetadataSummary.allCompleted,true,'修復成功後摘要後置條件必須成立');
+  assert.equal(typeof workflow.meetingDecisionLifecycleIsConsistent,'function','父子durable mutation需共用明確後置條件');
+  assert.equal(workflow.meetingDecisionLifecycleIsConsistent(repairedWithoutInventedMetadata.meeting,[repairedWithoutInventedMetadata.task],repairedWithoutInventedMetadata.task.id),true);
+  assert.equal(workflow.meetingDecisionLifecycleIsConsistent(repairedWithoutInventedMetadata.meeting,[repairedWithoutInventedMetadata.task,{...repairedWithoutInventedMetadata.task,id:'duplicate-linked-task'}],repairedWithoutInventedMetadata.task.id),false,'同一父item有重複linked Tasks時不得通過後置條件');
+  const repairedReopenLifecycle=workflow.transitionLinkedMeetingDecision(linkedCompleted.meeting,linkedReopened.task,'reopen',{actorId:'owner-1',actorName:'Owner',at:'2026-08-06T05:05:00.000Z',closedDate:'2026-08-06'});
+  assert.equal(repairedReopenLifecycle.task.isClosed,false);
+  assert.equal(repairedReopenLifecycle.meeting.taskItems[0].isClosed,false,'父item已完成但Task未完成時需明確同步為未完成');
+  assert.equal(repairedReopenLifecycle.repairedOnly,true);
 
   assert.throws(
     () => workflow.transitionMeetingDecisionTask(
@@ -312,6 +333,7 @@ try {
 
   const appSource = fs.readFileSync('src/App.tsx', 'utf8');
   const meetingSource = fs.readFileSync('src/TemporaryMeetings.tsx', 'utf8');
+  const workflowSource = fs.readFileSync('src/meetingTaskWorkflow.ts', 'utf8');
   const normalizeSource = fs.readFileSync('src/normalize.ts', 'utf8');
   assert.match(appSource, /const transitionMeetingTaskFromMeetingPage = async/, 'App需提供會議來源Task的專用完成／重新開啟入口');
   const appTransition = appSource.slice(
@@ -323,6 +345,10 @@ try {
   assert.ok(appTransition.includes('canEditTemporaryMeetings(prev.settings.rolePermissions,liveUser)'), '單項完成需在fresh snapshot重驗管理會議權限');
   assert.ok(appTransition.includes('liveMeeting.updatedAt!==expectedMeetingUpdatedAt'), '單項完成需同時CAS父會議版本，不能只鎖Task後覆寫較新的會議item');
   assert.ok(appTransition.includes('draft.meetings[meetingIndex]=targetMeeting'), '單項完成需把父子領域轉換結果放入同一durable snapshot');
+  assert.ok(appTransition.includes('meetingDecisionLifecycleIsConsistent(targetMeeting,draft.tasks,taskId)'), 'durable snapshot寫入前需重驗父子生命週期後置條件');
+  assert.ok(appTransition.includes('if(!initialCompletion)')&&appTransition.includes('if(!liveCompletion)'), '重複linked Tasks等無唯一completion的情況需在initial與fresh snapshot提前拒絕');
+  const linkedTransitionSource=workflowSource.slice(workflowSource.indexOf('export function transitionLinkedMeetingDecision'),workflowSource.indexOf('export const meetingTaskDescription'));
+  assert.ok(linkedTransitionSource.includes('meetingDecisionLifecycleIsConsistent'), '純domain父子轉換本身也需fail closed驗證後置條件');
   assert.ok(appSource.includes('會議來源待辦的完成或重新開啟請至臨會/專題頁操作'), '一般Task保存不得繞過會議生命週期入口');
   assert.ok(appSource.includes('會議來源待辦請至臨會/專題頁逐筆完成，不得由批量完成繞過父會議'), '批量完成不得繞過父會議生命週期');
   assert.ok(appSource.includes('synchronizeLinkedMeetingDecisionLifecycle(liveMeeting,saved')&&appSource.includes('meetingLifecycleChanged&&(!liveMeeting||!canEditTemporaryMeetings'), '分船整體完成狀態翻轉需fresh重驗管理會議權限並同步父item');
@@ -331,6 +357,8 @@ try {
   for (const label of ['完成此待辦', '重新開啟此待辦', '結案會議', '重新開啟會議', '待辦進度']) {
     assert.ok(meetingSource.includes(label), `會議頁缺少「${label}」入口或狀態`);
   }
+  assert.ok(meetingSource.includes('同步關聯狀態'),'父子生命週期分歧時UI需提供明確修復操作，不能靜默投影');
+  assert.ok(meetingSource.includes('completion?.task?.id===task.id'),'只有唯一綁定目前Task的completion才可顯示生命週期操作');
   assert.ok(meetingSource.includes('meetingDecisionCompletionSummary'), '會議頁與保存邊界需共用領域完成摘要');
   assert.ok(meetingSource.includes('if(!editable||!canCloseTasks)'), '會議頁的決議待辦生命週期按鈕需同時要求管理會議與結案權限');
   assert.match(meetingSource, /effectiveDraft\.status==='已完成'&&![a-zA-Z]+\.allCompleted/, '保存邊界需阻止仍有未完成或關聯衝突的會議結案');
