@@ -25,6 +25,7 @@ import { normalizeRolePermissions } from './permissions';
 import { isMeetingTaskSource, normalizeConfiguredMeetingTaskCategories, normalizeConfiguredTaskCategories, normalizeMeetingTaskCategoryList, normalizeTaskCategoryList, sanitizeEditableMeetingTaskCategories, sanitizeEditableTaskCategories } from './taskCategories';
 import { normalizeVesselDelegateManagers } from './vesselDelegation';
 import { canonicalizeMeetingTaskItemIds } from './meetingTaskItemIds';
+import { meetingDecisionLifecycleFromTask, meetingTaskLinkIsValidForMutation } from './meetingTaskWorkflow';
 import { DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES, isValidInternalControlDate, sanitizeEquipmentFailureSubcategories, taskToInternalControlCase, validateInternalControlCase } from './internalControlWorkflow';
 import { taipeiDateKey } from './taipeiTime';
 
@@ -227,15 +228,21 @@ function normalizeMeetings(value: unknown, timestamp: string, meetingTaskCategor
   return objects(value).map(item => {
     const id = text(item.id);
     const taskDescription = text(item.taskDescription);
-    const rawTaskItems = objects(item.taskItems).map((taskItem, index) => ({
-      id: text(taskItem.id, `${id}-task-${index + 1}`),
-      description: text(taskItem.description).trim(),
-      distributeToVessels: bool(taskItem.distributeToVessels),
-      categories: normalizeMeetingTaskCategoryList(taskItem.categories ?? taskItem.category, meetingTaskCategories),
-    }));
+    const rawTaskItems = objects(item.taskItems).map((taskItem, index) => {
+      const isClosed=bool(taskItem.isClosed);
+      return {
+        id: text(taskItem.id, `${id}-task-${index + 1}`),
+        description: text(taskItem.description).trim(),
+        distributeToVessels: bool(taskItem.distributeToVessels),
+        categories: normalizeMeetingTaskCategoryList(taskItem.categories ?? taskItem.category, meetingTaskCategories),
+        isClosed,
+        closedDate:isClosed?(normalizeDateText(taskItem.closedDate)||undefined):undefined,
+        closedBy:isClosed?(text(taskItem.closedBy)||undefined):undefined,
+      };
+    });
     const taskItems = canonicalizeMeetingTaskItemIds(rawTaskItems, `${id}-task`).filter(taskItem=>taskItem.description);
     if (!taskItems.length && Object.prototype.hasOwnProperty.call(item, 'taskDescription') && taskDescription.trim()) {
-      taskItems.push({ id: `${id}-task-1`, description: taskDescription.trim(), categories: normalizeMeetingTaskCategoryList([], meetingTaskCategories), distributeToVessels: false });
+      taskItems.push({ id: `${id}-task-1`, description: taskDescription.trim(), categories: normalizeMeetingTaskCategoryList([], meetingTaskCategories), distributeToVessels: false, isClosed:false, closedDate:undefined, closedBy:undefined });
     }
     const participantUserIds = strings(item.participantUserIds);
     const responsibleUserIds = strings(item.responsibleUserIds);
@@ -468,6 +475,34 @@ export function normalizeAppData(value: unknown): AppData | null {
     auditLogs: normalizeAuditLogs(raw.auditLogs),
     notifications: normalizeNotifications(raw.notifications),
   };
+
+  const rawMeetingsById=new Map(objects(raw.meetings).map(item=>[text(item.id),item]));
+  normalized.tasks.forEach(task=>{
+    if(!task.sourceMeetingId||!task.sourceMeetingItemId)return;
+    const meeting=normalized.meetings.find(item=>item.id===task.sourceMeetingId);
+    if(!meeting||!meetingTaskLinkIsValidForMutation(task,[meeting]))return;
+    const itemIndex=meeting.taskItems.findIndex(item=>item.id===task.sourceMeetingItemId);
+    if(itemIndex<0)return;
+    const rawMeeting=rawMeetingsById.get(meeting.id);
+    const rawItems=objects(rawMeeting?.taskItems);
+    const rawItem=rawItems.find(item=>text(item.id)===task.sourceMeetingItemId)||rawItems[itemIndex];
+    const hadLifecycleFields=Boolean(rawItem&&(
+      Object.prototype.hasOwnProperty.call(rawItem,'isClosed')
+      ||Object.prototype.hasOwnProperty.call(rawItem,'closedDate')
+      ||Object.prototype.hasOwnProperty.call(rawItem,'closedBy')
+    ));
+    if(hadLifecycleFields)return;
+    const lifecycle=meetingDecisionLifecycleFromTask(task);
+    const target=meeting.taskItems[itemIndex];
+    target.isClosed=lifecycle.isClosed;
+    if(lifecycle.isClosed){
+      target.closedDate=lifecycle.closedDate;
+      target.closedBy=lifecycle.closedBy;
+    }else{
+      delete target.closedDate;
+      delete target.closedBy;
+    }
+  });
 
   // Backfill a single canonical case for every ordinary task already marked as internal control.
   // Existing custom report-source/equipment metadata is preserved while shared fields follow the task.

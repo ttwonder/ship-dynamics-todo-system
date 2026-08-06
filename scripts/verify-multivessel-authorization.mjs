@@ -7,6 +7,10 @@ const modal = fs.readFileSync(new URL('../src/EditModals.tsx', import.meta.url),
 const work = fs.readFileSync(new URL('../src/WorkCenter.tsx', import.meta.url), 'utf8');
 const meetings = fs.readFileSync(new URL('../src/TemporaryMeetings.tsx', import.meta.url), 'utf8');
 const analysis = fs.readFileSync(new URL('../src/DataAnalysis.tsx', import.meta.url), 'utf8');
+const batchCompleteSource = app.slice(
+  app.indexOf('const batchCompleteTasks = async'),
+  app.indexOf('const transitionMeetingTaskFromMeetingPage = async'),
+);
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
@@ -47,11 +51,13 @@ try {
   assert.ok(!app.includes('function Stats('),'未使用且仍依賴 raw isClosed 的舊 Stats 元件應移除，避免日後誤啟用');
   assert.ok(app.includes('meetingTaskLinkIsValidForMutation(previous,prev.meetings)')&&app.includes('會議來源關聯缺失、失效或與父會議狀態不一致'),'既有會議語意或關聯待辦保存前需以共用 guard 驗證父會議權威狀態，孤立或不一致語意均需拒絕');
   assert.ok(app.includes('JSON.stringify(candidate.vesselProgress||[])!==JSON.stringify(previous.vesselProgress||[])')&&app.includes("hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')"),'保存端需保護分船結案歷史並重新驗證結案／重開權限');
-  assert.ok(app.includes('expectedUpdatedAtById')&&app.includes('runTaskMutationWithLockBundle(uniqueIds')&&app.includes('prev.revision!==fresh.revision||liveSelection.tasks.some(task=>task.updatedAt!==expectedUpdatedAtById.get(task.id))'),'批量完成需在完整關聯鎖後以 fresh revision 及逐筆 updatedAt CAS');
+  assert.ok(batchCompleteSource.includes('expectedUpdatedAtById')&&batchCompleteSource.includes('runTaskMutationWithLockBundle(uniqueIds'),'批量完成需在完整關聯鎖內執行');
+  assert.match(batchCompleteSource,/prev\.revision!==fresh\.revision/,'批量完成需CAS fresh revision');
+  assert.match(batchCompleteSource,/task\.updatedAt!==expectedUpdatedAtById\.get\(task\.id\)/,'批量完成需逐筆CAS updatedAt');
   assert.ok(app.includes('vessels.length!==taskVesselIds(liveTask).length'),'單筆刪除需拒絕含缺失船舶的部分解析範圍');
   assert.match(app, /previousVessels[\s\S]*必須同時具備原涉船與新涉船範圍權限/, '单笔事项更新需同时验证原范围与新范围');
   assert.match(app, /savedScopeVessels[\s\S]*saved\.ownerUserIds\.some[\s\S]*isEligibleTaskOwner/, '保存端需按最终实际涉船范围重新验证全部负责人资格');
-  assert.match(app, /completedTasks\.flatMap[\s\S]*ownerUserIds:task\.ownerUserIds\.filter[\s\S]*'task_updated'/, '批量完成通知需过滤无完整涉船权限的负责人');
+  assert.match(batchCompleteSource, /liveSelectedTasks\.flatMap[\s\S]*ownerUserIds:task\.ownerUserIds\.filter[\s\S]*'task_updated'/, '批量完成通知需过滤無完整涉船權限的負責人');
   assert.match(app, /liveSelection\.tasks\.flatMap[\s\S]*ownerUserIds:task\.ownerUserIds\.filter[\s\S]*internalControlDeletion\?'internal_control_cancelled':'task_deleted'/, '批量删除通知需按最终取消范围过滤负责人并保留专用通知');
   assert.match(modal, /visibleVessels/, '事项编辑器只能使用授权船舶资料显示范围');
   assert.ok(!work.includes('taskVesselLabel(task,data.vessels)')&&!work.includes('taskVesselLabel(task, data.vessels)'), '我的待办不得用全量船舶资料显示范围');

@@ -100,6 +100,27 @@ try{
   assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(remote,meetingOps,operator.id),auth.CloudPatchAuthorizationError,'operator without manageMeetings cannot create meetings');
   assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(remote,meetingOps,owner.id));
 
+  const meetingLifecycleBase=structuredClone(remote);
+  meetingLifecycleBase.settings.rolePermissions.operator={...meetingLifecycleBase.settings.rolePermissions.operator,manageMeetings:true,closeTasks:false};
+  meetingLifecycleBase.meetings.push({id:'meeting-lifecycle-auth',subject:'未指定船舶會議',vessels:[],taskItems:[{id:'item-1',description:'決議待辦',categories:[],isClosed:false}],updatedAt:'2026-08-06T01:00:00.000Z'});
+  const ordinaryMeetingEdit=structuredClone(meetingLifecycleBase);
+  ordinaryMeetingEdit.meetings.find(item=>item.id==='meeting-lifecycle-auth').subject='一般內容修改';
+  assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(meetingLifecycleBase,patch.buildCloudBlockPatch(meetingLifecycleBase,ordinaryMeetingEdit),operator.id),'ordinary meeting edits still require manageMeetings only');
+  const meetingLifecycleNext=structuredClone(meetingLifecycleBase);
+  const lifecycleItem=meetingLifecycleNext.meetings.find(item=>item.id==='meeting-lifecycle-auth').taskItems[0];
+  lifecycleItem.isClosed=true;
+  lifecycleItem.closedDate='2026-08-06';
+  lifecycleItem.closedBy=operator.id;
+  const meetingLifecycleOps=patch.buildCloudBlockPatch(meetingLifecycleBase,meetingLifecycleNext);
+  assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(meetingLifecycleBase,meetingLifecycleOps,operator.id),auth.CloudPatchAuthorizationError,'meeting item lifecycle transitions require closeTasks in addition to manageMeetings');
+  const removedClosedMeetingItem=structuredClone(meetingLifecycleNext);
+  removedClosedMeetingItem.meetings.find(item=>item.id==='meeting-lifecycle-auth').taskItems=[];
+  const removedClosedMeetingItemOps=patch.buildCloudBlockPatch(meetingLifecycleNext,removedClosedMeetingItem);
+  assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(meetingLifecycleNext,removedClosedMeetingItemOps,operator.id),auth.CloudPatchAuthorizationError,'removing a closed meeting item must not bypass closeTasks authorization');
+  const meetingLifecycleAuthorized=structuredClone(meetingLifecycleBase);
+  meetingLifecycleAuthorized.settings.rolePermissions.operator.closeTasks=true;
+  assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(meetingLifecycleAuthorized,meetingLifecycleOps,operator.id),'meeting managers with closeTasks may persist an unlinked item transition');
+
   const vesselUser=structuredClone(remote.users.find(user=>user.id!==owner.id));
   vesselUser.id='vessel-user';
   vesselUser.role='vessel';

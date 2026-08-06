@@ -92,6 +92,27 @@ const VESSEL_AUTHORIZATION_FIELDS=new Set(['isActive','assignedUserIds','delegat
 const STATUS_FIELDS=new Set(['status','statusLogs','isClosed','closedDate','closedBy','reopenedAt','reopenedBy']);
 const SENSITIVE_SETTING_FIELDS=new Set(['sitePasswordHash','rolePermissions','nonOwnerPasswordResetVersion']);
 
+const meetingTaskLifecycleChanged=(expected:Record<string,unknown>|null,value:Record<string,unknown>|null)=>{
+  if(!value)return false;
+  const items=(entity:Record<string,unknown>|null)=>new Map((Array.isArray(entity?.taskItems)?entity.taskItems:[]).flatMap(raw=>{
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return[];
+    const item=raw as Record<string,unknown>;
+    const id=String(item.id||'');
+    return id?[[id,{isClosed:item.isClosed===true,closedDate:String(item.closedDate||''),closedBy:String(item.closedBy||'')}]]:[];
+  }));
+  const before=items(expected);
+  const after=items(value);
+  for(const [id,previous] of before){
+    if(!after.has(id)&&(previous.isClosed||previous.closedDate||previous.closedBy))return true;
+  }
+  for(const [id,next] of after){
+    const previous=before.get(id);
+    if(!previous){if(next.isClosed||next.closedDate||next.closedBy)return true;continue;}
+    if(!equal(previous,next))return true;
+  }
+  return false;
+};
+
 export function vesselPatchRequiresCollaborationLock(expected:Record<string,unknown>|null,value:Record<string,unknown>|null){
   if(!expected)return false;
   if(!value)return true;
@@ -215,6 +236,7 @@ function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extra
   }
   if(collection==='meetings'){
     permission(data,actor,'manageMeetings');
+    if(meetingTaskLifecycleChanged(expected,value))permission(data,actor,'closeTasks');
     assertEntityScope(data,actor,collection,expected,value);
     return;
   }

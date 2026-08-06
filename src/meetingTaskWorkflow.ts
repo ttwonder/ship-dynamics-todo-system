@@ -3,6 +3,7 @@ import { uid } from './runtimeUtils';
 import { reconcileTaskVesselScope, taskIsClosedForScope } from './taskVesselProgress';
 import { normalizeMeetingTaskCategoryList } from './taskCategories';
 import { canonicalizeMeetingTaskItemIds } from './meetingTaskItemIds';
+import { taipeiDateKey } from './taipeiTime';
 
 interface ReconcileMeetingTasksInput {
   tasks: TaskItem[];
@@ -53,7 +54,19 @@ export interface MeetingTaskNotificationEvent {
   kind: MeetingTaskNotificationKind;
 }
 
-type MeetingWithTaskItems = { id: string; taskDescription?: unknown; taskItems?: unknown };
+type MeetingWithTaskItems = {
+  id: string;
+  taskDescription?: unknown;
+  taskItems?: unknown;
+  vessels?: unknown;
+  vesselScopeMode?: MeetingVesselScopeMode;
+  vesselTypeScopes?: unknown;
+  isInternalControl?: unknown;
+};
+
+type MeetingTaskProjection = Pick<TaskItem,
+  'sourceMeetingId' | 'sourceMeetingItemId' | 'description' | 'categories' | 'distributeToVessels'
+> & Partial<Pick<TaskItem, 'vesselId' | 'vesselIds' | 'vesselProgress' | 'isClosed' | 'closedDate' | 'closedBy'>>;
 
 type MeetingTaskMutationSource = Pick<TaskItem,
   'sourceType' | 'attentionDimension' | 'sourceMeetingId' | 'sourceMeetingItemId' |
@@ -93,21 +106,41 @@ export const canonicalMeetingTaskItems = (items: MeetingTaskItem[], meetingId: s
     description:item.description.trim(),
     categories:normalizeMeetingTaskCategoryList(item.categories,meetingTaskCategories),
     distributeToVessels:item.distributeToVessels===true,
+    isClosed:item.isClosed===true,
+    closedDate:item.isClosed===true&&item.closedDate?item.closedDate:undefined,
+    closedBy:item.isClosed===true&&item.closedBy?item.closedBy:undefined,
   })),`${meetingId}-task`).filter(item=>item.id&&item.description);
 
-export const meetingTaskItems = (
+export function meetingDecisionLifecycleFromTask(task: TaskItem) {
+  const vesselIds=Array.from(new Set((task.vesselIds?.length?task.vesselIds:[task.vesselId]).filter(Boolean)));
+  const isClosed=taskIsClosedForScope(task,vesselIds);
+  if(!isClosed)return {isClosed:false,closedDate:undefined,closedBy:undefined};
+  if(task.distributeToVessels===true&&vesselIds.length>1){
+    const closedProgress=vesselIds
+      .map(vesselId=>task.vesselProgress?.find(progress=>progress.vesselId===vesselId))
+      .filter((progress):progress is NonNullable<typeof progress>=>Boolean(progress?.isClosed))
+      .sort((left,right)=>(left.updatedAt||'').localeCompare(right.updatedAt||''));
+    const finalProgress=closedProgress[closedProgress.length-1];
+    return {isClosed:true,closedDate:finalProgress?.closedDate||task.closedDate,closedBy:finalProgress?.closedBy||task.closedBy};
+  }
+  return {isClosed:true,closedDate:task.closedDate,closedBy:task.closedBy};
+}
+
+const persistedMeetingTaskItems = (
   meeting: MeetingWithTaskItems,
-  tasks: Pick<TaskItem, 'sourceMeetingId' | 'sourceMeetingItemId' | 'description' | 'categories' | 'distributeToVessels'>[] = [],
+  tasks: MeetingTaskProjection[] = [],
   meetingTaskCategories?: string[],
 ): MeetingTaskItem[] => {
   if (Object.prototype.hasOwnProperty.call(meeting, 'taskItems')) {
     if (!Array.isArray(meeting.taskItems)) return [];
-    return canonicalMeetingTaskItems(meeting.taskItems.flatMap((value, index) => {
+    const savedItems=canonicalMeetingTaskItems(meeting.taskItems.flatMap((value, index) => {
       if (!value || typeof value !== 'object') return [];
-      const item = value as { id?: unknown; description?: unknown; categories?: unknown; distributeToVessels?: unknown };
+      const item = value as { id?: unknown; description?: unknown; categories?: unknown; distributeToVessels?: unknown; isClosed?: unknown; closedDate?: unknown; closedBy?: unknown };
       const id = typeof item.id === 'string' && item.id ? item.id : `${meeting.id}-task-${index + 1}`;
-      return [{ id, description: typeof item.description === 'string' ? item.description : '', categories: normalizeMeetingTaskCategoryList(item.categories, meetingTaskCategories), distributeToVessels: item.distributeToVessels === true }];
+      const isClosed=item.isClosed===true;
+      return [{ id, description: typeof item.description === 'string' ? item.description : '', categories: normalizeMeetingTaskCategoryList(item.categories, meetingTaskCategories), distributeToVessels: item.distributeToVessels === true, isClosed, closedDate:isClosed&&typeof item.closedDate==='string'?item.closedDate:undefined, closedBy:isClosed&&typeof item.closedBy==='string'?item.closedBy:undefined }];
     }), meeting.id, meetingTaskCategories);
+    return savedItems;
   }
   const hasSavedDescription = Object.prototype.hasOwnProperty.call(meeting, 'taskDescription');
   const savedDescription = typeof meeting.taskDescription === 'string' ? meeting.taskDescription : '';
@@ -115,6 +148,214 @@ export const meetingTaskItems = (
   const linkedTask = tasks.find(task => task.sourceMeetingId === meeting.id && task.description.trim());
   return linkedTask ? [{ id: linkedTask.sourceMeetingItemId || `${meeting.id}-task-1`, description: linkedTask.description, categories: normalizeMeetingTaskCategoryList(linkedTask.categories, meetingTaskCategories), distributeToVessels: linkedTask.distributeToVessels === true }] : [];
 };
+
+export const meetingTaskItems = (
+  meeting: MeetingWithTaskItems,
+  tasks: MeetingTaskProjection[] = [],
+  meetingTaskCategories?: string[],
+): MeetingTaskItem[] => persistedMeetingTaskItems(meeting,tasks,meetingTaskCategories).map(item=>{
+  const matches=tasks.filter(task=>task.sourceMeetingId===meeting.id&&task.sourceMeetingItemId===item.id);
+  if(matches.length!==1)return item;
+  const task=matches[0] as TaskItem;
+  const lifecycle=meetingDecisionLifecycleFromTask(task);
+  return {...item,...lifecycle};
+});
+
+export type MeetingDecisionCompletionState = 'open' | 'closed' | 'missing' | 'duplicate' | 'invalid';
+
+export interface MeetingDecisionCompletionItem {
+  item: MeetingTaskItem;
+  task?: TaskItem;
+  state: MeetingDecisionCompletionState;
+  distributed: boolean;
+  completedVesselCount: number;
+  vesselCount: number;
+}
+
+export interface MeetingDecisionCompletionSummary {
+  items: MeetingDecisionCompletionItem[];
+  totalCount: number;
+  completedCount: number;
+  hasLinkConflict: boolean;
+  orphanTaskIds: string[];
+  allCompleted: boolean;
+}
+
+export function meetingDecisionCompletionSummary(
+  meeting: MeetingWithTaskItems,
+  tasks: TaskItem[],
+): MeetingDecisionCompletionSummary {
+  const items = persistedMeetingTaskItems(meeting, tasks);
+  const meetingForLinkValidation = {
+    id: meeting.id,
+    vessels: Array.isArray(meeting.vessels) ? meeting.vessels.filter((value): value is string => typeof value === 'string' && Boolean(value)) : [],
+    vesselScopeMode: meeting.vesselScopeMode || 'vessels',
+    vesselTypeScopes: Array.isArray(meeting.vesselTypeScopes) ? meeting.vesselTypeScopes.filter((value): value is string => typeof value === 'string' && Boolean(value)) : [],
+    isInternalControl: meeting.isInternalControl === true,
+    taskItems: items,
+  };
+  const hasNoVesselScope=meetingForLinkValidation.vessels.length===0;
+  const itemIds = new Set(items.map(item => item.id));
+  const linkedTasks = tasks.filter(task => task.sourceMeetingId === meeting.id);
+  const orphanTaskIds = linkedTasks
+    .filter(task => !task.sourceMeetingItemId || !itemIds.has(task.sourceMeetingItemId))
+    .map(task => task.id);
+  const completionItems = items.map(item => {
+    const matches = linkedTasks.filter(task => task.sourceMeetingItemId === item.id);
+    if(matches.length===0&&hasNoVesselScope){
+      return {
+        item,
+        state:item.isClosed===true?'closed':'open',
+        distributed:false,
+        completedVesselCount:0,
+        vesselCount:0,
+      } satisfies MeetingDecisionCompletionItem;
+    }
+    if (matches.length !== 1) {
+      return {
+        item,
+        state: matches.length ? 'duplicate' : 'missing',
+        distributed: item.distributeToVessels === true,
+        completedVesselCount: 0,
+        vesselCount: 0,
+      } satisfies MeetingDecisionCompletionItem;
+    }
+    const task = matches[0];
+    const vesselIds = Array.from(new Set((task.vesselIds?.length ? task.vesselIds : [task.vesselId]).filter(Boolean)));
+    const distributed = task.distributeToVessels === true && vesselIds.length > 1;
+    if(hasNoVesselScope||!meetingTaskLinkIsValidForMutation(task,[meetingForLinkValidation])){
+      return {
+        item,
+        task,
+        state:'invalid',
+        distributed,
+        completedVesselCount:0,
+        vesselCount:vesselIds.length,
+      } satisfies MeetingDecisionCompletionItem;
+    }
+    const lifecycle=meetingDecisionLifecycleFromTask(task);
+    const closed=lifecycle.isClosed;
+    const lifecycleMatches=item.isClosed===closed
+      &&String(item.closedDate||'')===String(lifecycle.closedDate||'')
+      &&String(item.closedBy||'')===String(lifecycle.closedBy||'');
+    if(!lifecycleMatches){
+      return {
+        item,
+        task,
+        state:'invalid',
+        distributed,
+        completedVesselCount:0,
+        vesselCount:vesselIds.length,
+      } satisfies MeetingDecisionCompletionItem;
+    }
+    const completedVesselCount = distributed
+      ? vesselIds.filter(vesselId => task.vesselProgress?.find(progress => progress.vesselId === vesselId)?.isClosed === true).length
+      : (closed ? vesselIds.length : 0);
+    return {
+      item,
+      task,
+      state: closed ? 'closed' : 'open',
+      distributed,
+      completedVesselCount,
+      vesselCount: vesselIds.length,
+    } satisfies MeetingDecisionCompletionItem;
+  });
+  const hasLinkConflict = orphanTaskIds.length > 0 || completionItems.some(item => item.state === 'missing' || item.state === 'duplicate' || item.state === 'invalid');
+  const completedCount = completionItems.filter(item => item.state === 'closed').length;
+  return {
+    items: completionItems,
+    totalCount: completionItems.length,
+    completedCount,
+    hasLinkConflict,
+    orphanTaskIds,
+    allCompleted: !hasLinkConflict && completionItems.every(item => item.state === 'closed'),
+  };
+}
+
+export type MeetingDecisionTaskTransition = 'complete' | 'reopen';
+
+export interface MeetingDecisionTaskTransitionContext {
+  actorId: string;
+  actorName: string;
+  at: string;
+  closedDate: string;
+}
+
+export function synchronizeLinkedMeetingDecisionLifecycle(
+  meeting: TemporaryMeeting,
+  task: TaskItem,
+  context: MeetingDecisionTaskTransitionContext,
+): TemporaryMeeting {
+  if(!meetingTaskLinkIsValidForMutation(task,[meeting]))throw new Error('待辦與父會議關聯不一致');
+  const nextMeeting=structuredClone(meeting);
+  const matches=nextMeeting.taskItems.filter(item=>item.id===task.sourceMeetingItemId);
+  if(matches.length!==1)throw new Error('父會議決議待辦不存在或識別碼重複');
+  const lifecycle=meetingDecisionLifecycleFromTask(task);
+  const nextItem=matches[0];
+  nextItem.isClosed=lifecycle.isClosed;
+  if(lifecycle.isClosed){
+    nextItem.closedDate=lifecycle.closedDate||context.closedDate;
+    nextItem.closedBy=lifecycle.closedBy||context.actorId;
+  }else{
+    delete nextItem.closedDate;
+    delete nextItem.closedBy;
+  }
+  const status=lifecycle.isClosed?'決議待辦已完成':'決議待辦重新開啟';
+  nextMeeting.latestStatus=status;
+  nextMeeting.updatedAt=context.at;
+  nextMeeting.statusLogs=[
+    {id:uid('log'),at:context.at,by:context.actorName,byUserId:context.actorId,text:status},
+    ...(meeting.statusLogs||[]),
+  ];
+  return nextMeeting;
+}
+
+export function transitionMeetingDecisionTask(
+  task: TaskItem,
+  transition: MeetingDecisionTaskTransition,
+  context: MeetingDecisionTaskTransitionContext,
+): TaskItem {
+  if (task.sourceType !== 'temporary' || task.attentionDimension !== 'meeting' || !task.sourceMeetingId || !task.sourceMeetingItemId) {
+    throw new Error('待辦缺少有效的會議來源關聯');
+  }
+  const vesselIds = Array.from(new Set((task.vesselIds?.length ? task.vesselIds : [task.vesselId]).filter(Boolean)));
+  if (!vesselIds.length) throw new Error('會議待辦缺少完整涉船範圍');
+  if (task.distributeToVessels === true && vesselIds.length > 1) {
+    throw new Error('分船待辦必須依各船進度完成，不得覆寫整體狀態');
+  }
+  const closed = taskIsClosedForScope(task, vesselIds);
+  if ((transition === 'complete' && closed) || (transition === 'reopen' && !closed)) {
+    throw new Error(transition === 'complete' ? '會議待辦已完成' : '會議待辦尚未完成');
+  }
+  const status = transition === 'complete' ? '由臨會/專題標記完成' : '由臨會/專題重新開啟';
+  const next: TaskItem = {
+    ...task,
+    status,
+    isClosed: transition === 'complete',
+    updatedAt: context.at,
+    updatedBy: context.actorId,
+    statusLogs: [{ id: uid('log'), at: context.at, by: context.actorName, byUserId: context.actorId, text: status }, ...(task.statusLogs || [])],
+  };
+  if (transition === 'complete') {
+    next.closedDate = context.closedDate;
+    next.closedBy = context.actorId;
+  } else {
+    delete next.closedDate;
+    delete next.closedBy;
+  }
+  return next;
+}
+
+export function transitionLinkedMeetingDecision(
+  meeting: TemporaryMeeting,
+  task: TaskItem,
+  transition: MeetingDecisionTaskTransition,
+  context: MeetingDecisionTaskTransitionContext,
+): { meeting: TemporaryMeeting; task: TaskItem } {
+  const nextTask = transitionMeetingDecisionTask(task, transition, context);
+  const nextMeeting=synchronizeLinkedMeetingDecisionLifecycle(meeting,nextTask,context);
+  return { meeting: nextMeeting, task: nextTask };
+}
 
 export const meetingTaskDescription = (
   meeting: MeetingWithTaskItems,
@@ -328,7 +569,7 @@ export const reconcileMeetingTasks = ({
   };
   const normalizedFollowUps = canonicalMeetingTaskItems(
     (followUps ?? [{ id: `${meetingId}-task-1`, description: followUp, categories: normalizeMeetingTaskCategoryList([], meetingTaskCategories) }])
-      .map((item, index) => ({ id: item.id || `${meetingId}-task-${index + 1}`, description: item.description, categories: normalizeMeetingTaskCategoryList(item.categories, meetingTaskCategories), distributeToVessels: item.distributeToVessels === true })),
+      .map((item, index) => ({ id: item.id || `${meetingId}-task-${index + 1}`, description: item.description, categories: normalizeMeetingTaskCategoryList(item.categories, meetingTaskCategories), distributeToVessels: item.distributeToVessels === true, isClosed:item.isClosed===true, closedDate:item.isClosed===true?item.closedDate:undefined, closedBy:item.isClosed===true?item.closedBy:undefined })),
     meetingId,
     meetingTaskCategories,
   );
@@ -503,6 +744,10 @@ export const reconcileMeetingTasks = ({
       updatedIds.push(existingTask.id);
       return;
     }
+    const itemClosed=item.isClosed===true;
+    const inheritedClosedDate=item.closedDate||taipeiDateKey(at);
+    const inheritedClosedBy=item.closedBy||actorId;
+    const distributedClosed=itemClosed&&item.distributeToVessels===true&&targetVesselIds.length>1;
     const task: TaskItem = {
       id: allocatedTaskIds.get(item.id)!,
       sourceMeetingId: meetingId,
@@ -521,18 +766,20 @@ export const reconcileMeetingTasks = ({
       category: item.categories[0] || '',
       categories: [...item.categories],
       description: item.description,
-      status: initialStatus.trim() || '待執行',
+      status: itemClosed?'由臨會/專題既有完成狀態建立':initialStatus.trim() || '待執行',
       expectedDate,
       reportDate: at.slice(0, 10),
       departments: [...departments],
       ownerUserIds: [...ownerUserIds],
-      isClosed: false,
+      isClosed: itemClosed&&!distributedClosed,
+      closedDate:itemClosed&&!distributedClosed?inheritedClosedDate:undefined,
+      closedBy:itemClosed&&!distributedClosed?inheritedClosedBy:undefined,
       createdBy: actorId,
       updatedBy: actorId,
       createdAt: at,
       updatedAt: at,
-      statusLogs: [{ id: uid('log'), at, by: actorName, byUserId: actorId, text: initialStatus.trim() || '建立臨會/專題待辦' }],
-      vesselProgress: [],
+      statusLogs: [{ id: uid('log'), at, by: actorName, byUserId: actorId, text: itemClosed?'由臨會/專題既有完成狀態建立':initialStatus.trim() || '建立臨會/專題待辦' }],
+      vesselProgress: distributedClosed?targetVesselIds.map(vesselId=>({vesselId,status:'由臨會/專題既有完成狀態建立',isClosed:true,closedDate:inheritedClosedDate,closedBy:inheritedClosedBy,updatedAt:at,updatedBy:actorId,statusLogs:[{id:uid('log'),at,by:actorName,byUserId:actorId,text:'由臨會/專題既有完成狀態建立'}]})):[],
     };
     tasks.unshift(task);
     created.push(task);

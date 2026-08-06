@@ -194,6 +194,9 @@ export interface MeetingTaskItem {
   description: string;
   categories: string[];
   distributeToVessels?: boolean;
+  isClosed?: boolean;
+  closedDate?: string;
+  closedBy?: string;
 }
 
 export interface TemporaryMeeting {

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import fpmcLogo from './assets/fpmc-logo.png';
 import { createInitialData } from './data/seed';
-import type { AgendaReport, AppData, FilterState, InternalControlCase, StatusLog, TaskItem, TaskPriority, UserAccount, Vessel, WeeklyAttentionKey } from './types';
+import type { AgendaReport, AppData, FilterState, InternalControlCase, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, WeeklyAttentionKey } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, sanitizeAppDataForStorage, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
 import { CloudBlockPatchUnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, claimEditLock, cloudStoragePayloadFor, fetchCloudData, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
@@ -34,7 +34,7 @@ import { dashboardMeetingAlerts, meetingCreatesVesselAbnormalAlert } from './mee
 import { canEditTemporaryMeetings, meetingAppliesToUser } from './meetingAccess';
 import { completeSelectedTasks, sanitizeTaskSelection, validateBatchTaskSelection } from './batchTaskActions';
 import { closeInternalControlCaseBatchFromDraft, deleteInternalControlCaseBatchFromDraft, internalControlBatchLockKeys, validateBatchInternalControlSelection } from './batchInternalControlActions';
-import { meetingTaskLinkIsValidForMutation, resolveMeetingTaskItemIdForDeletion } from './meetingTaskWorkflow';
+import { meetingTaskLinkIsValidForMutation, resolveMeetingTaskItemIdForDeletion, synchronizeLinkedMeetingDecisionLifecycle, transitionLinkedMeetingDecision } from './meetingTaskWorkflow';
 import { paginateItems } from './pagination';
 import PaginationControls from './PaginationControls';
 import { appearsInSingleVesselTasks, canonicalTaskAttentionForSave, isMeetingAttentionTask, isVesselDelegatedMeetingTask, vesselAttentionTasks } from './taskAttention';
@@ -2153,6 +2153,7 @@ export default function App() {
       if(!creating&&(candidate.vesselScopeMode!==previous.vesselScopeMode||JSON.stringify(candidate.vesselTypeScopes||[])!==JSON.stringify(previous.vesselTypeScopes||[]))){failure='待辦涉船範圍模式只能由權威建立或臨會對帳流程更新';return prev;}
       if(!creating&&(candidate.createdBy!==previous.createdBy||candidate.createdAt!==previous.createdAt||candidate.internalControlCancelledAt!==previous.internalControlCancelledAt||candidate.internalControlCancelledBy!==previous.internalControlCancelledBy||candidate.internalControlCaseId!==previous.internalControlCaseId)){failure='待辦建立者、建立時間、內控關聯與內控取消來源資料不可由普通保存改寫';return prev;}
       if(!creating&&!meetingTaskLinkIsValidForMutation(previous,prev.meetings)){failure='會議來源關聯缺失、失效或與父會議狀態不一致，請先由臨會/專題頁安全修復';return prev;}
+      if(!creating&&previous.sourceMeetingId&&candidate.isClosed!==previous.isClosed){failure='會議來源待辦的完成或重新開啟請至臨會/專題頁操作';return prev;}
       const previousScopeIdsForClosure=taskVesselIds(previous);
       const candidateScopeIdsForClosure=taskVesselIds(candidate);
       const previousSemanticallyClosed=!creating&&taskIsClosedForScope(previous,previousScopeIdsForClosure);
@@ -2767,14 +2768,26 @@ export default function App() {
         else{normalizedProgress.closedDate=previousProgress.closedDate;normalizedProgress.closedBy=previousProgress.closedBy;}
       }else{delete normalizedProgress.closedDate;delete normalizedProgress.closedBy;}
       const saved=updateTaskVesselProgress(liveTask,vesselId,()=>normalizedProgress,{at,actorId:liveUser.id});
+      const previousOverallClosed=taskIsClosedForScope(liveTask,taskVesselIds(liveTask));
+      const nextOverallClosed=taskIsClosedForScope(saved,taskVesselIds(saved));
+      const meetingLifecycleChanged=previousOverallClosed!==nextOverallClosed;
+      const liveMeeting=liveTask.sourceMeetingId?prev.meetings.find(meeting=>meeting.id===liveTask.sourceMeetingId):undefined;
+      if(meetingLifecycleChanged&&(!liveMeeting||!canEditTemporaryMeetings(prev.settings.rolePermissions,liveUser))){failure='整體完成狀態變更需同時具備管理會議權限';return prev;}
+      if(meetingLifecycleChanged&&!nextOverallClosed&&liveMeeting?.status==='已完成'){failure='請先重新開啟整場會議';return prev;}
       const notices=buildTaskNotificationsForVessels(prev.users,[vessel],liveUser.id,saved,'task_updated',liveUser.name,prev.settings.rolePermissions);
       const draft=clone(prev);
       const index=draft.tasks.findIndex(item=>item.id===saved.id);
       if(index<0){failure='待辦已被刪除';return prev;}
       draft.tasks[index]=saved;
+      if(meetingLifecycleChanged&&liveMeeting){
+        const meetingIndex=draft.meetings.findIndex(meeting=>meeting.id===liveMeeting.id);
+        draft.meetings[meetingIndex]=synchronizeLinkedMeetingDecisionLifecycle(liveMeeting,saved,{actorId:liveUser.id,actorName:liveUser.name,at,closedDate:todayDate()});
+      }
       draft.notifications=[...notices,...draft.notifications].slice(0,1000);
       applied=true;
-      return withAudit(draft,liveUser,'更新單船進度','task',saved.id,`${vesselDisplayName(vessel)}｜${normalizedProgress.status||'未填狀態'}｜${normalizedProgress.isClosed?'已結案':'未結'}`);
+      let audited=withAudit(draft,liveUser,'更新單船進度','task',saved.id,`${vesselDisplayName(vessel)}｜${normalizedProgress.status||'未填狀態'}｜${normalizedProgress.isClosed?'已結案':'未結'}`);
+      if(meetingLifecycleChanged&&liveMeeting)audited=withAudit(audited,liveUser,nextOverallClosed?'同步完成臨會/專題待辦':'同步重新開啟臨會/專題待辦','meeting',liveMeeting.id,richTextToPlainText(saved.description)||saved.id);
+      return audited;
     }));return applied;};
     const durable=await runDurableRelatedMutation(`task:${candidate.id}`,'保存單船進度',apply);
     if(!durable&&!applied)alert(failure);
@@ -2982,6 +2995,7 @@ export default function App() {
     if(initialInternalSelection&&(!initialInternalSelection.ok||initialInternalSelection.cases.some(item=>item.isClosed))) { alert('所選內控案件已變更、已結案或未具備完整涉船範圍權限，請重新選擇'); return false; }
     const tasks=selectedTasks as TaskItem[];
     const selectedInternalCases=initialInternalSelection?.ok?initialInternalSelection.cases:[];
+    if(tasks.some(task=>task.sourceMeetingId)){alert('會議來源待辦請至臨會/專題頁逐筆完成，不得由批量完成繞過父會議');return false;}
     if(tasks.some(task=>selectedInternalCases.some(item=>item.linkedTaskId===task.id||task.internalControlCaseId===item.id))) { alert('同一組雙向關聯不可同時以待辦與內控案件重複選取'); return false; }
     const expectedUpdatedAtById=new Map(tasks.map(task=>[task.id,task.updatedAt]));
     const expectedInternalUpdatedAtById=new Map(selectedInternalCases.map(item=>[item.id,item.updatedAt]));
@@ -3006,6 +3020,7 @@ export default function App() {
         if(uniqueIds.length){
           const selected=validateBatchTaskSelection(prev.tasks,uniqueIds,batchVisibleVesselIds(prev,liveUser),'complete');
           if(!selected.ok||selected.tasks.some(task=>task.updatedAt!==expectedUpdatedAtById.get(task.id)))return prev;
+          if(selected.tasks.some(task=>task.sourceMeetingId)){failure='會議來源待辦請至臨會/專題頁逐筆完成';return prev;}
           if(selected.tasks.some(task=>!meetingTaskLinkIsValidForMutation(task,prev.meetings)))return prev;
           liveSelectedTasks=selected.tasks;
         }
@@ -3039,6 +3054,81 @@ export default function App() {
       if(!applied)alert(failure);
       return applied;
     },internalControlLockKeysForClosure);
+  };
+  const transitionMeetingTaskFromMeetingPage = async (taskId: string, transition: 'complete' | 'reopen') => {
+    if(!currentUser||!canCloseTasks||!canEditMeetings||currentUser.role==='vessel'){
+      alert('目前角色需同時具備管理會議與完成／重新開啟待辦權限');
+      return false;
+    }
+    const initialMatches=data.tasks.filter(task=>task.id===taskId);
+    const initialTask=initialMatches.length===1?initialMatches[0]:undefined;
+    const initialMeeting=initialTask?.sourceMeetingId?data.meetings.find(meeting=>meeting.id===initialTask.sourceMeetingId):undefined;
+    if(!initialTask||!initialMeeting||!meetingTaskLinkIsValidForMutation(initialTask,data.meetings)){
+      alert('會議待辦不存在、重複或關聯已失效，請重新整理後再試');
+      return false;
+    }
+    if(usesPerVesselProgress(initialTask)){
+      alert('此為分船待辦，請依各船進度分別完成；全部船舶完成後會議頁會自動顯示完成');
+      return false;
+    }
+    const initiallyClosed=taskIsClosedForScope(initialTask,taskVesselIds(initialTask));
+    if((transition==='complete'&&initiallyClosed)||(transition==='reopen'&&!initiallyClosed)){
+      alert(transition==='complete'?'此待辦已完成':'此待辦尚未完成');
+      return false;
+    }
+    if(transition==='reopen'&&initialMeeting.status==='已完成'){
+      alert('請先重新開啟整場會議，再重新開啟其中的待辦');
+      return false;
+    }
+    const actionLabel=transition==='complete'?'完成臨會/專題待辦':'重新開啟臨會/專題待辦';
+    if(!confirm(transition==='complete'?`確定將「${richTextToPlainText(initialTask.description)||'此待辦'}」標記完成？`:`確定重新開啟「${richTextToPlainText(initialTask.description)||'此待辦'}」？`))return false;
+    const expectedUpdatedAt=initialTask.updatedAt;
+    const expectedMeetingUpdatedAt=initialMeeting.updatedAt;
+    return runTaskMutationWithLockBundle([taskId],actionLabel,fresh=>{
+      let applied=false;
+      let failure='會議待辦已變更或權限已更新，請重新整理後再試';
+      flushSync(()=>setData(prev=>{
+        const liveUser=prev.users.find(user=>user.id===currentUser.id&&user.isActive);
+        if(!liveUser||liveUser.role==='vessel'||!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')||!canEditTemporaryMeetings(prev.settings.rolePermissions,liveUser)){failure='目前身份已無權管理會議或完成／重新開啟待辦';return prev;}
+        if(prev.revision!==fresh.revision){failure='主資料版本已更新，請重新執行';return prev;}
+        const matches=prev.tasks.filter(task=>task.id===taskId);
+        const liveTask=matches.length===1?matches[0]:undefined;
+        const liveMeeting=liveTask?.sourceMeetingId?prev.meetings.find(meeting=>meeting.id===liveTask.sourceMeetingId):undefined;
+        if(!liveTask||!liveMeeting||liveTask.updatedAt!==expectedUpdatedAt||!meetingTaskLinkIsValidForMutation(liveTask,prev.meetings)){failure='會議待辦已變更、重複或關聯失效';return prev;}
+        if(liveMeeting.updatedAt!==expectedMeetingUpdatedAt){failure='父會議已由其他人修改，請重新整理後再試';return prev;}
+        if(usesPerVesselProgress(liveTask)){failure='分船待辦必須依各船進度完成';return prev;}
+        const scopeIds=taskVesselIds(liveTask);
+        const visibleIds=batchVisibleVesselIds(prev,liveUser);
+        if(!scopeIds.length||scopeIds.some(id=>!visibleIds.has(id))){failure='目前身份不具備完整涉船範圍權限';return prev;}
+        const isClosed=taskIsClosedForScope(liveTask,scopeIds);
+        if((transition==='complete'&&isClosed)||(transition==='reopen'&&!isClosed)){failure=transition==='complete'?'待辦已完成':'待辦已重新開啟';return prev;}
+        if(transition==='reopen'&&liveMeeting.status==='已完成'){failure='請先重新開啟整場會議';return prev;}
+        const at=nowIso();
+        const closedDate=todayDate();
+        const draft=clone(prev);
+        const taskIndex=draft.tasks.findIndex(task=>task.id===taskId);
+        const meetingIndex=draft.meetings.findIndex(meeting=>meeting.id===liveMeeting.id);
+        let updatedTask:TaskItem;
+        let targetMeeting:TemporaryMeeting;
+        try{
+          const transitioned=transitionLinkedMeetingDecision(liveMeeting,liveTask,transition,{actorId:liveUser.id,actorName:liveUser.name,at,closedDate});
+          updatedTask=transitioned.task;
+          targetMeeting=transitioned.meeting;
+        }
+        catch(error:any){failure=error.message||String(error);return prev;}
+        draft.tasks[taskIndex]=updatedTask;
+        draft.meetings[meetingIndex]=targetMeeting;
+        const vessels=taskVessels(updatedTask,draft.vessels);
+        const noticeTask={...updatedTask,ownerUserIds:updatedTask.ownerUserIds.filter(id=>isEligibleTaskOwner(draft.settings.rolePermissions,draft.users.find(user=>user.id===id),vessels))};
+        const notices=buildTaskNotificationsForVessels(draft.users,vessels,liveUser.id,noticeTask,'task_updated',liveUser.name,draft.settings.rolePermissions);
+        draft.notifications=[...notices,...draft.notifications].slice(0,1000);
+        applied=true;
+        const auditedTask=withAudit(draft,liveUser,transition==='complete'?'完成臨會/專題待辦':'重新開啟臨會/專題待辦','task',taskId,richTextToPlainText(updatedTask.description)||taskId);
+        return withAudit(auditedTask,liveUser,transition==='complete'?'同步完成會議決議待辦':'同步重新開啟會議決議待辦','meeting',targetMeeting.id,richTextToPlainText(updatedTask.description)||taskId);
+      }));
+      if(!applied)alert(failure);
+      return applied;
+    });
   };
   const saveDailyMorningHistory=async(at:string):Promise<boolean>=>{
     if(currentUser.role!=='owner'&&currentUser.role!=='admin')return alert('只有 Owner／管理員可以保存正式每日早會快照'),false;
@@ -3861,7 +3951,7 @@ export default function App() {
       {tab==='closed' && <ListPanel title="已結案清單" tasks={closedTasks} data={roleVisibleData} visibleVessels={activeVessels} filters={closedFilters} setFilters={setClosedFilters} fleetTags={fleetTags} userMap={userMap} exportedBy={currentUser.name} onEdit={openTask} onPrint={() => print('已結案清單')} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
       {tab==='internalControl' && canAccessTab(currentUser,'internalControl') && <InternalControlPage data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onDelete={removeInternalCase} onBatchClose={caseIds=>batchCompleteTasks([],caseIds)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
       {tab==='stats' && <DataAnalysisView data={roleVisibleData} vessels={canViewAllVessels?reportVessels:activeVessels} />}
-      {tab==='meeting' && <TemporaryMeetingsPage data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
+      {tab==='meeting' && <TemporaryMeetingsPage data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} canCloseTasks={canCloseTasks&&currentUser.role!=='vessel'} onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
 
       {tab==='reports' && <ReportCenter
         data={roleVisibleData} visibleVessels={activeVessels} user={currentUser} selected={agendaSelection} setSelected={setAgendaSelection}
