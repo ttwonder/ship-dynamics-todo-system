@@ -8,6 +8,8 @@ try{
   const {
     APP_VERSION_CHECK_INTERVAL_MS,
     APP_VERSION_QUERY_KEY,
+    APP_RECOVERY_QUERY_KEY,
+    appRecoveryReloadUrl,
     appUpdateBlockReason,
     appVersionManifestUrl,
     appVersionReloadUrl,
@@ -16,6 +18,7 @@ try{
 
   assert.equal(APP_VERSION_CHECK_INTERVAL_MS,300_000,'version polling must use a quiet five-minute cadence');
   assert.equal(APP_VERSION_QUERY_KEY,'__ship_dynamics_version');
+  assert.equal(APP_RECOVERY_QUERY_KEY,'__ship_dynamics_repair');
   assert.equal(appVersionManifestUrl('/ship-dynamics/','123'),'/ship-dynamics/app-version.json?check=123');
   assert.equal(appVersionManifestUrl('/','a b'),'/app-version.json?check=a+b');
 
@@ -70,6 +73,15 @@ try{
   assert.equal(parsed.searchParams.get(APP_VERSION_QUERY_KEY),'build-new');
   assert.equal(parsed.hash,'#item');
   assert.throws(()=>appVersionReloadUrl('https://example.test/','bad version/'),/invalid/i);
+
+  const recoveryUrl=appRecoveryReloadUrl('https://example.test/ship/?tab=work#item','build-new','repair-123');
+  const recoveryParsed=new URL(recoveryUrl);
+  assert.equal(recoveryParsed.pathname,'/ship/');
+  assert.equal(recoveryParsed.searchParams.get('tab'),'work');
+  assert.equal(recoveryParsed.searchParams.get(APP_VERSION_QUERY_KEY),'build-new');
+  assert.equal(recoveryParsed.searchParams.get(APP_RECOVERY_QUERY_KEY),'repair-123');
+  assert.equal(recoveryParsed.hash,'#item');
+  assert.throws(()=>appRecoveryReloadUrl('https://example.test/','build-new','bad token/'),/invalid/i);
 
   const viteConfig=fs.readFileSync(new URL('../vite.config.ts',import.meta.url),'utf8');
   const app=fs.readFileSync(new URL('../src/App.tsx',import.meta.url),'utf8');

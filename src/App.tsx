@@ -60,8 +60,10 @@ import { resolveItemEditSession } from './itemEditSession';
 import { buildCloudBlockPatch, CloudBlockPatchConflictError } from './cloudBlockPatch';
 import { actorStorageAuthorizationGuard, appDataAuthorizationDomainChanged, assertActorAuthorizedForAppDataChange, authorizationDomainGuard } from './cloudAuthorization';
 import { classifyCloudSyncFailure } from './cloudSyncError';
-import { runStaleBrowserRecovery, shouldOfferStaleBrowserRecovery } from './staleBrowserRecovery';
-import { APP_VERSION_CHECK_INTERVAL_MS, appUpdateBlockReason, appVersionReloadUrl, checkForAppVersion } from './appVersionUpdate';
+import { shouldOfferStaleBrowserRecovery } from './staleBrowserRecovery';
+import { APP_VERSION_CHECK_INTERVAL_MS, appRecoveryReloadUrl, appUpdateBlockReason, appVersionReloadUrl, checkForAppVersion } from './appVersionUpdate';
+import BrowserRecoveryModal, { type BrowserRecoveryPhase } from './BrowserRecoveryModal';
+import { clearShipDynamicsBrowserStorage, repairShipDynamicsResources, shouldBlockAppBeforeUnload } from './browserRecovery';
 import { relatedEntityLockKeysForSection, taskInternalControlCreationLockKeys, taskRelationLockKeys } from './collaborationLockPlan';
 import { cloudWakeupAction } from './realtimeSync';
 import { CloudSaveRecoveryLockConflictError, runWithCloudSaveRecoveryLocks } from './cloudSaveLockRecovery';
@@ -319,6 +321,10 @@ export default function App() {
   const [saveToast,setSaveToast]=useState<SaveToast|null>(null);
   const [pendingTaskCreations,setPendingTaskCreations]=useState<PendingTaskCreationIntent[]>(()=>{try{return readPendingTaskCreations(window.localStorage);}catch{return [];}});
   const [staleBrowserRecoveryOffered,setStaleBrowserRecoveryOffered]=useState(false);
+  const [browserRecoveryOpen,setBrowserRecoveryOpen]=useState(false);
+  const [browserRecoveryAdvanced,setBrowserRecoveryAdvanced]=useState(false);
+  const [browserRecoveryPhase,setBrowserRecoveryPhase]=useState<BrowserRecoveryPhase>('idle');
+  const [browserRecoveryMessage,setBrowserRecoveryMessage]=useState('');
   const [availableAppVersion,setAvailableAppVersion]=useState('');
   const saveToastRef=useRef<SaveToast|null>(null);
   const [activeEditLock, setActiveEditLock] = useState<ActiveEditLock | null>(null);
@@ -329,6 +335,7 @@ export default function App() {
   const saveTimer = useRef<number | null>(null);
   const saveToastTimer=useRef<number|null>(null);
   const hasUnsavedWork=useRef(false);
+  const browserRecoveryNavigationRef=useRef(false);
   const cloudSaveQueueBypassUntil=useRef(0);
   const lastCloudRevision = useRef<number>(-1);
   const initialDurableRevisionFloorRegistry=typeof localStorage==='undefined'?{valid:true,floors:new Map<string,number>()}:parseDurableRevisionFloors(localStorage.getItem(CLOUD_REVISION_FLOORS_KEY));
@@ -996,9 +1003,14 @@ export default function App() {
     return () => { if (saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;} };
   }, [data, currentUser, cloudBootstrapped, cloudWriteBlocked, cloudSyncing]);
   useEffect(()=>{
-    const shouldWarnBeforeLeaving=()=>Boolean(
-      hasUnsavedWork.current||savePhaseRef.current!=='saved'||saveTimer.current||pendingCloudData.current.size()>0||pendingTaskCreationsRef.current.length>0
-    );
+    const shouldWarnBeforeLeaving=()=>shouldBlockAppBeforeUnload({
+      recoveryNavigation:browserRecoveryNavigationRef.current,
+      hasUnsavedWork:hasUnsavedWork.current,
+      savePhaseSaved:savePhaseRef.current==='saved',
+      saveTimerPending:Boolean(saveTimer.current),
+      pendingCloudDataCount:pendingCloudData.current.size(),
+      pendingTaskCreationCount:pendingTaskCreationsRef.current.length,
+    });
     const handleBeforeUnload=(event:BeforeUnloadEvent)=>{
       if(!shouldWarnBeforeLeaving())return;
       event.preventDefault();
@@ -3370,29 +3382,60 @@ export default function App() {
     setReportPreviewHistoryId(report.id);
     setReportPreviewOpen(true);
   };
-  const repairStaleBrowser=()=>{
-    const result=runStaleBrowserRecovery({
-      storage:localStorage,
-      confirm:message=>window.confirm(message),
-      beforeReload:()=>{
-        if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
-        pendingCloudData.current.rejectAll(new StaleAsyncConfigError());
-        configIoCoordinator.current.invalidate();
-        lockCoordinator.current.invalidate();
-        batchLockCoordinator.current.invalidate();
-        taskOpenRequests.current.invalidate();
-        identitySessionGeneration.current+=1;
-        liveCurrentUserId.current='';
-        hasUnsavedWork.current=false;
-      },
-      reload:()=>window.location.reload(),
-    });
-    if(result.status==='failed'){
-      hasUnsavedWork.current=true;
-      const detail='無法清除這台瀏覽器的舊暫存；頁面未重新載入。請保持頁面開啟並聯絡管理員。';
-      setSavePhase('error');
-      setCloudStatus(detail);
-      showSaveToast('error','瀏覽器修復未完成',detail);
+  const openBrowserRecovery=(advanced=false)=>{
+    setBrowserRecoveryAdvanced(advanced);
+    setBrowserRecoveryPhase('idle');
+    setBrowserRecoveryMessage('');
+    setBrowserRecoveryOpen(true);
+  };
+  const closeBrowserRecovery=()=>{
+    if(browserRecoveryPhase!=='idle')return;
+    setBrowserRecoveryOpen(false);
+    setBrowserRecoveryAdvanced(false);
+    setBrowserRecoveryMessage('');
+  };
+  const repairCurrentAppResources=()=>repairShipDynamicsResources({
+    appBaseUrl:import.meta.env.BASE_URL,
+    origin:window.location.origin,
+    cacheStorage:typeof caches==='undefined'?null:caches,
+    serviceWorkerContainer:'serviceWorker' in navigator?navigator.serviceWorker:null,
+  });
+  const runSafeBrowserRepair=async()=>{
+    setBrowserRecoveryPhase('repairing');
+    setBrowserRecoveryMessage('正在清理本App具名資源並準備最新版入口…');
+    try{
+      await repairCurrentAppResources();
+      const version=availableAppVersion||__SHIP_DYNAMICS_BUILD_VERSION__;
+      browserRecoveryNavigationRef.current=true;
+      window.location.assign(appRecoveryReloadUrl(window.location.href,version,`repair-${Date.now().toString(36)}`));
+    }catch(error){
+      browserRecoveryNavigationRef.current=false;
+      setBrowserRecoveryPhase('idle');
+      setBrowserRecoveryMessage(`安全修復未完成：${error instanceof Error?error.message:String(error)}。本機storage未刪除，頁面不會自動重新載入。`);
+    }
+  };
+  const runFullBrowserReset=async()=>{
+    if(!window.confirm('這會永久刪除本瀏覽器所有Ship Dynamics本機資料，包括AppData、登入、進站狀態、草稿與pending內容；不會先檢查是否已上傳。Supabase雲端資料、GitHub程式及其他專案不受影響。確定完整重設嗎？'))return;
+    const version=availableAppVersion||__SHIP_DYNAMICS_BUILD_VERSION__;
+    const resetUrl=appRecoveryReloadUrl(window.location.href,version,`reset-${Date.now().toString(36)}`);
+    setBrowserRecoveryPhase('resetting');
+    setBrowserRecoveryMessage('正在清理Ship Dynamics本機資料與App資源…');
+    try{
+      await repairCurrentAppResources();
+      const result=clearShipDynamicsBrowserStorage({localStorage:window.localStorage,sessionStorage:window.sessionStorage});
+      if(result.status==='failed'){
+        setBrowserRecoveryPhase('idle');
+        setBrowserRecoveryMessage(`本機資料只完成部分刪除，於${result.area}的「${result.failedKey}」停止；頁面不會自動重新載入。`);
+        return;
+      }
+      if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
+      hasUnsavedWork.current=false;
+      browserRecoveryNavigationRef.current=true;
+      window.location.assign(resetUrl);
+    }catch(error){
+      browserRecoveryNavigationRef.current=false;
+      setBrowserRecoveryPhase('idle');
+      setBrowserRecoveryMessage(`完整重設未完成：${error instanceof Error?error.message:String(error)}。本機資料可能已部分處理，頁面不會自動重新載入。`);
     }
   };
   const syncLatest = async () => {
@@ -3929,12 +3972,12 @@ export default function App() {
       <nav className="nav">
         {([['dashboard','船隊看板'],['morning','早會工作台'],['meeting','臨會/專題'],['work',`我的待辦${myWorkTaskCount?`（${myWorkTaskCount}）`:''}`],['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['internalControl','內控異常'],['reports','報告中心'],['stats','數據分析'],['management','管理']] as [Tab,string][]).filter(([k])=>canAccessTab(currentUser, k)&&(k!=='reports'||canExportReports)&&(k!=='management'||canEnterManagement)).map(([k,label]) => <button key={k} className={`${tab===k?'active':''} ${tab!==k&&['dashboard','work','internalControl'].includes(k)?'gradient-nav-label':''}`.trim()} onClick={() => { if (!canAccessTab(currentUser,k)) return; if (k==='reports' && !canExportReports) return alert('目前角色未獲授權預覽或匯出報告'); if (k==='management' && !requireManage()) return; navigateToTab(k); }}>{label}</button>)}
       </nav>
-      <div className="user-chip"><span className="cloud-dot"/><button type="button" className="user-name-btn" onClick={() => setPasswordModalOpen(true)} title="修改個人密碼">{currentUser.name}｜{roleLabel(currentUser.role)}</button><button className="btn small ghost" onClick={() => void leaveCurrentIdentity()}>切換/退出</button></div>
+      <div className="user-chip"><span className="cloud-dot"/><button type="button" className="user-name-btn" onClick={() => setPasswordModalOpen(true)} title="修改個人密碼">{currentUser.name}｜{roleLabel(currentUser.role)}</button>{tab==='dashboard'&&!selectedVesselDetailId&&<button type="button" className="btn small ghost browser-recovery-entry" onClick={()=>openBrowserRecovery(false)}>修復此瀏覽器</button>}<button className="btn small ghost" onClick={() => void leaveCurrentIdentity()}>切換/退出</button></div>
     </div></header>
     {appVersionUpdateNotice}
     {saveToast&&<div className="save-toast-layer no-print" aria-live="assertive" aria-atomic="true"><div className={`save-toast ${saveToast.kind}`} role="status"><span className="save-toast-icon">{saveToast.kind==='success'?'✓':saveToast.kind==='error'?'!':saveToast.kind==='warning'?'⚠':'↻'}</span><span><b>{saveToast.title}</b><small>{saveToast.detail}</small></span><button type="button" aria-label="關閉保存提醒" onClick={dismissSaveToast}>×</button><i /></div></div>}
     <main className="container">
-      <div className={`cloud-strip save-status-strip no-print ${savePhase}`} aria-live="polite"><span className="save-phase"><b>{savePhaseLabel[savePhase]}</b><small>{visibleCloudStatus}</small></span><span className="spacer"/>{staleBrowserRecoveryOffered&&<button className="btn red small" onClick={repairStaleBrowser} disabled={isSaveBusy} title="清除這台瀏覽器的舊App暫存並重新載入雲端資料">修復此瀏覽器</button>}<button className={`btn small ${cloudWriteBlocked&&savePhase==='error'?'primary guidance-active':'ghost'}`} onClick={syncLatest} disabled={isSaveBusy}>同步最新（安全合併）</button><button className={`btn small ${savePhase==='error'?'red':savePhase==='dirty'?'primary':'green'} ${!cloudWriteBlocked&&savePhase==='error'?'guidance-active':''}`} onClick={saveChanges} disabled={isSaveBusy}>{saveButtonLabel}</button></div>
+      <div className={`cloud-strip save-status-strip no-print ${savePhase}`} aria-live="polite"><span className="save-phase"><b>{savePhaseLabel[savePhase]}</b><small>{visibleCloudStatus}</small></span><span className="spacer"/>{staleBrowserRecoveryOffered&&tab==='dashboard'&&!selectedVesselDetailId&&<button className="btn red small" onClick={()=>openBrowserRecovery(true)} title="開啟瀏覽器修復與完整本機重設">修復此瀏覽器</button>}<button className={`btn small ${cloudWriteBlocked&&savePhase==='error'?'primary guidance-active':'ghost'}`} onClick={syncLatest} disabled={isSaveBusy}>同步最新（安全合併）</button><button className={`btn small ${savePhase==='error'?'red':savePhase==='dirty'?'primary':'green'} ${!cloudWriteBlocked&&savePhase==='error'?'guidance-active':''}`} onClick={saveChanges} disabled={isSaveBusy}>{saveButtonLabel}</button></div>
       {(savePhase!=='saved'||pendingTaskCreations.length>0)&&<aside className={`unsaved-work-guidance no-print ${cloudWriteBlocked?'conflict':'pending'}`} role="alert"><b>{pendingTaskCreations.length>0?`有 ${pendingTaskCreations.length} 筆新增要事正在等待雲端保存`:cloudWriteBlocked?'這些修改還沒有保存到雲端':'關閉前請先完成上傳保存'}</b>{pendingTaskCreations.length>0?<span>草稿已保存在這個瀏覽器，系統會在其他人完成船舶更新後自動重讀最新雲端資料並重試。請保持本頁開啟。</span>:cloudWriteBlocked?<ol><li>先點擊「同步最新（安全合併）」</li><li>同步完成後，再點擊「重新保存」</li></ol>:<span>請先點擊上方的保存按鈕，並等待雲端確認。</span>}<strong>直到畫面顯示「已保存到雲端」，看到「已保存到雲端」後再關閉網頁、瀏覽器或電腦；否則尚未上傳的修改可能遺失。</strong>{pendingTaskCreations.some(intent=>intent.state==='attention')&&<small>其中有草稿因身份、權限或資料識別異常而暫停自動保存；請勿關閉頁面，並先確認頁首提示。</small>}</aside>}
       {currentUser.role!=='vessel'&&activeEditLock&&authorizedEditLockKeys.has(activeEditLock.sectionKey)&&activeEditLock.authorizationEpoch===authorizationEpoch&&activeEditLock.ownerUserId===currentUser.id && <div className={`collaboration-banner no-print ${activeEditLock.status}`}><b>多人協作安全</b><span>{activeEditLock.status==='owned' ? `你正在編輯：${activeEditLock.label}；系統已建立短時鎖定，保存仍會做 revision 衝突檢查。` : activeEditLock.status==='blocked' ? `此項目正在由 ${activeEditLock.lockedByName || '其他使用者'} 編輯，已阻止打開以避免覆蓋對方內容。` : preservedCreationDraft ? '新增要事協作鎖已失效；草稿仍以唯讀方式保留，請複製內容後關閉並重新取得協作鎖。' : `無法確認 ${activeEditLock.label} 的編輯鎖；編輯器已關閉，請重試釋放。`}</span>{activeEditLock.status!=='owned'&&<button className="btn small ghost" onClick={resolveEditLockNotice}>{activeEditLock.status==='blocked'?'知道了':preservedCreationDraft?'關閉唯讀草稿':'重試釋放並關閉'}</button>}</div>}
       <div className="print-only app-print-header"><h2>{printTitle || data.settings.systemTitle}</h2><p>列印時間：{formatTaipeiDateTime(new Date())}｜列印人：{currentUser.name}</p></div>
@@ -3975,6 +4018,7 @@ export default function App() {
     {editingTask&&taskEditorLeaseAuthorized && <TaskEditModal task={editingTask} creating={creatingVisibleTask} data={taskEditorData} visibleVessels={taskEditorVisibleVessels} currentUser={taskEditorUser} canClose={!taskEditorReadOnly&&editingTaskCanMutate&&canCloseTasks&&currentUser.role!=='vessel'} canDelete={!taskEditorReadOnly&&editingTaskCanMutate&&canDeleteTasks} canCancelInternalControl={Boolean(!taskEditorReadOnly&&editingTaskCanMutate&&editingTask&&editingTaskScopeVessels.length===taskVesselIds(editingTask).length&&editingTaskScopeVessels.every(vessel=>canCancelInternalControl(currentUser,vessel)))} canEditOverall={!taskEditorReadOnly&&editingTaskCanMutate&&canEditOverallTask} initialProgressVesselId={taskProgressVesselId} readOnly={taskEditorReadOnly} readOnlyReason={taskReadOnlyReason} close={()=>void closeTaskEditor(taskEditorRequestGeneration)} onDraftChange={captureCreationDraft} onSave={saveTask} onSaveVesselProgress={saveTaskVesselProgress} onDelete={()=>deleteTask(editingTask)} />}
     {currentUser.role!=='vessel'&&canExportReports&&reportPreviewOpen && <ReportPreviewModal data={reportPreviewData} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} reportDate={reportPreviewHistory?.businessDate} close={()=>{setReportPreviewOpen(false);setReportPreviewHistoryId('');}} onPrint={printReport} />}
     {passwordModalOpen && <PersonalPasswordModal currentUser={currentUser} close={()=>setPasswordModalOpen(false)} commit={commit} />}
+    {browserRecoveryOpen&&<BrowserRecoveryModal advanced={browserRecoveryAdvanced} phase={browserRecoveryPhase} message={browserRecoveryMessage} onClose={closeBrowserRecovery} onToggleAdvanced={()=>setBrowserRecoveryAdvanced(value=>!value)} onSafeRepair={()=>void runSafeBrowserRepair()} onFullReset={()=>void runFullBrowserReset()} />}
     {currentUser.role!=='vessel'&&!selectedVesselDetailId&&(['dashboard','morning','reports'] as Tab[]).includes(tab) && <div className="selection-dock no-print">涉會船舶 <b className="selected-vessel-count">{agendaSelection.length}</b> 艘 <button className="btn pink small" onClick={()=>navigateToTab('morning')}>進入早會</button><button className="btn primary small" onClick={openReportPreview}>預覽報告</button></div>}
   </div>;
 }

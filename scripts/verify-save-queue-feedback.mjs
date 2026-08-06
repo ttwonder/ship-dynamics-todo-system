@@ -5,6 +5,7 @@ import { createServer } from 'vite';
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
 try {
   const queue = await server.ssrLoadModule('/src/cloudSaveQueue.ts');
+  const recovery = await server.ssrLoadModule('/src/browserRecovery.ts');
 
   let immediateClaims = 0;
   const immediate = await queue.waitForCloudSaveTurn({
@@ -133,7 +134,15 @@ try {
   assert.ok(app.includes('CloudSaveQueueRpcTimeoutError') && app.includes('已改用雲端版本檢查安全保存'));
   assert.ok(cloud.includes('request.abortSignal(signal)'), '保存權與釋放 RPC 必須可被逾時中止');
   assert.ok(app.includes("addEventListener('beforeunload'") && app.includes('event.returnValue'));
-  assert.ok(app.includes("hasUnsavedWork.current||savePhaseRef.current!=='saved'||saveTimer.current||pendingCloudData.current.size()>0||pendingTaskCreationsRef.current.length>0"), '離頁防線必須涵蓋 dirty/saving/queued phase 與待同步新增要事');
+  assert.ok(app.includes('shouldBlockAppBeforeUnload({')&&app.includes('recoveryNavigation:browserRecoveryNavigationRef.current'), 'App離頁防線必須透過可測helper辨識修復導航');
+  const cleanUnloadState={recoveryNavigation:false,hasUnsavedWork:false,savePhaseSaved:true,saveTimerPending:false,pendingCloudDataCount:0,pendingTaskCreationCount:0};
+  for(const hazardousState of [
+    {...cleanUnloadState,hasUnsavedWork:true},
+    {...cleanUnloadState,savePhaseSaved:false},
+    {...cleanUnloadState,saveTimerPending:true},
+    {...cleanUnloadState,pendingCloudDataCount:1},
+    {...cleanUnloadState,pendingTaskCreationCount:1},
+  ])assert.equal(recovery.shouldBlockAppBeforeUnload(hazardousState),true,'離頁防線必須涵蓋 dirty/saving/queued phase 與待同步新增要事');
   assert.ok(!app.includes('hasUnsavedWork.current||saveTimer.current||cloudSaveInFlight.current||pendingCloudData.current'), '已確認寫入而只剩 release 時不得誤擋離頁');
   assert.ok(app.includes('clearStaleSaveSuccessToast()') && app.includes("saveToastRef.current?.kind==='success'"), '新修改必須立即撤銷舊的成功提示');
   assert.ok(app.includes('visibleWriteConfirmed') && app.includes('hasUnsavedWork.current=false'), '寫入確認後應在 release 前更新 durability truth');

@@ -1,6 +1,7 @@
 export const APP_VERSION_MANIFEST_FILE='app-version.json';
 export const APP_VERSION_CHECK_INTERVAL_MS=300_000;
 export const APP_VERSION_QUERY_KEY='__ship_dynamics_version';
+export const APP_RECOVERY_QUERY_KEY='__ship_dynamics_repair';
 
 export type AppVersionCheckResult=
   |{status:'current'}
@@ -56,5 +57,12 @@ export function appVersionReloadUrl(currentHref:string,nextVersion:string){
   if(!validVersion(nextVersion))throw new Error('invalid app version');
   const url=new URL(currentHref);
   url.searchParams.set(APP_VERSION_QUERY_KEY,nextVersion);
+  return url.toString();
+}
+
+export function appRecoveryReloadUrl(currentHref:string,currentVersion:string,recoveryToken:string){
+  if(!validVersion(recoveryToken))throw new Error('invalid app recovery token');
+  const url=new URL(appVersionReloadUrl(currentHref,currentVersion));
+  url.searchParams.set(APP_RECOVERY_QUERY_KEY,recoveryToken);
   return url.toString();
 }
