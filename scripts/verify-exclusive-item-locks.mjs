@@ -98,7 +98,10 @@ try {
   assert.ok(app.includes('refreshAfterItemLease'),'App must refresh and reauthorize after a cloud lease is acquired');
   assert.ok(app.includes('refreshBatchAfterLeaseBundle'),'batch vessel editing must refresh and reauthorize after all vessel leases are acquired');
   assert.ok(app.includes('runTaskMutationWithLockBundle'),'batch complete/delete must acquire a task lock bundle and persist before release');
-  assert.ok(app.includes('mutateVesselWithLease'),'dashboard quick vessel actions must use the same lock-refresh-save-release lifecycle');
+  const weeklyAttentionHandler=app.slice(app.indexOf('const toggleDashboardVesselAttention='),app.indexOf('const retryDashboardVesselAttention='));
+  const manualAttentionHandler=app.slice(app.indexOf('const adjustDashboardVesselAttention='),app.indexOf('const savePhaseLabel:'));
+  assert.ok(weeklyAttentionHandler.includes('vesselAttentionSaveQueue.current?.enqueue')&&!weeklyAttentionHandler.includes('mutateVesselWithLease'),'weekly attention must coalesce clicks before entering the atomic cloud-save lock pipeline');
+  assert.ok(manualAttentionHandler.includes('mutateVesselWithLease'),'manual attention-level changes must keep the lock-refresh-save-release lifecycle');
   assert.match(app,/const mutationLeaseIsOwned=\(sectionKey:string\)=>\{\s*const lock=activeEditLockRef\.current;/,'immediate post-claim mutations must read the synchronous lock ref, not a stale React render');
   for(const [source,label] of [[meetings,'meeting'],[internal,'internal control']]){
     assert.ok(source.includes('claimItemLease')&&source.includes('requireItemLease')&&source.includes('releaseItemLease'),`${label} editor must own the complete item-lease lifecycle`);

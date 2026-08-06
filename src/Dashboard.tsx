@@ -14,17 +14,10 @@ import { meetingCreatesVesselAbnormalAlert, type DashboardMeetingAlert } from '.
 import RichTextContent from './RichTextContent';
 import VesselFilterControls from './VesselFilterControls';
 import { attentionFilterGroup, emptyVesselFilterState, matchesVesselFilterGroups, shipTypeFilterOptions, supervisorIdsForVessel, vesselSupervisorOptions } from './vesselDashboardFilters';
+import { WEEKLY_ATTENTION_OPTIONS } from './weeklyAttention';
+import type { VesselAttentionSaveState } from './vesselAttentionSaveQueue';
 
 const PRIORITY_RANK = { 急: 0, 高: 1, 中: 2, 低: 3 } as const;
-const WEEKLY_ATTENTION_OPTIONS: Array<{ key: WeeklyAttentionKey; label: string }> = [
-  { key: 'crew-operation', label: '換員操作' },
-  { key: 'bunkering-water', label: '加油加水' },
-  { key: 'materials-parts', label: '物料配件' },
-  { key: 'maintenance', label: '維修' },
-  { key: 'survey', label: 'Survey' },
-  { key: 'audit-inspection', label: '稽核檢查' },
-  { key: 'psc-window', label: 'PSC窗開' },
-];
 
 interface DashboardProps {
   user: UserAccount;
@@ -41,6 +34,8 @@ interface DashboardProps {
   onEdit: (id: string) => void;
   onAddTask: (id: string) => void;
   onToggleAttention: (vesselId: string, key: WeeklyAttentionKey) => void;
+  attentionSaveStates?: Record<string, VesselAttentionSaveState>;
+  onRetryAttentionSave?: (vesselId: string) => void;
   onAdjustAttention: (vesselId: string) => void;
   onStartMeeting: (requestedIds?: string[]) => void;
   onOpenReport: () => void;
@@ -52,7 +47,7 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, users, vessels, tasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ user, users, vessels, tasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [vesselFilters, setVesselFilters] = useState(emptyVesselFilterState);
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
@@ -140,6 +135,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       const sortedTasks = [...summaryTasks].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || Number(b.isAbnormal) - Number(a.isAbnormal));
       const highest = vesselAttentionLabel(attentionResult, attentionTasks);
       const selectedForMeeting = selected.includes(vessel.id);
+      const attentionSaveState = attentionSaveStates[vessel.id];
       const assignedSupervisorIds = new Set(supervisorIdsForVessel(vessel, users));
       const supervisorNames = supervisors.filter(option => assignedSupervisorIds.has(option.id)).map(option => option.name);
       const statusSupplement = [
@@ -154,16 +150,16 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
         <div className="ship-operation-grid">
           <div className="ship-route"><b>{vessel.position.lastPort || '未設定'}</b><span>→</span><b>{vessel.position.nextPort || '未設定'}</b></div>
           <div className="ship-position"><small>位置</small><b>{vessel.position.location || '未設定'}</b></div>
-          <div className="ship-navigation"><small>航行狀態</small><b>{vessel.position.navigationStatus === '航行' ? `${vessel.position.speedKnots || 0} kn` : vessel.position.navigationStatus}</b></div>
-          <button type="button" className="ship-schedule" onClick={() => cycleSchedule(vessel.id)} title="點擊循環顯示 ETA／ETB／ETD"><b>{scheduleKind}</b><span>{scheduleValue}</span></button>
-          <div className="ship-status"><small>狀態補充</small><b>{statusSupplement}</b></div>
+          <div className="ship-navigation"><small className="ship-data-label">航行狀態</small><b className="ship-data-value">{vessel.position.navigationStatus === '航行' ? `${vessel.position.speedKnots || 0} kn` : vessel.position.navigationStatus}</b></div>
+          <button type="button" className="ship-schedule" onClick={() => cycleSchedule(vessel.id)} title="點擊循環顯示 ETA／ETB／ETD"><b className="ship-data-label">{scheduleKind}</b><span className="ship-data-value">{scheduleValue}</span></button>
+          <div className="ship-status"><small className="ship-data-label">狀態補充</small><b className="ship-data-value">{statusSupplement}</b></div>
           <div className="ship-load"><small>載況</small><b>{vessel.cargo.loadStatus}</b></div>
-          <div className="ship-cargo"><small>貨名貨量：</small><div className="ship-cargo-items">{vessel.cargo.items.length ? vessel.cargo.items.map((item, index) => <span key={`${item.name}-${index}`}><b>{item.name || '未填貨名'}</b>{item.quantity && <em>{item.quantity}</em>}</span>) : <span>TBA</span>}</div></div>
+          <div className="ship-cargo"><small className="ship-data-label">貨名貨量：</small><div className="ship-cargo-items ship-data-value">{vessel.cargo.items.length ? vessel.cargo.items.map((item, index) => <span key={`${item.name}-${index}`}><b>{item.name || '未填貨名'}</b>{item.quantity && <em>{item.quantity}</em>}</span>) : <span>TBA</span>}</div></div>
         </div>
         <div className="weekly-attention no-print" aria-label="未來一週關注事項">{WEEKLY_ATTENTION_OPTIONS.map(option => {
           const active = vessel.weeklyAttention.includes(option.key);
           return <button type="button" key={option.key} disabled={!canEdit} className={`${active ? 'active' : ''} ${option.key === 'psc-window' ? 'psc' : ''}`} aria-pressed={active} onClick={() => onToggleAttention(vessel.id, option.key)}><i />{option.label}</button>;
-        })}</div>
+        })}{attentionSaveState&&<div className={`weekly-attention-sync ${attentionSaveState.phase}`} role="status" title={attentionSaveState.message||''}>{attentionSaveState.phase==='error'?<button type="button" disabled={!canEdit} onClick={()=>onRetryAttentionSave(vessel.id)}>同步失敗，重試</button>:<span>{attentionSaveState.phase==='saving'?'同步中…':'待同步'}</span>}</div>}</div>
         <div className="ship-summary"><b>重要摘要：</b><div className="ship-summary-content">{vessel.position.manualRemark&&<p><strong>人工備註</strong>{vessel.position.manualRemark}</p>}{vessel.note.recentDynamics&&<p><strong>近期／後續動態</strong>{vessel.note.recentDynamics}</p>}{abnormalMeetings.length>0&&<p className="meeting-abnormal-summary"><strong>臨會/專題異常</strong>{canUseMeetings?abnormalMeetings.map(meeting=>meeting.subject||'未命名會議').join('、'):`存在需關注之臨會/專題異常 ${abnormalMeetings.length} 件`}</p>}{standaloneInternalCases.length>0&&<p className="internal-control-summary"><strong>未同步內控</strong>{standaloneInternalCases.length} 件</p>}{sortedTasks.length ? <ul>{sortedTasks.map(task => <li key={task.id}>{task.isAbnormal && <span>異常</span>}<strong>{task.priority}</strong><RichTextContent compact value={task.description} fallback="尚未輸入要事內容"/></li>)}</ul> : !abnormalMeetings.length&&!standaloneInternalCases.length&&<p>目前無未結要事</p>}</div></div>
         <div className="ship-card-foot"><span className="task-mini"><i className="urgent">急 {urgent}</i><i className="high">高 {high}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print">{canEdit&&<button type="button" className={`btn small ${batchSelected.includes(vessel.id)?'green':'ghost'}`} aria-pressed={batchSelected.includes(vessel.id)} onClick={()=>setBatchSelected(batchSelected.includes(vessel.id)?batchSelected.filter(id=>id!==vessel.id):[...batchSelected,vessel.id])}>{batchSelected.includes(vessel.id)?'取消批量選取':'批量選取'}</button>}{canEdit && <button className="btn small" onClick={() => onEdit(vessel.id)}>快速更新</button>}{canCreateTasks && <button className="btn small ghost" onClick={() => onAddTask(vessel.id)}>新增要事</button>}{canUseMeetings&&<button className={`btn small ${selectedForMeeting ? 'pink' : 'ghost'}`} onClick={() => toggleMeeting(vessel.id)}>{selectedForMeeting ? '已選入會議' : '選入會議'}</button>}</div></div>
       </article>;

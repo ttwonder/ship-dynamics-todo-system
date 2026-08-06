@@ -4,6 +4,7 @@ import fs from 'node:fs';
 const read = path => fs.readFileSync(path, 'utf8');
 const app = read('src/App.tsx');
 const dashboard = read('src/Dashboard.tsx');
+const weeklyAttention = read('src/weeklyAttention.ts');
 const types = read('src/types.ts');
 const modals = read('src/EditModals.tsx');
 const normalizer = read('src/normalize.ts');
@@ -31,8 +32,9 @@ for (const label of ['異常存在', '位置', '貨名貨量', '重要摘要', '
   assert.ok(dashboard.includes(label), `船舶看板需显示「${label}」`);
 }
 for (const label of ['換員操作', '加油加水', '物料配件', '維修', 'Survey', '稽核檢查', 'PSC窗開']) {
-  assert.ok(dashboard.includes(label), `船舶看板需提供「${label}」一周关注灯`);
+  assert.ok(weeklyAttention.includes(label), `船舶看板需提供「${label}」一周关注灯`);
 }
+assert.ok(dashboard.includes('WEEKLY_ATTENTION_OPTIONS.map'), '船舶看板需渲染共用的一周關注燈選項');
 assert.ok(dashboard.includes("['ETA','ETB','ETD']") && dashboard.includes("||'TBA'"), 'ETA／ETB／ETD 需点击循环且空值显示 TBA');
 const schedulePosition = dashboard.indexOf('className="ship-schedule"');
 const vesselStatusPosition = dashboard.indexOf('className="ship-status"');

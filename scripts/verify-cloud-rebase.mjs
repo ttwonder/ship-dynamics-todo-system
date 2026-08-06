@@ -109,6 +109,32 @@ try {
   assert.equal(sameEntityRebased.vessels[0].note.recentDynamics, 'REMOTE-SAME', 'same vessel remote disjoint field edit must survive');
   assert.equal(sameEntityRebased.vessels[0].updatedAt, '2026-07-24T00:02:40.000Z', 'merged metadata must use the newest participating entity timestamp');
 
+  const attentionBase = clone(base);
+  attentionBase.vessels[0].weeklyAttention = [];
+  const attentionLocal = clone(attentionBase);
+  attentionLocal.vessels[0].weeklyAttention = ['maintenance'];
+  const attentionRemote = clone(attentionBase);
+  attentionRemote.vessels[0].weeklyAttention = ['survey'];
+  const attentionRebased = rebaseDisjointAppData(attentionBase, attentionLocal, attentionRemote, '2026-07-24T00:03:05.000Z');
+  assert.deepEqual(
+    new Set(attentionRebased.vessels[0].weeklyAttention),
+    new Set(['maintenance', 'survey']),
+    'different weekly attention lights on the same vessel must merge instead of conflicting',
+  );
+
+  const attentionRemovalBase = clone(base);
+  attentionRemovalBase.vessels[0].weeklyAttention = ['maintenance'];
+  const attentionRemovalLocal = clone(attentionRemovalBase);
+  attentionRemovalLocal.vessels[0].weeklyAttention = [];
+  const attentionAdditionRemote = clone(attentionRemovalBase);
+  attentionAdditionRemote.vessels[0].weeklyAttention = ['maintenance', 'survey'];
+  const attentionRemovalRebased = rebaseDisjointAppData(attentionRemovalBase, attentionRemovalLocal, attentionAdditionRemote, '2026-07-24T00:03:06.000Z');
+  assert.deepEqual(
+    new Set(attentionRemovalRebased.vessels[0].weeklyAttention),
+    new Set(['survey']),
+    'independent weekly attention removal and addition must both survive a three-way merge',
+  );
+
   const sameFieldLocal = clone(base);
   sameFieldLocal.revision = 11;
   sameFieldLocal.vessels[0].position.location = 'LOCAL-CONFLICT';

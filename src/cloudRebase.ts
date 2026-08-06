@@ -1,5 +1,6 @@
-import type { AppData } from './types';
+import type { AppData, WeeklyAttentionKey } from './types';
 import { actorAuthorizationUnchanged } from './cloudAuthorization';
+import { WEEKLY_ATTENTION_KEYS } from './weeklyAttention';
 
 const COLLECTION_KEYS = ['users', 'vessels', 'tasks', 'internalControlCases', 'meetings', 'agendaReports', 'taskDismissals', 'auditLogs', 'notifications'] as const;
 type CollectionKey = typeof COLLECTION_KEYS[number];
@@ -303,11 +304,36 @@ function mergeKeyedEntityArray(base: unknown[], local: unknown[], remote: unknow
   return merged;
 }
 
+function mergeWeeklyAttention(base: unknown[], local: unknown[], remote: unknown[], path: string, conflicts: string[]): WeeklyAttentionKey[] {
+  const allowed = new Set<string>(WEEKLY_ATTENTION_KEYS);
+  const parse = (items: unknown[], snapshot: SnapshotName) => {
+    if (items.some(item => typeof item !== 'string' || !allowed.has(item)) || new Set(items).size !== items.length) {
+      conflicts.push(`${path}:${snapshot}:invalid-weekly-attention`);
+      return null;
+    }
+    return new Set(items as WeeklyAttentionKey[]);
+  };
+  const baseSet = parse(base, 'base');
+  const localSet = parse(local, 'local');
+  const remoteSet = parse(remote, 'remote');
+  if (!baseSet || !localSet || !remoteSet) return remote.filter((item): item is WeeklyAttentionKey => typeof item === 'string' && allowed.has(item));
+  return WEEKLY_ATTENTION_KEYS.filter(key => {
+    const baseline = baseSet.has(key);
+    const localValue = localSet.has(key);
+    const remoteValue = remoteSet.has(key);
+    if (localValue === baseline) return remoteValue;
+    if (remoteValue === baseline || localValue === remoteValue) return localValue;
+    conflicts.push(`${path}:${key}`);
+    return remoteValue;
+  });
+}
+
 function mergeEntityValue(base: unknown, local: unknown, remote: unknown, path: string, conflicts: string[]): unknown {
   if (equal(local, base)) return clone(remote);
   if (equal(remote, base)) return clone(local);
   if (equal(local, remote)) return clone(local);
   if (Array.isArray(base) && Array.isArray(local) && Array.isArray(remote)) {
+    if (path.endsWith('.weeklyAttention')) return mergeWeeklyAttention(base, local, remote, path, conflicts);
     if (path.endsWith('.statusLogs')) return mergeStatusLogs(base, local, remote, path, conflicts);
     if (path.endsWith('.vesselProgress')) return mergeKeyedEntityArray(base, local, remote, path, 'vesselId', conflicts);
     conflicts.push(path);
