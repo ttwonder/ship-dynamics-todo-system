@@ -212,6 +212,8 @@ function normalizeAuditLogs(value: unknown): AuditLog[] {
     entityType: text(item.entityType),
     entityId: text(item.entityId),
     detail: text(item.detail),
+    ipAddress: text(item.ipAddress) || undefined,
+    ipCountryCode: text(item.ipCountryCode) || undefined,
   })).filter(item => item.id);
 }
 

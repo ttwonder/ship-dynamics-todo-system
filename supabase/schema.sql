@@ -83,6 +83,110 @@ create trigger ship_dynamics_revision_history_trigger
 after insert or update on public.ship_dynamics_app_state
 for each row execute function public.record_ship_dynamics_revision_history();
 
+create or replace function public.ship_dynamics_request_client_ip()
+returns text
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  raw_headers text;
+  request_headers jsonb;
+  candidate text;
+begin
+  raw_headers := current_setting('request.headers', true);
+  if nullif(raw_headers, '') is null then return null; end if;
+  request_headers := raw_headers::jsonb;
+  candidate := btrim(split_part(
+    coalesce(nullif(request_headers ->> 'x-forwarded-for', ''), request_headers ->> 'cf-connecting-ip', ''),
+    ',',
+    1
+  ));
+  if candidate = '' then return null; end if;
+  return host(candidate::inet);
+exception when others then
+  return null;
+end;
+$$;
+
+create or replace function public.ship_dynamics_request_country_code()
+returns text
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  raw_headers text;
+  request_headers jsonb;
+  country_code text;
+begin
+  raw_headers := current_setting('request.headers', true);
+  if nullif(raw_headers, '') is null then return null; end if;
+  request_headers := raw_headers::jsonb;
+  country_code := upper(btrim(coalesce(request_headers ->> 'cf-ipcountry', '')));
+  if country_code ~ '^[A-Z]{2}$' and country_code not in ('XX', 'T1') then
+    return country_code;
+  end if;
+  return null;
+exception when others then
+  return null;
+end;
+$$;
+
+revoke all on function public.ship_dynamics_request_client_ip() from public;
+revoke all on function public.ship_dynamics_request_country_code() from public;
+
+create or replace function public.stamp_ship_dynamics_audit_network_context()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  audit_item jsonb;
+  previous_item jsonb;
+  next_audit_logs jsonb := '[]'::jsonb;
+  request_ip text := public.ship_dynamics_request_client_ip();
+  request_country_code text := public.ship_dynamics_request_country_code();
+begin
+  if tg_op <> 'UPDATE' or jsonb_typeof(new.payload -> 'auditLogs') <> 'array' then
+    return new;
+  end if;
+
+  for audit_item in select value from jsonb_array_elements(new.payload -> 'auditLogs') loop
+    previous_item := null;
+    select value into previous_item
+    from jsonb_array_elements(coalesce(old.payload -> 'auditLogs', '[]'::jsonb))
+    where value ->> 'id' = audit_item ->> 'id'
+    limit 1;
+
+    audit_item := audit_item - 'ipAddress' - 'ipCountryCode';
+    if previous_item is not null then
+      audit_item := audit_item || jsonb_strip_nulls(jsonb_build_object(
+        'ipAddress', previous_item -> 'ipAddress',
+        'ipCountryCode', previous_item -> 'ipCountryCode'
+      ));
+    else
+      audit_item := audit_item || jsonb_strip_nulls(jsonb_build_object(
+        'ipAddress', request_ip,
+        'ipCountryCode', request_country_code
+      ));
+    end if;
+    next_audit_logs := next_audit_logs || jsonb_build_array(audit_item);
+  end loop;
+
+  new.payload := jsonb_set(new.payload, '{auditLogs}', next_audit_logs, true);
+  return new;
+end;
+$$;
+
+drop trigger if exists ship_dynamics_audit_network_context_trigger on public.ship_dynamics_app_state;
+create trigger ship_dynamics_audit_network_context_trigger
+before update on public.ship_dynamics_app_state
+for each row execute function public.stamp_ship_dynamics_audit_network_context();
+
 create table if not exists public.ship_dynamics_edit_locks (
   workspace_key text not null,
   section_key text not null,
@@ -667,7 +771,8 @@ begin
       revision = next_revision,
       updated_at = saved_at,
       updated_by = p_saved_by
-  where workspace_key = p_workspace_key;
+  where workspace_key = p_workspace_key
+  returning payload into working_payload;
   return jsonb_build_object('ok',true,'revision',next_revision,'updated_at',saved_at,'payload',working_payload);
 end;
 $$;

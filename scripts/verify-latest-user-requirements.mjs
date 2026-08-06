@@ -70,6 +70,7 @@ try {
   assert.equal('passwordVisible' in utils.sanitizeAppDataForStorage({ ...migrationFixture, users: [{ ...migrationFixture.users[1], passwordVisible:'old' }] }).users[0], false, '本機與雲端保存前必須以 UserAccount 白名單序列化，丟棄舊 plaintext password 欄位');
   const dashboard = fs.readFileSync('src/Dashboard.tsx','utf8');
   const app = fs.readFileSync('src/App.tsx','utf8');
+  const compactApp = app.replace(/\s/g,'');
   const editor = fs.readFileSync('src/EditModals.tsx','utf8');
   const morning = fs.readFileSync('src/MorningWorkspace.tsx','utf8');
   const meetings = fs.readFileSync('src/TemporaryMeetings.tsx','utf8');
@@ -108,7 +109,15 @@ try {
   assert.ok(app.includes('onAddTask={addTaskForVessel}'), 'App 必須把新增待辦动作接入早會');
   assert.ok(editor.includes('<label>近期／後續動態</label>') && !editor.includes('<label>後續動態</label>'), '快速更新只保留合併後的近期／後續動態欄位');
   assert.ok(dashboard.includes('人工備註') && dashboard.includes('近期／後續動態') && dashboard.includes('vessel.position.manualRemark') && dashboard.includes('vessel.note.recentDynamics'), '看板重要摘要需同時呈現人工備註及近期／後續動態');
-  assert.ok(app.replace(/\s/g,'').includes('constreportVessels=activeVessels') && app.includes('const selectedIds=_selected.filter(id=>allowedIds.has(id))'), '每日早會報告只能使用授權船舶，且有選擇時需套用授權交集');
+  assert.ok(
+    compactApp.includes('constactiveVessels=useMemo(()=>data.vessels.filter(v=>v.isActive&&vesselMatchesUser(v,currentUser,canViewAllVessels))')
+      && compactApp.includes('constreportPreviewAuthorizedVessels=data.vessels.filter(vessel=>vesselMatchesUser(vessel,currentUser,canViewAllVessels));')
+      && compactApp.includes('?reportPreviewSnapshot.vessels.filter(vessel=>reportPreviewAuthorizedVesselIds.has(vessel.id)):activeVessels;')
+      && compactApp.includes('<ReportPreviewModaldata={reportPreviewData}visibleVessels={reportVessels}')
+      && compactApp.includes('constselectedIds=_selected.filter(id=>allowedIds.has(id));')
+      && compactApp.includes('constvessels=reportDate?visibleVessels:_selected.length?visibleVessels.filter(v=>selectedIds.includes(v.id)):visibleVessels;'),
+    '每日早會報告只能使用目前授權船舶；有選擇與歷史快照時都必須再次套用授權交集',
+  );
   assert.ok(!app.includes("請至少選擇一艘船舶再預覽報告"), '每日早會報告不得依涉會勾選阻擋匯出');
   assert.ok(app.includes('人工備註：') && app.includes('近期／後續動態：'), '早會 PDF 需分別呈現人工備註及近期／後續動態');
   assert.ok(app.includes('本報告依目前授權範圍、報告選擇'), '早會 PDF 頁腳需說明資料来源为授权范围与当前选择');

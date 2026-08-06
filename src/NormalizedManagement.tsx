@@ -10,6 +10,7 @@ import type {
 import type { ManageUserRecoverySummary } from './normalizedRuntime';
 import { vesselDisplayName } from './vesselDisplay';
 import { formatTaipeiDateTime } from './taipeiTime';
+import { presentAuditLog } from './auditPresentation';
 
 type SettingsSection = 'departments' | 'task-categories' | 'meeting-task-categories'
   | 'priorities' | 'equipment-options';
@@ -197,11 +198,12 @@ export default function NormalizedManagement(props: Props) {
       <h2>伺服器稽核紀錄</h2>
       {!canViewAudit ? <p className="empty-state">目前角色沒有查看權限。</p>
         : <div className="table-wrap"><table className="compact"><thead><tr>
-          <th>時間</th><th>操作人</th><th>命令</th><th>實體</th><th>內容</th>
-        </tr></thead><tbody>{data.auditLogs.map(log => <tr key={log.id}>
+          <th>時間</th><th>操作人</th><th>具體操作</th><th>操作對象</th><th>內容</th><th>IP號碼</th><th>IP歸屬地</th>
+        </tr></thead><tbody>{data.auditLogs.map(log => { const presented = presentAuditLog(log, data); return <tr key={log.id}>
           <td>{formatTaipeiDateTime(log.at)}</td><td>{log.actorName}</td>
-          <td>{log.action}</td><td>{log.entityType}｜{log.entityId}</td><td>{log.detail}</td>
-        </tr>)}</tbody></table></div>}
+          <td>{presented.actionLabel}</td><td>{presented.targetLabel}</td><td>{presented.detailText}</td>
+          <td>{presented.ipAddressLabel}</td><td>{presented.ipLocationLabel}</td>
+        </tr>; })}</tbody></table></div>}
     </section>}
   </section>;
 }

@@ -565,6 +565,8 @@ export function projectNormalizedRows(
       entityType: text(row.entity_type),
       entityId: text(row.entity_id),
       detail: JSON.stringify(detail),
+      ipAddress: text(row.ip_address) || undefined,
+      ipCountryCode: text(row.ip_country_code) || undefined,
     };
   });
 

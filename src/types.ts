@@ -271,6 +271,8 @@ export interface AuditLog {
   entityType: string;
   entityId: string;
   detail: string;
+  ipAddress?: string;
+  ipCountryCode?: string;
 }
 
 export interface AppSettings {

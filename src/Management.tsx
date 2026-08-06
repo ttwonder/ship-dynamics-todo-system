@@ -8,6 +8,7 @@ import { vesselDisplayName } from './vesselDisplay';
 import { WEEKLY_ATTENTION_CATEGORY_MAP, isMeetingTaskSource, taskCategoriesOf } from './taskCategories';
 import { DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES, sanitizeEquipmentFailureSubcategories } from './internalControlWorkflow';
 import { formatTaipeiDateTime } from './taipeiTime';
+import { presentAuditLog } from './auditPresentation';
 
 type Section = 'directory' | 'people' | 'vessels' | 'categories' | 'attention' | 'roles' | 'owner' | 'audit';
 type DirectoryKind = 'all' | 'user' | 'vessel';
@@ -269,6 +270,13 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
   const filteredVessels = activeVessels.filter(v => !query.trim() || `${v.name} ${v.shortName} ${v.fullName} ${v.shipType}`.toLowerCase().includes(query.trim().toLowerCase()));
   const selectedDirectory = directoryItems.find(item => item.key === directorySelection) || directoryItems[0];
   const selectedAudit = data.auditLogs.find(log => log.id === auditId) || data.auditLogs[0];
+  const selectedAuditPresentation = selectedAudit ? presentAuditLog(selectedAudit, data) : undefined;
+  const filteredAuditLogs = data.auditLogs.filter(log => {
+    if (!query.trim()) return true;
+    const presented = presentAuditLog(log, data);
+    return `${log.actorName} ${presented.operationText} ${presented.detailText} ${log.ipAddress || ''} ${presented.ipLocationLabel}`
+      .toLowerCase().includes(query.trim().toLowerCase());
+  });
 
   const nav = [
     { id: 'directory' as const, icon: '▦', label: '總清單' },
@@ -312,7 +320,7 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
 
       {section === 'owner' && owner && <><div className="management-master"><div className="management-master-heading"><div><h2>Owner 與雲端</h2><small>敏感設定集中管理</small></div></div><div className="management-list"><button className={`management-list-item ${ownerPanel === 'gate' ? 'active' : ''}`} onClick={() => setOwnerPanel('gate')}><span className="management-avatar">🔐</span><span><b>進站密碼</b><small>網站第一道存取門</small></span></button><button className={`management-list-item ${ownerPanel === 'supabase' ? 'active' : ''}`} onClick={() => setOwnerPanel('supabase')}><span className="management-avatar">☁</span><span><b>Supabase 設定</b><small>工作區與資料表</small></span></button><button className={`management-list-item ${ownerPanel === 'cloud' ? 'active' : ''}`} onClick={() => setOwnerPanel('cloud')}><span className="management-avatar">↕</span><span><b>雲端資料</b><small>載入或保存主資料</small></span></button></div></div><div className="management-detail"><OwnerSettings panel={ownerPanel} sitePassword={sitePassword} setSitePassword={setSitePassword} config={config} setConfig={setConfig} data={data} commit={commit} onSaveSupabaseConfig={onSaveSupabaseConfig}/></div></>}
 
-      {section === 'audit' && <><div className="management-master"><MasterHeader title="操作紀錄" count={data.auditLogs.length} query={query} setQuery={setQuery}/><div className="management-list">{data.auditLogs.filter(log => !query.trim() || `${log.actorName} ${log.action} ${log.detail}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0,100).map(log => <button key={log.id} className={`management-list-item ${selectedAudit?.id === log.id ? 'active' : ''}`} onClick={() => setAuditId(log.id)}><span className="management-avatar audit">▤</span><span><b>{log.action}</b><small>{log.actorName}｜{formatTaipeiDateTime(log.at)}</small></span></button>)}</div></div><div className="management-detail">{selectedAudit ? <div className="management-editor"><EditorHeading title={selectedAudit.action} subtitle="操作紀錄詳細資料"/><div className="management-summary-grid"><Summary label="操作者" value={selectedAudit.actorName}/><Summary label="角色" value={roleLabel(selectedAudit.actorRole)}/><Summary label="時間" value={formatTaipeiDateTime(selectedAudit.at)}/></div><EditorSection title="內容"><p>{selectedAudit.detail || '無補充內容'}</p><p className="muted">{selectedAudit.entityType}｜{selectedAudit.entityId}</p></EditorSection></div>:<EmptyDetail text="目前沒有操作紀錄"/>}</div></>}
+      {section === 'audit' && <><div className="management-master"><MasterHeader title="操作紀錄" count={data.auditLogs.length} query={query} setQuery={setQuery}/><div className="management-list">{filteredAuditLogs.slice(0,100).map(log => { const presented = presentAuditLog(log, data); return <button key={log.id} className={`management-list-item ${selectedAudit?.id === log.id ? 'active' : ''}`} onClick={() => setAuditId(log.id)}><span className="management-avatar audit">▤</span><span><b>{presented.operationText}</b><small>{log.actorName}｜{formatTaipeiDateTime(log.at)}｜IP {log.ipAddress || '未記錄'}</small></span></button>; })}</div></div><div className="management-detail">{selectedAudit && selectedAuditPresentation ? <div className="management-editor"><EditorHeading title={selectedAuditPresentation.actionLabel} subtitle="操作紀錄詳細資料"/><div className="management-summary-grid"><Summary label="操作者" value={selectedAudit.actorName}/><Summary label="角色" value={roleLabel(selectedAudit.actorRole)}/><Summary label="時間" value={formatTaipeiDateTime(selectedAudit.at)}/><Summary label="IP號碼" value={selectedAuditPresentation.ipAddressLabel}/><Summary label="IP歸屬地" value={selectedAuditPresentation.ipLocationLabel}/></div><EditorSection title="具體操作"><p><b>{selectedAuditPresentation.operationText}</b></p><p>{selectedAuditPresentation.detailText}</p></EditorSection><details className="audit-technical"><summary>技術識別資料</summary><p className="muted">{selectedAuditPresentation.technicalId}</p></details></div>:<EmptyDetail text="目前沒有操作紀錄"/>}</div></>}
     </div>
     {saveNotice && <div className="management-save-toast" role="status" aria-live="polite">{saveNotice}</div>}
   </section>;

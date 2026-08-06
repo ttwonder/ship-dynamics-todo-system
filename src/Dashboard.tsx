@@ -113,7 +113,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       {canUseMeetings&&<div className="metric-card"><small>選入會議</small><b>{selected.length}</b><span>艘</span></div>}
     </div>
     <div className="dashboard-toolbar no-print">
-      <input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
+      <input className="dashboard-search" value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
       <VesselFilterControls filters={vesselFilters} shipTypes={shipTypes} supervisors={supervisors} onChange={setVesselFilters} showMeeting={canUseMeetings}/>
     </div>
     <div className="fleet-card-grid">{visible.map(vessel => {
@@ -154,7 +154,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
           <button type="button" className="ship-schedule" onClick={() => cycleSchedule(vessel.id)} title="點擊循環顯示 ETA／ETB／ETD"><b className="ship-data-label">{scheduleKind}</b><span className="ship-data-value">{scheduleValue}</span></button>
           <div className="ship-status"><small className="ship-data-label">狀態補充</small><b className="ship-data-value">{statusSupplement}</b></div>
           <div className="ship-load"><small>載況</small><b>{vessel.cargo.loadStatus}</b></div>
-          <div className="ship-cargo"><small className="ship-data-label">貨名貨量：</small><div className="ship-cargo-items ship-data-value">{vessel.cargo.items.length ? vessel.cargo.items.map((item, index) => <span key={`${item.name}-${index}`}><b>{item.name || '未填貨名'}</b>{item.quantity && <em>{item.quantity}</em>}</span>) : <span>TBA</span>}</div></div>
+          <div className="ship-cargo"><small className="ship-data-label">貨名貨量：</small><div className="ship-cargo-items ship-data-value">{vessel.cargo.items.length ? vessel.cargo.items.map((item, index) => <span key={`${item.name}-${index}`}><span className="ship-cargo-name">{item.name || '未填貨名'}</span>{item.quantity && <em>{item.quantity}</em>}</span>) : <span>TBA</span>}</div></div>
         </div>
         <div className="weekly-attention no-print" aria-label="未來一週關注事項">{WEEKLY_ATTENTION_OPTIONS.map(option => {
           const active = vessel.weeklyAttention.includes(option.key);

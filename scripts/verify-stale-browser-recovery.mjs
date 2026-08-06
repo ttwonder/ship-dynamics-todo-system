@@ -27,7 +27,7 @@ try{
   assert.ok(app.slice(syncLatestStart,syncLatestEnd).includes('setStaleBrowserRecoveryOffered(false);'),'a completed safe sync must dismiss the stale-browser repair action');
   assert.doesNotMatch(app,/runStaleBrowserRecovery\(/,'App must not expose the legacy one-click destructive path');
   assert.ok(app.includes('const openBrowserRecovery=(advanced=false)=>{')&&app.includes('runFullBrowserReset'),'authorization recovery must use the explicit two-level flow');
-  assert.match(app,/staleBrowserRecoveryOffered[\s\S]{0,500}<button[^>]*onClick=\{\(\)=>openBrowserRecovery\(true\)\}[^>]*>修復此瀏覽器<\/button>/,'the save strip must open the advanced recovery disclosure');
+  assert.match(app,/staleBrowserRecoveryOffered\?'red':'ghost'[\s\S]{0,300}openBrowserRecovery\(staleBrowserRecoveryOffered\)/,'the save strip must open the advanced recovery disclosure');
 
   console.log('Stale browser recovery storage contracts passed.');
 }finally{

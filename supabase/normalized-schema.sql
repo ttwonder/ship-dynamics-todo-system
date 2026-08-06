@@ -3,6 +3,61 @@ begin;
 -- Normalized, server-authoritative vertical slice. This file is additive and does
 -- not alter the legacy shared-payload tables during development or staging.
 
+create or replace function public.ship_dynamics_request_client_ip()
+returns text
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  raw_headers text;
+  request_headers jsonb;
+  candidate text;
+begin
+  raw_headers := current_setting('request.headers', true);
+  if nullif(raw_headers, '') is null then return null; end if;
+  request_headers := raw_headers::jsonb;
+  candidate := btrim(split_part(
+    coalesce(nullif(request_headers ->> 'x-forwarded-for', ''), request_headers ->> 'cf-connecting-ip', ''),
+    ',',
+    1
+  ));
+  if candidate = '' then return null; end if;
+  return host(candidate::inet);
+exception when others then
+  return null;
+end;
+$$;
+
+create or replace function public.ship_dynamics_request_country_code()
+returns text
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  raw_headers text;
+  request_headers jsonb;
+  country_code text;
+begin
+  raw_headers := current_setting('request.headers', true);
+  if nullif(raw_headers, '') is null then return null; end if;
+  request_headers := raw_headers::jsonb;
+  country_code := upper(btrim(coalesce(request_headers ->> 'cf-ipcountry', '')));
+  if country_code ~ '^[A-Z]{2}$' and country_code not in ('XX', 'T1') then
+    return country_code;
+  end if;
+  return null;
+exception when others then
+  return null;
+end;
+$$;
+
+revoke all on function public.ship_dynamics_request_client_ip() from public;
+revoke all on function public.ship_dynamics_request_country_code() from public;
+
 create table if not exists public.sd_workspaces (
   id uuid primary key,
   legacy_key text not null unique,
@@ -203,9 +258,34 @@ create table if not exists public.sd_audit_events (
   entity_type text not null,
   entity_id text not null,
   detail jsonb not null default '{}'::jsonb,
+  ip_address inet,
+  ip_country_code text,
   created_at timestamptz not null default clock_timestamp(),
   primary key (workspace_id, id)
 );
+
+alter table public.sd_audit_events add column if not exists ip_address inet;
+alter table public.sd_audit_events add column if not exists ip_country_code text;
+
+create or replace function public.sd_stamp_audit_request_context()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  request_ip text := public.ship_dynamics_request_client_ip();
+begin
+  new.ip_address := case when request_ip is null then null else request_ip::inet end;
+  new.ip_country_code := public.ship_dynamics_request_country_code();
+  return new;
+end;
+$$;
+
+drop trigger if exists sd_audit_request_context_trigger on public.sd_audit_events;
+create trigger sd_audit_request_context_trigger
+before insert on public.sd_audit_events
+for each row execute function public.sd_stamp_audit_request_context();
 
 alter table public.sd_workspaces enable row level security;
 alter table public.sd_profiles enable row level security;

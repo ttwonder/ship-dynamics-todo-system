@@ -156,7 +156,8 @@ try{
   assert.doesNotMatch(resetHandler,/fetchCloudData|confirmedCloudData|pendingTaskCreationInFlight|withPendingTaskCreationStorageLock|activeEditLockRef|leaseCloudConfigs|browserRecoveryHasProtectedDraft/,'explicit destructive reset must not reintroduce cloud, pending, draft, or lease verification');
   assert.doesNotMatch(app,/localStorage\.clear\(|sessionStorage\.clear\(/);
   assert.match(app,/tab===['"]dashboard['"][\s\S]{0,500}>修復此瀏覽器<\/button>/,'dashboard header must expose the recovery entry');
-  assert.match(app,/staleBrowserRecoveryOffered[\s\S]{0,500}openBrowserRecovery\(true\)/,'authorization recovery must open the same advanced flow');
+  assert.match(app,/staleBrowserRecoveryOffered\?'red':'ghost'/,'authorization recovery must keep a visible red warning state');
+  assert.match(app,/openBrowserRecovery\(staleBrowserRecoveryOffered\)/,'authorization recovery must open the same advanced flow');
   assert.match(app,/browserRecoveryOpen&&<BrowserRecoveryModal/);
 
   assert.match(boundary,/repairShipDynamicsResources/,'outer render failures need the same resource-only repair');

@@ -4,6 +4,8 @@ import fs from 'node:fs';
 const dashboard = fs.readFileSync('src/Dashboard.tsx', 'utf8');
 const styles = fs.readFileSync('src/styles.css', 'utf8');
 
+assert.doesNotMatch(dashboard, /<b>\{item\.name \|\| '未填貨名'\}<\/b>/, '貨名內容不得使用粗體標記');
+
 for (const contract of [
   /<b className="ship-data-label">\{scheduleKind\}<\/b><span className="ship-data-value">\{scheduleValue\}<\/span>/,
   /<div className="ship-navigation"><small className="ship-data-label">航行狀態<\/small><b className="ship-data-value">/,
@@ -42,8 +44,15 @@ const value = declarationsFor('.ship-operation-grid .ship-data-value');
 assert.equal(value.color, '#000', '指定欄位數值必須是黑色');
 assert.ok(Number.parseFloat(value['font-size']) >= 15, '指定欄位數值至少需要15px');
 
+const cargo = declarationsFor('.ship-cargo');
+assert.equal(cargo.height, '64px', '每張船舶卡的貨名貨量區塊必須固定採用右側示例高度');
+assert.equal(cargo['min-height'], '64px', '短貨物內容也必須維持固定高度');
+assert.equal(cargo['max-height'], '64px', '長貨物內容不得撐高卡片');
+assert.equal(cargo.overflow, 'auto', '超出固定高度的貨物內容必須在區塊內捲動');
+
 const cargoItems = declarationsFor('.ship-cargo .ship-data-value>span');
 assert.equal(cargoItems.color, '#000', '貨名貨量每筆內容必須是黑色');
-assert.ok(Number.parseFloat(cargoItems['font-size']) >= 15, '貨名貨量每筆內容至少需要15px');
+assert.equal(cargoItems['font-size'], '14px', '貨名貨量內容必須稍微縮小為14px');
+assert.equal(cargoItems['font-weight'], '400', '貨名貨量內容必須使用一般字重');
 
 console.log('Dashboard card readability contracts passed.');

@@ -9,6 +9,14 @@ const css = fs.readFileSync('src/styles.css', 'utf8');
 const normalizer = fs.readFileSync('src/normalize.ts', 'utf8');
 const meetingAccess = fs.readFileSync('src/meetingAccess.ts', 'utf8');
 const meetingTasks = fs.readFileSync('src/meetingTaskWorkflow.ts', 'utf8');
+const compactApp = app.replace(/\s/g, '');
+const morningReportScopeIsAuthorized =
+  compactApp.includes('constactiveVessels=useMemo(()=>data.vessels.filter(v=>v.isActive&&vesselMatchesUser(v,currentUser,canViewAllVessels))')
+  && compactApp.includes('constreportPreviewAuthorizedVessels=data.vessels.filter(vessel=>vesselMatchesUser(vessel,currentUser,canViewAllVessels));')
+  && compactApp.includes('?reportPreviewSnapshot.vessels.filter(vessel=>reportPreviewAuthorizedVesselIds.has(vessel.id)):activeVessels;')
+  && compactApp.includes('<ReportPreviewModaldata={reportPreviewData}visibleVessels={reportVessels}')
+  && compactApp.includes('constselectedIds=_selected.filter(id=>allowedIds.has(id));')
+  && compactApp.includes('constvessels=reportDate?visibleVessels:_selected.length?visibleVessels.filter(v=>selectedIds.includes(v.id)):visibleVessels;');
 
 const checks = [
   ['登入頁不得公開預設密碼', !app.includes('初始測試密碼') && !app.includes('操作員初始密碼')],
@@ -16,7 +24,7 @@ const checks = [
   ['操作員未指派不得看到全部船舶', !app.includes('v.assignedUserIds.length === 0 || v.assignedUserIds.includes(user.id)')],
   ['新增事項需使用未落庫 draft', app.includes('creatingTask') && !app.includes("d.tasks.unshift({ id, vesselId, priority:'中'" )],
   ['統計需從不受 closedMode 影響的集合計算', app.includes('statsTasks')],
-  ['每日早會報告需固定使用全部授權船舶，选择时套用授权交集', app.replace(/\s/g,'').includes('constreportVessels=activeVessels') && app.includes('const selectedIds=_selected.filter(id=>allowedIds.has(id))') && !app.includes("請至少選擇一艘船舶再預覽報告")],
+  ['每日早會報告需固定使用全部授權船舶，選擇與歷史快照皆套用目前授權交集', morningReportScopeIsAuthorized && !app.includes("請至少選擇一艘船舶再預覽報告")],
   ['查無事項需顯示空狀態', app.includes('目前沒有符合條件的事項')],
   ['管理頁需有 handler/render 雙層防護', app.includes("hasPermission(data.settings.rolePermissions, currentUser, 'enterManagement')") && app.includes("tab==='management' && canEnterManagement")],
   ['Owner 初始化前需先完成個人登入', app.includes('!ownerExists && !currentUser') && app.includes('OwnerSetup currentUser={currentUser}') && !app.includes('Owner 人員</label><select')],
