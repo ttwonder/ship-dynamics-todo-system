@@ -32,6 +32,10 @@ export function conservativeLeaseDeadline(expiresAt: string|undefined, nowMs=Dat
   return Number.isFinite(serverDeadline)?Math.min(nowMs+60_000,serverDeadline-5_000):nowMs;
 }
 
+export function classifyVesselLeaseRenewalFailure(validatedUntilMs:number,nowMs=Date.now()):'retrying'|'frozen' {
+  return validatedUntilMs>nowMs?'retrying':'frozen';
+}
+
 export function createEditLockCoordinator(): EditLockCoordinator {
   let generation = 0;
   let tail: Promise<void> = Promise.resolve();

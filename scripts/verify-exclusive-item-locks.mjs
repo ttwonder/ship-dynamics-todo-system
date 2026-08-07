@@ -7,7 +7,12 @@ try {
   const lockKeys = await server.ssrLoadModule('/src/exclusiveItemEditLock.ts');
   const taskCreation = await server.ssrLoadModule('/src/taskCreationLock.ts');
   const sessions = await server.ssrLoadModule('/src/itemEditSession.ts');
+  const lockCoordinator = await server.ssrLoadModule('/src/editLockCoordinator.ts');
   const { createInitialData } = await server.ssrLoadModule('/src/data/seed.ts');
+
+  assert.equal(typeof lockCoordinator.classifyVesselLeaseRenewalFailure,'function','vessel renewal failures need an explicit transient-versus-expired decision');
+  assert.equal(lockCoordinator.classifyVesselLeaseRenewalFailure(60_000,30_000),'retrying','a transient renewal failure inside the last confirmed lease window must remain retryable');
+  assert.equal(lockCoordinator.classifyVesselLeaseRenewalFailure(60_000,60_000),'frozen','a vessel editor must freeze once the last confirmed lease window has ended');
 
   assert.equal(lockKeys.meetingEditLockKey('m-1'),'meeting:m-1');
   assert.equal(lockKeys.internalControlEditLockKey('ic-1'),'internal-control:ic-1');
@@ -85,7 +90,8 @@ try {
   const internal=fs.readFileSync('src/InternalControlPage.tsx','utf8');
   assert.ok(cloud.includes('export async function renewEditLock')&&cloud.includes("supabase.rpc('renew_ship_dynamics_edit_lock'"),'cloud client must expose a non-creating renew RPC for heartbeats');
   const saveHeartbeat=app.slice(app.indexOf('const renewSaveTurn='),app.indexOf('const assertSaveTurnActive='));
-  const itemHeartbeat=app.slice(app.indexOf("const timer=window.setInterval(()=>{",app.indexOf("if(!lock||lock.status!=='owned')")),app.indexOf('return()=>window.clearInterval(timer);',app.indexOf("if(!lock||lock.status!=='owned')")));
+  const itemHeartbeatStart=app.indexOf('const renewSingleItemLease=');
+  const itemHeartbeat=app.slice(itemHeartbeatStart,app.indexOf('\n  useEffect(()=>{',itemHeartbeatStart));
   const batchHeartbeat=app.slice(app.indexOf("runCloudSaveQueueRpc('批量船舶鎖續期'",app.indexOf('const batchLockHeartbeat')),app.indexOf('const rejected=',app.indexOf('const batchLockHeartbeat')));
   for(const [source,label] of [[saveHeartbeat,'save queue'],[itemHeartbeat,'single item'],[batchHeartbeat,'batch vessel']]){
     assert.ok(source.includes('renewEditLock('),`${label} heartbeat must use non-creating renewal`);

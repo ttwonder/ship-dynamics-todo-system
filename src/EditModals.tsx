@@ -97,7 +97,7 @@ function ScheduleDateTimeField({ label, value, onChange }: { label: string; valu
   return <div className="field schedule-date-time-field"><label>{label}</label><div className="schedule-date-time-inputs"><input type="date" aria-label={`${label} 日期`} value={date} onChange={event => onChange(composeScheduleValue(event.target.value, time))}/><input type="time" aria-label={`${label} 小時分鐘`} value={time} disabled={!date} onChange={event => onChange(composeScheduleValue(date, event.target.value))}/></div><small>選填；可只填日期，若填小時分鐘會顯示到 HH:mm；未選擇時顯示 TBA</small></div>;
 }
 
-export function VesselEditModal({ vessel, data, currentUser, close, onSave, addTask, editTask }: { vessel?: Vessel; data: AppData; currentUser: UserAccount; close: () => void; onSave: (vessel: Vessel) => boolean | Promise<boolean>; addTask: (vesselId: string) => void; editTask: (taskId: string) => void }) {
+export function VesselEditModal({ vessel, data, currentUser, close, onSave, addTask, editTask, leaseMode = 'editable', leaseMessage = '' }: { vessel?: Vessel; data: AppData; currentUser: UserAccount; close: () => void; onSave: (vessel: Vessel) => boolean | Promise<boolean>; addTask: (vesselId: string) => void; editTask: (taskId: string) => void; leaseMode?: 'editable'|'retrying'|'frozen'; leaseMessage?: string }) {
   const [saving,setSaving]=useState(false);
   const [draft,setDraft]=useState<Vessel|null>(()=>vessel?clone(vessel):null);
   useEffect(()=>{setDraft(vessel?clone(vessel):null);},[vessel?.id]);
@@ -105,20 +105,22 @@ export function VesselEditModal({ vessel, data, currentUser, close, onSave, addT
   useEscapeClose(cancel);
   if (!vessel||!draft) return null;
   const update = (change: (target: Vessel) => void) => setDraft(previous=>{
-    if(!previous||saving)return previous;
+    if(!previous||saving||leaseMode==='frozen')return previous;
     const next=clone(previous);
     change(next);
     next.updatedAt=nowIso();
     return next;
   });
   const save=async(afterSave?:()=>void)=>{
-    if(saving)return;
+    if(saving||leaseMode!=='editable')return;
     setSaving(true);
     try{if(await onSave(clone(draft)))afterSave?.();}
     finally{setSaving(false);}
   };
   const openTasks = data.tasks.filter(task => appearsInSingleVesselTasks(task) && taskHasVessel(task, draft.id) && !taskIsClosedForVessel(task,draft.id));
-  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="vessel-edit-title"><div className="modal-header"><div><h2 id="vessel-edit-title">快速更新｜{vesselDisplayName(draft)}</h2><small>按「保存並關閉」才會寫入資料；按 Esc 等同取消</small></div><div className="heading-actions"><button type="button" className="btn ghost" disabled={saving} onClick={cancel}>取消並關閉</button><button type="button" className="btn primary" disabled={saving} onClick={()=>void save()}>{saving?'正在確認雲端…':'保存並關閉'}</button></div></div>
+  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="vessel-edit-title"><div className="modal-header"><div><h2 id="vessel-edit-title">快速更新｜{vesselDisplayName(draft)}</h2><small>按「保存並關閉」才會寫入資料；按 Esc 等同取消</small></div><div className="heading-actions"><button type="button" className="btn ghost" disabled={saving} onClick={cancel}>{leaseMode==='frozen'?'放棄並關閉':'取消並關閉'}</button><button type="button" className="btn primary" disabled={saving||leaseMode!=='editable'} onClick={()=>void save()}>{saving?'正在確認雲端…':leaseMode==='retrying'?'正在重新確認編輯鎖…':leaseMode==='frozen'?'編輯鎖已失效，不能保存':'保存並關閉'}</button></div></div>
+    {leaseMode!=='editable'&&<div className={`callout ${leaseMode==='frozen'?'danger':'warning'} vessel-lease-continuity-notice`} role="status"><b>{leaseMode==='frozen'?'多人協作鎖已失效':'多人協作鎖暫時無法確認'}</b><span>{leaseMessage||(leaseMode==='frozen'?'目前內容以唯讀方式保留，不能保存；可先複製內容，或明確放棄並關閉。':'正在重試；目前內容仍保留，可以繼續填寫，確認成功前不能保存。')}</span></div>}
+    <fieldset disabled={leaseMode==='frozen'} className="vessel-editor-fields" aria-readonly={leaseMode==='frozen'}>
     <div className="smart-ship-api-note"><b>智慧船舶接口預留</b><span>上下港、位置、速度／航行狀態、載況、ETA／ETB／ETD 與貨名貨量日後可自動同步；目前欄位同時支援手動修改，手動值會正常保存。</span></div>
     <div className="grid cols-4 vessel-operational-grid">
       <div className="field"><label>目前位置</label><input disabled={saving} value={draft.position.location} onChange={event => { const value = event.target.value; update(target => { target.position.location = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }); }}/></div>
@@ -151,7 +153,8 @@ export function VesselEditModal({ vessel, data, currentUser, close, onSave, addT
         <div className="field vessel-status-supplement"><label>船舶作業／動態補充</label><textarea disabled={saving} value={draft.note.statusSupplement} placeholder="可自由輸入；可與快捷狀態同時使用，也可全部留空" onChange={event => { const value = event.target.value; update(target => { target.note.statusSupplement = value; target.note.updatedAt = nowIso(); }); }}/></div>
       </div>
     </section>
-    <section className="modal-task-section"><div className="panel-title"><h3>未結要事 <span className="muted">({openTasks.length})</span></h3><button className="btn primary small" disabled={saving} onClick={() => void save(()=>addTask(draft.id))}>＋ 新增要事</button></div>{openTasks.length ? openTasks.map(task => <button key={task.id} className="modal-task-row" disabled={saving} onClick={() => void save(()=>editTask(task.id))}><span className={`badge ${priorityBadgeClass(task.priority)}`}>{task.priority}</span><b>{task.isAbnormal && <span className="inline-abnormal">異常</span>}{richTextToPlainText(task.description) || '尚未輸入要事內容'}</b><small>{richTextToPlainText(task.status) || '尚未更新狀態'}｜期限 {task.expectedDate || '未設定'}</small></button>) : <div className="empty-state compact">目前沒有未結要事</div>}</section>
+    <section className="modal-task-section"><div className="panel-title"><h3>未結要事 <span className="muted">({openTasks.length})</span></h3><button className="btn primary small" disabled={saving||leaseMode!=='editable'} onClick={() => void save(()=>addTask(draft.id))}>＋ 新增要事</button></div>{openTasks.length ? openTasks.map(task => <button key={task.id} className="modal-task-row" disabled={saving||leaseMode!=='editable'} onClick={() => void save(()=>editTask(task.id))}><span className={`badge ${priorityBadgeClass(task.priority)}`}>{task.priority}</span><b>{task.isAbnormal && <span className="inline-abnormal">異常</span>}{richTextToPlainText(task.description) || '尚未輸入要事內容'}</b><small>{richTextToPlainText(task.status) || '尚未更新狀態'}｜期限 {task.expectedDate || '未設定'}</small></button>) : <div className="empty-state compact">目前沒有未結要事</div>}</section>
+    </fieldset>
   </div></div>;
 }
 
