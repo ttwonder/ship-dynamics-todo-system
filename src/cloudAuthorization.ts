@@ -277,6 +277,86 @@ function authorizeOrderOperation(data:AppData,actor:UserAccount,collection:Cloud
   else if(collection==='taskDismissals')throw new CloudPatchAuthorizationError('task-dismissal-order-without-entity');
 }
 
+const exactSelfNotificationRead=(operation:Extract<CloudBlockPatchOperation,{kind:'entity'}>,actor:UserAccount)=>{
+  if(operation.collection!=='notifications'||!operation.expected||!operation.value)return false;
+  const fields=changedFields(operation.expected,operation.value);
+  return fields.size===1
+    && fields.has('readAt')
+    && operation.expected.userId===actor.id
+    && operation.value.userId===actor.id
+    && !operation.expected.readAt
+    && typeof operation.value.readAt==='string'
+    && Boolean(operation.value.readAt);
+};
+
+const exactLegacyNotificationReadAudit=(data:AppData,operations:readonly CloudBlockPatchOperation[],actor:UserAccount)=>{
+  const notificationReads=operations.filter((operation):operation is Extract<CloudBlockPatchOperation,{kind:'entity'}>=>operation.kind==='entity'&&operation.collection==='notifications');
+  if(!notificationReads.length||notificationReads.some(operation=>!exactSelfNotificationRead(operation,actor)))return false;
+  if(operations.some(operation=>{
+    if(operation.kind==='settings')return true;
+    return operation.collection!=='notifications'&&operation.collection!=='auditLogs';
+  }))return false;
+  if(operations.some(operation=>operation.kind!=='settings'&&operation.collection==='notifications'&&operation.kind!=='entity'))return false;
+  const readTransitions=notificationReads.map(operation=>({
+    taskId:String(operation.value?.taskId||''),
+    at:String(operation.value?.readAt||''),
+  }));
+  if(readTransitions.some(transition=>!transition.taskId||!Number.isFinite(Date.parse(transition.at))))return false;
+  const auditEntities=operations.filter((operation):operation is Extract<CloudBlockPatchOperation,{kind:'entity'}>=>operation.kind==='entity'&&operation.collection==='auditLogs');
+  const added=auditEntities.filter(operation=>!operation.expected&&operation.value);
+  if(!added.length)return false;
+  const expectedAuditKeys=['action','actorId','actorName','actorRole','at','detail','entityId','entityType','id'].sort();
+  const validLegacyAudit=(audit:Record<string,unknown>)=>{
+    const auditTime=Date.parse(String(audit.at||''));
+    const matchingRead=readTransitions.some(transition=>
+      (audit.action==='標記通知已讀'||transition.taskId===audit.entityId)
+      && Math.abs(auditTime-Date.parse(transition.at))<=60_000
+    );
+    const taskReadAudit=audit.action==='查看待辦更新'
+      && audit.detail==='標記此待辦未讀變動'
+      && matchingRead;
+    const markAllAudit=audit.action==='標記通知已讀'
+      && audit.detail==='全部標記已讀'
+      && audit.entityId===actor.id
+      && matchingRead;
+    return equal(Object.keys(audit).sort(),expectedAuditKeys)
+      && audit.actorId===actor.id
+      && audit.actorName===actor.name
+      && audit.actorRole===actor.role
+      && audit.entityType==='notification'
+      && (taskReadAudit||markAllAudit)
+      && Number.isFinite(auditTime);
+  };
+  if(added.some(operation=>!validLegacyAudit(operation.value!)))return false;
+  const baseIds=data.auditLogs.map(item=>item.id);
+  const auditOrders=operations.filter((operation):operation is Extract<CloudBlockPatchOperation,{kind:'order'}>=>operation.kind==='order'&&operation.collection==='auditLogs');
+  if(auditOrders.length!==1||!equal(auditOrders[0].expectedIds,baseIds))return false;
+  const baseIdSet=new Set(baseIds);
+  const addedById=new Map(added.map(operation=>[operation.entityId,operation.value!] as const));
+  const addedIds=new Set(addedById.keys());
+  const valueIds=auditOrders[0].valueIds;
+  if(new Set(valueIds).size!==valueIds.length||valueIds.some(id=>!baseIdSet.has(id)&&!addedIds.has(id)))return false;
+  const addedIdsInOrder=valueIds.filter(id=>addedIds.has(id));
+  if(addedIdsInOrder.length!==addedIds.size||addedIdsInOrder.some(id=>!addedIds.has(id)))return false;
+  const retainedBaseIds=valueIds.filter(id=>baseIdSet.has(id));
+  const expectedLength=Math.min(500,baseIds.length+addedIds.size);
+  if(valueIds.length!==expectedLength
+    ||retainedBaseIds.length!==expectedLength-addedIds.size
+    ||!equal(retainedBaseIds,baseIds.slice(0,retainedBaseIds.length)))return false;
+  const baseById=new Map(data.auditLogs.map(item=>[item.id,item] as const));
+  const auditAt=(id:string)=>String(addedById.get(id)?.at||baseById.get(id)?.at||'');
+  for(let left=0;left<valueIds.length;left+=1){
+    for(let right=left+1;right<valueIds.length;right+=1){
+      if(!addedIds.has(valueIds[left])&&!addedIds.has(valueIds[right]))continue;
+      if(auditAt(valueIds[left]).localeCompare(auditAt(valueIds[right]))<0)return false;
+    }
+  }
+  const expectedDeletedIds=baseIds.slice(retainedBaseIds.length);
+  const deleted=auditEntities.filter(operation=>operation.expected&&!operation.value).map(operation=>operation.entityId).sort();
+  if(!equal(deleted,[...expectedDeletedIds].sort())||auditEntities.length!==added.length+expectedDeletedIds.length)return false;
+  return true;
+};
+
 export function assertActorAuthorizedForCloudBlockPatch(data:AppData,operations:readonly CloudBlockPatchOperation[],actorUserId:string):void{
   const actor=data.users.find(user=>user.id===actorUserId&&user.isActive);
   if(!actor)throw new CloudPatchAuthorizationError('actor-missing-or-inactive');
@@ -301,6 +381,7 @@ export function assertActorAuthorizedForCloudBlockPatch(data:AppData,operations:
       authorizedPrimary=true;
     }
   }
+  if(!authorizedPrimary&&exactLegacyNotificationReadAudit(data,operations,actor))return;
   for(const operation of sideEffects){
     if(operation.kind==='entity'&&operation.collection==='notifications'){
       const notification=(operation.value||operation.expected) as Record<string,unknown>|null;

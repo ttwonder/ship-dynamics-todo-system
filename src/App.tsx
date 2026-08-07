@@ -20,6 +20,7 @@ import WorkCenter from './WorkCenter';
 import DataAnalysisView from './DataAnalysis';
 import { canAccessAllVessels, hasPermission, isEligibleTaskOwner } from './permissions';
 import { selectUserWorkCenterInternalCases, selectUserWorkCenterTasks, taskBelongsToUserWorkCenter } from './workCenterScope';
+import { markOwnNotificationsRead } from './notificationReadReceipts';
 import { clearDismissalsForNewTaskAssignments, dismissWorkCenterItems, workCenterDismissalId } from './taskDismissals';
 import InternalControlPage from './InternalControlPage';
 import { closeLinkedInternalControlCaseAfterTaskDelete, createInternalControlCases, deleteInternalControlCase, reconcileInternalControlAfterTaskSave, syncLinkedInternalControlCasesFromTasks, updateInternalControlCase, type InternalControlTaskProjection } from './internalControlData';
@@ -1965,9 +1966,6 @@ export default function App() {
     if(!visibleTask){if(requestIsCurrent())taskOpenRequests.current.clearIfCurrent(requestGeneration);alert('無權查看此待辦');return requestIsCurrent()?'failed':'cancelled';}
     if(vesselId&&(!taskVesselIds(visibleTask).includes(vesselId)||!activeVessels.some(vessel=>vessel.id===vesselId))){if(requestIsCurrent())taskOpenRequests.current.clearIfCurrent(requestGeneration);alert('無權更新此船舶進度');return requestIsCurrent()?'failed':'cancelled';}
     const result=await openTaskEditor(visibleTask,vesselId,requestGeneration);
-    if(result==='opened'&&liveData.current.notifications.some(item=>item.userId===currentUser.id&&item.taskId===visibleTask.id&&!item.readAt)){
-      commit(draft=>{const at=nowIso();draft.notifications.forEach(item=>{if(item.userId===currentUser.id&&item.taskId===task.id&&!item.readAt)item.readAt=at;});},'查看待辦更新','notification',task.id,'標記此待辦未讀變動');
-    }
     if(result!=='opened')taskOpenRequests.current.clearIfCurrent(requestGeneration);
     return result;
   };
@@ -4112,7 +4110,7 @@ export default function App() {
         canDelete={canDeleteTasks}
         canPrint={canExportReports}
         onPrint={()=>print('我的待辦清單','work-center')}
-        markAllRead={()=>commit(draft=>{const at=nowIso();draft.notifications.forEach(item=>{if(item.userId===currentUser.id&&!item.readAt)item.readAt=at;});},'標記通知已讀','notification',currentUser.id,'全部標記已讀')}
+        markAllRead={()=>setData(previous=>markOwnNotificationsRead(previous,currentUser.id,nowIso()))}
       />}
       {tab==='closed' && <ListPanel title="已結案清單" tasks={closedTasks} data={roleVisibleData} visibleVessels={activeVessels} filters={closedFilters} setFilters={setClosedFilters} fleetTags={fleetTags} userMap={userMap} exportedBy={currentUser.name} onEdit={openTask} onPrint={() => print('已結案清單')} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
       {tab==='internalControl' && canAccessTab(currentUser,'internalControl') && <InternalControlPage data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onDelete={removeInternalCase} onBatchClose={caseIds=>batchCompleteTasks([],caseIds)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
