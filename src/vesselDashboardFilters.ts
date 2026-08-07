@@ -31,6 +31,12 @@ export function vesselSupervisorDisplayName(user: Pick<UserAccount, 'id' | 'name
   return user.name.trim() || user.username.trim() || `未命名督導（${user.id}）`;
 }
 
+export function effectiveVesselManagerNames(vessel: Pick<Vessel, 'id' | 'assignedUserIds' | 'delegateManagers'>, users: UserAccount[]): string[] {
+  return users
+    .filter(user => user.isActive && user.role !== 'vessel' && userCanManageVesselByAssignmentOrDelegation(vessel, user))
+    .map(vesselSupervisorDisplayName);
+}
+
 export function emptyVesselFilterState(): VesselFilterState {
   return {
     selfManagedOnly: false,

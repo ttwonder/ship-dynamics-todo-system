@@ -60,8 +60,17 @@ try {
     { id: 'u1', name: 'Supervisor One', department: '督導', isActive: true, role: 'operator', managedVesselIds: ['v1'] },
     { id: 'u2', name: 'Supervisor Two', department: '督導', isActive: true, role: 'operator', managedVesselIds: [] },
     { id: 'u3', name: 'Assigned Non-Supervisor', department: '管理組', isActive: true, role: 'operator', managedVesselIds: ['v1'] },
+    { id: 'u4', name: 'Active Delegate', department: '航運處', isActive: true, role: 'operator', managedVesselIds: [] },
+    { id: 'u5', name: 'Inactive Delegate', department: '航運處', isActive: true, role: 'operator', managedVesselIds: [] },
+    { id: 'u6', name: 'Disabled Manager', department: '航運處', isActive: false, role: 'operator', managedVesselIds: ['v1'] },
+    { id: 'u7', name: 'Vessel Account', department: '船舶帳戶', isActive: true, role: 'vessel', managedVesselIds: ['v1'] },
   ];
-  const supervisedVessels = [{ id: 'v1', assignedUserIds: ['u2', 'u3'], delegateManagers: [] }];
+  const supervisedVessels = [{ id: 'v1', assignedUserIds: ['u2', 'u3', 'u6', 'u7'], delegateManagers: [{ userId: 'u4', isActive: true }, { userId: 'u5', isActive: false }] }];
+  assert.deepEqual(
+    filters.effectiveVesselManagerNames(supervisedVessels[0], supervisorUsers),
+    ['Supervisor One', 'Supervisor Two', 'Assigned Non-Supervisor', 'Active Delegate'],
+    '船卡必須顯示所有有效直接經管與已激活代管人員，且排除未激活、停用與船舶帳號',
+  );
   assert.deepEqual(filters.vesselSupervisorOptions(supervisedVessels, supervisorUsers).map(option => option.id), ['u1', 'u2'], '督導下拉不得混入其他部門的分管人員');
   assert.ok(controlsSource.includes('搜尋督導姓名'), '督導多選下拉必須支援姓名搜尋');
 

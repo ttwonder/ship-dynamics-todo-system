@@ -21,9 +21,10 @@ assert.match(controls, /<span className="vessel-supervisor-option-name">\{option
 assert.match(styles, /\.vessel-supervisor-options\{[^}]*overflow-x:hidden/, '督導候選清單不得產生水平捲動條');
 assert.match(styles, /\.vessel-supervisor-options label\{[^}]*grid-template-columns:auto minmax\(0,1fr\)/, '督導 checkbox 與姓名必須使用穩定的兩欄列排版');
 
-assert.ok(dashboard.includes('className="ship-type-supervisor"'), '每張船卡必須有船型與分管督導的共同資訊列');
-assert.ok(dashboard.includes('supervisors.filter(option => assignedSupervisorIds.has(option.id))'), '船卡姓名必須先通過正式督導候選範圍，不得顯示其他部門的廣義 assigned user');
-assert.ok(dashboard.includes("supervisorNames.join('、') || '-'"), '船卡必須顯示全部分管督導姓名，未分管時顯示半形 -');
-assert.match(styles, /\.ship-type-supervisor\{[^}]*font-size:13px/, '船型與分管督導姓名必須使用一致且放大後的 13px 字級');
+assert.ok(dashboard.includes('className="ship-type-supervisor"'), '每張船卡必須有船型與有效經管人員的共同資訊列');
+assert.ok(dashboard.includes('effectiveVesselManagerNames(vessel, users)'), '船卡姓名必須使用全部有效直接經管與已激活代管人員，不得再限制為督導部門');
+assert.ok(!dashboard.includes('supervisors.filter(option => assignedSupervisorIds.has(option.id))'), '船卡不得再借用只含督導部門的篩選候選清單');
+assert.ok(dashboard.includes("managerNames.join('、') || '-'"), '船卡必須顯示全部有效經管人員姓名，未分管時顯示半形 -');
+assert.match(styles, /\.ship-type-supervisor\{[^}]*font-size:13px/, '船型與有效經管人員姓名必須使用一致且放大後的 13px 字級');
 
 console.log('Dashboard metrics, filters, supervisor picker and card metadata presentation contracts passed.');
