@@ -2118,6 +2118,7 @@ export default function App() {
       flushSync(()=>setData(remote));
       applied=apply();
       if(!applied){await releaseRelated();return false;}
+      if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
       assertBundleActive();
       await enqueueCloudSave(liveData.current,sessionIsCurrent);
       assertBundleActive();

@@ -13,6 +13,7 @@ assert.ok(wrapper.includes('relatedEntityLockKeysForSection(planningRemote,secti
 assert.ok(wrapper.includes('acquireEditLockBundle(')&&wrapper.includes('renewEditLock('),'the wrapper must claim and renew the related lock bundle');
 assert.ok(wrapper.includes('relatedEntityLockKeysForSection(remote,sectionKey)')&&wrapper.includes('sameLockKeySet'),'the post-lock refresh must reject relation drift');
 assert.ok(wrapper.includes('await enqueueCloudSave(liveData.current,sessionIsCurrent)')&&wrapper.includes('appDataContentEqual(liveData.current,confirmedCloudData.current)'),'success must require authoritative cloud confirmation');
+assert.match(wrapper,/applied=apply\(\);[\s\S]*?if\(saveTimer\.current\)\{window\.clearTimeout\(saveTimer\.current\);saveTimer\.current=null;\}[\s\S]*?await enqueueCloudSave\(liveData\.current,sessionIsCurrent\)/,'an explicit durable related mutation must cancel its redundant autosave timer before enqueueing the authoritative snapshot');
 
 const saveTaskStart=app.indexOf('const saveTask = async');
 const saveTaskEnd=app.indexOf('\n  const saveTaskVesselProgress',saveTaskStart);

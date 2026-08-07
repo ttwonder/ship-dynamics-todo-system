@@ -6,6 +6,7 @@ export const CLOUD_BLOCK_COLLECTIONS=[
 
 const UNORDERED_COLLECTIONS=new Set<CloudBlockCollection>(['taskDismissals']);
 const DERIVED_ORDER_COLLECTIONS=new Set<CloudBlockCollection>(['notifications','auditLogs']);
+const SERVER_OWNED_AUDIT_FIELDS=['ipAddress','ipCountryCode'] as const;
 
 export type CloudBlockCollection=typeof CLOUD_BLOCK_COLLECTIONS[number];
 
@@ -53,6 +54,16 @@ const canonical=(value:unknown):string=>{
 };
 
 const equal=(left:unknown,right:unknown)=>canonical(left)===canonical(right);
+
+const auditValueForPatch=(expected:JsonObject|null,value:JsonObject|null):JsonObject|null=>{
+  if(!value)return null;
+  const trusted=clone(value);
+  for(const field of SERVER_OWNED_AUDIT_FIELDS){
+    if(expected&&Object.prototype.hasOwnProperty.call(expected,field))trusted[field]=clone(expected[field]);
+    else delete trusted[field];
+  }
+  return trusted;
+};
 
 const entityArray=(snapshot:AppData,collection:CloudBlockCollection):JsonObject[]=>{
   const value=(snapshot as unknown as Record<string,unknown>)[collection];
@@ -107,7 +118,8 @@ export function buildCloudBlockPatch(base:AppData,next:AppData,storageBase:AppDa
     for(const entityId of ids){
       const normalizedExpected=baseMap.get(entityId)||null;
       const expected=storageMap.get(entityId)||null;
-      const value=nextMap.get(entityId)||null;
+      const submittedValue=nextMap.get(entityId)||null;
+      const value=collection==='auditLogs'?auditValueForPatch(expected||normalizedExpected,submittedValue):submittedValue;
       if(!equal(normalizedExpected,value)){
         operations.push({kind:'entity',collection,entityId,expected:expected?clone(expected):null,value:value?clone(value):null});
         hasEntityOperation=true;

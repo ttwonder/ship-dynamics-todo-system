@@ -7,10 +7,13 @@ type CollectionKey = typeof COLLECTION_KEYS[number];
 type SnapshotName = 'base' | 'local' | 'remote';
 type Identified = { id: string };
 const FIELD_LEVEL_COLLECTIONS = new Set<CollectionKey>(['vessels', 'tasks', 'internalControlCases', 'meetings']);
+const SERVER_OWNED_AUDIT_FIELDS = new Set(['ipAddress', 'ipCountryCode']);
 
 const clone = <T,>(value: T): T => structuredClone(value);
 const equal = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 const plainObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+const auditBusinessValue = (value: Identified) => Object.fromEntries(Object.entries(value).filter(([key]) => !SERVER_OWNED_AUDIT_FIELDS.has(key)));
+const auditBusinessEqual = (left: Identified, right: Identified) => equal(auditBusinessValue(left), auditBusinessValue(right));
 export const appDataContentEqual = (left: AppData, right: AppData) => {
   const { revision: _leftRevision, updatedAt: _leftUpdatedAt, ...leftContent } = left;
   const { revision: _rightRevision, updatedAt: _rightUpdatedAt, ...rightContent } = right;
@@ -245,15 +248,17 @@ function mergeImmutableAuditLogs(baseItems: Identified[],localItems: Identified[
   const retainedBase:Identified[]=[];
   for(const baseItem of baseItems){
     const id=baseItem.id;const local=localById.get(id);const remote=remoteById.get(id);
-    if((local===undefined&&!localRetention)||(local!==undefined&&!equal(local,baseItem))||(remote===undefined&&!remoteRetention)||(remote!==undefined&&!equal(remote,baseItem)))conflicts.push(`auditLogs:${id}`);
-    retainedBase.push(clone(baseItem));
+    if((local===undefined&&!localRetention)||(local!==undefined&&!auditBusinessEqual(local,baseItem))||(remote===undefined&&!remoteRetention)||(remote!==undefined&&!auditBusinessEqual(remote,baseItem)))conflicts.push(`auditLogs:${id}`);
+    retainedBase.push(clone(remote||local||baseItem));
   }
   const newIds=[...new Set([...localById.keys(),...remoteById.keys()].filter(id=>!baseById.has(id)))];
   const appended:Identified[]=[];
   for(const id of newIds){
     const local=localById.get(id);const remote=remoteById.get(id);
-    if(local&&remote&&!equal(local,remote)){conflicts.push(`auditLogs:${id}`);appended.push(clone(remote));}
-    else if(local||remote)appended.push(clone((local||remote)!));
+    if(local&&remote){
+      if(!auditBusinessEqual(local,remote))conflicts.push(`auditLogs:${id}`);
+      appended.push(clone(remote));
+    }else if(local||remote)appended.push(clone((local||remote)!));
   }
   appended.sort((a:any,b:any)=>String(b.at||'').localeCompare(String(a.at||''))||a.id.localeCompare(b.id));
   if(appended.length>500){

@@ -201,6 +201,63 @@ try{
   assert.ok(primaryNoticeOps.some(operation=>operation.kind==='order'&&operation.collection==='notifications'),'real notification membership changes must retain their order operation');
   assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(sideEffectBase,primaryNoticeOps,operator.id),'derived order suppression must not bypass ordinary primary authorization');
 
+  const stampedAuditRaceBase=structuredClone(remote);
+  const stampedAuditRaceTask=stampedAuditRaceBase.tasks.find(task=>task.id===ownedTask.id);
+  const stampedAuditRaceClient=structuredClone(stampedAuditRaceBase);
+  stampedAuditRaceClient.tasks.find(task=>task.id===ownedTask.id).status='audit-stamp-race-saved';
+  const unstampedAudit={
+    id:'audit-stamp-race',at:'2026-08-07T01:20:00.000Z',actorId:operator.id,actorName:operator.name,actorRole:operator.role,
+    action:'更新事項',entityType:'task',entityId:stampedAuditRaceTask.id,detail:'保存事項變更',
+  };
+  stampedAuditRaceClient.auditLogs.unshift(unstampedAudit);
+  const stampedAuditRaceFirstOps=patch.buildCloudBlockPatch(stampedAuditRaceBase,stampedAuditRaceClient);
+  assert.ok(
+    stampedAuditRaceFirstOps.some(operation=>operation.kind==='entity'&&operation.collection==='tasks'&&operation.entityId===stampedAuditRaceTask.id),
+    'the first legitimate save must include the primary task entity operation',
+  );
+  assert.ok(
+    stampedAuditRaceFirstOps.some(operation=>operation.kind==='entity'&&operation.collection==='auditLogs'&&operation.entityId===unstampedAudit.id),
+    'the first legitimate save must include its accompanying audit entity operation',
+  );
+  assert.doesNotThrow(
+    ()=>auth.assertActorAuthorizedForCloudBlockPatch(stampedAuditRaceBase,stampedAuditRaceFirstOps,operator.id),
+    'the first task plus audit save must remain an authorized primary business mutation',
+  );
+  const stampedAuditRaceServer=structuredClone(stampedAuditRaceClient);
+  stampedAuditRaceServer.auditLogs[0]={...stampedAuditRaceServer.auditLogs[0],ipAddress:'203.0.113.42',ipCountryCode:'TW'};
+  const rebasedStampedAuditRace=rebase.rebaseDisjointAppData(
+    stampedAuditRaceBase,
+    stampedAuditRaceClient,
+    stampedAuditRaceServer,
+    '2026-08-07T01:20:01.000Z',
+    operator.id,
+  );
+  assert.deepEqual(
+    rebasedStampedAuditRace.auditLogs[0],
+    stampedAuditRaceServer.auditLogs[0],
+    'three-way rebase must accept the trusted server-enriched copy of the same newly appended audit',
+  );
+  const tamperedRebaseAudit=structuredClone(stampedAuditRaceServer);
+  tamperedRebaseAudit.auditLogs[0].detail='tampered during rebase';
+  assert.throws(
+    ()=>rebase.rebaseDisjointAppData(stampedAuditRaceBase,stampedAuditRaceClient,tamperedRebaseAudit,'2026-08-07T01:20:02.000Z',operator.id),
+    error=>error instanceof rebase.CloudRebaseConflictError&&error.conflicts.includes('auditLogs:audit-stamp-race'),
+    'server request-context enrichment must not hide a conflicting immutable audit business value',
+  );
+  assert.deepEqual(
+    patch.buildCloudBlockPatch(stampedAuditRaceServer,stampedAuditRaceClient),
+    [],
+    'a queued duplicate snapshot must not turn server-stamped audit context into an unaccompanied audit-only write',
+  );
+  const tamperedStampedAudit=structuredClone(stampedAuditRaceServer);
+  tamperedStampedAudit.auditLogs[0].detail='tampered audit detail';
+  const tamperedStampedAuditOps=patch.buildCloudBlockPatch(stampedAuditRaceServer,tamperedStampedAudit);
+  assert.throws(
+    ()=>auth.assertActorAuthorizedForCloudBlockPatch(stampedAuditRaceServer,tamperedStampedAuditOps,operator.id),
+    error=>error instanceof auth.CloudPatchAuthorizationError&&error.reason==='unaccompanied-auditLogs',
+    'ignoring server-owned request context must not authorize edits to immutable audit business fields',
+  );
+
   const dismissalBase=structuredClone(remote);
   dismissalBase.taskDismissals=[];
   const dismissalNext=structuredClone(dismissalBase);
