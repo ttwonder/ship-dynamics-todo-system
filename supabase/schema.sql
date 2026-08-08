@@ -560,13 +560,21 @@ begin
   end if;
   if p_collection = 'internalControlCases' then
     related_id := coalesce(p_value ->> 'linkedTaskId','');
-    if related_id <> '' and not exists (
-      select 1
-      from jsonb_array_elements(p_operations) operation_item
-      where operation_item ->> 'kind' = 'entity'
-        and operation_item ->> 'collection' = 'tasks'
-        and operation_item ->> 'entityId' = related_id
-        and operation_item -> 'expected' = 'null'::jsonb
+    if related_id <> '' and (
+      not exists (
+        select 1
+        from jsonb_array_elements(p_operations) operation_item
+        where operation_item ->> 'kind' = 'entity'
+          and operation_item ->> 'collection' = 'tasks'
+          and operation_item ->> 'entityId' = related_id
+          and operation_item -> 'expected' = 'null'::jsonb
+      )
+      or exists (
+        select 1
+        from jsonb_array_elements(coalesce(p_lock_guards,'[]'::jsonb)) guard
+        where left(guard ->> 'section_key',15) = 'task-create:v2:'
+          and right(guard ->> 'section_key',char_length(related_id)+1) = ':' || related_id
+      )
     ) then
       return exists (
         select 1 from jsonb_array_elements(coalesce(p_lock_guards,'[]'::jsonb)) guard

@@ -10,6 +10,16 @@ type TaskRelationSnapshot={
 
 type TaskInternalControlCreationCandidate={id:string;isInternalControl?:boolean};
 
+export function taskCreationRelatedLockKeys(
+  vesselIds:readonly string[],
+  candidate:TaskInternalControlCreationCandidate,
+  meetingSource:boolean,
+):string[]{
+  const keys=new Set(vesselIds.filter(Boolean).map(vesselId=>`vessel:${vesselId}`));
+  if(candidate.isInternalControl&&!meetingSource)keys.add(internalControlCreationLockKey(candidate.id));
+  return[...keys].sort((left,right)=>left.localeCompare(right));
+}
+
 export function lockKeyForExistingEntity(collection:CloudBlockCollection,entityId:string):string|null{
   if(!entityId)return null;
   if(collection==='vessels')return`vessel:${entityId}`;

@@ -129,6 +129,13 @@ try {
 
   assert.ok(app.includes('pendingTaskCreationMatchesContext'), 'App重試前必須核對workspace及使用者');
   assert.ok(app.includes('taskCreationAlreadyCommitted'), '重試必須以固定task ID識別已成功的新增，避免重複');
+  const creationSaveSource=app.slice(app.indexOf('if(creating&&getSupabaseConfig())'),app.indexOf('if(!creating){'));
+  assert.ok(
+    creationSaveSource.includes('taskCreationRelatedLockKeys(taskVesselIds(candidate),candidate,isMeetingTaskSource(candidate))')
+      && creationSaveSource.indexOf('taskCreationRelatedLockKeys(')<creationSaveSource.indexOf('acquireEditLockBundle('),
+    '首次新增與pending共用的建立流程必須在取得bundle前規劃船舶鎖及精確內控建立鎖',
+  );
+  assert.ok(app.includes("const durable=await saveTask(intent.task,true,'',remote.revision,runContext);"), 'pending重試必須回到同一個已補齊建立關聯鎖的saveTask流程');
   assert.ok(app.includes('creationSectionKey=taskCreationLockKey(intent.primaryVesselId,intent.taskId)'), '重試必須重新取得完全相符的creation sentinel');
   assert.ok(app.includes("transientCloudBlockLockGuards.current.set(`${creationSectionKey}|${creationLeaseOwnerId}`"), 'pending重試必須把creation sentinel提交為原子雲端保存guard');
   assert.ok(app.includes('Date.now()<creationValidatedUntilMs'), 'pending重試不得在creation lease保守到期後繼續本機mutation');

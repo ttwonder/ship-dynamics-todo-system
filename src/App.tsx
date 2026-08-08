@@ -65,7 +65,7 @@ import { shouldOfferStaleBrowserRecovery } from './staleBrowserRecovery';
 import { APP_VERSION_CHECK_INTERVAL_MS, appRecoveryReloadUrl, appUpdateBlockReason, appVersionReloadUrl, checkForAppVersion } from './appVersionUpdate';
 import BrowserRecoveryModal, { type BrowserRecoveryPhase } from './BrowserRecoveryModal';
 import { clearShipDynamicsBrowserStorage, repairShipDynamicsResources, shouldBlockAppBeforeUnload } from './browserRecovery';
-import { relatedEntityLockKeysForSection, taskInternalControlCreationLockKeys, taskRelationLockKeys } from './collaborationLockPlan';
+import { relatedEntityLockKeysForSection, taskCreationRelatedLockKeys, taskInternalControlCreationLockKeys, taskRelationLockKeys } from './collaborationLockPlan';
 import { cloudWakeupAction } from './realtimeSync';
 import { CloudSaveRecoveryLockConflictError, runWithCloudSaveRecoveryLocks } from './cloudSaveLockRecovery';
 import { sortRecordsNewestCreated } from './recordSorting';
@@ -2557,8 +2557,7 @@ export default function App() {
         if(!creationIsCurrent())throw new StaleAsyncConfigError();
         if(liveData.current.revision>lastCloudRevision.current)await enqueueCloudSave(liveData.current,creationIsCurrent);
         if(!creationIsCurrent())throw new StaleAsyncConfigError();
-        const vesselIds=taskVesselIds(candidate);
-        const vesselRequests=vesselIds.map(vesselId=>({sectionKey:`vessel:${vesselId}`,label:`新增要事關聯船舶｜${vesselId}`,leaseOwnerId:uid('task-create-vessel-lease')}));
+        const vesselRequests=taskCreationRelatedLockKeys(taskVesselIds(candidate),candidate,isMeetingTaskSource(candidate)).map(sectionKey=>({sectionKey,label:sectionKey.startsWith('vessel:')?`新增要事關聯船舶｜${sectionKey.slice('vessel:'.length)}`:`新增要事關聯內控｜${candidate.id}`,leaseOwnerId:uid('task-create-related-lease')}));
         const releaseVesselRequest=async(request:{sectionKey:string;leaseOwnerId:string})=>runCloudSaveQueueRpc('釋放新增要事關聯船舶鎖',signal=>releaseEditLock(request.sectionKey,request.leaseOwnerId,capturedCreationConfig,signal),8_000);
         const vesselBundle=await acquireEditLockBundle(
           vesselRequests,

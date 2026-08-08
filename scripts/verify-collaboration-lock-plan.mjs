@@ -66,6 +66,21 @@ try{
     'task:task-a',
   ],'an individual task mutation must include its exact task and every existing meeting/internal-control relation');
   assert.deepEqual(plan.relatedEntityLockKeysForSection(relationSnapshot,'meeting:missing'),['meeting:missing']);
+  assert.deepEqual(
+    plan.taskCreationRelatedLockKeys(['vessel-b','vessel-a','vessel-a'],{id:'task-created-internal',isInternalControl:true},false),
+    ['internal-control-create:task-created-internal','vessel:vessel-a','vessel:vessel-b'],
+    'a new ordinary-source internal-control task must acquire its exact case-creation guard together with every related vessel guard',
+  );
+  assert.deepEqual(
+    plan.taskCreationRelatedLockKeys(['vessel-a'],{id:'task-created-ordinary',isInternalControl:false},false),
+    ['vessel:vessel-a'],
+    'a new ordinary task must not acquire an unnecessary internal-control creation guard',
+  );
+  assert.deepEqual(
+    plan.taskCreationRelatedLockKeys(['vessel-a'],{id:'task-created-meeting',isInternalControl:true},true),
+    ['vessel:vessel-a'],
+    'a meeting-source task must remain under its parent meeting path instead of acquiring a standalone internal-control creation guard',
+  );
   const ordinaryTaskSnapshot={tasks:[{id:'task-new-internal',isInternalControl:false}],internalControlCases:[]};
   assert.deepEqual(
     plan.taskInternalControlCreationLockKeys(ordinaryTaskSnapshot,{id:'task-new-internal',isInternalControl:true},false),

@@ -225,6 +225,53 @@ try{
   ])).rows[0].value;
   assert.equal(guardedInternalTransition.ok,true,'the task direct guard, affected vessel guard, and internal-control creation guard must allow the atomic transition');
 
+  const newInternalTask={id:'new-internal-task',vesselId:'v1',status:'open',isInternalControl:true,internalControlCaseId:'internal-new-internal-task'};
+  const newInternalCase={id:'internal-new-internal-task',vesselId:'v1',linkedTaskId:newInternalTask.id,status:'open'};
+  const internalCreationPayload={...structuredClone(payload),revision:1,tasks:[],internalControlCases:[]};
+  const internalCreationVessel=internalCreationPayload.vessels.find(vessel=>vessel.id==='v1');
+  assert.ok(internalCreationVessel,'same-block internal task fixture needs vessel v1');
+  await db.query('insert into public.ship_dynamics_app_state(workspace_key,payload,revision,updated_by) values ($1,$2::jsonb,$3,$4)',[
+    'internal-create-workspace',JSON.stringify(internalCreationPayload),1,'seed',
+  ]);
+  await db.query("insert into public.ship_dynamics_edit_locks(workspace_key,section_key,locked_by,locked_by_name,expires_at) values ('internal-create-workspace','task-create:v2:v1:new-internal-task','new-task-owner','Operator',now()+interval '60 seconds'),('internal-create-workspace','vessel:v1','new-vessel-owner','Operator',now()+interval '60 seconds')");
+  const internalCreationGuard=(await db.query('select public.ship_dynamics_actor_guard($1::jsonb,$2::text) as value',[JSON.stringify(internalCreationPayload),'actor-1'])).rows[0].value;
+  const internalCreationOps=[
+    {kind:'entity',collection:'tasks',entityId:newInternalTask.id,expected:null,value:newInternalTask},
+    {kind:'entity',collection:'internalControlCases',entityId:newInternalCase.id,expected:null,value:newInternalCase},
+    {kind:'order',collection:'tasks',expectedIds:[],valueIds:[newInternalTask.id]},
+    {kind:'order',collection:'internalControlCases',expectedIds:[],valueIds:[newInternalCase.id]},
+    {kind:'entity',collection:'vessels',entityId:'v1',expected:internalCreationVessel,value:{...internalCreationVessel,weeklyAttention:['內部管控']}},
+  ];
+  const missingNewInternalGuard=(await db.query('select public.apply_ship_dynamics_block_patch($1,$2::jsonb,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb) as value',[
+    'internal-create-workspace',JSON.stringify(internalCreationOps),'Operator','actor-1',JSON.stringify(internalCreationGuard),null,JSON.stringify([
+      {section_key:'task-create:v2:v1:new-internal-task',locked_by:'new-task-owner'},
+      {section_key:'vessel:v1',locked_by:'new-vessel-owner'},
+    ]),
+  ])).rows[0].value;
+  assert.equal(missingNewInternalGuard.code,'lock-conflict','same-block internal task creation must fail closed without the exact internal-control creation guard');
+  assert.equal(missingNewInternalGuard.conflict_key,`internalControlCases:${newInternalCase.id}`);
+  await db.query("insert into public.ship_dynamics_edit_locks(workspace_key,section_key,locked_by,locked_by_name,expires_at) values ('internal-create-workspace','internal-control-create:unrelated-task','unrelated-internal-owner','Operator',now()+interval '60 seconds')");
+  const unrelatedNewInternalGuard=(await db.query('select public.apply_ship_dynamics_block_patch($1,$2::jsonb,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb) as value',[
+    'internal-create-workspace',JSON.stringify(internalCreationOps),'Operator','actor-1',JSON.stringify(internalCreationGuard),null,JSON.stringify([
+      {section_key:'task-create:v2:v1:new-internal-task',locked_by:'new-task-owner'},
+      {section_key:'vessel:v1',locked_by:'new-vessel-owner'},
+      {section_key:'internal-control-create:unrelated-task',locked_by:'unrelated-internal-owner'},
+    ]),
+  ])).rows[0].value;
+  assert.equal(unrelatedNewInternalGuard.code,'lock-conflict','another task\'s internal-control creation guard must not authorize the same-block internal-control case');
+  assert.equal(unrelatedNewInternalGuard.conflict_key,`internalControlCases:${newInternalCase.id}`);
+  await db.query("insert into public.ship_dynamics_edit_locks(workspace_key,section_key,locked_by,locked_by_name,expires_at) values ('internal-create-workspace','internal-control-create:new-internal-task','new-internal-owner','Operator',now()+interval '60 seconds')");
+  const guardedNewInternalCreation=(await db.query('select public.apply_ship_dynamics_block_patch($1,$2::jsonb,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb) as value',[
+    'internal-create-workspace',JSON.stringify(internalCreationOps),'Operator','actor-1',JSON.stringify(internalCreationGuard),null,JSON.stringify([
+      {section_key:'task-create:v2:v1:new-internal-task',locked_by:'new-task-owner'},
+      {section_key:'vessel:v1',locked_by:'new-vessel-owner'},
+      {section_key:'internal-control-create:new-internal-task',locked_by:'new-internal-owner'},
+    ]),
+  ])).rows[0].value;
+  assert.equal(guardedNewInternalCreation.ok,true,'the exact task-creation, vessel, and internal-control creation guards must allow the same-block internal task save');
+  assert.ok(guardedNewInternalCreation.payload.tasks.some(task=>task.id===newInternalTask.id));
+  assert.ok(guardedNewInternalCreation.payload.internalControlCases.some(item=>item.id===newInternalCase.id));
+
   await db.query("update public.ship_dynamics_app_state set payload=jsonb_set(payload,'{tasks}',(payload->'tasks') || jsonb_build_array(jsonb_build_object('id','second-task','vesselId','v1','status','open'))) where workspace_key='workspace'");
   const reorderBase=(await db.query("select payload from public.ship_dynamics_app_state where workspace_key='workspace'")).rows[0].payload;
   const reorderGuard=(await db.query('select public.ship_dynamics_actor_guard($1::jsonb,$2::text) as value',[JSON.stringify(reorderBase),'actor-1'])).rows[0].value;
