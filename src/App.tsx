@@ -47,7 +47,7 @@ import { formatTaipeiDate, formatTaipeiDateTime, taipeiDateKey } from './taipeiT
 import { dailyMorningReports, upsertDailyMorningReport } from './morningHistory';
 import RichTextContent from './RichTextContent';
 import { richTextToPlainText } from './richText';
-import { classifyVesselLeaseRenewalFailure, conservativeLeaseDeadline, createEditLockCoordinator, editLockAllowsMutation } from './editLockCoordinator';
+import { classifyExpiredLeaseRelease, classifyLeaseRenewalAfterAwait, classifyMutationLeaseFailure, classifyVesselLeaseIncidentClose, classifyVesselLeaseRenewalFailure, conservativeLeaseDeadline, createEditLockCoordinator, editLockAllowsMutation, shouldRenderProductionCloudSafetyGate } from './editLockCoordinator';
 import { acquireEditLockBundle } from './editLockBundle';
 import { batchMutationSessionIsCurrent, createBatchManagedAuthorization, type BatchManagedAuthorization } from './batchManagedAuthorization';
 import { createLeaseReleaseState, pendingTrackedLeases, registerTrackedLease, releaseTrackedLeases, type TrackedLeaseToken } from './leaseReleaseTracker';
@@ -1063,7 +1063,7 @@ export default function App() {
   useEffect(()=>{
     const shouldWarnBeforeLeaving=()=>shouldBlockAppBeforeUnload({
       recoveryNavigation:browserRecoveryNavigationRef.current,
-      hasUnsavedWork:hasUnsavedWork.current||Boolean(vesselAttentionSaveQueue.current?.hasPending()),
+      hasUnsavedWork:hasUnsavedWork.current||Boolean(vesselAttentionSaveQueue.current?.hasPending())||Boolean(vesselLeaseIncidentRef.current)||Boolean(activeEditLockRef.current?.sectionKey.startsWith('vessel:')),
       savePhaseSaved:savePhaseRef.current==='saved',
       saveTimerPending:Boolean(saveTimer.current),
       pendingCloudDataCount:pendingCloudData.current.size(),
@@ -1223,6 +1223,10 @@ export default function App() {
       if(!getSupabaseConfig()&&!record)return;
       if(record&&sameCloudConfig(getSupabaseConfig(),record.config))return;
       if(creationHandoffMatches(lock)){setSensitiveCloudStatus('雲端設定已變更：正在完成目前新增要事的耐久保存，暫不釋放協作鎖',lock.sectionKey);return;}
+      if(lock.sectionKey.startsWith('vessel:')){
+        freezeVesselEditorForLock(lock,`雲端設定已變更：已凍結並保留 ${lock.label}；目前內容只保留在這個視窗，不能保存。`);
+        return;
+      }
       lockCoordinator.current.invalidate();
       setActiveEditLock(previous=>previous?.leaseOwnerId===lock.leaseOwnerId?{...previous,status:'error'}:previous);
       setSensitiveCloudStatus(`雲端設定已變更：已凍結並保留 ${lock.label}；請恢復原設定後保存或重新載入，未確認內容不會被清除`,lock.sectionKey);
@@ -1252,6 +1256,11 @@ export default function App() {
           if(!leaseRecord)throw new Error('協作鎖的原始雲端設定已遺失');
           if(!sameCloudConfig(getSupabaseConfig(),leaseRecord.config)){
             if(creationHandoffMatches(lock))setSensitiveCloudStatus('雲端設定已變更：新增要事仍在耐久保存，暫以原工作區設定續期協作鎖',lock.sectionKey);
+            else if(lock.sectionKey.startsWith('vessel:')){
+              clearRetryTimer();
+              freezeVesselEditorForLock(lock,`雲端設定已變更：已凍結並保留 ${lock.label}；目前內容只保留在這個視窗，不能保存。`);
+              return;
+            }
             else{
               lockCoordinator.current.invalidate();
               closeEditorForLock(lock,true);
@@ -1264,13 +1273,40 @@ export default function App() {
           const renewed=await runCloudSaveQueueRpc('單項協作鎖續期',signal=>renewEditLock(lock.sectionKey,lock.leaseOwnerId,75,leaseRecord.config,signal),8_000);
           const renewalStillCurrent=()=>lockCoordinator.current.isCurrent(lock.generation)&&liveAuthorizationEpoch.current===lock.authorizationEpoch&&liveAuthorizedEditLockKeys.current.has(lock.sectionKey);
           const matchingCreationHandoff=creationHandoffInFlight.current?.leaseOwnerId===lock.leaseOwnerId?creationHandoffInFlight.current:null;
+          const renewalAfterAwaitDisposition=classifyLeaseRenewalAfterAwait({
+            sectionKey:lock.sectionKey,
+            renewalTargetIsCurrent:renewalStillCurrent(),
+            cloudConfigStillCurrent:sameCloudConfig(getSupabaseConfig(),leaseRecord.config),
+            durableCreationHandoff:Boolean(matchingCreationHandoff),
+          });
+          if(renewalAfterAwaitDisposition==='freeze-vessel-draft'){
+            clearRetryTimer();
+            freezeVesselEditorForLock(lock,`雲端設定在協作鎖續期期間發生變更：已凍結並保留 ${lock.label}；目前內容只保留在這個視窗，不能保存。`);
+            return;
+          }
+          if(renewalAfterAwaitDisposition==='close-editor'){
+            lockCoordinator.current.invalidate();
+            closeEditorForLock(lock,true);
+            setActiveEditLock(previous=>previous?.leaseOwnerId===lock.leaseOwnerId?{...previous,status:'error'}:previous);
+            setSensitiveCloudStatus(`雲端設定已變更：已關閉 ${lock.label} 並停止舊工作區續期`,lock.sectionKey);
+            void releaseCurrentEditLock();
+            return;
+          }
           if(matchingCreationHandoff&&(!renewed.ok||!renewalStillCurrent())){
             setSensitiveCloudStatus(renewed.ok?'新增要事耐久保存仍在執行；舊續期結果暫不釋放協作鎖':'新增要事耐久保存仍在執行；續期失效處置將等待雲端保存結果',lock.sectionKey);
             await waitForDurableCreationHandoff(matchingCreationHandoff,lock.leaseOwnerId);
           }
           if(!renewalStillCurrent()){
             if(isTaskCreationLockKey(lock.sectionKey))quarantineCreationDraftForLock(lock);
-            if(renewed.ok){await runCloudSaveQueueRpc('清理失效單項協作鎖',signal=>releaseEditLock(leaseRecord.sectionKey,lock.leaseOwnerId,leaseRecord.config,signal),8_000);leaseCloudConfigs.current.delete(lock.leaseOwnerId);}
+            if(renewed.ok){
+              const renewalCleanupDisposition=classifyExpiredLeaseRelease(lock.sectionKey,vesselSaveLeaseOwners.current.has(lock.leaseOwnerId));
+              if(renewalCleanupDisposition==='defer-for-durability'){
+                setSensitiveCloudStatus('船舶快速更新保存仍在確認；延遲續租結果將等待雲端保存完成後再釋放協作鎖',lock.sectionKey);
+                return;
+              }
+              await runCloudSaveQueueRpc('清理失效單項協作鎖',signal=>releaseEditLock(leaseRecord.sectionKey,lock.leaseOwnerId,leaseRecord.config,signal),8_000);
+              leaseCloudConfigs.current.delete(lock.leaseOwnerId);
+            }
             else leaseCloudConfigs.current.delete(lock.leaseOwnerId);
             return;
           }
@@ -1350,6 +1386,7 @@ export default function App() {
       const latestLock=activeEditLockRef.current;
       if(latestLock?.leaseOwnerId===lock.leaseOwnerId&&latestLock.validatedUntilMs>lock.validatedUntilMs)return;
       if(creationHandoffMatches(lock)){setSensitiveCloudStatus('協作鎖有效期已到：正在等待新增要事耐久保存完成，暫不交出協作鎖',lock.sectionKey);return;}
+      const expiredReleaseDisposition=classifyExpiredLeaseRelease(lock.sectionKey,vesselSaveLeaseOwners.current.has(lock.leaseOwnerId));
       const leaseIsCurrent=()=>lockCoordinator.current.isCurrent(lock.generation)
         &&liveAuthorizationEpoch.current===lock.authorizationEpoch
         &&liveCurrentUserId.current===lock.ownerUserId;
@@ -1393,7 +1430,7 @@ export default function App() {
         closeEditorForLock(lock,true);
         setSensitiveCloudStatus(`協作鎖有效期已到：${lock.label} 已停止編輯`,lock.sectionKey);
       }
-      if(leaseRecord){
+      if(expiredReleaseDisposition==='release'&&leaseRecord){
         void runCloudSaveQueueRpc('清理已失效協作鎖',signal=>releaseEditLock(leaseRecord.sectionKey,lock.leaseOwnerId,leaseRecord.config,signal),8_000)
           .catch(error=>setSensitiveCloudStatus(`協作鎖已失效，伺服器清理失敗：${error.message||error}`,lock.sectionKey))
           .finally(()=>{
@@ -1572,11 +1609,15 @@ export default function App() {
   const requireMutationLease=(sectionKey:string)=>{
     if(mutationLeaseIsOwned(sectionKey))return true;
     const lock=activeEditLockRef.current;
+    if(classifyMutationLeaseFailure(sectionKey)==='freeze-vessel-draft'&&lock?.sectionKey===sectionKey){
+      freezeVesselEditorForLock(lock,'協作鎖已失效或無法確認；目前內容已唯讀保留，本次未保存。');
+      alert('協作鎖已失效或無法確認；目前內容已唯讀保留，不能保存。');
+      return false;
+    }
     if(sectionKey.startsWith('task:')||isTaskCreationLockKey(sectionKey)){
       if(isTaskCreationLockKey(sectionKey)&&lock?.sectionKey===sectionKey)quarantineCreationDraftForLock(lock);
       setEditingTaskId('');setTaskEditorAuthorizationEpoch('');setTaskProgressVesselId('');setCreatingTask(null);
     }
-    if(sectionKey.startsWith('vessel:'))setEditingVesselId('');
     setSensitiveCloudStatus('協作鎖已失效或無法確認；編輯器已關閉，本次未保存',sectionKey);
     if(lock?.sectionKey===sectionKey)void releaseCurrentEditLock();
     alert('協作鎖已失效或無法確認，本次未保存；請重新開啟後再試。');
@@ -1902,7 +1943,15 @@ export default function App() {
     localInitializationAllowed:import.meta.env.DEV,
   });
   const productionCloudUnavailable=!getSupabaseConfig()&&!import.meta.env.DEV;
-  if(productionCloudUnavailable||((!data.settings.sitePasswordHash||!ownerExists)&&!firstRunInitializationAllowed))return <>{appVersionUpdateNotice}<div className="login-page"><div className="login-card loading-card"><h2>雲端主資料尚未通過首次初始化安全檢查</h2><p className="warn">已阻止設定進站密碼或建立 Owner。</p><p className="muted">{cloudStatus}</p><p className="muted">請確認網路與 Supabase 設定後重新載入；系統不會使用內建初始資料取代正式資料。</p></div></div></>;
+  const productionCloudSafetyGateBlocked=shouldRenderProductionCloudSafetyGate({
+    productionCloudUnavailable,
+    editingVesselId,
+    currentUserId:currentUser?.id||'',
+    authorizationEpoch,
+    activeVesselIds:activeVessels.map(vessel=>vessel.id),
+    incident:vesselLeaseIncidentRef.current,
+  });
+  if(productionCloudSafetyGateBlocked||((!data.settings.sitePasswordHash||!ownerExists)&&!firstRunInitializationAllowed))return <>{appVersionUpdateNotice}<div className="login-page"><div className="login-card loading-card"><h2>雲端主資料尚未通過首次初始化安全檢查</h2><p className="warn">已阻止設定進站密碼或建立 Owner。</p><p className="muted">{cloudStatus}</p><p className="muted">請確認網路與 Supabase 設定後重新載入；系統不會使用內建初始資料取代正式資料。</p></div></div></>;
   if (!siteUnlocked || !data.settings.sitePasswordHash) return <>{appVersionUpdateNotice}<SiteGate data={data} setData={setData} onUnlock={() => { sessionStorage.setItem(SESSION_SITE_UNLOCK,'1'); setSiteUnlocked(true); }} /></>;
   if (!ownerExists && !currentUser) return <>{appVersionUpdateNotice}<Login data={data} setCurrentUserId={setCurrentUserId} /></>;
   if (!ownerExists && currentUser) return <>{appVersionUpdateNotice}<OwnerSetup currentUser={currentUser} setData={setData} setCurrentUserId={setCurrentUserId} /></>;
@@ -1927,11 +1976,17 @@ export default function App() {
     setTaskReadOnlyReason('');
     clearBlockedTaskLock();
   };
-  const navigateToTab = async (nextTab: Tab) => {
+  const navigateToTab = async (nextTab:Tab) => {
+    const incident=vesselLeaseIncidentRef.current;
+    if(editingVesselId&&incident&&classifyVesselLeaseIncidentClose(incident.mode)==='confirm-discard'&&incident.sectionKey===`vessel:${editingVesselId}`){
+      const incidentLock=activeEditLockRef.current;
+      const matchingIncidentLock=incidentLock?.sectionKey===incident.sectionKey&&incidentLock.leaseOwnerId===incident.leaseOwnerId?incidentLock:null;
+      if(!await closeVesselEditorRef.current(matchingIncidentLock))return;
+    }
     const lock=activeEditLockRef.current;
     if(lock){
       if(lock.status==='owned'&&!await releaseExclusiveItemLease(lock.sectionKey))return;
-      if(lock.status!=='owned'&&!await releaseCurrentEditLock())return;
+      else if(lock.status!=='owned'&&!await releaseCurrentEditLock())return;
       closeEditorForLock(lock);
     }
     invalidatePendingTaskOpen();
@@ -3758,14 +3813,17 @@ export default function App() {
     else if (returnDestination?.vesselId && activeVessels.some(vessel => vessel.id === returnDestination.vesselId)) void openVesselEditor(returnDestination.vesselId);
   };
   const closeVesselEditor=async(lock:ActiveEditLock|null)=>{
-    const frozenIncident=vesselLeaseIncidentRef.current;
-    if(editingVesselId&&frozenIncident?.mode==='frozen'&&frozenIncident.sectionKey===`vessel:${editingVesselId}`){
-      if(!confirm('協作鎖已失效，目前內容只保留在這個視窗；關閉後無法恢復。確定放棄並關閉？'))return false;
-      if(vesselSaveLeaseOwners.current.has(frozenIncident.leaseOwnerId)&&!await ensureCloudDurableBeforeLeaseRelease(frozenIncident.sectionKey))return false;
-      vesselSaveLeaseOwners.current.delete(frozenIncident.leaseOwnerId);
+    const leaseIncident=vesselLeaseIncidentRef.current;
+    if(editingVesselId&&leaseIncident&&classifyVesselLeaseIncidentClose(leaseIncident.mode)==='confirm-discard'&&leaseIncident.sectionKey===`vessel:${editingVesselId}`){
+      const discardMessage=leaseIncident.mode==='frozen'
+        ?'協作鎖已失效，目前內容只保留在這個視窗；關閉後無法恢復。確定放棄並關閉？'
+        :'協作鎖正在重新確認，目前內容只保留在這個視窗；關閉後無法恢復。確定取消並關閉？';
+      if(!confirm(discardMessage))return false;
+      if(vesselSaveLeaseOwners.current.has(leaseIncident.leaseOwnerId)&&!await ensureCloudDurableBeforeLeaseRelease(leaseIncident.sectionKey))return false;
+      vesselSaveLeaseOwners.current.delete(leaseIncident.leaseOwnerId);
       setEditingVesselId('');
-      clearVesselLeaseIncident(frozenIncident.sectionKey,frozenIncident.leaseOwnerId);
-      if(lock?.sectionKey===frozenIncident.sectionKey){
+      clearVesselLeaseIncident(leaseIncident.sectionKey,leaseIncident.leaseOwnerId);
+      if(lock?.sectionKey===leaseIncident.sectionKey){
         const released=await releaseCurrentEditLock();
         if(!released){
           leaseCloudConfigs.current.delete(lock.leaseOwnerId);

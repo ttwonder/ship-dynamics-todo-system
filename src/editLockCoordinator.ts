@@ -36,6 +36,56 @@ export function classifyVesselLeaseRenewalFailure(validatedUntilMs:number,nowMs=
   return validatedUntilMs>nowMs?'retrying':'frozen';
 }
 
+export function classifyMutationLeaseFailure(sectionKey:string):'freeze-vessel-draft'|'close-editor' {
+  return sectionKey.startsWith('vessel:')?'freeze-vessel-draft':'close-editor';
+}
+
+export function classifyExpiredLeaseRelease(sectionKey:string,vesselSaveInFlight:boolean):'defer-for-durability'|'release' {
+  return sectionKey.startsWith('vessel:')&&vesselSaveInFlight?'defer-for-durability':'release';
+}
+
+export function classifyVesselLeaseIncidentClose(mode:'editable'|'retrying'|'frozen'):'confirm-discard'|'normal-close' {
+  return mode==='editable'?'normal-close':'confirm-discard';
+}
+
+export function classifyLeaseRenewalAfterAwait(input:{
+  sectionKey:string;
+  renewalTargetIsCurrent:boolean;
+  cloudConfigStillCurrent:boolean;
+  durableCreationHandoff:boolean;
+}):'continue'|'stale-result'|'freeze-vessel-draft'|'close-editor' {
+  if(!input.renewalTargetIsCurrent)return'stale-result';
+  if(input.cloudConfigStillCurrent||input.durableCreationHandoff)return'continue';
+  return input.sectionKey.startsWith('vessel:')?'freeze-vessel-draft':'close-editor';
+}
+
+type VesselEditorCloudGateIncident={
+  sectionKey:string;
+  ownerUserId:string;
+  authorizationEpoch:string;
+  mode:'retrying'|'frozen';
+};
+
+export function shouldRenderProductionCloudSafetyGate(input:{
+  productionCloudUnavailable:boolean;
+  editingVesselId:string;
+  currentUserId:string;
+  authorizationEpoch:string;
+  activeVesselIds:readonly string[];
+  incident:VesselEditorCloudGateIncident|null|undefined;
+}) {
+  if(!input.productionCloudUnavailable)return false;
+  const incident=input.incident;
+  const preserveMountedDraft=Boolean(
+    input.editingVesselId&&input.currentUserId&&incident
+    &&incident.sectionKey===`vessel:${input.editingVesselId}`
+    &&incident.ownerUserId===input.currentUserId
+    &&incident.authorizationEpoch===input.authorizationEpoch
+    &&input.activeVesselIds.includes(input.editingVesselId),
+  );
+  return!preserveMountedDraft;
+}
+
 export function createEditLockCoordinator(): EditLockCoordinator {
   let generation = 0;
   let tail: Promise<void> = Promise.resolve();
