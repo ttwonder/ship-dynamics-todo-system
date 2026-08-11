@@ -33,6 +33,13 @@ import RichTextContent from './RichTextContent';
 import { richTextToPlainText, isRichTextEmpty } from './richText';
 import { normalizeMeetingTaskCategoryList } from './taskCategories';
 import { meetingCreationLockKey, meetingEditLockKey } from './exclusiveItemEditLock';
+import {
+  meetingBelongsToRegisterList,
+  meetingRegisterAriaSort,
+  nextMeetingRegisterSort,
+  sortMeetingRegisterEntries,
+} from './meetingRegister';
+import type { MeetingRegisterListMode, MeetingRegisterSortKey, MeetingRegisterSortState } from './meetingRegister';
 
 type Props = {
   data: AppData;
@@ -158,9 +165,12 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const [typeFilter, setTypeFilter] = useState('all');
   const [meetingPage, setMeetingPage] = useState(1);
   const [viewMode, setViewMode] = useState<'workspace' | 'register'>('workspace');
+  const [registerListMode,setRegisterListMode]=useState<MeetingRegisterListMode>('unfinished');
+  const [registerSort,setRegisterSort]=useState<MeetingRegisterSortState>({key:'meetingDate',direction:'desc'});
   const [meetingExportSelection, setMeetingExportSelection] = useState<string[]>([]);
   const [printMeetingIds, setPrintMeetingIds] = useState<string[]>([]);
   const [printMode, setPrintMode] = useState<'meetings' | 'register' | ''>('');
+  const [printRegisterListMode,setPrintRegisterListMode]=useState<MeetingRegisterListMode>('unfinished');
   const [notice, setNotice] = useState('');
   const [quickStatus, setQuickStatus] = useState('');
   const [editingSessionActive, setEditingSessionActive] = useState(false);
@@ -210,7 +220,9 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     return Array.from(new Set(meeting.vessels.map(id => vesselById[id]?.shipType).filter((value): value is string => Boolean(value))));
   };
 
-  const filtered = accessibleMeetings.filter(meeting => {
+  const registerMeetings=accessibleMeetings.filter(meeting=>meetingBelongsToRegisterList(statusOf(meeting),registerListMode));
+  const filterSourceMeetings=viewMode==='register'?registerMeetings:accessibleMeetings;
+  const filtered = filterSourceMeetings.filter(meeting => {
     const q = query.trim().toLowerCase();
     if (statusFilter !== '全部' && statusOf(meeting) !== statusFilter) return false;
     if (scopeFilter !== 'any' && scopeModeOf(meeting) !== scopeFilter) return false;
@@ -220,8 +232,6 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     }
     return !q || `${meeting.subject} ${richTextToPlainText(meeting.reason)} ${richTextToPlainText(meeting.resolution)} ${[...meeting.participantUserIds, ...(meeting.trackingUserIds || []), ...meeting.responsibleUserIds].map(id => users[id]?.name || '').join(' ')} ${meetingTaskItems(meeting, data.tasks, data.settings.meetingTaskCategories).map(item => richTextToPlainText(item.description)).join(' ')} ${meeting.meetingDate} ${meetingScopeLabel(meeting)}`.toLowerCase().includes(q);
   });
-  const pagedMeetings = paginateItems(filtered, meetingPage);
-
   useEffect(() => setMeetingPage(1), [query, statusFilter, scopeFilter, typeFilter]);
 
   const resolvedVesselIds = useMemo(() => {
@@ -1055,6 +1065,8 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   };
 
   const counts = Object.fromEntries(statuses.map(status => [status, accessibleMeetings.filter(meeting => statusOf(meeting) === status).length])) as Record<TemporaryMeetingStatus, number>;
+  const registerStatusOptions:TemporaryMeetingStatus[]=registerListMode==='completed'?['已完成']:['待召開','追蹤中'];
+  const registerListLabel=registerListMode==='completed'?'已完成':'未完成';
   const meetingVesselIds = (meeting: TemporaryMeeting) => {
     const saved = meeting.vessels.filter(id => visibleIds.has(id));
     if (saved.length) return saved;
@@ -1062,19 +1074,51 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     if (scopeModeOf(meeting) === 'types') return visibleVessels.filter(vessel => (meeting.vesselTypeScopes || []).includes(vessel.shipType)).map(vessel => vessel.id);
     return saved;
   };
+  const meetingRegisterSortValues=(meeting:TemporaryMeeting)=>{
+    const vesselIds=meetingVesselIds(meeting);
+    return {
+      id:meeting.id,
+      meetingDate:meeting.meetingDate||'',
+      status:statusOf(meeting),
+      scope:meetingScopeLabel(meeting),
+      vesselCount:vesselIds.length,
+      vesselLabel:vesselIds.map(id=>vesselDisplayName(vesselById[id])).join('、'),
+      expectedDate:meeting.expectedDate||'',
+    };
+  };
+  const orderedMeetings=viewMode==='register'?sortMeetingRegisterEntries(filtered,registerSort,meetingRegisterSortValues):filtered;
+  const pagedMeetings=paginateItems(orderedMeetings,meetingPage);
   const meetingTaskCount = (meetingId: string) => data.tasks.filter(task => task.sourceMeetingId === meetingId && taskVesselIds(task).some(id => visibleIds.has(id))).length;
   const meetingTaskProgressLabel=(meeting:TemporaryMeeting)=>{
     const summary=meetingDecisionCompletionSummary(meeting,data.tasks);
     return summary.hasLinkConflict?'關聯待修復':`${summary.completedCount}/${summary.totalCount} 完成`;
   };
-  const selectedExportMeetings = accessibleMeetings.filter(meeting => meetingExportSelection.includes(meeting.id));
+  const selectedExportMeetings = registerMeetings.filter(meeting => meetingExportSelection.includes(meeting.id));
   const printableMeetings = accessibleMeetings.filter(meeting => printMeetingIds.includes(meeting.id));
+  const registerPrintMeetings=sortMeetingRegisterEntries(
+    accessibleMeetings.filter(meeting=>meetingBelongsToRegisterList(statusOf(meeting),printRegisterListMode)),
+    registerSort,
+    meetingRegisterSortValues,
+  );
   const toggleMeetingExport = (id: string) => setMeetingExportSelection(previous => previous.includes(id) ? previous.filter(item => item !== id) : [...previous, id]);
+  const openMeetingRegister=(mode:MeetingRegisterListMode)=>{
+    setRegisterListMode(mode);
+    setStatusFilter('全部');
+    setMeetingExportSelection([]);
+    setMeetingPage(1);
+    setViewMode('register');
+  };
+  const changeMeetingRegisterSort=(key:MeetingRegisterSortKey)=>{
+    setRegisterSort(current=>nextMeetingRegisterSort(current,key));
+    setMeetingPage(1);
+  };
+  const meetingRegisterSortIndicator=(key:MeetingRegisterSortKey)=>registerSort.key===key?(registerSort.direction==='asc'?'▲':'▼'):'↕';
   const printMeetings = (mode: 'meetings' | 'register', requestedIds = meetingExportSelection) => {
     if (!canExportReports) return alert('目前角色未获授权导出会议资料');
     if (printInFlightRef.current || printMode) return alert('正在準備列印，請稍候');
     const allowedIds = requestedIds.filter(id => accessibleMeetings.some(meeting => meeting.id === id));
     if (mode === 'meetings' && !allowedIds.length) return alert('請先勾選至少一筆會議');
+    if(mode==='register')setPrintRegisterListMode(registerListMode);
     setPrintMeetingIds(mode === 'meetings' ? allowedIds : []);
     setPrintMode(mode);
   };
@@ -1088,17 +1132,21 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   return <><section className="temporary-meeting-page meeting-screen">
     <div className="page-heading">
       <div><h1>臨會/專題</h1><p>建立突發議題會議，可按全部船舶、船舶類型或逐船設定範圍。</p></div>
-      <div className="heading-actions no-print"><button className="btn ghost" onClick={() => setViewMode(viewMode === 'register' ? 'workspace' : 'register')}>{viewMode === 'register' ? '返回會議詳情' : '臨會/專題總清單'}</button>{editable?<button className="btn primary" onClick={() => void startNew()}>＋ 新增臨會/專題</button>:<span className="badge">操作員唯讀</span>}</div>
+      <div className="heading-actions no-print">
+        <button aria-pressed={viewMode==='register'&&registerListMode==='unfinished'} className={`btn ghost meeting-register-entry ${viewMode==='register'&&registerListMode==='unfinished'?'active':''}`} onClick={()=>openMeetingRegister('unfinished')}>未完成清單</button>
+        <button aria-pressed={viewMode==='register'&&registerListMode==='completed'} className={`btn ghost meeting-register-entry ${viewMode==='register'&&registerListMode==='completed'?'active':''}`} onClick={()=>openMeetingRegister('completed')}>已完成清單</button>
+        {editable?<button className="btn primary" onClick={() => void startNew()}>＋ 新增臨會/專題</button>:<span className="badge">操作員唯讀</span>}
+      </div>
     </div>
     {viewMode === 'register' ? <section className="panel meeting-register">
-      <div className="panel-title"><div><h2>臨會/專題總清單</h2><p className="muted">共 {accessibleMeetings.length} 筆，目前篩選顯示 {filtered.length} 筆{canExportReports ? `｜已選 ${selectedExportMeetings.length} 筆` : ''}</p></div>{canExportReports&&<div className="heading-actions no-print"><button className="btn small ghost" onClick={() => setMeetingExportSelection(Array.from(new Set([...meetingExportSelection, ...pagedMeetings.items.map(meeting => meeting.id)])))}>全選本頁</button><button className="btn small ghost" onClick={() => setMeetingExportSelection([])}>清空</button><button className="btn small primary" onClick={() => printMeetings('meetings')}>匯出所選會議 PDF</button><button className="btn small green" onClick={() => printMeetings('register')}>匯出總清單 PDF</button></div>}</div>
+      <div className="panel-title"><div><h2>{registerListMode==='completed'?'臨會/專題已完成清單':'臨會/專題未完成清單'}</h2><p className="muted">共 {registerMeetings.length} 筆，目前篩選顯示 {filtered.length} 筆{canExportReports ? `｜已選 ${selectedExportMeetings.length} 筆` : ''}</p></div><div className="heading-actions no-print"><button className="btn small ghost" onClick={()=>setViewMode('workspace')}>返回會議詳情</button>{canExportReports&&<><button className="btn small ghost" onClick={() => setMeetingExportSelection(Array.from(new Set([...meetingExportSelection, ...pagedMeetings.items.map(meeting => meeting.id)])))}>全選本頁</button><button className="btn small ghost" onClick={() => setMeetingExportSelection([])}>清空</button><button className="btn small primary" onClick={() => printMeetings('meetings')}>匯出所選會議 PDF</button><button className="btn small green" onClick={() => printMeetings('register')}>{registerListMode==='completed'?'匯出已完成清單 PDF':'匯出未完成清單 PDF'}</button></>}</div></div>
       <div className="meeting-register-filters no-print">
         <input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜尋主題、人員、待辦、船型…" />
-        <select aria-label="總清單會議狀態篩選" value={statusFilter} onChange={event => setStatusFilter(event.target.value as typeof statusFilter)}><option>全部</option>{statuses.map(status => <option key={status}>{status}</option>)}</select>
+        <select aria-label={`${registerListLabel}清單會議狀態篩選`} value={statusFilter} onChange={event => setStatusFilter(event.target.value as typeof statusFilter)}><option>全部</option>{registerStatusOptions.map(status => <option key={status}>{status}</option>)}</select>
         <select aria-label="總清單會議範圍篩選" value={scopeFilter} onChange={event => setScopeFilter(event.target.value as ScopeFilter)}><option value="any">全部範圍</option><option value="all">全部船舶</option><option value="types">按船舶類型</option><option value="vessels">逐船選擇</option></select>
         <select aria-label="總清單船舶類型篩選" value={typeFilter} onChange={event => setTypeFilter(event.target.value)}><option value="all">全部船型</option>{shipTypes.map(shipType => <option key={shipType}>{shipType}</option>)}</select>
       </div>
-      {filtered.length ? <div className="table-wrap"><table className="compact meeting-register-table"><thead><tr>{canExportReports&&<th className="no-print">選取</th>}<th>召開日期</th><th>狀態</th><th className="meeting-register-subject">會議主題</th><th>會議範圍</th><th>船舶</th><th>部門</th><th>追蹤窗口／負責人</th><th>待辦</th><th>期限</th><th className="no-print">操作</th></tr></thead><tbody>{pagedMeetings.items.map(meeting => { const vesselIds = meetingVesselIds(meeting); const vesselNames = vesselIds.map(id => vesselDisplayName(vesselById[id])); return <tr key={meeting.id}>{canExportReports&&<td className="no-print"><input aria-label={`選取會議 ${meeting.subject}`} type="checkbox" checked={meetingExportSelection.includes(meeting.id)} onChange={() => toggleMeetingExport(meeting.id)}/></td>}<td>{meeting.meetingDate || '-'}</td><td><span className={`meeting-status status-${statusOf(meeting)}`}>{statusOf(meeting)}</span></td><td className="meeting-register-subject"><b>{meeting.subject}</b><RichTextContent compact className="muted" value={meeting.reason} fallback="未填召開緣由"/></td><td>{meetingScopeLabel(meeting)}</td><td title={vesselNames.join('、')}>{vesselIds.length} 艘<br/><span className="muted">{vesselNames.slice(0, 3).join('、')}{vesselNames.length > 3 ? '…' : ''}</span></td><td>{meeting.departments.join('、') || '-'}</td><td><b>追蹤：{peopleNames(meeting.trackingUserIds || [])}</b><br/><span className="muted">負責：{peopleNames(meeting.responsibleUserIds)}</span></td><td><span className="task-source-badge source-temporary">{meetingTaskProgressLabel(meeting)}</span></td><td>{meeting.expectedDate || '-'}</td><td className="no-print"><div className="heading-actions"><button className="btn small primary" onClick={() => viewMeeting(meeting)}>進入詳情</button>{canDeleteMeetings&&<button className="btn small red" onClick={() => void deleteMeeting(meeting)}>刪除</button>}</div></td></tr>; })}</tbody></table></div> : <div className="empty-state">目前沒有符合條件的臨會/專題</div>}
+      {filtered.length ? <div className="table-wrap"><table className="compact meeting-register-table"><thead><tr>{canExportReports&&<th className="no-print">選取</th>}<th aria-sort={meetingRegisterAriaSort(registerSort,'meetingDate')}><button type="button" className="meeting-register-sort-button" onClick={()=>changeMeetingRegisterSort('meetingDate')}>召開日期 <span aria-hidden="true">{meetingRegisterSortIndicator('meetingDate')}</span></button></th><th aria-sort={meetingRegisterAriaSort(registerSort,'status')}><button type="button" className="meeting-register-sort-button" onClick={()=>changeMeetingRegisterSort('status')}>狀態 <span aria-hidden="true">{meetingRegisterSortIndicator('status')}</span></button></th><th className="meeting-register-subject">會議主題</th><th aria-sort={meetingRegisterAriaSort(registerSort,'scope')}><button type="button" className="meeting-register-sort-button" onClick={()=>changeMeetingRegisterSort('scope')}>會議範圍 <span aria-hidden="true">{meetingRegisterSortIndicator('scope')}</span></button></th><th aria-sort={meetingRegisterAriaSort(registerSort,'vessels')}><button type="button" className="meeting-register-sort-button" onClick={()=>changeMeetingRegisterSort('vessels')}>船舶 <span aria-hidden="true">{meetingRegisterSortIndicator('vessels')}</span></button></th><th>部門</th><th>追蹤窗口／負責人</th><th>待辦</th><th aria-sort={meetingRegisterAriaSort(registerSort,'expectedDate')}><button type="button" className="meeting-register-sort-button" onClick={()=>changeMeetingRegisterSort('expectedDate')}>期限 <span aria-hidden="true">{meetingRegisterSortIndicator('expectedDate')}</span></button></th><th className="no-print">操作</th></tr></thead><tbody>{pagedMeetings.items.map(meeting => { const vesselIds = meetingVesselIds(meeting); const vesselNames = vesselIds.map(id => vesselDisplayName(vesselById[id])); return <tr key={meeting.id}>{canExportReports&&<td className="no-print"><input aria-label={`選取會議 ${meeting.subject}`} type="checkbox" checked={meetingExportSelection.includes(meeting.id)} onChange={() => toggleMeetingExport(meeting.id)}/></td>}<td>{meeting.meetingDate || '-'}</td><td><span className={`meeting-status status-${statusOf(meeting)}`}>{statusOf(meeting)}</span></td><td className="meeting-register-subject"><b>{meeting.subject}</b><RichTextContent compact className="muted" value={meeting.reason} fallback="未填召開緣由"/></td><td>{meetingScopeLabel(meeting)}</td><td title={vesselNames.join('、')}>{vesselIds.length} 艘<br/><span className="muted">{vesselNames.slice(0, 3).join('、')}{vesselNames.length > 3 ? '…' : ''}</span></td><td>{meeting.departments.join('、') || '-'}</td><td><b>追蹤：{peopleNames(meeting.trackingUserIds || [])}</b><br/><span className="muted">負責：{peopleNames(meeting.responsibleUserIds)}</span></td><td><span className="task-source-badge source-temporary">{meetingTaskProgressLabel(meeting)}</span></td><td>{meeting.expectedDate || '-'}</td><td className="no-print"><div className="heading-actions"><button className="btn small primary" onClick={() => viewMeeting(meeting)}>進入詳情</button>{canDeleteMeetings&&<button className="btn small red" onClick={() => void deleteMeeting(meeting)}>刪除</button>}</div></td></tr>; })}</tbody></table></div> : <div className="empty-state">目前沒有符合條件的{registerListLabel}臨會/專題</div>}
       <PaginationControls ariaLabel="臨會清單分頁" page={pagedMeetings.page} pageCount={pagedMeetings.pageCount} total={pagedMeetings.total} from={pagedMeetings.from} to={pagedMeetings.to} onPageChange={setMeetingPage}/>
     </section> : <div className="temporary-meeting-workspace">
       <aside className="meeting-column temporary-list-column">
@@ -1228,7 +1276,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   </div>}
   {printMode&&<section className="meeting-print print-only">
     {printMode==='meetings'&&printableMeetings.map(meeting=>{const items=meetingTaskItems(meeting,data.tasks,data.settings.meetingTaskCategories);const completion=meetingDecisionCompletionSummary(meeting,data.tasks);return <article className="meeting-print-page" key={meeting.id}><header><div><span className={`meeting-status status-${statusOf(meeting)}`}>{statusOf(meeting)}</span><h1>{meeting.subject||'臨會／專題會議報告'}</h1><p>匯出時間：{formatTaipeiDateTime(new Date())}｜匯出人：{currentUser.name}</p></div><b>臨會／專題</b></header><div className="meeting-print-meta"><div><small>召開日期</small><b>{meeting.meetingDate||'-'}</b></div><div><small>預計完成</small><b>{meeting.expectedDate||'-'}</b></div><div><small>關注程度</small><b>{meeting.priority}</b></div><div><small>會議範圍</small><b>{meetingScopeLabel(meeting)}</b></div><div><small>涉會船舶</small><b>{meetingVesselIds(meeting).length} 艘</b></div><div><small>決議待辦進度</small><b>{completion.completedCount}/{completion.totalCount}</b></div><div><small>會議追蹤</small><b>{statusOf(meeting)==='已完成'?'已結案':'持續追蹤'}</b></div></div><div className="meeting-print-grid"><section className="meeting-print-section card-like"><h2>會議範圍</h2><p>{meetingPdfVesselSummary(meeting, visibleVessels)}</p></section><section className="meeting-print-section card-like"><h2>涉及部門</h2><p>{meeting.departments.join('、')||'未指定'}</p></section><section className="meeting-print-section card-like"><h2>與會人員</h2><p>{peopleNames(meeting.participantUserIds)}</p></section><section className="meeting-print-section card-like"><h2>追蹤窗口</h2><p>{peopleNames(meeting.trackingUserIds || [])}</p></section><section className="meeting-print-section card-like"><h2>負責人</h2><p>{peopleNames(meeting.responsibleUserIds)}</p></section></div><section className="meeting-print-section card-like wide"><h2>召開緣由</h2><RichTextContent value={meeting.reason} fallback="未填寫"/></section><section className="meeting-print-section card-like wide"><h2>決議／會議結論</h2><RichTextContent value={meeting.resolution} fallback="未填寫"/></section><section className="meeting-print-section card-like wide"><h2>待辦事項</h2>{items.length?<ol className="meeting-print-task-list">{items.map((item,index)=>{const itemCompletion=completion.items.find(entry=>entry.item.id===item.id);return <li key={item.id}><span>待辦 {index+1}｜{itemCompletion?.state==='closed'?'已完成':itemCompletion?.distributed?`分船完成 ${itemCompletion.completedVesselCount}/${itemCompletion.vesselCount}`:itemCompletion?.state==='open'?'未完成':'關聯待修復'}</span><RichTextContent value={item.description} fallback="未填寫"/><small>{normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).join('、')}｜{item.distributeToVessels?'分派到涉及船舶單船跟蹤':'公司層決議待辦'}</small></li>;})}</ol>:<p>尚無待辦事項</p>}</section><section className="meeting-print-section card-like wide meeting-print-status-history"><h2>狀態歷程</h2>{(meeting.statusLogs||[]).length?(meeting.statusLogs||[]).map(log=><article key={log.id}><b>{log.text}</b><small>{formatTaipeiDateTime(log.at)}｜{log.by}</small></article>):<p>尚無狀態紀錄</p>}</section></article>;})}
-    {printMode==='register'&&<article className="meeting-print-register"><header><h1>臨會／專題總清單</h1><p>匯出時間：{formatTaipeiDateTime(new Date())}｜匯出人：{currentUser.name}｜共 {accessibleMeetings.length} 筆</p></header><table><thead><tr><th>召開日期</th><th>狀態</th><th>主題</th><th>範圍</th><th>船舶</th><th>部門</th><th>追蹤窗口／負責人</th><th>待辦</th><th>期限</th></tr></thead><tbody>{accessibleMeetings.map(meeting=>{return <tr key={meeting.id}><td>{meeting.meetingDate||'-'}</td><td>{statusOf(meeting)}</td><td><b>{meeting.subject||'-'}</b><br/>{richTextToPlainText(meeting.reason)||'未填召開緣由'}</td><td>{meetingScopeLabel(meeting)}</td><td>{meetingPdfVesselSummary(meeting, visibleVessels)}</td><td>{meeting.departments.join('、')||'-'}</td><td>追蹤：{peopleNames(meeting.trackingUserIds || [])}<br/>負責：{peopleNames(meeting.responsibleUserIds)}</td><td>{meetingTaskProgressLabel(meeting)}</td><td>{meeting.expectedDate||'-'}</td></tr>;})}</tbody></table></article>}
+    {printMode==='register'&&<article className="meeting-print-register"><header><h1>{printRegisterListMode==='completed'?'臨會／專題已完成清單':'臨會／專題未完成清單'}</h1><p>匯出時間：{formatTaipeiDateTime(new Date())}｜匯出人：{currentUser.name}｜共 {registerPrintMeetings.length} 筆</p></header><table><thead><tr><th>召開日期</th><th>狀態</th><th>主題</th><th>範圍</th><th>船舶</th><th>部門</th><th>追蹤窗口／負責人</th><th>待辦</th><th>期限</th></tr></thead><tbody>{registerPrintMeetings.map(meeting=>{return <tr key={meeting.id}><td>{meeting.meetingDate||'-'}</td><td>{statusOf(meeting)}</td><td><b>{meeting.subject||'-'}</b><br/>{richTextToPlainText(meeting.reason)||'未填召開緣由'}</td><td>{meetingScopeLabel(meeting)}</td><td>{meetingPdfVesselSummary(meeting, visibleVessels)}</td><td>{meeting.departments.join('、')||'-'}</td><td>追蹤：{peopleNames(meeting.trackingUserIds || [])}<br/>負責：{peopleNames(meeting.responsibleUserIds)}</td><td>{meetingTaskProgressLabel(meeting)}</td><td>{meeting.expectedDate||'-'}</td></tr>;})}</tbody></table></article>}
   </section>}
   </>;
 }

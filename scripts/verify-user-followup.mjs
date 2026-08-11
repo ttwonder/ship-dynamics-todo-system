@@ -47,10 +47,10 @@ assert.ok(app.includes("sourceType:'morning'"), '一般新增待辦必須标记�
 for (const source of [app, meetings]) {
   assert.ok(source.includes('臨會/專題'), '主要操作界面名稱必須統一為「臨會/專題」');
 }
-assert.ok(meetings.includes("'register'"), '臨會／專題頁必須提供獨立總清單視圖');
-assert.ok(meetings.includes('臨會/專題總清單'), '必須提供清楚的臨會／專題總清單入口及標題');
+assert.ok(meetings.includes("'register'"), '臨會／專題頁必須提供獨立清單視圖');
+assert.ok(meetings.includes('未完成清單') && meetings.includes('已完成清單'), '必須提供清楚分開的未完成／已完成清單入口及標題');
 for (const heading of ['召開日期', '狀態', '會議主題', '會議範圍', '船舶', '部門', '待辦', '期限']) {
-  assert.ok(new RegExp(`<th(?:\\s[^>]*)?>${heading}</th>`).test(meetings), `臨會／專題總清單必須顯示「${heading}」欄`);
+  assert.ok(new RegExp(`<th(?:\\s[^>]*)?>[^]*?${heading}[^]*?</th>`).test(meetings), `臨會／專題清單必須顯示「${heading}」欄`);
 }
 assert.ok(meetings.includes('meetingTaskCount'), '總清單必須顯示每場會議的關聯待辦數量');
 assert.ok((meetings.match(/taskVesselIds\(task\)\.some\(id => visibleIds\.has\(id\)\)/g) || []).length >= 2, '會議詳情及總清單待辦必須限制於目前可見船舶');

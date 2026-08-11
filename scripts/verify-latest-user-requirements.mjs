@@ -121,7 +121,7 @@ try {
   assert.ok(!app.includes("請至少選擇一艘船舶再預覽報告"), '每日早會報告不得依涉會勾選阻擋匯出');
   assert.ok(app.includes('人工備註：') && app.includes('近期／後續動態：'), '早會 PDF 需分別呈現人工備註及近期／後續動態');
   assert.ok(app.includes('本報告依目前授權範圍、報告選擇'), '早會 PDF 頁腳需說明資料来源为授权范围与当前选择');
-  assert.ok(meetings.includes('meetingExportSelection') && meetings.includes('匯出所選會議 PDF') && meetings.includes('匯出總清單 PDF'), '臨會總清單需提供多選會議 PDF 與總清單 PDF');
+  assert.ok(meetings.includes('meetingExportSelection') && meetings.includes('匯出所選會議 PDF') && meetings.includes('匯出未完成清單 PDF') && meetings.includes('匯出已完成清單 PDF') && meetings.includes('registerPrintMeetings'), '臨會清單需提供多選會議 PDF，並各自匯出未完成／已完成清單 PDF');
   assert.ok(meetings.includes('meeting-print-page') && meetings.includes('window.print()'), '臨會所選會議需使用獨立列印頁並逐會議分頁');
   assert.ok(styles.includes('.meeting-print-page') && styles.includes('break-after:page'), '臨會列印 CSS 需強制逐會議分頁');
   assert.ok(app.includes("currentUser?.role==='owner'||currentUser?.role==='admin'||hasPermission"), 'Owner／管理員應固定查看全部船舶');
