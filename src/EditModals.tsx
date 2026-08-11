@@ -117,7 +117,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, onSave, addT
     try{if(await onSave(clone(draft)))afterSave?.();}
     finally{setSaving(false);}
   };
-  const openTasks = data.tasks.filter(task => appearsInSingleVesselTasks(task) && taskHasVessel(task, draft.id) && !taskIsClosedForVessel(task,draft.id));
+  const openTasks = data.tasks.filter(task => appearsInSingleVesselTasks(task) && taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="vessel-edit-title"><div className="modal-header"><div><h2 id="vessel-edit-title">快速更新｜{vesselDisplayName(draft)}</h2><small>按「保存並關閉」才會寫入資料；按 Esc 等同取消</small></div><div className="heading-actions"><button type="button" className="btn ghost" disabled={saving} onClick={cancel}>{leaseMode==='frozen'?'放棄並關閉':'取消並關閉'}</button><button type="button" className="btn primary" disabled={saving||leaseMode!=='editable'} onClick={()=>void save()}>{saving?'正在確認雲端…':leaseMode==='retrying'?'正在重新確認編輯鎖…':leaseMode==='frozen'?'編輯鎖已失效，不能保存':'保存並關閉'}</button></div></div>
     {leaseMode!=='editable'&&<div className={`callout ${leaseMode==='frozen'?'danger':'warning'} vessel-lease-continuity-notice`} role="status"><b>{leaseMode==='frozen'?'多人協作鎖已失效':'多人協作鎖暫時無法確認'}</b><span>{leaseMessage||(leaseMode==='frozen'?'目前內容以唯讀方式保留，不能保存；可先複製內容，或明確放棄並關閉。':'正在重試；目前內容仍保留，可以繼續填寫，確認成功前不能保存。')}</span></div>}
     <fieldset disabled={leaseMode==='frozen'} className="vessel-editor-fields" aria-readonly={leaseMode==='frozen'}>
