@@ -33,7 +33,7 @@ import { buildTaskReadOnlyEditorData, type TaskReadOnlyEditorData } from './task
 import { deriveVesselAttention, nextManualVesselAttention } from './vesselAttention';
 import { dashboardMeetingAlerts, meetingCreatesVesselAbnormalAlert } from './meetingVesselAttention';
 import { canEditTemporaryMeetings, meetingAppliesToUser } from './meetingAccess';
-import { completeSelectedTasks, sanitizeTaskSelection, validateBatchTaskSelection } from './batchTaskActions';
+import { completeSelectedTasksWithMeetingSync, sanitizeTaskSelection, validateBatchTaskSelection } from './batchTaskActions';
 import { closeInternalControlCaseBatchFromDraft, deleteInternalControlCaseBatchFromDraft, internalControlBatchLockKeys, validateBatchInternalControlSelection } from './batchInternalControlActions';
 import { meetingDecisionCompletionSummary, meetingDecisionLifecycleIsConsistent, meetingTaskLinkIsValidForMutation, resolveMeetingTaskItemIdForDeletion, synchronizeLinkedMeetingDecisionLifecycle, transitionLinkedMeetingDecision } from './meetingTaskWorkflow';
 import { paginateItems } from './pagination';
@@ -2394,7 +2394,8 @@ export default function App() {
       if(!creating&&(candidate.vesselScopeMode!==previous.vesselScopeMode||JSON.stringify(candidate.vesselTypeScopes||[])!==JSON.stringify(previous.vesselTypeScopes||[]))){failure='待辦涉船範圍模式只能由權威建立或臨會對帳流程更新';return prev;}
       if(!creating&&(candidate.createdBy!==previous.createdBy||candidate.createdAt!==previous.createdAt||candidate.internalControlCancelledAt!==previous.internalControlCancelledAt||candidate.internalControlCancelledBy!==previous.internalControlCancelledBy||candidate.internalControlCaseId!==previous.internalControlCaseId)){failure='待辦建立者、建立時間、內控關聯與內控取消來源資料不可由普通保存改寫';return prev;}
       if(!creating&&!meetingTaskLinkIsValidForMutation(previous,prev.meetings)){failure='會議來源關聯缺失、失效或與父會議狀態不一致，請先由臨會/專題頁安全修復';return prev;}
-      if(!creating&&previous.sourceMeetingId&&candidate.isClosed!==previous.isClosed){failure='會議來源待辦的完成或重新開啟請至臨會/專題頁操作';return prev;}
+      const meetingLifecycleChanged=!creating&&Boolean(previous.sourceMeetingId)&&candidate.isClosed!==previous.isClosed;
+      if(meetingLifecycleChanged&&(!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')||!canEditTemporaryMeetings(prev.settings.rolePermissions,liveUser))){failure='目前身份需同時具備管理會議與結案待辦權限';return prev;}
       const previousScopeIdsForClosure=taskVesselIds(previous);
       const candidateScopeIdsForClosure=taskVesselIds(candidate);
       const previousSemanticallyClosed=!creating&&taskIsClosedForScope(previous,previousScopeIdsForClosure);
@@ -2458,6 +2459,7 @@ export default function App() {
       const linkedMeeting=previous.sourceMeetingId?prev.meetings.find(meeting=>meeting.id===previous.sourceMeetingId):undefined;
       const linkedMeetingItem=linkedMeeting?.taskItems.find(item=>item.id===previous.sourceMeetingItemId);
       const linkedMeetingPriority=linkedMeeting?.priority;
+      if(meetingLifecycleChanged&&!candidate.isClosed&&linkedMeeting?.status==='已完成'){failure='請先重新開啟整場會議，再重新開啟其中的待辦';return prev;}
       const normalizedCandidate=canonicalTaskAttentionForSave({...boundaryCandidate,categories:normalizedCategories,category:normalizedCategories[0]||''},previous,linkedMeetingPriority);
       if(linkedMeeting){
         if(!linkedMeetingItem||normalizedCandidate.distributeToVessels!==(linkedMeetingItem.distributeToVessels===true)){failure='臨會/專題關聯待辦的分船模式必須從臨會/專題頁統一調整';return prev;}
@@ -2491,6 +2493,11 @@ export default function App() {
         saved.status=saved.isInternalControl?`取消部分涉船內部管控：${removedVesselIds.join('、')}`:'取消內部管控';
         saved.statusLogs=[{id:uid('log'),at:nowIso(),by:liveUser.name,byUserId:liveUser.id,text:saved.status},...saved.statusLogs];
       }
+      let syncedMeeting:TemporaryMeeting|undefined;
+      if(linkedMeeting&&meetingLifecycleChanged){
+        try{syncedMeeting=synchronizeLinkedMeetingDecisionLifecycle(linkedMeeting,saved,{actorId:liveUser.id,actorName:liveUser.name,at:saveAt,closedDate:trustedClosureDate(saved.closedDate,todayDate())});}
+        catch(error:any){failure=error.message||String(error);return prev;}
+      }
       const savedScopeIds=taskVesselIds(saved);
       const savedScopeVessels=taskVessels(saved,prev.vessels);
       if(!savedScopeVessels.length||savedScopeVessels.length!==savedScopeIds.length||!canAccessAllVessels(prev.settings.rolePermissions,liveUser,savedScopeVessels)){failure='最終涉船範圍不存在或目前身份無權保存';return prev;}
@@ -2516,13 +2523,21 @@ export default function App() {
         if(index<0){failure='事項已被刪除或不存在，未保存任何變更';return prev;}
         draft.tasks[index]=saved;
       }
+      if(syncedMeeting){
+        const meetingIndex=draft.meetings.findIndex(meeting=>meeting.id===syncedMeeting!.id);
+        if(meetingIndex<0){failure='父會議不存在，未保存任何變更';return prev;}
+        draft.meetings[meetingIndex]=syncedMeeting;
+        if(!meetingDecisionLifecycleIsConsistent(syncedMeeting,draft.tasks,saved.id)){failure='父會議與關聯待辦狀態同步未完成';return prev;}
+      }
       draft.taskDismissals=clearDismissalsForNewTaskAssignments(draft.taskDismissals,creating?undefined:previous,saved,previousAssigneeIds,nextAssigneeIds);
       try{reconcileInternalControlAfterTaskSave(draft,creating?undefined:previous,saved,liveUser,saveAt);}
       catch(error:any){failure=error.message||String(error);return prev;}
       draft.vessels.filter(item=>taskHasVessel(saved,item.id)).forEach(targetVessel=>{targetVessel.weeklyAttention=mergeAttentionFromCategories(targetVessel.weeklyAttention,saved.categories);});
       draft.notifications=[...notices,...draft.notifications].slice(0,1000);
+      let audited=withAudit(draft,liveUser,creating?'新增事項':cancelled?'取消內部管控':'更新事項','task',saved.id,cancelled?'已提醒至 FLOW 系統申報異常':creating?'建立跟進事項':'保存事項變更');
+      if(syncedMeeting)audited=withAudit(audited,liveUser,saved.isClosed?'同步完成會議決議待辦':'同步重新開啟會議決議待辦','meeting',syncedMeeting.id,richTextToPlainText(saved.description)||saved.id);
       applied=true;
-      return withAudit(draft,liveUser,creating?'新增事項':cancelled?'取消內部管控':'更新事項','task',saved.id,cancelled?'已提醒至 FLOW 系統申報異常':creating?'建立跟進事項':'保存事項變更');
+      return audited;
     };
     if(creating&&getSupabaseConfig()){
       const creationSectionKey=taskCreationLockKey(candidate.vesselId,candidate.id);
@@ -3235,7 +3250,7 @@ export default function App() {
     if(initialInternalSelection&&(!initialInternalSelection.ok||initialInternalSelection.cases.some(item=>item.isClosed))) { alert('所選內控案件已變更、已結案或未具備完整涉船範圍權限，請重新選擇'); return false; }
     const tasks=selectedTasks as TaskItem[];
     const selectedInternalCases=initialInternalSelection?.ok?initialInternalSelection.cases:[];
-    if(tasks.some(task=>task.sourceMeetingId)){alert('會議來源待辦請至臨會/專題頁逐筆完成，不得由批量完成繞過父會議');return false;}
+    if(tasks.some(task=>task.sourceMeetingId)&&!canEditMeetings){alert('完成會議來源待辦需同時具備管理會議權限');return false;}
     if(tasks.some(task=>selectedInternalCases.some(item=>item.linkedTaskId===task.id||task.internalControlCaseId===item.id))) { alert('同一組雙向關聯不可同時以待辦與內控案件重複選取'); return false; }
     const expectedUpdatedAtById=new Map(tasks.map(task=>[task.id,task.updatedAt]));
     const expectedInternalUpdatedAtById=new Map(selectedInternalCases.map(item=>[item.id,item.updatedAt]));
@@ -3260,7 +3275,7 @@ export default function App() {
         if(uniqueIds.length){
           const selected=validateBatchTaskSelection(prev.tasks,uniqueIds,batchVisibleVesselIds(prev,liveUser),'complete');
           if(!selected.ok||selected.tasks.some(task=>task.updatedAt!==expectedUpdatedAtById.get(task.id)))return prev;
-          if(selected.tasks.some(task=>task.sourceMeetingId)){failure='會議來源待辦請至臨會/專題頁逐筆完成';return prev;}
+          if(selected.tasks.some(task=>task.sourceMeetingId)&&!canEditTemporaryMeetings(prev.settings.rolePermissions,liveUser)){failure='目前身份已無管理會議權限';return prev;}
           if(selected.tasks.some(task=>!meetingTaskLinkIsValidForMutation(task,prev.meetings)))return prev;
           liveSelectedTasks=selected.tasks;
         }
@@ -3279,14 +3294,17 @@ export default function App() {
         });
         try{
           if(liveSelectedTasks.length){
-            const result=completeSelectedTasks(draft.tasks,uniqueIds,{actorId:liveUser.id,actorName:liveUser.name,at,closedDate});
+            const result=completeSelectedTasksWithMeetingSync(draft.tasks,draft.meetings,uniqueIds,{actorId:liveUser.id,actorName:liveUser.name,at,closedDate});
+            if(result.completedIds.length!==uniqueIds.length){failure='待辦或父會議狀態同步未完成';return prev;}
             draft.tasks=result.tasks;
+            draft.meetings=result.meetings;
             syncLinkedInternalControlCasesFromTasks(draft,uniqueIds,liveUser,at);
           }
           if(liveSelectedInternalCases.length)closeInternalControlCaseBatchFromDraft(draft,liveSelectedInternalCases,liveUser,at);
         }catch(error:any){failure=error.message||String(error);return prev;}
         draft.notifications=[...notices,...draft.notifications].slice(0,1000);
         liveSelectedTasks.forEach(task=>{ draft=withAudit(draft,liveUser,'批量完成事項','task',task.id,richTextToPlainText(task.description)||task.id); });
+        liveSelectedTasks.filter(task=>task.sourceMeetingId).forEach(task=>{ draft=withAudit(draft,liveUser,'同步完成會議決議待辦','meeting',task.sourceMeetingId!,richTextToPlainText(task.description)||task.id); });
         liveSelectedInternalCases.forEach(item=>{ draft=withAudit(draft,liveUser,'批量結案內控異常','internal-control',item.id,richTextToPlainText(item.description)||item.id); });
         applied=true;
         return draft;
@@ -3300,14 +3318,15 @@ export default function App() {
       alert('目前角色需同時具備管理會議與完成／重新開啟待辦權限');
       return false;
     }
-    const initialMatches=data.tasks.filter(task=>task.id===taskId);
+    const initialSnapshot=liveData.current;
+    const initialMatches=initialSnapshot.tasks.filter(task=>task.id===taskId);
     const initialTask=initialMatches.length===1?initialMatches[0]:undefined;
-    const initialMeeting=initialTask?.sourceMeetingId?data.meetings.find(meeting=>meeting.id===initialTask.sourceMeetingId):undefined;
-    if(!initialTask||!initialMeeting||!meetingTaskLinkIsValidForMutation(initialTask,data.meetings)){
+    const initialMeeting=initialTask?.sourceMeetingId?initialSnapshot.meetings.find(meeting=>meeting.id===initialTask.sourceMeetingId):undefined;
+    if(!initialTask||!initialMeeting||!meetingTaskLinkIsValidForMutation(initialTask,initialSnapshot.meetings)){
       alert('會議待辦不存在、重複或關聯已失效，請重新整理後再試');
       return false;
     }
-    const initialCompletion=meetingDecisionCompletionSummary(initialMeeting,data.tasks).items.find(item=>item.task?.id===taskId);
+    const initialCompletion=meetingDecisionCompletionSummary(initialMeeting,initialSnapshot.tasks).items.find(item=>item.task?.id===taskId);
     if(!initialCompletion){alert('會議待辦關聯重複或不明確，未執行任何變更');return false;}
     const repairingLifecycle=initialCompletion?.lifecycleConflict===true;
     if(usesPerVesselProgress(initialTask)&&!repairingLifecycle){

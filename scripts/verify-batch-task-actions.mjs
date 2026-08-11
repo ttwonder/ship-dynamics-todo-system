@@ -17,6 +17,12 @@ try {
   ];
   const companyMeeting = { ...base, id:'meeting-company', vesselIds:['v1','v2'], sourceType:'temporary', sourceMeetingId:'m1', attentionDimension:'meeting', distributeToVessels:false, vesselProgress:[] };
   const multiMeeting = { ...base, id:'meeting-multi', vesselIds:['v1','v2'], sourceType:'temporary', sourceMeetingId:'m2', attentionDimension:'meeting', distributeToVessels:true, vesselProgress:[] };
+  const linkedMeeting = {
+    id:'meeting-sync', status:'追蹤中', vessels:['v1','v2'], vesselScopeMode:'vessels', vesselTypeScopes:[], isInternalControl:false,
+    taskItems:[{id:'item-sync',description:'同步父會議',categories:[],distributeToVessels:false,isClosed:false}],
+    latestStatus:'',statusLogs:[],updatedAt:'2026-07-01T00:00:00.000Z',
+  };
+  const linkedMeetingTask = { ...companyMeeting, id:'meeting-sync-task', sourceMeetingId:'meeting-sync', sourceMeetingItemId:'item-sync', description:'同步父會議', vesselScopeMode:'vessels', vesselTypeScopes:[] };
   const result = batch.completeSelectedTasks(tasks, ['open-a','closed-c','missing'], {
     actorId:'u9', actorName:'測試主管', at:'2026-07-18T12:34:56.000Z', closedDate:'2026-07-18',
   });
@@ -55,6 +61,19 @@ try {
   assert.deepEqual(guarded.completedIds,[],'批量工具本身也不得整体完成已分派逐船會議待辦');
   assert.equal(guarded.tasks[0].isClosed,false,'已分派逐船會議待辦顶层结案状态不得被批量改变');
 
+  assert.equal(typeof batch.completeSelectedTasksWithMeetingSync,'function','待辦清單完成需提供同步父會議item的批量領域操作');
+  const synced=batch.completeSelectedTasksWithMeetingSync(
+    [tasks[0],linkedMeetingTask],
+    [linkedMeeting],
+    ['open-a','meeting-sync-task'],
+    {actorId:'u9',actorName:'測試主管',at:'2026-07-18T12:34:56.000Z',closedDate:'2026-07-18'},
+  );
+  assert.deepEqual(synced.completedIds,['open-a','meeting-sync-task'],'普通待辦與會議待辦可在同一批完成');
+  assert.equal(synced.tasks.find(task=>task.id==='meeting-sync-task').isClosed,true,'批量完成需更新canonical會議來源Task');
+  assert.equal(synced.meetings[0].taskItems[0].isClosed,true,'批量完成需同步父會議item顯示已完成');
+  assert.equal(synced.meetings[0].taskItems[0].closedDate,'2026-07-18');
+  assert.equal(linkedMeeting.taskItems[0].isClosed,false,'同步操作不得原地修改舊父會議snapshot');
+
   const app = fs.readFileSync('src/App.tsx','utf8');
   const work = fs.readFileSync('src/WorkCenter.tsx','utf8');
   const bundleStart=app.indexOf('const runTaskMutationWithLockBundle=');
@@ -68,16 +87,19 @@ try {
   assert.ok(bundleBranch.includes('refreshedLockKeys=[...new Set([...taskRelationLockKeys(remote,uniqueIds),...additionalLockKeys(remote)])]')&&bundleBranch.includes('sameLockKeySet(refreshedLockKeys,plannedLockKeys)'),'the post-lock refresh must reject any task or additional internal-control relation set that changed while locks were being acquired');
   assert.ok(bundleBranch.includes("runCloudSaveQueueRpc('批量關聯鎖續期'")&&bundleBranch.includes('renewEditLock(')&&bundleBranch.includes('Promise.allSettled'),'the complete related bundle must renew concurrently for the whole mutation');
   assert.ok(app.includes('batchCompleteTasks') && app.includes('batchDeleteTasks'), 'App 必須集中處理批量完成與刪除');
+  assert.ok(app.includes('completeSelectedTasksWithMeetingSync'), 'App批量完成需把來源Task與父會議item放入同一snapshot同步');
   assert.ok(app.includes("只有 Owner／管理員可以批量刪除待辦"), '批量刪除 handler 必須有角色防護');
   assert.ok(app.includes("目前角色未獲授權批量完成待辦"), '批量完成 handler 必須有權限防護');
   assert.ok(app.includes('validateBatchTaskSelection(prev.tasks'), '批量 handler 必须在原子状态事务内重新验证最新记录');
   assert.ok(app.includes("hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')"), '批量完成必须在原子事务内重新授权');
   assert.ok(app.includes("hasPermission(prev.settings.rolePermissions,liveUser,'deleteTasks')"), '批量删除必须在原子事务内重新授权');
   assert.ok(app.includes("'批量完成事項'") && app.includes("'批量刪除事項'"), '每筆批量动作必须留下审计记录');
-  for (const label of ['全選目前結果','批量完成','批量刪除']) {
+  for (const label of ['全選目前結果','批量完成']) {
     assert.ok(app.includes(label), `待辦總表／已結案缺少 ${label}`);
     assert.ok(work.includes(label), `我的待辦缺少 ${label}`);
   }
+  assert.ok(app.includes('批量刪除'),'待辦總表／已結案缺少批量刪除');
+  assert.ok(work.includes('永久刪除共用待辦'),'我的待辦缺少永久刪除共用待辦');
   assert.ok(work.includes('aria-label={`選取待辦'), '我的待辦每列必须有可存取名称的勾选框');
   assert.ok(app.includes('aria-label={`選取待辦'), '總表／已結案每列必须有可存取名称的勾选框');
   assert.ok(app.indexOf("['total',currentUser.role==='vessel'?'本船待辦':'待辦總表']") < app.indexOf("['closed','已結案']")

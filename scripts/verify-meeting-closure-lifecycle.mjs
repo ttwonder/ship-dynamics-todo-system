@@ -349,8 +349,13 @@ try {
   assert.ok(appTransition.includes('if(!initialCompletion)')&&appTransition.includes('if(!liveCompletion)'), '重複linked Tasks等無唯一completion的情況需在initial與fresh snapshot提前拒絕');
   const linkedTransitionSource=workflowSource.slice(workflowSource.indexOf('export function transitionLinkedMeetingDecision'),workflowSource.indexOf('export const meetingTaskDescription'));
   assert.ok(linkedTransitionSource.includes('meetingDecisionLifecycleIsConsistent'), '純domain父子轉換本身也需fail closed驗證後置條件');
-  assert.ok(appSource.includes('會議來源待辦的完成或重新開啟請至臨會/專題頁操作'), '一般Task保存不得繞過會議生命週期入口');
-  assert.ok(appSource.includes('會議來源待辦請至臨會/專題頁逐筆完成，不得由批量完成繞過父會議'), '批量完成不得繞過父會議生命週期');
+  const taskSaveSource=appSource.slice(appSource.indexOf('const saveTask = async'),appSource.indexOf('pendingTaskCreationProcessorRef.current='));
+  assert.ok(!taskSaveSource.includes('會議來源待辦的完成或重新開啟請至臨會/專題頁操作'), '總待辦單項編輯保存不得再把會議來源待辦導回會議頁');
+  assert.ok(taskSaveSource.includes('meetingLifecycleChanged')&&taskSaveSource.includes('synchronizeLinkedMeetingDecisionLifecycle(linkedMeeting,saved')&&taskSaveSource.includes('draft.meetings[meetingIndex]=syncedMeeting'), '總待辦單項編輯完成時需在同一保存交易同步父會議item');
+  assert.ok(taskSaveSource.includes("canEditTemporaryMeetings(prev.settings.rolePermissions,liveUser)")&&taskSaveSource.includes("hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')"), '總待辦單項編輯完成會議待辦時需fresh重驗會議管理與結案權限');
+  const batchCompleteSource=appSource.slice(appSource.indexOf('const batchCompleteTasks = async'),appSource.indexOf('const transitionMeetingTaskFromMeetingPage = async'));
+  assert.ok(batchCompleteSource.includes('completeSelectedTasksWithMeetingSync'), '總待辦單項勾選或批量完成需共用父會議同步交易');
+  assert.ok(!batchCompleteSource.includes('會議來源待辦請至臨會/專題頁逐筆完成'), '批量完成不得再拒絕有效的公司層會議來源待辦');
   assert.ok(appSource.includes('synchronizeLinkedMeetingDecisionLifecycle(liveMeeting,saved')&&appSource.includes('meetingLifecycleChanged&&(!liveMeeting||!canEditTemporaryMeetings'), '分船整體完成狀態翻轉需fresh重驗管理會議權限並同步父item');
   assert.ok(appSource.includes('onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage}') && appSource.includes('canCloseTasks={canCloseTasks'), 'App需把權限與可信callback傳入會議頁');
 
@@ -361,6 +366,13 @@ try {
   assert.ok(meetingSource.includes('completion?.task?.id===task.id'),'只有唯一綁定目前Task的completion才可顯示生命週期操作');
   assert.ok(meetingSource.includes('meetingDecisionCompletionSummary'), '會議頁與保存邊界需共用領域完成摘要');
   assert.ok(meetingSource.includes('if(!editable||!canCloseTasks)'), '會議頁的決議待辦生命週期按鈕需同時要求管理會議與結案權限');
+  const meetingTransitionSource=meetingSource.slice(meetingSource.indexOf('const transitionDecisionTask = async'),meetingSource.indexOf('const transitionUnlinkedDecisionItem = async'));
+  assert.ok(meetingTransitionSource.includes('if(editorWritable){const saved=await save();if(!saved)return;}'), '取得會議編輯權後按完成需先保存目前草稿，再執行父子同步轉換');
+  const unlinkedTransitionSource=meetingSource.slice(meetingSource.indexOf('const transitionUnlinkedDecisionItem = async'),meetingSource.indexOf('const transitionMeetingLifecycle = async'));
+  assert.ok(unlinkedTransitionSource.includes('if(editorWritable){const saved=await save();if(!saved)return;}'), '未指定船舶的父會議待辦在編輯中也需先保存草稿再完成');
+  assert.ok(meetingSource.includes("&&editable&&canCloseTasks&&selected&&statusOf(selected)!=='已完成'&&<button"), 'linked會議待辦完成控制需在編輯中保持顯示');
+  assert.ok(meetingSource.includes("&&canCloseTasks&&editable&&selected&&statusOf(selected)!=='已完成'&&<button"), '未指定船舶的父會議待辦完成控制需在編輯中保持顯示');
+  assert.ok(!meetingSource.includes("&&editable&&canCloseTasks&&!editorWritable&&selected")&&!meetingSource.includes("&&canCloseTasks&&editable&&!editorWritable&&selected"), '取得會議編輯權後不得隱藏完成／重新開啟待辦控制');
   assert.match(meetingSource, /effectiveDraft\.status==='已完成'&&![a-zA-Z]+\.allCompleted/, '保存邊界需阻止仍有未完成或關聯衝突的會議結案');
   assert.ok(meetingSource.includes('vesselScopeMode:draft.vesselScopeMode')&&meetingSource.includes('vesselTypeScopes:[...draft.vesselTypeScopes]')&&meetingSource.includes('isInternalControl:draft.isInternalControl'), 'draft結案preflight需帶完整父會議scope metadata');
   assert.ok(meetingSource.includes('vesselScopeMode:effectiveDraft.vesselScopeMode')&&meetingSource.includes('vesselTypeScopes:effectiveDraft.vesselTypeScopes')&&meetingSource.includes('isInternalControl:effectiveDraft.isInternalControl'), 'fresh保存端結案重驗需帶完整父會議scope metadata');
