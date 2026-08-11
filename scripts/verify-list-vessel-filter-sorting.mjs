@@ -10,6 +10,7 @@ try {
   const internalControlSource = await readFile(new URL('../src/InternalControlPage.tsx', import.meta.url), 'utf8');
   const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
   const normalizedSource = await readFile(new URL('../src/NormalizedApp.tsx', import.meta.url), 'utf8');
+  const stylesSource = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
 
   const user = { id: 'u1', role: 'operator', managedVesselIds: ['v-managed'] };
   const vessels = [
@@ -45,10 +46,14 @@ try {
   assert.equal(sort('vessel-desc')[0], 'b-empty', '再次點擊船舶標題必須可反向排序');
   assert.deepEqual(sort('date-asc'), ['a-early', 'a-late', 'b-empty'], '日期近到遠且空日期最後');
   assert.deepEqual(sort('date-desc'), ['a-late', 'a-early', 'b-empty'], '日期遠到近仍須把空日期放最後');
+  assert.deepEqual(sort('created-asc'), ['a-early', 'a-late', 'b-empty'], '發佈日期需可由舊到新排序');
+  assert.deepEqual(sort('created-desc'), ['b-empty', 'a-late', 'a-early'], '發佈日期需可由新到舊排序');
   assert.deepEqual(sort('closed-date-asc'), ['a-early', 'a-late', 'b-empty'], '內控結案日期必須可排序且空值最後');
   assert.equal(controls.nextListColumnSort('vessel-asc', 'vessel'), 'vessel-desc');
   assert.equal(controls.nextListColumnSort('date-desc', 'vessel'), 'vessel-asc');
   assert.equal(controls.nextListColumnSort('date-asc', 'date'), 'date-desc');
+  assert.equal(controls.nextListColumnSort('created-desc', 'created'), 'created-asc');
+  assert.equal(controls.nextListColumnSort('created-asc', 'created'), 'created-desc');
 
   for (const label of ['選擇船舶', '全部', '只看我的經管船舶/事項', '指定船舶（可複選）']) {
     assert.ok(selectorSource.includes(label), `共用船舶選擇器缺少「${label}」`);
@@ -60,6 +65,13 @@ try {
   assert.ok(appSource.includes('<VesselListFilter') && appSource.includes('ariaLabel="待辦清單船舶篩選"'), '待辦總表與已結案共用FilterBar必須使用共用多船選擇器');
   assert.ok(appSource.includes('<div className="field"><label>船舶</label><VesselListFilter vessels={visibleVessels}'), '待辦總表與已結案的船舶選擇器必須與關鍵字／日期欄使用相同field標籤基準對齊');
   assert.ok(appSource.includes("onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}") && appSource.includes("onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}"), '待辦總表與已結案的船舶／期限標題必須可點擊排序');
+  assert.ok(appSource.includes("onClick={()=>setColumnSort(nextListColumnSort(columnSort,'created'))}") && appSource.includes("columnSort==='created-asc'?'ascending':columnSort==='created-desc'?'descending':'none'"), '待辦總表與已結案的發佈日期標題必須可點擊並回報正反排序');
+  const trackingHeader = appSource.indexOf('<th>追蹤窗口</th>');
+  const publishHeader = appSource.indexOf('>發佈日期 <span>');
+  const deadlineHeader = appSource.indexOf('>期限 <span>');
+  assert.ok(trackingHeader >= 0 && trackingHeader < publishHeader && publishHeader < deadlineHeader, '發佈日期必須位於追蹤窗口與期限之間');
+  assert.ok((appSource.match(/className="task-list-date-column"/g) || []).length >= 4 && appSource.includes('taipeiDateKey(t.createdAt)'), '發佈日期與期限必須共用等寬欄位 class，並顯示台北發佈日期');
+  assert.ok(stylesSource.includes('.batch-task-table .task-list-date-column{width:110px;min-width:110px;max-width:110px;white-space:nowrap}'), '發佈日期與期限欄必須共用相同固定寬度');
   assert.ok(internalControlSource.includes('<VesselListFilter') && internalControlSource.includes('ariaLabel="內控清單船舶篩選"'), '內控未完與結案必須使用共用多船選擇器');
   assert.ok(internalControlSource.includes("nextListColumnSort(columnSort,'vessel')") && internalControlSource.includes("nextListColumnSort(columnSort,'date')") && internalControlSource.includes("nextListColumnSort(columnSort,'closed-date')"), '內控表格必須可依船舶、報告日期及結案日期正反排序');
   assert.ok(normalizedSource.includes("'歸一化已結案船舶篩選':'歸一化待辦清單船舶篩選'"), 'normalized待辦總表與已結案必須使用授權船舶共用選擇器');

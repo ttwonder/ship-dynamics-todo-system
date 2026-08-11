@@ -5,6 +5,7 @@ import { userCanManageVesselByAssignmentOrDelegation } from './vesselDelegation'
 export type VesselListFilterMode = 'all' | 'mine' | 'custom';
 export type VesselListSelection = { mode: VesselListFilterMode; vesselIds: string[] };
 export type ListColumnSort =
+  | 'created-asc'
   | 'created-desc'
   | 'vessel-asc'
   | 'vessel-desc'
@@ -12,7 +13,7 @@ export type ListColumnSort =
   | 'date-desc'
   | 'closed-date-asc'
   | 'closed-date-desc';
-export type ListSortColumn = 'vessel' | 'date' | 'closed-date';
+export type ListSortColumn = 'vessel' | 'date' | 'created' | 'closed-date';
 
 type ListVessel = Pick<Vessel, 'id' | 'isActive' | 'assignedUserIds' | 'delegateManagers'>;
 type ListUser = Pick<UserAccount, 'id' | 'role' | 'managedVesselIds'>;
@@ -52,8 +53,8 @@ export function matchesListVesselSelection(
 }
 
 export function nextListColumnSort(current: ListColumnSort, column: ListSortColumn): ListColumnSort {
-  const ascending: ListColumnSort = column === 'vessel' ? 'vessel-asc' : column === 'date' ? 'date-asc' : 'closed-date-asc';
-  const descending: ListColumnSort = column === 'vessel' ? 'vessel-desc' : column === 'date' ? 'date-desc' : 'closed-date-desc';
+  const ascending: ListColumnSort = column === 'vessel' ? 'vessel-asc' : column === 'date' ? 'date-asc' : column === 'created' ? 'created-asc' : 'closed-date-asc';
+  const descending: ListColumnSort = column === 'vessel' ? 'vessel-desc' : column === 'date' ? 'date-desc' : column === 'created' ? 'created-desc' : 'closed-date-desc';
   return current === ascending ? descending : ascending;
 }
 
@@ -80,6 +81,9 @@ export function sortListRecords<T extends CreatedRecord>(
     }
     if (sort === 'date-asc' || sort === 'date-desc') {
       return compareOptionalListDate(primaryDate(left), primaryDate(right), sort === 'date-asc' ? 1 : -1) || compareCreatedNewestFirst(left, right);
+    }
+    if (sort === 'created-asc') {
+      return compareOptionalListDate(left.createdAt, right.createdAt, 1) || compareCreatedNewestFirst(left, right);
     }
     if (sort === 'closed-date-asc' || sort === 'closed-date-desc') {
       return compareOptionalListDate(closedDate(left), closedDate(right), sort === 'closed-date-asc' ? 1 : -1) || compareCreatedNewestFirst(left, right);
