@@ -54,6 +54,25 @@ try{
 
   assert.ok(styles.includes('.selected-task-print{display:none}')
     && styles.includes('.selected-task-print{display:block!important;'),'selected task print artifact must remain screen-hidden and print-visible');
+  const orderedColumns=(source,classes,label)=>{
+    const positions=classes.map(name=>source.indexOf(`className="${name}"`));
+    assert.ok(positions.every(position=>position>=0)&&positions.every((position,index)=>index===0||position>positions[index-1]),`${label} must declare its semantic PDF columns in rendered order`);
+  };
+  const cssWidth=(scope,name)=>{
+    const match=styles.match(new RegExp(`\\.${scope} \\.${name}\\{width:(\\d+)%\\}`));
+    assert.ok(match,`${scope} must define ${name} width`);
+    return Number(match[1]);
+  };
+  orderedColumns(selectedTaskPrint,['print-col-vessel','print-col-attention','print-col-source','print-col-item','print-col-department','print-col-tracking','print-col-deadline','print-col-status','print-col-closure'],'total/closed selected PDF');
+  const selectedWidths=Object.fromEntries(['vessel','attention','source','item','department','tracking','deadline','status','closure'].map(name=>[name,cssWidth('selected-task-print',`print-col-${name}`)]));
+  assert.equal(Object.values(selectedWidths).reduce((sum,width)=>sum+width,0),100,'total/closed PDF column widths must fill exactly 100%');
+  assert.equal(selectedWidths.item,selectedWidths.status,'total/closed PDF item and latest-status columns must share the widest tier');
+  assert.ok(Math.min(selectedWidths.item,selectedWidths.status)>Math.max(selectedWidths.vessel,selectedWidths.department,selectedWidths.tracking)&&Math.min(selectedWidths.vessel,selectedWidths.department,selectedWidths.tracking)>Math.max(selectedWidths.attention,selectedWidths.source,selectedWidths.deadline,selectedWidths.closure),'total/closed PDF must make item/status widest, vessel/department/tracking medium, and remaining columns narrow');
+  orderedColumns(workCenter,['print-col-source','print-col-vessel','print-col-attention','print-col-item','print-col-department','print-col-deadline','print-col-status'],'my-work PDF');
+  const workWidths=Object.fromEntries(['source','vessel','attention','item','department','deadline','status'].map(name=>[name,cssWidth('work-print-list',`print-col-${name}`)]));
+  assert.equal(Object.values(workWidths).reduce((sum,width)=>sum+width,0),100,'my-work PDF column widths must fill exactly 100%');
+  assert.equal(workWidths.item,workWidths.status,'my-work PDF item and status columns must share the widest tier');
+  assert.ok(Math.min(workWidths.item,workWidths.status)>Math.max(workWidths.vessel,workWidths.department)&&Math.min(workWidths.vessel,workWidths.department)>Math.max(workWidths.source,workWidths.attention,workWidths.deadline),'my-work PDF must make item/status widest, vessel/department medium, and remaining columns narrow');
   assert.ok(app.includes('printing-work-center')
     && styles.includes('body.printing-work-center .app-print-header')
     && styles.includes('body.printing-work-center .work-center>.page-heading')

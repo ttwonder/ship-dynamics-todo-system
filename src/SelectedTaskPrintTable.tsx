@@ -24,6 +24,7 @@ export default function SelectedTaskPrintTable({
     <h1>{title}（所選項目）</h1>
     <p>匯出人：{exportedBy}｜匯出時間：{formatTaipeiDateTime(new Date())}｜所選 {tasks.length} 件</p>
     <table>
+      <colgroup><col className="print-col-vessel"/><col className="print-col-attention"/><col className="print-col-source"/><col className="print-col-item"/><col className="print-col-department"/><col className="print-col-tracking"/><col className="print-col-deadline"/><col className="print-col-status"/><col className="print-col-closure"/></colgroup>
       <thead><tr><th>船舶</th><th>關注</th><th>來源</th><th>分類／事項</th><th>部門</th><th>追蹤窗口</th><th>期限</th><th>最新狀態</th><th>結案</th></tr></thead>
       <tbody>{tasks.map(task => { const projected=taskProjectedProgressForScope(task,visibleVesselIds); return <tr key={task.id}>
         <td>{taskVesselLabel(task, vessels)}</td>
