@@ -268,6 +268,47 @@ export function meetingDecisionCompletionSummary(
   };
 }
 
+export type UnlinkedMeetingDecisionTransitionFailureReason =
+  | 'meeting-missing-or-duplicate'
+  | 'relationship-changed'
+  | 'meeting-closed'
+  | 'already-applied';
+
+export type UnlinkedMeetingDecisionTransitionPlan =
+  | { ok: false; reason: UnlinkedMeetingDecisionTransitionFailureReason }
+  | {
+      ok: true;
+      meeting: TemporaryMeeting;
+      expectedUpdatedAt: string;
+      mustClaimLease: boolean;
+    };
+
+export function planUnlinkedMeetingDecisionTransition(input: {
+  meetings: TemporaryMeeting[];
+  tasks: TaskItem[];
+  meetingId: string;
+  itemId: string;
+  transition: 'complete' | 'reopen';
+  sectionKey: string;
+  activeItemLeaseKey: string;
+  savedBeforeTransition: boolean;
+}): UnlinkedMeetingDecisionTransitionPlan {
+  const matches=input.meetings.filter(meeting=>meeting.id===input.meetingId);
+  if(matches.length!==1)return {ok:false,reason:'meeting-missing-or-duplicate'};
+  const meeting=matches[0];
+  const summary=meetingDecisionCompletionSummary(meeting,input.tasks);
+  const item=summary.items.find(candidate=>candidate.item.id===input.itemId);
+  if(!item||item.task||summary.hasLinkConflict||meeting.vessels.length)return {ok:false,reason:'relationship-changed'};
+  if((meeting.status||'追蹤中')==='已完成')return {ok:false,reason:'meeting-closed'};
+  if((input.transition==='complete'&&item.state==='closed')||(input.transition==='reopen'&&item.state!=='closed'))return {ok:false,reason:'already-applied'};
+  return {
+    ok:true,
+    meeting,
+    expectedUpdatedAt:meeting.updatedAt,
+    mustClaimLease:input.savedBeforeTransition||input.activeItemLeaseKey!==input.sectionKey,
+  };
+}
+
 export function meetingDecisionLifecycleIsConsistent(
   meeting: MeetingWithTaskItems,
   tasks: TaskItem[],

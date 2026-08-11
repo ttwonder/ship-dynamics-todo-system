@@ -16,7 +16,7 @@ import { nowIso, roleLabel, todayDate, uid, withAudit } from './utils';
 import { formatTaipeiDateTime } from './taipeiTime';
 import { canAccessAllVessels, hasPermission, isEligibleTaskOwner } from './permissions';
 import { buildTaskNotificationsForVessels, buildTaskScopeChangeNotifications, canCancelInternalControl, FLOW_INTERNAL_CONTROL_REMINDER, trustedClosureDate } from './taskWorkflow';
-import { meetingDecisionCompletionSummary, reconcileMeetingTasks, meetingTaskClosedLinkConflict, meetingTaskItems, meetingTaskInternalControlTransitionRequired, meetingTaskLinkResolutionConflict, meetingTaskNotificationEvents, unchangedMeetingTaskItemIds } from './meetingTaskWorkflow';
+import { meetingDecisionCompletionSummary, planUnlinkedMeetingDecisionTransition, reconcileMeetingTasks, meetingTaskClosedLinkConflict, meetingTaskItems, meetingTaskInternalControlTransitionRequired, meetingTaskLinkResolutionConflict, meetingTaskNotificationEvents, unchangedMeetingTaskItemIds } from './meetingTaskWorkflow';
 import { canEditTemporaryMeetings, meetingAppliesToUser } from './meetingAccess';
 import { vesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskShipTypeLabel, taskVesselIds, taskVesselLabel } from './taskVesselScope';
@@ -166,6 +166,10 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const editBaselineRef = useRef<MeetingDraft | null>(null);
   const saveReachedLocalStateRef = useRef(false);
   const printInFlightRef = useRef(false);
+  const liveDataRef=useRef(data);
+  liveDataRef.current=data;
+  const activeItemLeaseKeyRef=useRef(activeItemLeaseKey);
+  activeItemLeaseKeyRef.current=activeItemLeaseKey;
 
   const selected = accessibleMeetings.find(meeting => meeting.id === selectedId);
   const editorWritable=Boolean(
@@ -719,27 +723,63 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const transitionUnlinkedDecisionItem = async (meeting:TemporaryMeeting,itemId:string,transition:'complete'|'reopen') => {
     if(lifecycleBusy)return;
     if(!editable||!canCloseTasks)return alert('目前身份需同時具備管理會議與結案待辦權限');
-    if(editorWritable){const saved=await save();if(!saved)return;}
-    const initialSummary=meetingDecisionCompletionSummary(meeting,data.tasks);
-    const initialItem=initialSummary.items.find(item=>item.item.id===itemId);
-    if(!initialItem||initialItem.task||initialSummary.hasLinkConflict||meeting.vessels.length){return alert('此待辦已有Task關聯或資料狀態已改變，請重新整理後再試');}
-    if(statusOf(meeting)==='已完成')return alert('請先重新開啟整場會議');
-    if((transition==='complete'&&initialItem.state==='closed')||(transition==='reopen'&&initialItem.state!=='closed'))return;
+    let savedBeforeTransition=false;
+    if(editorWritable){const saved=await save();if(!saved)return;savedBeforeTransition=true;}
+    const sectionKey=meetingEditLockKey(meeting.id);
+    let plan=planUnlinkedMeetingDecisionTransition({
+      meetings:liveDataRef.current.meetings,
+      tasks:liveDataRef.current.tasks,
+      meetingId:meeting.id,
+      itemId,
+      transition,
+      sectionKey,
+      activeItemLeaseKey:activeItemLeaseKeyRef.current,
+      savedBeforeTransition,
+    });
+    if(plan.ok===false){
+      if(plan.reason==='already-applied')return;
+      if(plan.reason==='meeting-closed')return alert('請先重新開啟整場會議');
+      return alert(plan.reason==='meeting-missing-or-duplicate'?'會議不存在或識別碼重複，未變更待辦狀態':'此待辦已有Task關聯或資料狀態已改變，請重新整理後再試');
+    }
     if(!window.confirm(transition==='complete'?'確定完成此待辦事項？':'確定重新開啟此待辦事項？'))return;
     setLifecycleBusy(true);
-    const sectionKey=meetingEditLockKey(meeting.id);
     let applied=false;
+    let claimedForTransition=false;
     try{
-      let freshMeeting=meeting;
-      if(activeItemLeaseKey!==sectionKey){
+      if(plan.mustClaimLease){
         const latest=await claimItemLease(sectionKey,`臨會/專題｜${meeting.subject||meeting.id}`);
         if(!latest)return;
-        const matches=latest.meetings.filter(item=>item.id===meeting.id);
-        if(matches.length!==1){await releaseItemLease(sectionKey);return alert('會議不存在或識別碼重複，未變更待辦狀態');}
-        freshMeeting=matches[0];
+        claimedForTransition=true;
+        plan=planUnlinkedMeetingDecisionTransition({
+          meetings:latest.meetings,
+          tasks:latest.tasks,
+          meetingId:meeting.id,
+          itemId,
+          transition,
+          sectionKey,
+          activeItemLeaseKey:sectionKey,
+          savedBeforeTransition:false,
+        });
+      }else{
+        plan=planUnlinkedMeetingDecisionTransition({
+          meetings:liveDataRef.current.meetings,
+          tasks:liveDataRef.current.tasks,
+          meetingId:meeting.id,
+          itemId,
+          transition,
+          sectionKey,
+          activeItemLeaseKey:activeItemLeaseKeyRef.current,
+          savedBeforeTransition:false,
+        });
       }
-      if(!requireItemLease(sectionKey))return;
-      const expectedUpdatedAt=freshMeeting.updatedAt;
+      if(plan.ok===false){
+        if(claimedForTransition)await releaseItemLease(sectionKey);
+        if(plan.reason==='already-applied')return;
+        if(plan.reason==='meeting-closed')return alert('請先重新開啟整場會議');
+        return alert(plan.reason==='meeting-missing-or-duplicate'?'會議不存在或識別碼重複，未變更待辦狀態':'此待辦已有Task關聯或資料狀態已改變，請重新整理後再試');
+      }
+      if(!requireItemLease(sectionKey)){if(claimedForTransition)await releaseItemLease(sectionKey);return;}
+      const expectedUpdatedAt=plan.expectedUpdatedAt;
       let failure='待辦或會議已變更，請重新確認最新內容';
       let persistedMeeting:TemporaryMeeting|undefined;
       const apply=()=>{
@@ -789,7 +829,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
         return;
       }
       const released=await releaseItemLease(sectionKey);
-      setDraft(draftFrom(persistedMeeting,data.tasks,data.settings.meetingTaskCategories));
+      setDraft(draftFrom(persistedMeeting,liveDataRef.current.tasks,liveDataRef.current.settings.meetingTaskCategories));
       setBaseMeetingUpdatedAt(persistedMeeting.updatedAt||'');
       setNotice(released
         ?transition==='complete'?'✓ 待辦事項已完成':'✓ 待辦事項已重新開啟'

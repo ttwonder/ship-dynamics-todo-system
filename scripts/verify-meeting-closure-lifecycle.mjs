@@ -8,6 +8,7 @@ try {
   const { normalizeAppData } = await server.ssrLoadModule('/src/normalize.ts');
   const { createInitialData } = await server.ssrLoadModule('/src/data/seed.ts');
   assert.equal(typeof workflow.meetingDecisionCompletionSummary, 'function', '臨會待辦需提供唯一關聯、完成與衝突的領域摘要');
+  assert.equal(typeof workflow.planUnlinkedMeetingDecisionTransition, 'function', '編輯中保存後的未連結決議需由fresh snapshot規劃續接');
 
   const meeting = {
     id: 'meeting-1',
@@ -169,6 +170,44 @@ try {
   }, []);
   assert.equal(noVesselClosed.items[0].state, 'closed');
   assert.equal(noVesselClosed.allCompleted, true);
+
+  const beforeSaveUnlinkedMeeting = {
+    ...meeting,
+    id: 'meeting-unlinked',
+    vessels: [],
+    updatedAt: '2026-08-06T00:00:00.000Z',
+    taskItems: [{ id: 'item-unlinked', description: '無涉船待辦', categories: [], distributeToVessels: false }],
+  };
+  const afterSaveUnlinkedMeeting = {
+    ...beforeSaveUnlinkedMeeting,
+    updatedAt: '2026-08-06T00:01:00.000Z',
+  };
+  const unlinkedSectionKey = 'meeting:meeting-unlinked';
+  const postSaveContinuation = workflow.planUnlinkedMeetingDecisionTransition({
+    meetings: [afterSaveUnlinkedMeeting],
+    tasks: [],
+    meetingId: afterSaveUnlinkedMeeting.id,
+    itemId: 'item-unlinked',
+    transition: 'complete',
+    sectionKey: unlinkedSectionKey,
+    activeItemLeaseKey: unlinkedSectionKey,
+    savedBeforeTransition: true,
+  });
+  assert.equal(postSaveContinuation.ok, true, '保存後應以fresh meeting續接未連結待辦完成');
+  assert.equal(postSaveContinuation.expectedUpdatedAt, afterSaveUnlinkedMeeting.updatedAt, 'CAS不得沿用保存前updatedAt');
+  assert.equal(postSaveContinuation.mustClaimLease, true, 'save已釋放鎖時，即使閉包仍看見舊key也必須重新claim');
+  assert.notEqual(postSaveContinuation.expectedUpdatedAt, beforeSaveUnlinkedMeeting.updatedAt);
+  const relationshipChangedAfterSave = workflow.planUnlinkedMeetingDecisionTransition({
+    meetings: [afterSaveUnlinkedMeeting],
+    tasks: [{ ...task({ id: 'newly-linked', itemId: 'item-unlinked', vesselIds: [] }), sourceMeetingId: afterSaveUnlinkedMeeting.id }],
+    meetingId: afterSaveUnlinkedMeeting.id,
+    itemId: 'item-unlinked',
+    transition: 'complete',
+    sectionKey: unlinkedSectionKey,
+    activeItemLeaseKey: '',
+    savedBeforeTransition: true,
+  });
+  assert.deepEqual(relationshipChangedAfterSave, { ok: false, reason: 'relationship-changed' }, '保存若建立或改變Task關聯，不得沿用保存前unlinked關係執行');
 
   const scopedMissing = workflow.meetingDecisionCompletionSummary({ ...meeting, vessels: ['v1'], taskItems: [meeting.taskItems[0]] }, []);
   assert.equal(scopedMissing.items[0].state, 'missing', '有船舶範圍卻缺Task時仍須fail closed');
@@ -369,7 +408,10 @@ try {
   const meetingTransitionSource=meetingSource.slice(meetingSource.indexOf('const transitionDecisionTask = async'),meetingSource.indexOf('const transitionUnlinkedDecisionItem = async'));
   assert.ok(meetingTransitionSource.includes('if(editorWritable){const saved=await save();if(!saved)return;}'), '取得會議編輯權後按完成需先保存目前草稿，再執行父子同步轉換');
   const unlinkedTransitionSource=meetingSource.slice(meetingSource.indexOf('const transitionUnlinkedDecisionItem = async'),meetingSource.indexOf('const transitionMeetingLifecycle = async'));
-  assert.ok(unlinkedTransitionSource.includes('if(editorWritable){const saved=await save();if(!saved)return;}'), '未指定船舶的父會議待辦在編輯中也需先保存草稿再完成');
+  assert.ok(unlinkedTransitionSource.includes('if(editorWritable){const saved=await save();if(!saved)return;savedBeforeTransition=true;}'), '未指定船舶的父會議待辦在編輯中需先保存草稿，並記錄lease已釋放');
+  assert.ok(meetingSource.includes('const liveDataRef=useRef(data);')&&meetingSource.includes('liveDataRef.current=data;'), '保存後續接需讀取重新render後的fresh AppData');
+  assert.ok(unlinkedTransitionSource.includes('savedBeforeTransition=true')&&unlinkedTransitionSource.includes('planUnlinkedMeetingDecisionTransition'), '未連結決議完成需明確標記save已釋放鎖並以fresh snapshot重規劃');
+  assert.ok(unlinkedTransitionSource.includes('if(plan.mustClaimLease)')&&unlinkedTransitionSource.includes('claimItemLease'), '保存後即使閉包仍持有舊lease key也必須重新claim');
   assert.ok(meetingSource.includes("&&editable&&canCloseTasks&&selected&&statusOf(selected)!=='已完成'&&<button"), 'linked會議待辦完成控制需在編輯中保持顯示');
   assert.ok(meetingSource.includes("&&canCloseTasks&&editable&&selected&&statusOf(selected)!=='已完成'&&<button"), '未指定船舶的父會議待辦完成控制需在編輯中保持顯示');
   assert.ok(!meetingSource.includes("&&editable&&canCloseTasks&&!editorWritable&&selected")&&!meetingSource.includes("&&canCloseTasks&&editable&&!editorWritable&&selected"), '取得會議編輯權後不得隱藏完成／重新開啟待辦控制');
