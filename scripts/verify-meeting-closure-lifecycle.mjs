@@ -386,6 +386,7 @@ try {
   assert.ok(appTransition.includes('draft.meetings[meetingIndex]=targetMeeting'), '單項完成需把父子領域轉換結果放入同一durable snapshot');
   assert.ok(appTransition.includes('meetingDecisionLifecycleIsConsistent(targetMeeting,draft.tasks,taskId)'), 'durable snapshot寫入前需重驗父子生命週期後置條件');
   assert.ok(appTransition.includes('if(!initialCompletion)')&&appTransition.includes('if(!liveCompletion)'), '重複linked Tasks等無唯一completion的情況需在initial與fresh snapshot提前拒絕');
+  assert.ok(appTransition.includes('requestedClosedDate?: string')&&appTransition.includes("trustedClosureDate(requestedClosedDate,'')"), 'linked會議待辦完成需接收並驗證使用者在日期視窗選定的完成日期');
   const linkedTransitionSource=workflowSource.slice(workflowSource.indexOf('export function transitionLinkedMeetingDecision'),workflowSource.indexOf('export const meetingTaskDescription'));
   assert.ok(linkedTransitionSource.includes('meetingDecisionLifecycleIsConsistent'), '純domain父子轉換本身也需fail closed驗證後置條件');
   const taskSaveSource=appSource.slice(appSource.indexOf('const saveTask = async'),appSource.indexOf('pendingTaskCreationProcessorRef.current='));
@@ -398,9 +399,12 @@ try {
   assert.ok(appSource.includes('synchronizeLinkedMeetingDecisionLifecycle(liveMeeting,saved')&&appSource.includes('meetingLifecycleChanged&&(!liveMeeting||!canEditTemporaryMeetings'), '分船整體完成狀態翻轉需fresh重驗管理會議權限並同步父item');
   assert.ok(appSource.includes('onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage}') && appSource.includes('canCloseTasks={canCloseTasks'), 'App需把權限與可信callback傳入會議頁');
 
-  for (const label of ['完成此待辦', '重新開啟此待辦', '結案會議', '重新開啟會議', '待辦進度']) {
+  for (const label of ['完成此待辦', '完結此待辦', '重新開啟此待辦', '結案會議', '重新開啟會議', '待辦進度']) {
     assert.ok(meetingSource.includes(label), `會議頁缺少「${label}」入口或狀態`);
   }
+  assert.ok(meetingSource.includes('meeting-inline-decision-transition')&&meetingSource.includes('editorWritable&&selected'), '取得編輯權後，每筆可整體完成的待辦需在編輯卡片標題列提供inline完結操作');
+  assert.ok(meetingSource.includes('aria-label="待辦完成日期"')&&meetingSource.includes('type="date"')&&meetingSource.includes('確認完結'), '完成會議待辦時需顯示真實日期輸入視窗並由使用者確認');
+  assert.ok(meetingSource.includes('requestDecisionCompletion')&&meetingSource.includes("kind:'linked'")&&meetingSource.includes("kind:'unlinked'"), 'inline與右側按鈕需共用日期視窗並涵蓋linked與unlinked待辦');
   assert.ok(meetingSource.includes('同步關聯狀態'),'父子生命週期分歧時UI需提供明確修復操作，不能靜默投影');
   assert.ok(meetingSource.includes('completion?.task?.id===task.id'),'只有唯一綁定目前Task的completion才可顯示生命週期操作');
   assert.ok(meetingSource.includes('meetingDecisionCompletionSummary'), '會議頁與保存邊界需共用領域完成摘要');
@@ -412,6 +416,7 @@ try {
   assert.ok(meetingSource.includes('const liveDataRef=useRef(data);')&&meetingSource.includes('liveDataRef.current=data;'), '保存後續接需讀取重新render後的fresh AppData');
   assert.ok(unlinkedTransitionSource.includes('savedBeforeTransition=true')&&unlinkedTransitionSource.includes('planUnlinkedMeetingDecisionTransition'), '未連結決議完成需明確標記save已釋放鎖並以fresh snapshot重規劃');
   assert.ok(unlinkedTransitionSource.includes('if(plan.mustClaimLease)')&&unlinkedTransitionSource.includes('claimItemLease'), '保存後即使閉包仍持有舊lease key也必須重新claim');
+  assert.ok(unlinkedTransitionSource.includes("trustedClosureDate(requestedClosedDate,'')")&&unlinkedTransitionSource.includes('targetItem.closedDate=selectedClosedDate'), '未連結待辦需驗證並保存日期視窗選定的完成日期，不得固定寫今天');
   assert.ok(meetingSource.includes("&&editable&&canCloseTasks&&selected&&statusOf(selected)!=='已完成'&&<button"), 'linked會議待辦完成控制需在編輯中保持顯示');
   assert.ok(meetingSource.includes("&&canCloseTasks&&editable&&selected&&statusOf(selected)!=='已完成'&&<button"), '未指定船舶的父會議待辦完成控制需在編輯中保持顯示');
   assert.ok(!meetingSource.includes("&&editable&&canCloseTasks&&!editorWritable&&selected")&&!meetingSource.includes("&&canCloseTasks&&editable&&!editorWritable&&selected"), '取得會議編輯權後不得隱藏完成／重新開啟待辦控制');

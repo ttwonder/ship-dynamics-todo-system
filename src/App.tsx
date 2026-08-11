@@ -3313,7 +3313,7 @@ export default function App() {
       return applied;
     },internalControlLockKeysForClosure);
   };
-  const transitionMeetingTaskFromMeetingPage = async (taskId: string, transition: 'complete' | 'reopen') => {
+  const transitionMeetingTaskFromMeetingPage = async (taskId: string, transition: 'complete' | 'reopen', requestedClosedDate?: string) => {
     if(!currentUser||!canCloseTasks||!canEditMeetings||currentUser.role==='vessel'){
       alert('目前角色需同時具備管理會議與完成／重新開啟待辦權限');
       return false;
@@ -3342,9 +3342,14 @@ export default function App() {
       alert('請先重新開啟整場會議，再重新開啟其中的待辦');
       return false;
     }
+    const selectedClosedDate=transition==='complete'&&!repairingLifecycle?trustedClosureDate(requestedClosedDate,''):'';
+    if(transition==='complete'&&!repairingLifecycle&&!selectedClosedDate){
+      alert('請先選擇有效的待辦完成日期');
+      return false;
+    }
     const actionLabel=repairingLifecycle?'同步臨會/專題待辦關聯狀態':transition==='complete'?'完成臨會/專題待辦':'重新開啟臨會/專題待辦';
-    const confirmation=repairingLifecycle?`確定同步「${richTextToPlainText(initialTask.description)||'此待辦'}」的父會議狀態？`:transition==='complete'?`確定將「${richTextToPlainText(initialTask.description)||'此待辦'}」標記完成？`:`確定重新開啟「${richTextToPlainText(initialTask.description)||'此待辦'}」？`;
-    if(!confirm(confirmation))return false;
+    const confirmation=repairingLifecycle?`確定同步「${richTextToPlainText(initialTask.description)||'此待辦'}」的父會議狀態？`:`確定重新開啟「${richTextToPlainText(initialTask.description)||'此待辦'}」？`;
+    if((repairingLifecycle||transition==='reopen')&&!confirm(confirmation))return false;
     const expectedUpdatedAt=initialTask.updatedAt;
     const expectedMeetingUpdatedAt=initialMeeting.updatedAt;
     return runTaskMutationWithLockBundle([taskId],actionLabel,fresh=>{
@@ -3369,8 +3374,9 @@ export default function App() {
         const isClosed=taskIsClosedForScope(liveTask,scopeIds);
         if(!liveRepairingLifecycle&&((transition==='complete'&&isClosed)||(transition==='reopen'&&!isClosed))){failure=transition==='complete'?'待辦已完成':'待辦已重新開啟';return prev;}
         if(transition==='reopen'&&liveMeeting.status==='已完成'){failure='請先重新開啟整場會議';return prev;}
+        if(transition==='complete'&&!liveRepairingLifecycle&&!selectedClosedDate){failure='待辦完成日期無效';return prev;}
         const at=nowIso();
-        const closedDate=todayDate();
+        const closedDate=transition==='complete'&&!liveRepairingLifecycle?selectedClosedDate:trustedClosureDate(liveTask.closedDate,todayDate());
         const draft=clone(prev);
         const taskIndex=draft.tasks.findIndex(task=>task.id===taskId);
         const meetingIndex=draft.meetings.findIndex(meeting=>meeting.id===liveMeeting.id);

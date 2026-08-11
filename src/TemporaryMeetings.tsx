@@ -40,7 +40,7 @@ type Props = {
   currentUser: UserAccount;
   canExportReports: boolean;
   canCloseTasks: boolean;
-  onTransitionDecisionTask: (taskId:string,transition:'complete'|'reopen')=>Promise<boolean>;
+  onTransitionDecisionTask: (taskId:string,transition:'complete'|'reopen',closedDate?:string)=>Promise<boolean>;
   setData: Dispatch<SetStateAction<AppData>>;
   commit: (mutate: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => void;
   claimItemLease: (sectionKey:string,label:string)=>Promise<AppData|null>;
@@ -63,6 +63,9 @@ type MeetingDraft = Pick<
 };
 
 type ScopeFilter = 'any' | MeetingVesselScopeMode;
+type MeetingDecisionClosureTarget =
+  | { kind:'linked'; taskId:string; label:string }
+  | { kind:'unlinked'; meetingId:string; itemId:string; label:string };
 
 const statuses: TemporaryMeetingStatus[] = ['待召開', '追蹤中', '已完成'];
 const statusOf = (meeting: TemporaryMeeting): TemporaryMeetingStatus => meeting.status || '追蹤中';
@@ -162,6 +165,8 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const [quickStatus, setQuickStatus] = useState('');
   const [editingSessionActive, setEditingSessionActive] = useState(false);
   const [lifecycleBusy,setLifecycleBusy]=useState(false);
+  const [decisionClosureTarget,setDecisionClosureTarget]=useState<MeetingDecisionClosureTarget|null>(null);
+  const [decisionClosureDate,setDecisionClosureDate]=useState(todayDate());
   const savingRef = useRef(false);
   const editBaselineRef = useRef<MeetingDraft | null>(null);
   const saveReachedLocalStateRef = useRef(false);
@@ -709,20 +714,24 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     return true;
   };
 
-  const transitionDecisionTask = async (taskId:string,transition:'complete'|'reopen',repairing=false) => {
+  const transitionDecisionTask = async (taskId:string,transition:'complete'|'reopen',repairing=false,requestedClosedDate?:string) => {
     if(lifecycleBusy)return;
     if(!editable||!canCloseTasks)return alert('目前身份需同時具備管理會議與結案待辦權限');
+    const selectedClosedDate=transition==='complete'&&!repairing?trustedClosureDate(requestedClosedDate,''):'';
+    if(transition==='complete'&&!repairing&&!selectedClosedDate)return alert('請先選擇有效的待辦完成日期');
     if(editorWritable){const saved=await save();if(!saved)return;}
     setLifecycleBusy(true);
     try{
-      const completed=await onTransitionDecisionTask(taskId,transition);
+      const completed=await onTransitionDecisionTask(taskId,transition,selectedClosedDate||undefined);
       if(completed)setNotice(repairing?'✓ 關聯狀態已同步':transition==='complete'?'✓ 待辦事項已完成':'✓ 待辦事項已重新開啟');
     }finally{setLifecycleBusy(false);}
   };
 
-  const transitionUnlinkedDecisionItem = async (meeting:TemporaryMeeting,itemId:string,transition:'complete'|'reopen') => {
+  const transitionUnlinkedDecisionItem = async (meeting:TemporaryMeeting,itemId:string,transition:'complete'|'reopen',requestedClosedDate?:string) => {
     if(lifecycleBusy)return;
     if(!editable||!canCloseTasks)return alert('目前身份需同時具備管理會議與結案待辦權限');
+    const selectedClosedDate=transition==='complete'?trustedClosureDate(requestedClosedDate,''):'';
+    if(transition==='complete'&&!selectedClosedDate)return alert('請先選擇有效的待辦完成日期');
     let savedBeforeTransition=false;
     if(editorWritable){const saved=await save();if(!saved)return;savedBeforeTransition=true;}
     const sectionKey=meetingEditLockKey(meeting.id);
@@ -741,7 +750,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
       if(plan.reason==='meeting-closed')return alert('請先重新開啟整場會議');
       return alert(plan.reason==='meeting-missing-or-duplicate'?'會議不存在或識別碼重複，未變更待辦狀態':'此待辦已有Task關聯或資料狀態已改變，請重新整理後再試');
     }
-    if(!window.confirm(transition==='complete'?'確定完成此待辦事項？':'確定重新開啟此待辦事項？'))return;
+    if(transition==='reopen'&&!window.confirm('確定重新開啟此待辦事項？'))return;
     setLifecycleBusy(true);
     let applied=false;
     let claimedForTransition=false;
@@ -804,7 +813,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
           if(!targetItem){failure='待辦事項不存在';return prev;}
           targetItem.isClosed=transition==='complete';
           if(transition==='complete'){
-            targetItem.closedDate=todayDate();
+            targetItem.closedDate=selectedClosedDate;
             targetItem.closedBy=liveUser.id;
           }else{
             delete targetItem.closedDate;
@@ -835,6 +844,27 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
         ?transition==='complete'?'✓ 待辦事項已完成':'✓ 待辦事項已重新開啟'
         :`${transition==='complete'?'待辦事項已完成':'待辦事項已重新開啟'}；雲端已確認，協作鎖將自動釋放`);
     }finally{setLifecycleBusy(false);}
+  };
+
+  const requestDecisionCompletion=(target:MeetingDecisionClosureTarget)=>{
+    if(lifecycleBusy)return;
+    setDecisionClosureDate(todayDate());
+    setDecisionClosureTarget(target);
+  };
+
+  const confirmDecisionCompletion=async()=>{
+    const target=decisionClosureTarget;
+    if(!target||lifecycleBusy)return;
+    const closedDate=trustedClosureDate(decisionClosureDate,'');
+    if(!closedDate)return alert('請選擇有效的待辦完成日期');
+    setDecisionClosureTarget(null);
+    if(target.kind==='linked'){
+      await transitionDecisionTask(target.taskId,'complete',false,closedDate);
+      return;
+    }
+    const meetings=liveDataRef.current.meetings.filter(meeting=>meeting.id===target.meetingId);
+    if(meetings.length!==1)return alert('會議不存在或識別碼重複，未變更待辦狀態');
+    await transitionUnlinkedDecisionItem(meetings[0],target.itemId,'complete',closedDate);
   };
 
   const transitionMeetingLifecycle = async (meeting:TemporaryMeeting,transition:'close'|'reopen') => {
@@ -1118,12 +1148,30 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
             <div className="field span-3"><label>決議／會議結論</label><RichTextEditor ariaLabel="決議／會議結論" readOnly={!editorWritable} value={draft.resolution} onChange={resolution=>setDraft({...draft,resolution})} placeholder="記錄本次會議決議或結論" /></div>
             <div className="field span-3 meeting-task-items-editor">
               <div className="meeting-task-items-title"><label>待辦事項</label><button type="button" className="btn small primary" onClick={addTaskItem}>＋ 增加待辦事項</button></div>
-              {draft.taskItems.map((item, index) => {const completion=selectedDecisionStateByItemId.get(item.id);return <div className="meeting-task-item" key={item.id}>
-                <div><label htmlFor={`meeting-task-${item.id}`}>待辦事項 {index + 1}</label><span className={`meeting-decision-state state-${completion?.state||'pending'}`}>{completion?.lifecycleConflict?'狀態待同步':completion?.state==='closed'?'已完成':completion?.state==='open'?(completion.distributed?`分船完成 ${completion.completedVesselCount}/${completion.vesselCount}`:'未完成'):completion?.state==='duplicate'?'關聯重複':completion?.state==='missing'?'關聯待修復':completion?.state==='invalid'?'關聯異常':'保存後追蹤'}</span><button type="button" className="btn small ghost" onClick={() => removeTaskItem(item.id)}>移除此事項</button></div>
-                <RichTextEditor id={`meeting-task-${item.id}`} ariaLabel={`待辦事項 ${index+1}`} readOnly={!editorWritable} value={item.description} onChange={description=>updateTaskItem(item.id,description)} placeholder="填寫後保存，預設作為公司層決議待辦" />
-                <div className="meeting-task-category-picker"><b>臨會/專題待辦分類</b><span>已選 {normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).length}</span><div className="temporary-chip-grid">{data.settings.meetingTaskCategories.map(category=>{const checked=normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).includes(category);return <label key={category} className={`meeting-task-category-chip ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const current=normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories);updateTaskItemCategories(item.id,checked?current.filter(value=>value!==category):[...current,category]);}}/><span>{category}</span></label>;})}</div></div>
-                <label className="aware-toggle meeting-vessel-distribution-toggle"><input type="checkbox" checked={item.distributeToVessels===true} onChange={event=>toggleTaskItemDistribution(item.id,event.target.checked)}/><span><b>分派到涉及船舶單船跟蹤：</b><small>勾選後，該會議待辦會分派到所有涉及船舶並出現在單船待辦清單；各船分別更新進度，只有全部涉及船舶完成，該待辦才記為完成。未勾選則只在臨會/專題、我的待辦、待辦總表與已結案中流轉。</small></span></label>
-              </div>;})}
+              {draft.taskItems.map((item, index) => {
+                const completion=selectedDecisionStateByItemId.get(item.id);
+                const inlineLifecycleAction=Boolean(
+                  editorWritable&&selected&&statusOf(selected)!=='已完成'&&canCloseTasks
+                  &&completion&&!completion.lifecycleConflict&&!completion.distributed
+                  &&(completion.state==='open'||completion.state==='closed')
+                );
+                const itemLabel=richTextToPlainText(item.description)||`待辦事項 ${index+1}`;
+                return <div className="meeting-task-item" key={item.id}>
+                  <div className="meeting-task-item-heading">
+                    <label htmlFor={`meeting-task-${item.id}`}>待辦事項 {index + 1}</label>
+                    <span className={`meeting-decision-state state-${completion?.state||'pending'}`}>{completion?.lifecycleConflict?'狀態待同步':completion?.state==='closed'?'已完成':completion?.state==='open'?(completion.distributed?`分船完成 ${completion.completedVesselCount}/${completion.vesselCount}`:'未完成'):completion?.state==='duplicate'?'關聯重複':completion?.state==='missing'?'關聯待修復':completion?.state==='invalid'?'關聯異常':'保存後追蹤'}</span>
+                    <span className="meeting-task-item-actions no-print">
+                      {inlineLifecycleAction&&(completion?.state==='closed'
+                        ?<button type="button" className="btn small ghost meeting-inline-decision-transition" disabled={lifecycleBusy} onClick={()=>{if(completion.task)void transitionDecisionTask(completion.task.id,'reopen');else if(selected)void transitionUnlinkedDecisionItem(selected,item.id,'reopen');}}>重新開啟此待辦</button>
+                        :<button type="button" className="btn small green meeting-inline-decision-transition" disabled={lifecycleBusy} onClick={()=>requestDecisionCompletion(completion?.task?{kind:'linked',taskId:completion.task.id,label:itemLabel}:{kind:'unlinked',meetingId:selectedId,itemId:item.id,label:itemLabel})}>完結此待辦</button>)}
+                      <button type="button" className="btn small ghost" onClick={() => removeTaskItem(item.id)}>移除此事項</button>
+                    </span>
+                  </div>
+                  <RichTextEditor id={`meeting-task-${item.id}`} ariaLabel={`待辦事項 ${index+1}`} readOnly={!editorWritable} value={item.description} onChange={description=>updateTaskItem(item.id,description)} placeholder="填寫後保存，預設作為公司層決議待辦" />
+                  <div className="meeting-task-category-picker"><b>臨會/專題待辦分類</b><span>已選 {normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).length}</span><div className="temporary-chip-grid">{data.settings.meetingTaskCategories.map(category=>{const checked=normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).includes(category);return <label key={category} className={`meeting-task-category-chip ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const current=normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories);updateTaskItemCategories(item.id,checked?current.filter(value=>value!==category):[...current,category]);}}/><span>{category}</span></label>;})}</div></div>
+                  <label className="aware-toggle meeting-vessel-distribution-toggle"><input type="checkbox" checked={item.distributeToVessels===true} onChange={event=>toggleTaskItemDistribution(item.id,event.target.checked)}/><span><b>分派到涉及船舶單船跟蹤：</b><small>勾選後，該會議待辦會分派到所有涉及船舶並出現在單船待辦清單；各船分別更新進度，只有全部涉及船舶完成，該待辦才記為完成。未勾選則只在臨會/專題、我的待辦、待辦總表與已結案中流轉。</small></span></label>
+                </div>;
+              })}
             </div>
           </div>
 
@@ -1164,13 +1212,20 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
           <div className="temporary-status-grid">{statuses.map(status => <button key={status} className={statusFilter === status ? 'active' : ''} onClick={() => setStatusFilter(status)}><span>{status}</span><b>{counts[status]}</b></button>)}</div>
           <div className="summary-card blue"><h3>目前會議</h3><div className="summary-line"><span>狀態</span><b>{draft.status}</b></div><div className="summary-line"><span>會議追蹤</span><b>{draft.status==='已完成'?'已結案':'持續追蹤'}</b></div><div className="summary-line"><span>待辦進度</span><b>{selectedCompletionSummary?`${selectedCompletionSummary.completedCount}/${selectedCompletionSummary.totalCount}`:'尚未建立'}</b></div><div className="summary-line"><span>完成日期</span><b>{draft.completedDate||'未完成'}</b></div><div className="summary-line"><span>範圍</span><b>{scopeModeLabel(draft.vesselScopeMode)}</b></div><div className="summary-line"><span>船舶</span><b>{resolvedVesselIds.length}</b></div><div className="summary-line"><span>部門</span><b>{draft.departments.length}</b></div><div className="summary-line"><span>與會人員</span><b>{draft.participantUserIds.length}</b></div><div className="summary-line"><span>追蹤窗口</span><b>{draft.trackingUserIds.length}</b></div><div className="summary-line"><span>負責人</span><b>{draft.responsibleUserIds.length}</b></div><div className="summary-line"><span>關注</span><b>{draft.priority}</b></div><div className="summary-line"><span>異常</span><b>{draft.isAbnormal?'是':'否'}</b></div><div className="summary-line"><span>內部管控</span><b>{draft.isInternalControl?'是':'否'}</b></div><div className="summary-line"><span>早會</span><b>{draft.includeInMorning?'納入':'不納入'}</b></div><div className="summary-line"><span>最新狀態</span><b>{draft.latestStatus||'尚無記錄'}</b></div></div>
           <div className="summary-card"><h3>建立資訊</h3><p>{selected ? formatTaipeiDateTime(selected.createdAt) : '尚未建立'}</p><small>{creator ? `${creator.department}｜${creator.name}｜${roleLabel(creator.role)}` : '建立後顯示建立者'}</small></div>
-          <div className="summary-card mint"><h3>關聯待辦事項</h3>{selectedCompletionSummary?.hasLinkConflict&&<p className="meeting-decision-warning">待辦關聯缺少、重複或孤立，結案前必須先保存修復。</p>}{linkedTasks.length ? <div className="meeting-linked-tasks">{linkedTasks.map(task => {const completion=task.sourceMeetingItemId?selectedDecisionStateByItemId.get(task.sourceMeetingItemId):undefined;const closed=taskIsClosedForScope(task,taskVesselIds(task));return <article key={task.id} className={closed?'decision-completed':''}><div className="meeting-linked-task-heading"><b>{taskVesselLabel(task, visibleVessels)}</b><span className={`meeting-decision-state state-${completion?.state||'missing'}`}>{completion?.lifecycleConflict?'父子狀態不一致':completion?.distributed?`分船完成 ${completion.completedVesselCount}/${completion.vesselCount}`:closed?'已完成':completion?'未完成':'關聯待修復'}</span></div><small>船種：{taskShipTypeLabel(task, visibleVessels)}</small><RichTextContent compact value={task.description} fallback="尚未填寫事項內容"/><small>{task.sourceMeetingItemId && selectedTaskItemNumbers.get(task.sourceMeetingItemId) ? `待辦事項 ${selectedTaskItemNumbers.get(task.sourceMeetingItemId)}｜` : ''}{closed ? '已結案' : richTextToPlainText(task.status) || '待執行'}｜期限 {task.expectedDate || '未設定'}</small>{completion?.task?.id===task.id&&(completion.lifecycleConflict||(!completion.distributed&&(completion.state==='open'||completion.state==='closed')))&&editable&&canCloseTasks&&selected&&statusOf(selected)!=='已完成'&&<button type="button" className={`btn small ${completion.lifecycleConflict||closed?'ghost':'green'} meeting-decision-transition`} disabled={lifecycleBusy} onClick={()=>void transitionDecisionTask(task.id,completion.lifecycleConflict?(closed?'complete':'reopen'):closed?'reopen':'complete',completion.lifecycleConflict===true)}>{completion.lifecycleConflict?'同步關聯狀態':closed?'重新開啟此待辦':'完成此待辦'}</button>}{completion?.distributed&&!completion.lifecycleConflict&&<small className="meeting-distributed-guidance">請在各船進度分別完成；全部完成後此項自動完成。</small>}{closed&&selected&&statusOf(selected)==='已完成'&&<small>如需重新開啟此待辦，請先重新開啟會議。</small>}</article>;})}</div> : !selectedCompletionSummary?.items.some(item=>!item.task)?<p>{draft.taskItems.some(item => !isRichTextEmpty(item.description)) ? '保存後每個事項會依合併船舶範圍建立一筆待辦。' : '尚未填寫待辦事項。'}</p>:null}{selectedCompletionSummary?.items.some(item=>!item.task)&&<div className="meeting-linked-tasks meeting-unlinked-decisions">{selectedCompletionSummary.items.filter(item=>!item.task).map((completion,index)=><article key={completion.item.id} className={completion.state==='closed'?'decision-completed':''}><div className="meeting-linked-task-heading"><b>待辦事項 {index+1}</b><span className={`meeting-decision-state state-${completion.state}`}>{completion.state==='closed'?'已完成':completion.state==='open'?'未完成':'關聯待修復'}</span></div><RichTextContent compact value={completion.item.description} fallback="尚未填寫事項內容"/>{completion.state!=='missing'&&completion.state!=='duplicate'&&canCloseTasks&&editable&&selected&&statusOf(selected)!=='已完成'&&<button type="button" className={`btn small ${completion.state==='closed'?'ghost':'green'} meeting-decision-transition`} disabled={lifecycleBusy} onClick={()=>void transitionUnlinkedDecisionItem(selected,completion.item.id,completion.state==='closed'?'reopen':'complete')}>{completion.state==='closed'?'重新開啟此待辦':'完成此待辦'}</button>}{completion.state==='missing'&&<small>此會議已有涉船範圍，但缺少唯一Task關聯，請取得編輯權後保存修復。</small>}{completion.state==='closed'&&selected&&statusOf(selected)==='已完成'&&<small>如需重新開啟此待辦，請先重新開啟會議。</small>}</article>)}</div>}</div>
+          <div className="summary-card mint"><h3>關聯待辦事項</h3>{selectedCompletionSummary?.hasLinkConflict&&<p className="meeting-decision-warning">待辦關聯缺少、重複或孤立，結案前必須先保存修復。</p>}{linkedTasks.length ? <div className="meeting-linked-tasks">{linkedTasks.map(task => {const completion=task.sourceMeetingItemId?selectedDecisionStateByItemId.get(task.sourceMeetingItemId):undefined;const closed=taskIsClosedForScope(task,taskVesselIds(task));return <article key={task.id} className={closed?'decision-completed':''}><div className="meeting-linked-task-heading"><b>{taskVesselLabel(task, visibleVessels)}</b><span className={`meeting-decision-state state-${completion?.state||'missing'}`}>{completion?.lifecycleConflict?'父子狀態不一致':completion?.distributed?`分船完成 ${completion.completedVesselCount}/${completion.vesselCount}`:closed?'已完成':completion?'未完成':'關聯待修復'}</span></div><small>船種：{taskShipTypeLabel(task, visibleVessels)}</small><RichTextContent compact value={task.description} fallback="尚未填寫事項內容"/><small>{task.sourceMeetingItemId && selectedTaskItemNumbers.get(task.sourceMeetingItemId) ? `待辦事項 ${selectedTaskItemNumbers.get(task.sourceMeetingItemId)}｜` : ''}{closed ? '已結案' : richTextToPlainText(task.status) || '待執行'}｜期限 {task.expectedDate || '未設定'}</small>{completion?.task?.id===task.id&&(completion.lifecycleConflict||(!completion.distributed&&(completion.state==='open'||completion.state==='closed')))&&editable&&canCloseTasks&&selected&&statusOf(selected)!=='已完成'&&<button type="button" className={`btn small ${completion.lifecycleConflict||closed?'ghost':'green'} meeting-decision-transition`} disabled={lifecycleBusy} onClick={()=>{if(completion.lifecycleConflict){void transitionDecisionTask(task.id,closed?'complete':'reopen',true);return;}if(closed){void transitionDecisionTask(task.id,'reopen');return;}requestDecisionCompletion({kind:'linked',taskId:task.id,label:richTextToPlainText(task.description)||'此待辦'});}}>{completion.lifecycleConflict?'同步關聯狀態':closed?'重新開啟此待辦':'完成此待辦'}</button>}{completion?.distributed&&!completion.lifecycleConflict&&<small className="meeting-distributed-guidance">請在各船進度分別完成；全部完成後此項自動完成。</small>}{closed&&selected&&statusOf(selected)==='已完成'&&<small>如需重新開啟此待辦，請先重新開啟會議。</small>}</article>;})}</div> : !selectedCompletionSummary?.items.some(item=>!item.task)?<p>{draft.taskItems.some(item => !isRichTextEmpty(item.description)) ? '保存後每個事項會依合併船舶範圍建立一筆待辦。' : '尚未填寫待辦事項。'}</p>:null}{selectedCompletionSummary?.items.some(item=>!item.task)&&<div className="meeting-linked-tasks meeting-unlinked-decisions">{selectedCompletionSummary.items.filter(item=>!item.task).map((completion,index)=><article key={completion.item.id} className={completion.state==='closed'?'decision-completed':''}><div className="meeting-linked-task-heading"><b>待辦事項 {index+1}</b><span className={`meeting-decision-state state-${completion.state}`}>{completion.state==='closed'?'已完成':completion.state==='open'?'未完成':'關聯待修復'}</span></div><RichTextContent compact value={completion.item.description} fallback="尚未填寫事項內容"/>{completion.state!=='missing'&&completion.state!=='duplicate'&&canCloseTasks&&editable&&selected&&statusOf(selected)!=='已完成'&&<button type="button" className={`btn small ${completion.state==='closed'?'ghost':'green'} meeting-decision-transition`} disabled={lifecycleBusy} onClick={()=>{if(completion.state==='closed'){void transitionUnlinkedDecisionItem(selected,completion.item.id,'reopen');return;}requestDecisionCompletion({kind:'unlinked',meetingId:selected.id,itemId:completion.item.id,label:richTextToPlainText(completion.item.description)||`待辦事項 ${index+1}`});}}>{completion.state==='closed'?'重新開啟此待辦':'完成此待辦'}</button>}{completion.state==='missing'&&<small>此會議已有涉船範圍，但缺少唯一Task關聯，請取得編輯權後保存修復。</small>}{completion.state==='closed'&&selected&&statusOf(selected)==='已完成'&&<small>如需重新開啟此待辦，請先重新開啟會議。</small>}</article>)}</div>}</div>
           <div className="summary-card blue"><h3>待辦同步規則</h3><p>每個已填寫的待辦事項只建立一筆待辦；船舶欄會顯示「全部船舶」或合併船名，船種欄同步顯示全部或涉及類型。</p></div>
         </div>
       </aside>
     </div>}
     {notice && <div className="management-save-toast" role="status" aria-live="polite">{notice}</div>}
   </section>
+  {decisionClosureTarget&&<div className="modal-backdrop meeting-decision-date-backdrop" role="presentation">
+    <form className="modal meeting-decision-date-modal" role="dialog" aria-modal="true" aria-labelledby="meeting-decision-date-title" onSubmit={event=>{event.preventDefault();void confirmDecisionCompletion();}}>
+      <div className="modal-header"><div><h2 id="meeting-decision-date-title">完結此待辦</h2><p>{decisionClosureTarget.label}</p></div><button type="button" className="btn small ghost" disabled={lifecycleBusy} onClick={()=>setDecisionClosureTarget(null)}>關閉</button></div>
+      <div className="field"><label htmlFor="meeting-decision-closure-date">完成日期</label><input autoFocus required id="meeting-decision-closure-date" aria-label="待辦完成日期" type="date" value={decisionClosureDate} onChange={event=>setDecisionClosureDate(event.target.value)}/><small>{decisionClosureTarget.kind==='linked'?'確認後，日期會同步寫入會議待辦與關聯待辦。':'確認後，日期會寫入此會議待辦。'}</small></div>
+      <div className="modal-actions"><button type="button" className="btn ghost" disabled={lifecycleBusy} onClick={()=>setDecisionClosureTarget(null)}>取消</button><button type="submit" className="btn green" disabled={lifecycleBusy||!decisionClosureDate}>確認完結</button></div>
+    </form>
+  </div>}
   {printMode&&<section className="meeting-print print-only">
     {printMode==='meetings'&&printableMeetings.map(meeting=>{const items=meetingTaskItems(meeting,data.tasks,data.settings.meetingTaskCategories);const completion=meetingDecisionCompletionSummary(meeting,data.tasks);return <article className="meeting-print-page" key={meeting.id}><header><div><span className={`meeting-status status-${statusOf(meeting)}`}>{statusOf(meeting)}</span><h1>{meeting.subject||'臨會／專題會議報告'}</h1><p>匯出時間：{formatTaipeiDateTime(new Date())}｜匯出人：{currentUser.name}</p></div><b>臨會／專題</b></header><div className="meeting-print-meta"><div><small>召開日期</small><b>{meeting.meetingDate||'-'}</b></div><div><small>預計完成</small><b>{meeting.expectedDate||'-'}</b></div><div><small>關注程度</small><b>{meeting.priority}</b></div><div><small>會議範圍</small><b>{meetingScopeLabel(meeting)}</b></div><div><small>涉會船舶</small><b>{meetingVesselIds(meeting).length} 艘</b></div><div><small>決議待辦進度</small><b>{completion.completedCount}/{completion.totalCount}</b></div><div><small>會議追蹤</small><b>{statusOf(meeting)==='已完成'?'已結案':'持續追蹤'}</b></div></div><div className="meeting-print-grid"><section className="meeting-print-section card-like"><h2>會議範圍</h2><p>{meetingPdfVesselSummary(meeting, visibleVessels)}</p></section><section className="meeting-print-section card-like"><h2>涉及部門</h2><p>{meeting.departments.join('、')||'未指定'}</p></section><section className="meeting-print-section card-like"><h2>與會人員</h2><p>{peopleNames(meeting.participantUserIds)}</p></section><section className="meeting-print-section card-like"><h2>追蹤窗口</h2><p>{peopleNames(meeting.trackingUserIds || [])}</p></section><section className="meeting-print-section card-like"><h2>負責人</h2><p>{peopleNames(meeting.responsibleUserIds)}</p></section></div><section className="meeting-print-section card-like wide"><h2>召開緣由</h2><RichTextContent value={meeting.reason} fallback="未填寫"/></section><section className="meeting-print-section card-like wide"><h2>決議／會議結論</h2><RichTextContent value={meeting.resolution} fallback="未填寫"/></section><section className="meeting-print-section card-like wide"><h2>待辦事項</h2>{items.length?<ol className="meeting-print-task-list">{items.map((item,index)=>{const itemCompletion=completion.items.find(entry=>entry.item.id===item.id);return <li key={item.id}><span>待辦 {index+1}｜{itemCompletion?.state==='closed'?'已完成':itemCompletion?.distributed?`分船完成 ${itemCompletion.completedVesselCount}/${itemCompletion.vesselCount}`:itemCompletion?.state==='open'?'未完成':'關聯待修復'}</span><RichTextContent value={item.description} fallback="未填寫"/><small>{normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).join('、')}｜{item.distributeToVessels?'分派到涉及船舶單船跟蹤':'公司層決議待辦'}</small></li>;})}</ol>:<p>尚無待辦事項</p>}</section><section className="meeting-print-section card-like wide meeting-print-status-history"><h2>狀態歷程</h2>{(meeting.statusLogs||[]).length?(meeting.statusLogs||[]).map(log=><article key={log.id}><b>{log.text}</b><small>{formatTaipeiDateTime(log.at)}｜{log.by}</small></article>):<p>尚無狀態紀錄</p>}</section></article>;})}
     {printMode==='register'&&<article className="meeting-print-register"><header><h1>臨會／專題總清單</h1><p>匯出時間：{formatTaipeiDateTime(new Date())}｜匯出人：{currentUser.name}｜共 {accessibleMeetings.length} 筆</p></header><table><thead><tr><th>召開日期</th><th>狀態</th><th>主題</th><th>範圍</th><th>船舶</th><th>部門</th><th>追蹤窗口／負責人</th><th>待辦</th><th>期限</th></tr></thead><tbody>{accessibleMeetings.map(meeting=>{return <tr key={meeting.id}><td>{meeting.meetingDate||'-'}</td><td>{statusOf(meeting)}</td><td><b>{meeting.subject||'-'}</b><br/>{richTextToPlainText(meeting.reason)||'未填召開緣由'}</td><td>{meetingScopeLabel(meeting)}</td><td>{meetingPdfVesselSummary(meeting, visibleVessels)}</td><td>{meeting.departments.join('、')||'-'}</td><td>追蹤：{peopleNames(meeting.trackingUserIds || [])}<br/>負責：{peopleNames(meeting.responsibleUserIds)}</td><td>{meetingTaskProgressLabel(meeting)}</td><td>{meeting.expectedDate||'-'}</td></tr>;})}</tbody></table></article>}
