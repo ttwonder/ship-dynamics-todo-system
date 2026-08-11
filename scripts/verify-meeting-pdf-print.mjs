@@ -24,6 +24,26 @@ assert.match(meetings,/printMeetingDetail\(selected\.id\)/,'详情按钮必须�
 assert.match(meetings,/printMeetingIds/,'打印集合必须与总清单勾选状态分离，避免详情导出混入其他会议');
 assert.match(meetings,/meetingPdfVesselSummary\(meeting,/,'会议 PDF 涉船内容必须使用范围摘要 helper');
 
+const registerPrintStart=meetings.indexOf("{printMode==='register'&&<article");
+const registerPrintEnd=meetings.indexOf('</article>}',registerPrintStart);
+assert.ok(registerPrintStart>=0&&registerPrintEnd>registerPrintStart,'未完成／已完成清單 PDF 必須有獨立 register print artifact');
+const registerPrintMarkup=meetings.slice(registerPrintStart,registerPrintEnd);
+assert.ok(registerPrintMarkup.includes('registerPrintMeetings.map')&&!registerPrintMarkup.includes('printableMeetings.map')&&!registerPrintMarkup.includes('meeting-print-page'),'清單 PDF 只能輸出目前未完成／已完成清單列，不得混入逐場會議詳情');
+assert.ok(registerPrintMarkup.includes('<th>召開日期</th><th>狀態</th><th>會議主題</th><th>會議範圍</th><th>船舶</th><th>部門</th><th>追蹤窗口／負責人</th><th>待辦</th><th>期限</th>'),'清單 PDF 欄位與順序必須對齊頁面清單');
+const orderedPrintColumns=['date','status','subject','scope','vessels','department','people','tasks','deadline'];
+const columnPositions=orderedPrintColumns.map(name=>registerPrintMarkup.indexOf(`className="meeting-print-col-${name}"`));
+assert.ok(columnPositions.every(position=>position>=0)&&columnPositions.every((position,index)=>index===0||position>columnPositions[index-1]),'清單 PDF 必須依頁面欄位順序宣告語意化 colgroup');
+const meetingRegisterWidth=name=>{
+  const match=styles.match(new RegExp(`\\.meeting-print-register \\.meeting-print-col-${name}\\{width:(\\d+)%\\}`));
+  assert.ok(match,`清單 PDF 必須指定 ${name} 欄寬`);
+  return Number(match[1]);
+};
+const meetingRegisterWidths=Object.fromEntries(orderedPrintColumns.map(name=>[name,meetingRegisterWidth(name)]));
+assert.equal(Object.values(meetingRegisterWidths).reduce((sum,width)=>sum+width,0),100,'清單 PDF 欄寬總和必須為 100%');
+assert.ok(meetingRegisterWidths.subject>Math.max(...orderedPrintColumns.filter(name=>name!=='subject').map(name=>meetingRegisterWidths[name])),'會議主題必須是清單 PDF 唯一最寬欄位');
+assert.ok(meetingRegisterWidths.people>meetingRegisterWidths.vessels&&meetingRegisterWidths.vessels>meetingRegisterWidths.status,'追蹤人員、船舶及短內容欄位必須依資訊量合理分級');
+assert.ok(styles.includes('.meeting-print-register table{width:100%;border-collapse:collapse;margin-top:12px;table-layout:fixed}'),'清單 PDF 必須使用固定表格布局落實欄寬比例');
+
 const server=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});
 try {
   const { meetingPdfVesselSummary }=await server.ssrLoadModule('/src/meetingPdf.ts');
