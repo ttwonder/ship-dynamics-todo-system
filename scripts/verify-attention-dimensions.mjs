@@ -73,7 +73,7 @@ try{
   assert.match(editorSource,/disabled=\{globalReadOnly\|\|hasMeetingScope\}/,'会议派生待办的关注程度不可独立修改');
   assert.match(appSource,/canonicalTaskAttentionForSave\(/,'保存层须再次强制会议维度与会议关注程度');
   assert.ok(dashboardSource.includes('const summaryTasks = vesselTasks.filter(appearsInSingleVesselTasks)') && dashboardSource.includes('[...summaryTasks].sort'), '船舶摘要只能列普通單船要事與明確分派到船舶的會議待辦');
-  assert.ok(dashboardSource.includes('appearsInSingleVesselTasks(task)') && dashboardSource.includes('const attentionTasks = vesselAttentionTasks(vesselTasks)'), '船隊看板 KPI 可計分派到單船的待辦，但船舶關注度仍須排除會議維度');
+  assert.ok(dashboardSource.includes('const openTasks = tasks.filter(task => taskVesselIds(task).some') && !/const openTasks = tasks\.filter\([^\n]*appearsInSingleVesselTasks/.test(dashboardSource) && dashboardSource.includes('const attentionTasks = vesselAttentionTasks(vesselTasks)'), '船隊看板 KPI 須與待辦總表使用相同項目集合，但船舶關注度仍須排除會議維度');
   assert.ok(appSource.includes('!isVesselDelegatedMeetingTask(task)') && appSource.includes('公司層決議案') && appSource.includes('ordinaryReportTasks=tasks.filter(appearsInSingleVesselTasks)'), '報告/PDF 必須把未分派公司層決議與單船/已分派要事分區列示');
 
 console.log('Task and meeting attention dimensions are isolated.');

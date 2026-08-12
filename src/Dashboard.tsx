@@ -89,7 +89,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
   });
 
   const visibleVesselIds = new Set(vessels.map(vessel => vessel.id));
-  const openTasks = tasks.filter(task => appearsInSingleVesselTasks(task) && taskVesselIds(task).some(id => visibleVesselIds.has(id)) && !taskIsClosedForScope(task,[...visibleVesselIds]));
+  const openTasks = tasks.filter(task => taskVesselIds(task).some(id => visibleVesselIds.has(id)) && !taskIsClosedForScope(task,[...visibleVesselIds]));
   const urgentHighCount = openTasks.filter(task => task.priority === '急' || task.priority === '高').length;
   const overdueCount = openTasks.filter(task => (daysDiff(task.expectedDate) ?? 0) < 0).length;
   const updatedToday = vessels.filter(vessel => taipeiDateKey(vessel.updatedAt || vessel.position.updatedAt) === todayDate()).length;
