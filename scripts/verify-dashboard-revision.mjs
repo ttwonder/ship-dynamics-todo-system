@@ -35,7 +35,7 @@ for (const label of ['換員操作', '加油加水', '物料配件', '維修', '
   assert.ok(weeklyAttention.includes(label), `船舶看板需提供「${label}」一周关注灯`);
 }
 assert.ok(dashboard.includes('WEEKLY_ATTENTION_OPTIONS.map'), '船舶看板需渲染共用的一周關注燈選項');
-assert.ok(dashboard.includes("['ETA','ETB','ETD']") && dashboard.includes("||'TBA'"), 'ETA／ETB／ETD 需点击循环且空值显示 TBA');
+assert.ok(dashboard.includes('automaticScheduleKind') && dashboard.includes('nextScheduleKind') && dashboard.includes("||'TBA'"), 'ETA／ETB／ETD 需依電腦時間自動選擇、保留點擊循環且未填完整日期時間時顯示 TBA');
 const schedulePosition = dashboard.indexOf('className="ship-schedule"');
 const vesselStatusPosition = dashboard.indexOf('className="ship-status"');
 const loadStatusPosition = dashboard.indexOf('className="ship-load"');

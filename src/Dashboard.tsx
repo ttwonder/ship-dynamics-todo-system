@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { InternalControlCase, ScheduleKind, TaskItem, UserAccount, Vessel, WeeklyAttentionKey } from './types';
 import { daysDiff, todayDate } from './runtimeUtils';
 import { taipeiDateKey } from './taipeiTime';
@@ -8,7 +8,7 @@ import { deriveVesselAttention, unlinkedInternalControlCasesForVessel, vesselAtt
 import QuickMorningPicker from './QuickMorningPicker';
 import { appearsInSingleVesselTasks, vesselAttentionTasks } from './taskAttention';
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
-import { formatScheduleDisplay } from './scheduleTime';
+import { automaticScheduleKind, formatCompleteScheduleDisplay, nextScheduleKind } from './scheduleTime';
 import { userCanManageVesselByAssignmentOrDelegation } from './vesselDelegation';
 import { meetingCreatesVesselAbnormalAlert, type DashboardMeetingAlert } from './meetingVesselAttention';
 import RichTextContent from './RichTextContent';
@@ -51,8 +51,13 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
   const [vesselFilters, setVesselFilters] = useState(emptyVesselFilterState);
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
-  const scheduleKinds: ScheduleKind[] = ['ETA','ETB','ETD'];
+  const [scheduleNow, setScheduleNow] = useState(() => new Date());
   const scheduleField = { ETA: 'eta', ETB: 'etb', ETD: 'etd' } as const;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setScheduleNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const abnormalMeetingsForVessel = (vesselId: string) => meetings.filter(meeting => meetingCreatesVesselAbnormalAlert(meeting, vesselId));
 
@@ -94,9 +99,9 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
   const overdueCount = openTasks.filter(task => (daysDiff(task.expectedDate) ?? 0) < 0).length;
   const updatedToday = vessels.filter(vessel => taipeiDateKey(vessel.updatedAt || vessel.position.updatedAt) === todayDate()).length;
   const toggleMeeting = (id: string) => setSelected(selected.includes(id) ? selected.filter(item => item !== id) : [...selected, id]);
-  const cycleSchedule = (vesselId: string) => setScheduleByVessel(previous => {
-    const current = previous[vesselId] || 'ETA';
-    return { ...previous, [vesselId]: scheduleKinds[(scheduleKinds.indexOf(current) + 1) % scheduleKinds.length] };
+  const cycleSchedule = (vesselId: string, automaticKind: ScheduleKind) => setScheduleByVessel(previous => {
+    const current = previous[vesselId] ?? automaticKind;
+    return { ...previous, [vesselId]: nextScheduleKind(current) };
   });
 
   return <section className="dashboard-view">
@@ -129,8 +134,9 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       const abnormal = attentionResult.hasAbnormal;
       const attention = attentionResult.effective;
       const level = vesselAttentionClass(attention);
-      const scheduleKind = scheduleByVessel[vessel.id] || 'ETA';
-      const scheduleValue = formatScheduleDisplay(vessel.position[scheduleField[scheduleKind]])||'TBA';
+      const automaticKind = automaticScheduleKind(vessel.position, scheduleNow);
+      const scheduleKind = scheduleByVessel[vessel.id] ?? automaticKind;
+      const scheduleValue = formatCompleteScheduleDisplay(vessel.position[scheduleField[scheduleKind]])||'TBA';
       const summaryTasks = vesselTasks.filter(appearsInSingleVesselTasks);
       const sortedTasks = [...summaryTasks].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || Number(b.isAbnormal) - Number(a.isAbnormal));
       const highest = vesselAttentionLabel(attentionResult, attentionTasks);
@@ -150,7 +156,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
           <div className="ship-route"><b>{vessel.position.lastPort || '未設定'}</b><span>→</span><b>{vessel.position.nextPort || '未設定'}</b></div>
           <div className="ship-position"><small>位置</small><b>{vessel.position.location || '未設定'}</b></div>
           <div className="ship-navigation"><small className="ship-data-label">航行狀態</small><b className="ship-data-value">{vessel.position.navigationStatus === '航行' ? `${vessel.position.speedKnots || 0} kn` : vessel.position.navigationStatus}</b></div>
-          <button type="button" className="ship-schedule" onClick={() => cycleSchedule(vessel.id)} title="點擊循環顯示 ETA／ETB／ETD"><b className="ship-data-label">{scheduleKind}</b><span className="ship-data-value">{scheduleValue}</span></button>
+          <button type="button" className="ship-schedule" onClick={() => cycleSchedule(vessel.id, automaticKind)} title="點擊循環顯示 ETA／ETB／ETD"><b className="ship-data-label">{scheduleKind}</b><span className="ship-data-value">{scheduleValue}</span></button>
           <div className="ship-status"><small className="ship-data-label">狀態補充</small><b className="ship-data-value">{statusSupplement}</b></div>
           <div className="ship-load"><small>載況</small><b>{vessel.cargo.loadStatus}</b></div>
           <div className="ship-cargo"><small className="ship-data-label">貨名貨量：</small><div className="ship-cargo-items ship-data-value">{vessel.cargo.items.length ? vessel.cargo.items.map((item, index) => <span key={`${item.name}-${index}`}><span className="ship-cargo-name">{item.name || '未填貨名'}</span>{item.quantity && <em>{item.quantity}</em>}</span>) : <span>TBA</span>}</div></div>
