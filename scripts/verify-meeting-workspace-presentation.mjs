@@ -12,6 +12,9 @@ assert.match(styles, /\.morning-supervisor-filter>select\{[^}]*grid-column:2[^}]
 assert.match(styles, /\.morning-supervisor-filter>\.btn\{[^}]*grid-column:3[^}]*grid-row:1/, '新增待辦按鈕必須位於同列第三欄');
 assert.match(styles, /\.morning-workspace\{[^}]*height:auto[^}]*min-height:0[^}]*align-items:stretch/, '早會工作區必須由完整船舶清單自然撐高，三欄維持相同高度');
 assert.match(styles, /\.temporary-meeting-workspace\{[^}]*height:auto[^}]*min-height:0[^}]*max-height:none[^}]*align-items:start/, '臨會／專題工作區必須使用自然頁面高度');
+assert.match(styles, /\.temporary-editor-column>\.column-title\{[^}]*height:auto[^}]*min-height:56px[^}]*align-items:flex-start[^}]*flex-wrap:wrap/, '臨會詳情長標題與多排操作按鈕必須撐高標題列，不得溢出壓住表單');
+assert.match(styles, /\.temporary-editor-column>\.column-title>div:first-child\{[^}]*flex:1 1 320px[^}]*min-width:0/, '臨會詳情標題區必須可安全換行並保留操作按鈕空間');
+assert.match(styles, /\.temporary-editor-column>\.column-title>\.heading-actions\{[^}]*flex:1 1 520px[^}]*align-self:flex-start/, '臨會詳情操作按鈕換成多排時必須仍留在標題列內');
 assert.match(styles, /\.morning-workspace>\.meeting-column,\.temporary-meeting-workspace>\.meeting-column\{[^}]*height:auto[^}]*min-height:0[^}]*max-height:none/, '早會與臨會欄體不得再鎖定viewport高度');
 assert.match(styles, /\.morning-workspace \.column-scroll,\.temporary-meeting-workspace \.column-scroll\{[^}]*max-height:none[^}]*overflow:visible/, '早會與臨會主內容不得使用欄內上下滾動條');
 assert.doesNotMatch(styles, /\.(?:morning-workspace|temporary-meeting-workspace)\{[^}]*height:calc\(100dvh/, '兩個工作區不得再以動態viewport鎖定高度');
