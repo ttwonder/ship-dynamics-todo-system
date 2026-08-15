@@ -210,7 +210,7 @@ export function buildTaskNotifications(users: WorkflowUser[], vessel: WorkflowVe
   }));
 }
 
-export function buildTaskNotificationsForVessels(users: WorkflowUser[], vessels: WorkflowVessel[], actorId: string, task: Pick<TaskItem, 'id' | 'description' | 'isInternalControl'> & Partial<Pick<TaskItem, 'ownerUserIds'>>, kind: UserNotification['kind'], actorName: string, rolePermissions: RolePermissions | undefined): UserNotification[] {
+export function buildTaskNotificationsForVessels(users: WorkflowUser[], vessels: WorkflowVessel[], actorId: string, task: Pick<TaskItem, 'id' | 'description' | 'isInternalControl'> & Partial<Pick<TaskItem, 'ownerUserIds'|'distributeToVessels'>>, kind: UserNotification['kind'], actorName: string, rolePermissions: RolePermissions | undefined): UserNotification[] {
   const seen = new Set<string>();
   const ownerUserIds=(task.ownerUserIds||[]).filter(ownerId=>{
     const owner=users.find(user=>user.id===ownerId);
@@ -221,7 +221,9 @@ export function buildTaskNotificationsForVessels(users: WorkflowUser[], vessels:
   const safeTask={...task,ownerUserIds};
   return vessels.flatMap(vessel => buildTaskNotifications(users, vessel, actorId, safeTask, kind, actorName, ownerUserIds))
     .filter(notice => {
-      const key = `${notice.userId}\u0000${notice.vesselId}`;
+      const key = task.distributeToVessels===true
+        ?`${notice.userId}\u0000${notice.vesselId}`
+        :notice.userId;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -230,17 +232,20 @@ export function buildTaskNotificationsForVessels(users: WorkflowUser[], vessels:
 
 export function buildTaskScopeChangeNotifications(
   users: WorkflowUser[],
-  previous: { task: Pick<TaskItem, 'id' | 'description' | 'isInternalControl'> & Partial<Pick<TaskItem, 'ownerUserIds'>>; vessels: WorkflowVessel[] } | null,
-  next: { task: Pick<TaskItem, 'id' | 'description' | 'isInternalControl'> & Partial<Pick<TaskItem, 'ownerUserIds'>>; vessels: WorkflowVessel[] } | null,
+  previous: { task: Pick<TaskItem, 'id' | 'description' | 'isInternalControl'> & Partial<Pick<TaskItem, 'ownerUserIds'|'distributeToVessels'>>; vessels: WorkflowVessel[] } | null,
+  next: { task: Pick<TaskItem, 'id' | 'description' | 'isInternalControl'> & Partial<Pick<TaskItem, 'ownerUserIds'|'distributeToVessels'>>; vessels: WorkflowVessel[] } | null,
   actorId: string,
   kind: UserNotification['kind'],
   actorName: string,
   rolePermissions: RolePermissions | undefined,
 ): UserNotification[] {
   const notices = new Map<string, UserNotification>();
+  const keyFor=(notice:UserNotification,task:{distributeToVessels?:boolean})=>task.distributeToVessels===true
+    ?`${notice.userId}\u0000${notice.vesselId}`
+    :notice.userId;
   if (previous) buildTaskNotificationsForVessels(users, previous.vessels, actorId, previous.task, kind, actorName, rolePermissions)
-    .forEach(notice => notices.set(`${notice.userId}\u0000${notice.vesselId}`, notice));
+    .forEach(notice => notices.set(keyFor(notice,previous.task), notice));
   if (next) buildTaskNotificationsForVessels(users, next.vessels, actorId, next.task, kind, actorName, rolePermissions)
-    .forEach(notice => notices.set(`${notice.userId}\u0000${notice.vesselId}`, notice));
+    .forEach(notice => notices.set(keyFor(notice,next.task), notice));
   return [...notices.values()];
 }

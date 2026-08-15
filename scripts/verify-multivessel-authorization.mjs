@@ -18,6 +18,7 @@ try {
   const { taskVesselLabel, taskShipTypeLabel } = await server.ssrLoadModule('/src/taskVesselScope.ts');
   const { isEligibleTaskOwner } = await server.ssrLoadModule('/src/permissions.ts');
   const { buildTaskNotificationsForVessels, buildTaskScopeChangeNotifications } = await server.ssrLoadModule('/src/taskWorkflow.ts');
+  const { repairPendingCompanyLevelNotificationOverflow } = await server.ssrLoadModule('/src/notificationCompaction.ts');
   const { meetingTaskLinkIsValidForMutation } = await server.ssrLoadModule('/src/meetingTaskWorkflow.ts');
   const cross = { id:'cross', vesselId:'v1', vesselIds:['v1','v2'], ownerUserIds:[], isClosed:false };
   assert.equal(validateBatchTaskSelection([cross], ['cross'], new Set(['v1']), 'complete').ok, false, '部分可见范围不得完成整个多船事项');
@@ -38,6 +39,7 @@ try {
   assert.equal(taskShipTypeLabel(cross, visible), 'Bulk、另含受限船舶 1 艘', '不得泄露受限船型');
   assert.ok(!app.includes('involvedVesselIds.has(v.id)'), '事项负责人不得扩大整船访问权');
   assert.match(app, /flushSync\(\(\)=>setData\(prev=>[\s\S]*taskVessels\(candidate,prev\.vessels\)/, '保存需在最新 state 解析完整事项范围');
+  assert.ok(app.includes('const nextForSave=repairPendingCompanyLevelNotificationOverflow(base,next)')&&app.includes('sanitizeAppDataForStorage(nextForSave)')&&app.includes('rebaseDisjointAppData(base,nextForSave,remote'),'共同雲端保存邊界必須在直寫與rebase兩條路徑先收斂已恢復的公司層通知風暴');
   assert.match(app, /previous\.updatedAt!==expectedUpdatedAt/, '单笔事项保存需以打开时版本执行 CAS');
   assert.match(app, /\(!getSupabaseConfig\(\)&&prev\.revision!==expectedRevision\)/, '單筆事項只在本機模式保留 global revision guard；雲端模式由 item version 與原子 block expected-value fencing 保護');
   assert.ok(app.includes('candidate.sourceMeetingId!==previous.sourceMeetingId')&&app.includes('candidate.sourceMeetingItemId!==previous.sourceMeetingItemId')&&app.includes('candidate.sourceType!==previous.sourceType'),'普通待辦保存不得偽造、解除或改寫會議來源關聯');
@@ -80,5 +82,39 @@ try {
   assert.ok(!notices.some(item=>item.userId==='next'&&item.vesselId==='v1'), '新负责人不得绑定到已移除旧范围');
   const guardedNotices=buildTaskNotificationsForVessels(users,vessels,'actor',{id:'cross',description:'跨船敏感事项',isInternalControl:false,ownerUserIds:['old']},'task_updated','Owner',undefined);
   assert.ok(!guardedNotices.some(item=>item.userId==='old'&&item.vesselId==='v2'),'无完整范围权限的旧负责人不得收到受限船通知');
+
+  const sharedUser={id:'shared',role:'operator',department:'督導',managedVesselIds:[],isActive:true};
+  const sharedVessels=[
+    {id:'v1',assignedUserIds:['shared']},
+    {id:'v2',assignedUserIds:['shared']},
+  ];
+  const companyNotices=buildTaskNotificationsForVessels([sharedUser],sharedVessels,'actor',{id:'company-task',description:'公司層決議',isInternalControl:false,ownerUserIds:[],distributeToVessels:false},'task_created','Owner',undefined);
+  assert.equal(companyNotices.length,1,'未逐船分派的公司層決議同一收件人只可收到一筆通知');
+  const distributedNotices=buildTaskNotificationsForVessels([sharedUser],sharedVessels,'actor',{id:'distributed-task',description:'逐船決議',isInternalControl:false,ownerUserIds:[],distributeToVessels:true},'task_created','Owner',undefined);
+  assert.deepEqual(distributedNotices.map(item=>item.vesselId),['v1','v2'],'逐船分派待辦仍須保留每艘船的通知語意');
+
+  const oldNotices=Array.from({length:1000},(_,index)=>({
+    id:`old-${index}`,userId:'shared',vesselId:'v1',taskId:`old-task-${index}`,kind:'task_updated',title:`old ${index}`,message:`old ${index}`,actorId:'actor',createdAt:'2026-08-14T08:00:00.000Z',
+  }));
+  const stormTask={id:'storm-task',sourceMeetingId:'meeting-new',distributeToVessels:false};
+  const stormNotices=[
+    {id:'storm-u1-v1',userId:'u1',vesselId:'v1',taskId:'storm-task',kind:'task_created',title:'新增待辦',message:'同一事件',actorId:'actor',createdAt:'2026-08-14T09:25:26.469Z'},
+    {id:'storm-u1-v2',userId:'u1',vesselId:'v2',taskId:'storm-task',kind:'task_created',title:'新增待辦',message:'同一事件',actorId:'actor',createdAt:'2026-08-14T09:25:26.471Z'},
+    {id:'storm-u2-v1',userId:'u2',vesselId:'v1',taskId:'storm-task',kind:'task_created',title:'新增待辦',message:'同一事件',actorId:'actor',createdAt:'2026-08-14T09:25:26.470Z'},
+    {id:'storm-u2-v2',userId:'u2',vesselId:'v2',taskId:'storm-task',kind:'task_created',title:'新增待辦',message:'同一事件',actorId:'actor',createdAt:'2026-08-14T09:25:26.472Z'},
+  ];
+  const repaired=repairPendingCompanyLevelNotificationOverflow(
+    {tasks:[],notifications:oldNotices},
+    {tasks:[stormTask],notifications:[...stormNotices,...oldNotices.slice(0,996)]},
+  );
+  assert.equal(repaired.notifications.length,1000,'去重後必須從可信基線補回被通知風暴擠掉的歷史並維持上限');
+  assert.deepEqual(repaired.notifications.slice(0,2).map(item=>item.id),['storm-u1-v1','storm-u2-v1'],'同一次公司層事件每位收件人保留一筆且順序穩定');
+  assert.equal(repaired.notifications.filter(item=>item.id.startsWith('old-')).length,998,'四筆重複新通知收斂為兩筆後應恢復兩筆舊通知');
+  assert.ok(repaired.notifications.some(item=>item.id==='old-997'),'恢復不得只保留已被本機截斷的前996筆舊通知');
+  const switchedToDistributed=repairPendingCompanyLevelNotificationOverflow(
+    {tasks:[stormTask],notifications:[]},
+    {tasks:[{...stormTask,distributeToVessels:true}],notifications:stormNotices.slice(0,2)},
+  );
+  assert.equal(switchedToDistributed.notifications.length,2,'最新本機已切換為逐船分派時不得沿用舊公司層模式去重');
   console.log('Multi-vessel authorization and redaction contracts passed.');
 } finally { await server.close(); }

@@ -2,6 +2,29 @@ export type CloudSyncFailureKind='authorization'|'safety'|'field'|'transport';
 
 const SAFETY_MARKERS=['缺少可信','durable','rollback','工作區已變更','工作區不存在','來源未綁定','主資料遺失','identity','registry損壞','雲端工作區沒有主資料'];
 
+const displayField=(value:unknown)=>typeof value==='string'||typeof value==='number'?String(value).trim():'';
+
+export function cloudErrorMessage(error:unknown):string{
+  if(error instanceof Error&&error.message.trim())return error.message.trim();
+  if(typeof error==='string'&&error.trim())return error.trim();
+  if(error&&typeof error==='object'){
+    const record=error as Record<string,unknown>;
+    const message=displayField(record.message);
+    const details=displayField(record.details);
+    const hint=displayField(record.hint);
+    const code=displayField(record.code);
+    const parts=[
+      message,
+      details&&details!==message?`details: ${details}`:'',
+      hint?`hint: ${hint}`:'',
+      code?`code: ${code}`:'',
+    ].filter(Boolean);
+    if(parts.length)return parts.join('｜');
+  }
+  const fallback=displayField(error);
+  return fallback&&fallback!=='[object Object]'?fallback:'未知的雲端服務錯誤';
+}
+
 export function classifyCloudSyncFailure(error:unknown):{kind:CloudSyncFailureKind;message:string}{
   const conflicts=Array.isArray((error as{conflicts?:unknown})?.conflicts)
     ?(error as{conflicts:unknown[]}).conflicts.map(value=>String(value))
@@ -21,6 +44,6 @@ export function classifyCloudSyncFailure(error:unknown):{kind:CloudSyncFailureKi
       message:`同步發現真正欄位衝突：${detail}；本機編輯內容仍完整保留，未被雲端資料覆蓋。請協調衝突欄位後再保存。`,
     };
   }
-  const message=error instanceof Error?error.message:String(error);
+  const message=cloudErrorMessage(error);
   return{kind:'transport',message:`同步失敗：${message}；本機編輯內容仍完整保留。`};
 }

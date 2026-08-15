@@ -25,6 +25,7 @@ import { clearDismissalsForNewTaskAssignments, dismissWorkCenterItems, workCente
 import InternalControlPage from './InternalControlPage';
 import { closeLinkedInternalControlCaseAfterTaskDelete, createInternalControlCases, deleteInternalControlCase, reconcileInternalControlAfterTaskSave, syncLinkedInternalControlCasesFromTasks, updateInternalControlCase, type InternalControlTaskProjection } from './internalControlData';
 import { buildTaskNotificationsForVessels, buildTaskScopeChangeNotifications, canAccessTab, canAcquireTaskEditLock, canCancelInternalControl, canDeleteTask, canUseVessel, internalControlTransitionRequested, selectInternalControlCasesVisibleToUser, selectTasksVisibleToUser, taskSourceLabel, trustedClosureDate, validateInternalControlTransition } from './taskWorkflow';
+import { repairPendingCompanyLevelNotificationOverflow } from './notificationCompaction';
 import { isMeetingTaskSource, mergeAttentionFromCategories, normalizeMeetingTaskCategoryList, normalizeTaskCategoryList, taskCategoriesOf, taskCategoryLabel } from './taskCategories';
 import { vesselDisplayName } from './vesselDisplay';
 import { applyVesselOperationalDraft, vesselOperationalDraftEquals } from './vesselOperationalDraft';
@@ -60,7 +61,7 @@ import { internalControlCreationLockKey, internalControlEditLockKey, isInternalC
 import { resolveItemEditSession } from './itemEditSession';
 import { buildCloudBlockPatch, CloudBlockPatchConflictError } from './cloudBlockPatch';
 import { actorStorageAuthorizationGuard, appDataAuthorizationDomainChanged, assertActorAuthorizedForAppDataChange, authorizationDomainGuard } from './cloudAuthorization';
-import { classifyCloudSyncFailure } from './cloudSyncError';
+import { classifyCloudSyncFailure, cloudErrorMessage } from './cloudSyncError';
 import { shouldOfferStaleBrowserRecovery } from './staleBrowserRecovery';
 import { APP_VERSION_CHECK_INTERVAL_MS, appRecoveryReloadUrl, appUpdateBlockReason, appVersionReloadUrl, checkForAppVersion } from './appVersionUpdate';
 import BrowserRecoveryModal, { type BrowserRecoveryPhase } from './BrowserRecoveryModal';
@@ -483,7 +484,7 @@ export default function App() {
     return()=>{window.removeEventListener('storage',handleStorage);window.clearInterval(timer);};
   },[]);
   const reportCloudSaveFailure=(error:unknown)=>{
-    const message=error instanceof Error?error.message:String(error);
+    const message=cloudErrorMessage(error);
     const failure=classifyCloudSyncFailure(error);
     if(shouldOfferStaleBrowserRecovery(failure.kind))setStaleBrowserRecoveryOffered(true);
     hasUnsavedWork.current=true;
@@ -796,7 +797,8 @@ export default function App() {
               assertSaveTurnActive();
               if (!hasCurrentCloudIdentity()) throw new Error('雲端工作區 identity 已變更');
               if(!base)throw new CloudRebaseConflictError(['缺少可信的雲端合併基線']);
-              if(appDataContentEqual(next,base)){pendingEntry.resolve();pendingEntry=pendingCloudData.current.shift();continue;}
+              const nextForSave=repairPendingCompanyLevelNotificationOverflow(base,next);
+              if(appDataContentEqual(nextForSave,base)){pendingEntry.resolve();pendingEntry=pendingCloudData.current.shift();continue;}
               let remote=await configIoCoordinator.current.run(token,getSupabaseConfig,fetchCloudData);
               if(!remote)throw new CloudRebaseConflictError(['雲端工作區不存在']);
               let persisted:AppData|null=null;
@@ -807,8 +809,8 @@ export default function App() {
                 assertSaveTurnActive();
                 assertRemoteExtendsDurableHistory(activeCloudIdentity.current,base,remote);
                 const candidate=appDataContentEqual(base,remote)
-                  ?{...sanitizeAppDataForStorage(next),revision:remote.revision+1,updatedAt:nowIso()}
-                  :sanitizeAppDataForStorage(rebaseDisjointAppData(base,next,remote,nowIso(),actorUserId));
+                  ?{...sanitizeAppDataForStorage(nextForSave),revision:remote.revision+1,updatedAt:nowIso()}
+                  :sanitizeAppDataForStorage(rebaseDisjointAppData(base,nextForSave,remote,nowIso(),actorUserId));
                 mergedRemoteChanges=mergedRemoteChanges||!appDataContentEqual(base,remote);
                 const storageRemote=cloudStoragePayloadFor(remote);
                 const operations=buildCloudBlockPatch(remote,candidate,storageRemote);
