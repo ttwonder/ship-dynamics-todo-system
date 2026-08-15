@@ -157,7 +157,10 @@ try{
   assert.doesNotMatch(app,/localStorage\.clear\(|sessionStorage\.clear\(/);
   assert.match(app,/tab===['"]dashboard['"][\s\S]{0,500}>修復此瀏覽器<\/button>/,'dashboard header must expose the recovery entry');
   assert.match(app,/staleBrowserRecoveryOffered\?'red':'ghost'/,'authorization recovery must keep a visible red warning state');
-  assert.match(app,/openBrowserRecovery\(staleBrowserRecoveryOffered\)/,'authorization recovery must open the same advanced flow');
+  const openRecoveryHandler=app.slice(app.indexOf('const openBrowserRecovery='),app.indexOf('const closeBrowserRecovery='));
+  assert.match(openRecoveryHandler,/const openBrowserRecovery=\(\)=>\{[\s\S]*setBrowserRecoveryAdvanced\(true\)/,'every recovery-dialog entry must show the complete-reset section immediately');
+  assert.doesNotMatch(openRecoveryHandler,/advanced=false|setBrowserRecoveryAdvanced\(advanced\)/,'ordinary dashboard entry must not reopen the advanced section collapsed');
+  assert.match(app,/onClick=\{\(\)=>openBrowserRecovery\(\)\}/,'dashboard recovery entry must use the always-expanded opening flow');
   assert.match(app,/browserRecoveryOpen&&<BrowserRecoveryModal/);
 
   assert.match(boundary,/repairShipDynamicsResources/,'outer render failures need the same resource-only repair');
