@@ -450,6 +450,36 @@ try {
     'task changes must not be reapplied when their vessel scope changes remotely',
   );
 
+  const allVesselMeetingLocal = clone(dependencyBase);
+  const allVesselIds = allVesselMeetingLocal.vessels.map(vessel => vessel.id);
+  allVesselMeetingLocal.meetings.push({ id:'new-all-vessel-meeting', vessels:allVesselIds, vesselScopeMode:'all', marker:'local' });
+  for (let index=1;index<=4;index+=1) {
+    allVesselMeetingLocal.tasks.push({
+      id:`new-all-vessel-task-${index}`,
+      sourceMeetingId:'new-all-vessel-meeting',
+      sourceMeetingItemId:`new-all-vessel-item-${index}`,
+      vesselId:allVesselIds[0],
+      vesselIds:allVesselIds,
+      vesselScopeMode:'all',
+      marker:'local',
+    });
+  }
+  allVesselMeetingLocal.revision=dependencyBase.revision+1;
+  const operationalVesselRemote = clone(dependencyBase);
+  operationalVesselRemote.vessels[0].position.location = 'REMOTE-OPERATIONAL-UPDATE';
+  operationalVesselRemote.vessels[0].updatedAt = '2026-07-24T00:04:41.000Z';
+  operationalVesselRemote.revision=dependencyBase.revision+1;
+  const meetingCreationRebased = prepareCloudSyncSnapshot(
+    dependencyBase,
+    allVesselMeetingLocal,
+    operationalVesselRemote,
+    dependencyBase.revision,
+    '2026-07-24T00:04:42.000Z',
+  );
+  assert.equal(meetingCreationRebased.vessels[0].position.location,'REMOTE-OPERATIONAL-UPDATE','remote vessel operations must be retained');
+  assert.ok(meetingCreationRebased.meetings.some(item=>item.id==='new-all-vessel-meeting'),'new all-vessel meeting must survive an unrelated vessel operational update');
+  assert.equal(meetingCreationRebased.tasks.filter(item=>item.sourceMeetingId==='new-all-vessel-meeting').length,4,'all four new meeting tasks must survive an unrelated vessel operational update');
+
   const disjointTaskBase = clone(base);
   disjointTaskBase.tasks.push({ id:'task-vessel-a', vesselId:base.vessels[0].id, marker:'base' }, { id:'task-vessel-b', vesselId:base.vessels[1].id, marker:'base' });
   const disjointTaskLocal = clone(disjointTaskBase);

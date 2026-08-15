@@ -1,4 +1,4 @@
-import type { AppData, WeeklyAttentionKey } from './types';
+import type { AppData, Vessel, WeeklyAttentionKey } from './types';
 import { actorAuthorizationUnchanged } from './cloudAuthorization';
 import { WEEKLY_ATTENTION_KEYS } from './weeklyAttention';
 
@@ -47,6 +47,22 @@ const changedIds = (baseItems: Identified[], sideItems: Identified[]) => {
   return new Set([...new Set([...baseById.keys(), ...sideById.keys()])].filter(id => !equal(baseById.get(id), sideById.get(id))));
 };
 
+// Task relationships depend on vessel membership, scope and authority; live
+// position, cargo, notes and attention are independent vessel operations.
+const sortedStringValues=(value:unknown)=>Array.isArray(value)?value.filter((item):item is string=>typeof item==='string').sort():[];
+const vesselScopeDependencyShape=(vessel:Vessel|undefined)=>vessel?{
+  shipType:vessel.shipType,
+  isActive:vessel.isActive,
+  assignedUserIds:sortedStringValues(vessel.assignedUserIds),
+  delegateManagers:[...(vessel.delegateManagers||[])].map(item=>({userId:item.userId,isActive:item.isActive})).sort((left,right)=>left.userId.localeCompare(right.userId)),
+  vesselAccountUserIds:sortedStringValues(vessel.vesselAccountUserIds),
+}:null;
+const changedVesselScopeIds=(baseItems:Vessel[],sideItems:Vessel[])=>{
+  const baseById=new Map(baseItems.map(item=>[item.id,item]));
+  const sideById=new Map(sideItems.map(item=>[item.id,item]));
+  return new Set([...new Set([...baseById.keys(),...sideById.keys()])].filter(id=>!equal(vesselScopeDependencyShape(baseById.get(id)),vesselScopeDependencyShape(sideById.get(id)))));
+};
+
 const settingsKeyChanged = (base: AppData, side: AppData, key: keyof AppData['settings']) => !equal(base.settings[key], side.settings[key]);
 const SENSITIVE_SETTINGS: (keyof AppData['settings'])[] = ['sitePasswordHash', 'rolePermissions', 'nonOwnerPasswordResetVersion'];
 const vesselAuthorizationShape = (data: AppData) => data.vessels.map(vessel=>({
@@ -82,8 +98,8 @@ function detectDependencyConflicts(base: AppData, local: AppData, remote: AppDat
   const remoteCaseIds = changed(remote, 'internalControlCases');
   const localMeetingIds = changed(local, 'meetings');
   const remoteMeetingIds = changed(remote, 'meetings');
-  const localVesselIds = changed(local, 'vessels');
-  const remoteVesselIds = changed(remote, 'vessels');
+  const localVesselIds = changedVesselScopeIds(base.vessels,local.vessels);
+  const remoteVesselIds = changedVesselScopeIds(base.vessels,remote.vessels);
   const taskCases = (side: AppData, ids: Set<string>) => relationshipValues(base.tasks, side.tasks, ids, item => [item.internalControlCaseId || '']);
   const taskMeetings = (side: AppData, ids: Set<string>) => relationshipValues(base.tasks, side.tasks, ids, item => [item.sourceMeetingId || '']);
   const taskVessels = (side: AppData, ids: Set<string>) => relationshipValues(base.tasks, side.tasks, ids, item => [item.vesselId || '', ...(item.vesselIds || [])]);
