@@ -1,6 +1,6 @@
 import type { CloudBlockCollection, CloudBlockPatchOperation } from './cloudBlockPatch';
 import { vesselPatchRequiresCollaborationLock } from './cloudAuthorization';
-import { internalControlCreationLockKey } from './exclusiveItemEditLock';
+import { internalControlCreationLockKey, meetingCreationLockKey } from './exclusiveItemEditLock';
 
 type TaskRelationSnapshot={
   tasks:readonly {id:string;sourceMeetingId?:string;internalControlCaseId?:string}[];
@@ -27,6 +27,15 @@ export function lockKeyForExistingEntity(collection:CloudBlockCollection,entityI
   if(collection==='meetings')return`meeting:${entityId}`;
   if(collection==='internalControlCases')return`internal-control:${entityId}`;
   return null;
+}
+
+export function recoveryCreationLockKeysForPatch(operations:readonly CloudBlockPatchOperation[]):string[]{
+  const keys=new Set<string>();
+  for(const operation of operations){
+    if(operation.kind!=='entity'||operation.expected!==null||operation.value===null)continue;
+    if(operation.collection==='meetings')keys.add(meetingCreationLockKey(operation.entityId));
+  }
+  return[...keys].sort((left,right)=>left.localeCompare(right));
 }
 
 export function existingEntityLockKeysForPatch(operations:readonly CloudBlockPatchOperation[]):string[]{

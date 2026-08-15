@@ -114,6 +114,29 @@ try{
   assert.deepEqual(creationClaims,['task-create:v2:v1:draft-1'],'an expired creation sentinel must be reclaimed by its exact attempt key');
   assert.deepEqual(recoveredCreation.value,[{section_key:'task-create:v2:v1:draft-1',locked_by:'fresh:task-create:v2:v1:draft-1'}],'a recovered creation attempt must fence the atomic create with the fresh lease owner');
 
+  const restoredMeetingOperations=[
+    ...Array.from({length:4},(_,index)=>({
+      kind:'entity',collection:'tasks',entityId:`restored-task-${index+1}`,expected:null,
+      value:{id:`restored-task-${index+1}`,sourceMeetingId:'restored-meeting',vesselId:'v1'},
+    })),
+    {kind:'entity',collection:'meetings',entityId:'restored-meeting',expected:null,value:{id:'restored-meeting',subject:'Restored after refresh'}},
+  ];
+  const restoredMeetingClaims=[];
+  let restoredMeetingGuards=[];
+  const restoredMeetingSave=await recovery.runWithCloudSaveRecoveryLocks({
+    operations:restoredMeetingOperations,
+    existingGuards:[],
+    createLeaseOwnerId:sectionKey=>`restored:${sectionKey}`,
+    stillCurrent:()=>true,
+    renew:async()=>({ok:false}),
+    claim:async request=>{restoredMeetingClaims.push(request.sectionKey);return{ok:true,sectionKey:request.sectionKey};},
+    release:async()=>{},
+    run:async guards=>{restoredMeetingGuards=guards;return'saved-restored-meeting';},
+  });
+  assert.equal(restoredMeetingSave.value,'saved-restored-meeting');
+  assert.deepEqual(restoredMeetingClaims,['meeting-create:restored-meeting'],'refresh recovery must reclaim the exact new-meeting creation sentinel');
+  assert.deepEqual(restoredMeetingGuards,[{section_key:'meeting-create:restored-meeting',locked_by:'restored:meeting-create:restored-meeting'}],'one recovered meeting creation guard must cover the same-block meeting and all four child tasks');
+
   const managementClaims=[];
   const managementOnly=await recovery.runWithCloudSaveRecoveryLocks({
     operations:[

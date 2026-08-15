@@ -1,5 +1,5 @@
 import type { CloudBlockPatchOperation } from './cloudBlockPatch';
-import { existingEntityLockKeysForPatch } from './collaborationLockPlan';
+import { existingEntityLockKeysForPatch, recoveryCreationLockKeysForPatch } from './collaborationLockPlan';
 import { acquireEditLockBundle, type EditLockBundleClaimResult, type EditLockBundleRequest } from './editLockBundle';
 
 export type CloudSaveLockGuard={section_key:string;locked_by:string};
@@ -33,7 +33,11 @@ export async function runWithCloudSaveRecoveryLocks<T>(input:RecoveryLockInput<T
     else staleGuardSections.add(guard.section_key);
   }
   const coveredSections=new Set(usableExistingGuards.map(guard=>guard.section_key));
-  const requiredSections=[...new Set([...staleGuardSections,...existingEntityLockKeysForPatch(input.operations)])]
+  const requiredSections=[...new Set([
+    ...staleGuardSections,
+    ...recoveryCreationLockKeysForPatch(input.operations),
+    ...existingEntityLockKeysForPatch(input.operations),
+  ])]
     .filter(sectionKey=>!coveredSections.has(sectionKey))
     .sort((left,right)=>left.localeCompare(right));
   const requests=requiredSections
