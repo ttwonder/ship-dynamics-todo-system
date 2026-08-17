@@ -9,8 +9,9 @@ import { WEEKLY_ATTENTION_CATEGORY_MAP, isMeetingTaskSource, taskCategoriesOf } 
 import { DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES, sanitizeEquipmentFailureSubcategories } from './internalControlWorkflow';
 import { formatTaipeiDateTime } from './taipeiTime';
 import { presentAuditLog } from './auditPresentation';
+import DataManagementPanel from './DataManagementPanel';
 
-type Section = 'directory' | 'people' | 'vessels' | 'categories' | 'attention' | 'roles' | 'owner' | 'audit';
+type Section = 'directory' | 'people' | 'vessels' | 'categories' | 'attention' | 'roles' | 'owner' | 'audit' | 'data';
 type DirectoryKind = 'all' | 'user' | 'vessel';
 type UserDelegateVesselDraft = { vesselId: string; isActive: boolean };
 type UserDraft = Pick<UserAccount, 'department' | 'name' | 'username' | 'role' | 'isActive' | 'managedVesselIds'> & { password: string; delegateVessels: UserDelegateVesselDraft[] };
@@ -53,6 +54,7 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
   const canManageVessels = hasPermission(data.settings.rolePermissions, currentUser, 'manageVessels');
   const canViewAudit = hasPermission(data.settings.rolePermissions, currentUser, 'viewAuditLogs');
   const canManageSystem = hasPermission(data.settings.rolePermissions, currentUser, 'manageSystemSettings');
+  const canViewDataManagement = currentUser.role === 'owner' || currentUser.role === 'admin';
   const canManageCategories = owner || currentUser.role === 'admin';
   const activeUsers = useMemo(() => data.users.filter(u => u.isActive), [data.users]);
   const activeVessels = useMemo(() => data.vessels.filter(v => v.isActive), [data.vessels]);
@@ -94,6 +96,7 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
     if (next === 'vessels' && !canManageVessels) return alert('目前角色未獲授權管理船舶');
     if (next === 'categories' && !canManageCategories) return alert('只有 Owner／管理員可以維護分類');
     if (next === 'audit' && !canViewAudit) return alert('目前角色未獲授權查看操作紀錄');
+    if (next === 'data' && !canViewDataManagement) return alert('只有 Owner／管理員可以進入數據管理');
     if (next === 'owner' && !canManageSystem) return alert('只有 Owner 可以進入敏感設定');
     setSection(next);
     setQuery('');
@@ -287,6 +290,7 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
     { id: 'roles' as const, icon: '◆', label: '角色權限' },
     ...(canManageSystem ? [{ id: 'owner' as const, icon: '🔐', label: 'Owner 與雲端' }] : []),
     ...(canViewAudit ? [{ id: 'audit' as const, icon: '▤', label: '操作紀錄' }] : []),
+    ...(canViewDataManagement ? [{ id: 'data' as const, icon: '▥', label: '數據管理' }] : []),
   ];
 
   return <section className="management-view">
@@ -321,6 +325,8 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
       {section === 'owner' && owner && <><div className="management-master"><div className="management-master-heading"><div><h2>Owner 與雲端</h2><small>敏感設定集中管理</small></div></div><div className="management-list"><button className={`management-list-item ${ownerPanel === 'gate' ? 'active' : ''}`} onClick={() => setOwnerPanel('gate')}><span className="management-avatar">🔐</span><span><b>進站密碼</b><small>網站第一道存取門</small></span></button><button className={`management-list-item ${ownerPanel === 'supabase' ? 'active' : ''}`} onClick={() => setOwnerPanel('supabase')}><span className="management-avatar">☁</span><span><b>Supabase 設定</b><small>工作區與資料表</small></span></button><button className={`management-list-item ${ownerPanel === 'cloud' ? 'active' : ''}`} onClick={() => setOwnerPanel('cloud')}><span className="management-avatar">↕</span><span><b>雲端資料</b><small>載入或保存主資料</small></span></button></div></div><div className="management-detail"><OwnerSettings panel={ownerPanel} sitePassword={sitePassword} setSitePassword={setSitePassword} config={config} setConfig={setConfig} data={data} commit={commit} onSaveSupabaseConfig={onSaveSupabaseConfig}/></div></>}
 
       {section === 'audit' && <><div className="management-master"><MasterHeader title="操作紀錄" count={data.auditLogs.length} query={query} setQuery={setQuery}/><div className="management-list">{filteredAuditLogs.slice(0,100).map(log => { const presented = presentAuditLog(log, data); return <button key={log.id} className={`management-list-item ${selectedAudit?.id === log.id ? 'active' : ''}`} onClick={() => setAuditId(log.id)}><span className="management-avatar audit">▤</span><span><b>{presented.operationText}</b><small>{log.actorName}｜{formatTaipeiDateTime(log.at)}｜IP {log.ipAddress || '未記錄'}</small></span></button>; })}</div></div><div className="management-detail">{selectedAudit && selectedAuditPresentation ? <div className="management-editor"><EditorHeading title={selectedAuditPresentation.actionLabel} subtitle="操作紀錄詳細資料"/><div className="management-summary-grid"><Summary label="操作者" value={selectedAudit.actorName}/><Summary label="角色" value={roleLabel(selectedAudit.actorRole)}/><Summary label="時間" value={formatTaipeiDateTime(selectedAudit.at)}/><Summary label="IP號碼" value={selectedAuditPresentation.ipAddressLabel}/><Summary label="IP歸屬地" value={selectedAuditPresentation.ipLocationLabel}/></div><EditorSection title="具體操作"><p><b>{selectedAuditPresentation.operationText}</b></p><p>{selectedAuditPresentation.detailText}</p></EditorSection><details className="audit-technical"><summary>技術識別資料</summary><p className="muted">{selectedAuditPresentation.technicalId}</p></details></div>:<EmptyDetail text="目前沒有操作紀錄"/>}</div></>}
+
+      {section === 'data' && canViewDataManagement && <DataManagementPanel currentUser={currentUser}/>}
     </div>
     {saveNotice && <div className="management-save-toast" role="status" aria-live="polite">{saveNotice}</div>}
   </section>;
