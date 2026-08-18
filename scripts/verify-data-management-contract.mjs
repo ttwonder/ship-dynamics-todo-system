@@ -32,6 +32,9 @@ assert.match(panel, /writePendingRevisionPrune\(envelope/, 'client must persist 
 assert.match(panel, /無法保存刪除對帳資料.*未送出任何刪除/, 'local pending persistence failure must stop before the destructive RPC');
 assert.match(panel, /const HISTORY_PAGE_SIZE = 100/, 'production-scale revision history must render in bounded pages');
 assert.match(panel, /aria-label="歷史版本頁次"/, 'revision history must allow direct page selection');
+assert.match(panel, /勾選當頁全部/, 'Owner must have a select-all-current-page action');
+assert.match(panel, /取消當頁全部/, 'the page action must toggle only the current page selection');
+assert.match(panel, /pageRows\.filter\(row => !row\.current\)/, 'page selection must exclude the protected current revision');
 const pruneHandler = panel.slice(panel.indexOf('const performPrune'), panel.indexOf('const startPrune'));
 assert.ok(pruneHandler.indexOf('await refresh()') < pruneHandler.lastIndexOf('setErrorText(message)'), 'revision-set conflict refresh must preserve the user-visible rejection message');
 assert.match(panel, /目前正式 Revision r\$\{stats\.currentRevision\}.*正常資料都不會刪除/s, 'confirmation must state the protected scope');
