@@ -7,6 +7,7 @@ const REVISION_COUNT = 2437;
 const PAYLOAD_BYTES_FLOOR = 1_150_000;
 const migrationPath = 'supabase/migrations/20260817143000_data_management_storage.sql';
 const patchPath = 'supabase/migrations/20260818003000_data_management_storage_timeout_fix.sql';
+const batchLimitPatchPath = 'supabase/migrations/20260818154500_data_management_prune_batch_limit.sql';
 const migration = fs.readFileSync(migrationPath, 'utf8');
 const patchMigration = fs.existsSync(patchPath) ? fs.readFileSync(patchPath, 'utf8') : '';
 
@@ -29,6 +30,7 @@ try {
   await db.exec(fs.readFileSync('supabase/schema.sql', 'utf8'));
   await db.exec(migration);
   await db.exec(patchMigration);
+  await db.exec(fs.readFileSync(batchLimitPatchPath, 'utf8'));
 
   const payload = {
     revision: REVISION_COUNT,
@@ -77,6 +79,13 @@ try {
   assert.equal(Number(stats.revisionHistoryBytes), expectedBytes);
 
   const expectedRevisions = Array.from({ length: REVISION_COUNT }, (_, index) => index + 1);
+  const oversized = (await db.query(`
+    select public.prune_ship_dynamics_revision_history($1,$2,$3,$4::jsonb,$5::jsonb) as result
+  `, ['workspace', 'owner-1', '00000000-0000-4000-8000-000000009998', JSON.stringify(expectedRevisions), JSON.stringify(expectedRevisions.slice(0, 101))])).rows[0].result;
+  assert.equal(oversized.ok, false);
+  assert.equal(oversized.error, 'BATCH_LIMIT_EXCEEDED');
+  assert.equal(Number((await db.query(`select count(*)::int as count from public.ship_dynamics_app_revisions where workspace_key='workspace'`)).rows[0].count), REVISION_COUNT);
+
   const prune = (await db.query(`
     select public.prune_ship_dynamics_revision_history($1,$2,$3,$4::jsonb,$5::jsonb) as result
   `, ['workspace', 'owner-1', '00000000-0000-4000-8000-000000009999', JSON.stringify(expectedRevisions), '[1]'])).rows[0].result;

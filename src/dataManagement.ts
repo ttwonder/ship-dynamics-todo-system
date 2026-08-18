@@ -145,6 +145,8 @@ export function dataManagementErrorMessage(error: unknown) {
     REVISION_SET_CHANGED: '預覽後歷史版本集合已變更；本次未刪除，請刷新後重新選擇。',
     CURRENT_REVISION_PROTECTED: '目前正式 Revision 必須保留，未執行刪除。',
     CURRENT_REVISION_HISTORY_MISSING: '目前正式 Revision 的歷史列缺失；為避免誤刪，已停止。',
+    BATCH_LIMIT_EXCEEDED: '單次最多刪除 100 份歷史版本；本次未刪除，請只勾選目前一頁。',
+    PRUNE_BATCH_TIMEOUT: '歷史版本刪除逾時，結果尚未確認；請勿建立新刪除，應使用同一 operation 對帳。',
     '57014': 'Supabase 空間統計逾時；未刪除任何資料。請先套用數據管理效能修補 SQL，再重新刷新。',
     RPC_TIMEOUT: '連線逾時，刪除結果尚未確認；請使用「對帳上次操作」。',
   };
@@ -268,13 +270,21 @@ export async function pruneShipDynamicsRevisionHistory(
   config?: ResolvedSupabaseConfig | null,
 ): Promise<RevisionPruneResult> {
   const resolved = currentConfig(config);
-  const response = await runRpc('prune_ship_dynamics_revision_history', {
-    p_workspace_key: resolved.workspaceKey,
-    p_actor_user_id: request.actorUserId,
-    p_operation_id: request.operationId,
-    p_expected_revisions: integerSet(request.expectedRevisions),
-    p_delete_revisions: integerSet(request.deleteRevisions),
-  }, resolved);
+  let response: Record<string, unknown>;
+  try {
+    response = await runRpc('prune_ship_dynamics_revision_history', {
+      p_workspace_key: resolved.workspaceKey,
+      p_actor_user_id: request.actorUserId,
+      p_operation_id: request.operationId,
+      p_expected_revisions: integerSet(request.expectedRevisions),
+      p_delete_revisions: integerSet(request.deleteRevisions),
+    }, resolved);
+  } catch (error) {
+    if (error instanceof DataManagementRpcError && error.code === '57014') {
+      throw new DataManagementRpcError('PRUNE_BATCH_TIMEOUT', error.message, false, error.details);
+    }
+    throw error;
+  }
   return {
     ok: true,
     operationId: asText(response.operationId, request.operationId),

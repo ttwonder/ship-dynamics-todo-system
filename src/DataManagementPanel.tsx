@@ -22,6 +22,7 @@ interface Props {
 
 type DataView = 'overview' | 'items' | 'history';
 const HISTORY_PAGE_SIZE = 100;
+const MAX_REVISION_PRUNE_BATCH = 100;
 
 const revisionListLabel = (revisions: number[]) => revisions.length <= 12
   ? revisions.map(revision => `r${revision}`).join('、')
@@ -37,6 +38,7 @@ export default function DataManagementPanel({ currentUser }: Props) {
   const [notice, setNotice] = useState('');
   const [selectedRevisions, setSelectedRevisions] = useState<number[]>([]);
   const [pending, setPending] = useState<PendingRevisionPrune | null>(null);
+  const [pruneProgress, setPruneProgress] = useState<{ completed:number; total:number } | null>(null);
   const [itemQuery, setItemQuery] = useState('');
   const [itemCollection, setItemCollection] = useState('all');
   const requestId = useRef(0);
@@ -65,6 +67,7 @@ export default function DataManagementPanel({ currentUser }: Props) {
     setStats(null);
     setSelectedRevisions([]);
     setPending(null);
+    setPruneProgress(null);
     setNotice('');
     void refresh();
     return () => { requestId.current += 1; };
@@ -83,7 +86,8 @@ export default function DataManagementPanel({ currentUser }: Props) {
       const result = await pruneShipDynamicsRevisionHistory(envelope, config);
       clearPendingRevisionPrune(config, currentUser.id);
       setPending(null);
-      setSelectedRevisions([]);
+      const reconciled = new Set(envelope.deleteRevisions);
+      setSelectedRevisions(previous => previous.filter(revision => !reconciled.has(revision)));
       setNotice(`${reconciling ? '上次操作已對帳' : '歷史版本已刪除'}：${result.deletedCount} 份，邏輯量 ${formatDataBytes(result.deletedBytes)}。目前正式資料未變更。`);
       await refresh();
     } catch (error) {
@@ -101,6 +105,7 @@ export default function DataManagementPanel({ currentUser }: Props) {
       setErrorText(message);
     } finally {
       setActing(false);
+      setPruneProgress(null);
     }
   };
 
@@ -117,10 +122,12 @@ export default function DataManagementPanel({ currentUser }: Props) {
     }
     const selectedRows = stats.revisions.filter(row => chosen.includes(row.revision));
     const selectedBytes = selectedRows.reduce((sum, row) => sum + row.logicalBytes, 0);
+    const batchCount = Math.ceil(chosen.length / MAX_REVISION_PRUNE_BATCH);
     const confirmed = window.confirm([
       `確定刪除 ${chosen.length} 份 Ship Dynamics 歷史版本？`,
       `版本：${revisionListLabel(chosen)}`,
       `預估邏輯量：${formatDataBytes(selectedBytes)}`,
+      `系統會自動分成 ${batchCount} 批，每批最多 ${MAX_REVISION_PRUNE_BATCH} 份。`,
       '',
       `目前正式 Revision r${stats.currentRevision}、待辦、船舶、會議、內控、操作紀錄與其他正常資料都不會刪除。`,
       '刪除後無法復原；PostgreSQL 物理總量不一定立即縮小。',
@@ -131,20 +138,58 @@ export default function DataManagementPanel({ currentUser }: Props) {
       setErrorText('尚未配置 Supabase，無法刪除雲端歷史版本。');
       return;
     }
-    const envelope = createPendingRevisionPrune({
-      operationId: crypto.randomUUID(),
-      actorUserId: currentUser.id,
-      expectedRevisions: stats.revisions.map(row => row.revision),
-      deleteRevisions: chosen,
-    }, config);
+    let expectedRevisions = stats.revisions.map(row => row.revision);
+    let completed = 0;
+    let deletedBytes = 0;
+    setActing(true);
+    setErrorText('');
+    setNotice('');
+    setPruneProgress({ completed: 0, total: chosen.length });
     try {
-      writePendingRevisionPrune(envelope, config);
-    } catch {
-      setErrorText('瀏覽器無法保存刪除對帳資料；為避免結果無法追蹤，本次未送出任何刪除。');
-      return;
+      for (let index = 0; index < chosen.length; index += MAX_REVISION_PRUNE_BATCH) {
+        const batch = chosen.slice(index, index + MAX_REVISION_PRUNE_BATCH);
+        const envelope = createPendingRevisionPrune({
+          operationId: crypto.randomUUID(),
+          actorUserId: currentUser.id,
+          expectedRevisions,
+          deleteRevisions: batch,
+        }, config);
+        try {
+          writePendingRevisionPrune(envelope, config);
+        } catch {
+          setErrorText(`已完成 ${completed}／${chosen.length} 份；下一批無法保存對帳資料，因此尚未送出。`);
+          return;
+        }
+        setPending(envelope);
+        let result;
+        try {
+          result = await pruneShipDynamicsRevisionHistory(envelope, config);
+        } catch (error) {
+          const definitive = error instanceof DataManagementRpcError && error.definitive;
+          if (definitive) {
+            clearPendingRevisionPrune(config, currentUser.id);
+            setPending(null);
+          }
+          const prefix = completed ? `已完成 ${completed}／${chosen.length} 份；` : '';
+          setErrorText(`${prefix}${dataManagementErrorMessage(error)}`);
+          return;
+        }
+        clearPendingRevisionPrune(config, currentUser.id);
+        setPending(null);
+        const completedBatch = new Set(batch);
+        expectedRevisions = expectedRevisions.filter(revision => !completedBatch.has(revision));
+        completed += result.deletedCount;
+        deletedBytes += result.deletedBytes;
+        setSelectedRevisions(previous => previous.filter(revision => !completedBatch.has(revision)));
+        setPruneProgress({ completed, total: chosen.length });
+        setNotice(`歷史版本分批清理中：已完成 ${completed}／${chosen.length} 份。`);
+      }
+      await refresh();
+      setNotice(`歷史版本已刪除：${completed} 份，邏輯量 ${formatDataBytes(deletedBytes)}。目前正式資料未變更。`);
+    } finally {
+      setActing(false);
+      setPruneProgress(null);
     }
-    setPending(envelope);
-    await performPrune(envelope, false);
   };
 
   const selectedBytes = useMemo(() => stats?.revisions
@@ -184,7 +229,7 @@ export default function DataManagementPanel({ currentUser }: Props) {
 
         {stats && view === 'overview' && <Overview stats={stats}/>}
         {stats && view === 'items' && <ItemsView stats={stats} items={filteredItems} query={itemQuery} setQuery={setItemQuery} collection={itemCollection} setCollection={setItemCollection}/>}
-        {stats && view === 'history' && <HistoryView stats={stats} owner={owner} pending={Boolean(pending)} acting={acting} selected={selectedRevisions} setSelected={setSelectedRevisions} selectedBytes={selectedBytes} onDelete={startPrune}/>}
+        {stats && view === 'history' && <HistoryView stats={stats} owner={owner} pending={Boolean(pending)} acting={acting} pruneProgress={pruneProgress} selected={selectedRevisions} setSelected={setSelectedRevisions} selectedBytes={selectedBytes} onDelete={startPrune}/>}
       </div>
     </div>
   </>;
@@ -211,7 +256,7 @@ function ItemsView({ stats, items, query, setQuery, collection, setCollection }:
   </>;
 }
 
-function HistoryView({ stats, owner, pending, acting, selected, setSelected, selectedBytes, onDelete }: { stats:ShipDynamicsStorageStats; owner:boolean; pending:boolean; acting:boolean; selected:number[]; setSelected:React.Dispatch<React.SetStateAction<number[]>>; selectedBytes:number; onDelete:()=>Promise<void> }) {
+function HistoryView({ stats, owner, pending, acting, pruneProgress, selected, setSelected, selectedBytes, onDelete }: { stats:ShipDynamicsStorageStats; owner:boolean; pending:boolean; acting:boolean; pruneProgress:{completed:number;total:number}|null; selected:number[]; setSelected:React.Dispatch<React.SetStateAction<number[]>>; selectedBytes:number; onDelete:()=>Promise<void> }) {
   const pageCount = Math.max(1, Math.ceil(stats.revisions.length / HISTORY_PAGE_SIZE));
   const [page, setPage] = useState(1);
   useEffect(() => setPage(previous => Math.min(previous, pageCount)), [pageCount]);
@@ -219,15 +264,21 @@ function HistoryView({ stats, owner, pending, acting, selected, setSelected, sel
   const pageRows = stats.revisions.slice(pageStart, pageStart + HISTORY_PAGE_SIZE);
   const selectablePageRevisions = pageRows.filter(row => !row.current).map(row => row.revision);
   const pageFullySelected = selectablePageRevisions.length > 0 && selectablePageRevisions.every(revision => selected.includes(revision));
-  const toggle = (revision:number) => setSelected(previous => previous.includes(revision) ? previous.filter(value => value !== revision) : [...previous, revision]);
+  const toggle = (revision:number) => setSelected(previous => {
+    if (previous.includes(revision)) return previous.filter(value => value !== revision);
+    return [...previous, revision];
+  });
   const togglePageSelection = () => setSelected(previous => {
+    if (pageFullySelected) {
+      const currentPage = new Set(selectablePageRevisions);
+      return previous.filter(revision => !currentPage.has(revision));
+    }
     const next = new Set(previous);
-    if (pageFullySelected) selectablePageRevisions.forEach(revision => next.delete(revision));
-    else selectablePageRevisions.forEach(revision => next.add(revision));
+    selectablePageRevisions.forEach(revision => next.add(revision));
     return Array.from(next).sort((left, right) => right - left);
   });
   return <>
-    <div className="data-management-retention-head"><div><b>{owner ? `已人工選擇 ${selected.length} 份` : '管理員可查看；只有 Owner 可清理'}</b><span>{owner ? `預估邏輯量 ${formatDataBytes(selectedBytes)}` : '正式資料與歷史版本均為唯讀'}</span></div>{owner && <><button className="btn small ghost data-management-page-select" disabled={!selectablePageRevisions.length || acting || pending} onClick={togglePageSelection}>{pageFullySelected ? '取消當頁全部' : '勾選當頁全部'}</button><button className="btn small ghost" disabled={!selected.length || acting || pending} onClick={() => setSelected([])}>清除選擇</button><button className="btn danger" disabled={!selected.length || acting || pending} onClick={() => void onDelete()}>{acting ? '處理中…' : `刪除所選 ${selected.length} 份`}</button></>}</div>
+    <div className="data-management-retention-head"><div><b>{owner ? `已人工選擇 ${selected.length} 份` : '管理員可查看；只有 Owner 可清理'}</b><span>{owner ? `預估邏輯量 ${formatDataBytes(selectedBytes)}｜可跨頁累積，刪除時每批最多 ${MAX_REVISION_PRUNE_BATCH} 份` : '正式資料與歷史版本均為唯讀'}</span></div>{owner && <><button className="btn small ghost data-management-page-select" title="可跨頁累積；再次點擊只取消目前頁" disabled={!selectablePageRevisions.length || acting || pending} onClick={togglePageSelection}>{pageFullySelected ? '取消當頁全部' : '勾選當頁全部'}</button><button className="btn small ghost" disabled={!selected.length || acting || pending} onClick={() => setSelected([])}>清除選擇</button><button className="btn danger" disabled={!selected.length || acting || pending} onClick={() => void onDelete()}>{acting ? (pruneProgress ? `刪除中 ${pruneProgress.completed}／${pruneProgress.total}` : '處理中…') : `刪除所選 ${selected.length} 份`}</button></>}</div>
     <div className="data-management-history-pagination"><button className="btn small ghost" disabled={page <= 1} onClick={() => setPage(previous => Math.max(1, previous - 1))}>← 上一頁</button><label><span>第</span><select aria-label="歷史版本頁次" value={page} onChange={event => setPage(Number(event.target.value))}>{Array.from({ length: pageCount }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select><span>／{pageCount} 頁</span></label><button className="btn small ghost" disabled={page >= pageCount} onClick={() => setPage(previous => Math.min(pageCount, previous + 1))}>下一頁 →</button><em>顯示 {stats.revisions.length ? pageStart + 1 : 0}–{Math.min(pageStart + pageRows.length, stats.revisions.length)}／共 {stats.revisions.length} 份</em></div>
     <div className="data-management-table-wrap history"><table className="data-management-table"><thead><tr><th>選擇</th><th>Revision</th><th>保存時間</th><th>保存者</th><th>單份邏輯量</th><th>保護狀態</th></tr></thead><tbody>{pageRows.map(row => <tr key={row.revision} className={row.current ? 'current' : selected.includes(row.revision) ? 'selected' : ''}><td>{row.current ? <span className="data-management-lock">🔒</span> : <input type="checkbox" aria-label={`選擇刪除 revision ${row.revision}`} disabled={!owner || pending || acting} checked={selected.includes(row.revision)} onChange={() => toggle(row.revision)}/>}</td><td><b>r{row.revision}</b></td><td>{row.savedAt ? formatTaipeiDateTime(row.savedAt) : '未記錄'}</td><td>{row.savedBy || '未記錄'}</td><td>{formatDataBytes(row.logicalBytes)}</td><td>{row.current ? <strong>目前正式版本｜不可刪</strong> : '歷史快照'}</td></tr>)}</tbody></table></div>
     <div className="data-management-warning danger"><b>刪除範圍</b><p>只會 DELETE 所勾選的 <code>ship_dynamics_app_revisions</code> 列；不會改動 <code>ship_dynamics_app_state</code>、目前 Revision、任何正式業務資料、Storage object、Lease 或一般操作紀錄。送出時會核對完整 revision 集合；預覽後若有新保存，整次 fail closed，不刪除任何版本。</p></div>

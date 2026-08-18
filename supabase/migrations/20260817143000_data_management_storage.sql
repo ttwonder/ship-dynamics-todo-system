@@ -308,6 +308,14 @@ begin
   if expected_count <> expected_distinct_count or delete_count <> delete_distinct_count then
     return jsonb_build_object('ok', false, 'error', 'INVALID_PAYLOAD');
   end if;
+  if delete_count > 100 then
+    return jsonb_build_object(
+      'ok', false,
+      'error', 'BATCH_LIMIT_EXCEEDED',
+      'maximumDeleteCount', 100,
+      'requestedDeleteCount', delete_count
+    );
+  end if;
 
   select * into current_row
   from public.ship_dynamics_app_state

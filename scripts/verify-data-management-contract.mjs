@@ -27,14 +27,20 @@ for (const label of [
 ]) assert.ok(panel.includes(label), `missing data-management UI contract: ${label}`);
 
 assert.match(panel, /currentUser\.role === 'owner'/, 'destructive controls must be Owner-only');
-assert.match(panel, /expectedRevisions: stats\.revisions\.map/, 'client must send the complete previewed revision set');
+assert.match(panel, /let expectedRevisions = stats\.revisions\.map/, 'client must begin each cleanup plan from the complete previewed revision set');
 assert.match(panel, /writePendingRevisionPrune\(envelope/, 'client must persist the exact pending operation before deletion');
-assert.match(panel, /無法保存刪除對帳資料.*未送出任何刪除/, 'local pending persistence failure must stop before the destructive RPC');
+assert.match(panel, /下一批無法保存對帳資料，因此尚未送出/, 'local pending persistence failure must stop before sending that destructive batch');
 assert.match(panel, /const HISTORY_PAGE_SIZE = 100/, 'production-scale revision history must render in bounded pages');
 assert.match(panel, /aria-label="歷史版本頁次"/, 'revision history must allow direct page selection');
 assert.match(panel, /勾選當頁全部/, 'Owner must have a select-all-current-page action');
 assert.match(panel, /取消當頁全部/, 'the page action must toggle only the current page selection');
 assert.match(panel, /pageRows\.filter\(row => !row\.current\)/, 'page selection must exclude the protected current revision');
+assert.match(panel, /const MAX_REVISION_PRUNE_BATCH = 100/, 'client must cap one destructive operation at one page');
+assert.match(panel, /chosen\.slice\(index, index \+ MAX_REVISION_PRUNE_BATCH\)/, 'cross-page selection must be split into bounded server operations');
+assert.match(panel, /可跨頁累積/, 'current-page selection must accumulate across pages');
+assert.match(panel, /setPruneProgress\(\{ completed, total: chosen\.length \}\)/, 'multi-batch cleanup must publish progress');
+assert.match(client, /BATCH_LIMIT_EXCEEDED/, 'server batch-limit rejection must have a localized client message');
+assert.match(client, /PRUNE_BATCH_TIMEOUT/, 'prune timeout must not be mislabeled as a storage-stat timeout');
 const pruneHandler = panel.slice(panel.indexOf('const performPrune'), panel.indexOf('const startPrune'));
 assert.ok(pruneHandler.indexOf('await refresh()') < pruneHandler.lastIndexOf('setErrorText(message)'), 'revision-set conflict refresh must preserve the user-visible rejection message');
 assert.match(panel, /目前正式 Revision r\$\{stats\.currentRevision\}.*正常資料都不會刪除/s, 'confirmation must state the protected scope');
@@ -56,6 +62,7 @@ for (const contract of [
   'CURRENT_REVISION_HISTORY_MISSING',
   'REVISION_SET_CHANGED',
   'IDEMPOTENCY_MISMATCH',
+  'BATCH_LIMIT_EXCEEDED',
   "actor_role is distinct from 'owner'",
   "delete from public.ship_dynamics_app_revisions",
 ]) assert.ok(migration.includes(contract), `missing SQL safety contract: ${contract}`);
@@ -70,5 +77,8 @@ assert.doesNotMatch(timeoutFixTopLevel, /\b(?:insert into|update|delete from|alt
 assert.doesNotMatch(timeoutFix, /pg_column_size\(r\)(?!\.)|pg_column_size\(s\)(?!\.)/, 'timeout patch must keep scalar TOAST-safe sizing');
 assert.match(timeoutFix, /begin;[\s\S]*commit;/, 'timeout patch must install both RPCs atomically');
 assert.match(pkg.scripts['test:data-management'], /verify-data-management-scale-db\.mjs/, 'focused data-management gate must include the production-scale regression');
+const batchLimitFix = fs.readFileSync('supabase/migrations/20260818154500_data_management_prune_batch_limit.sql', 'utf8');
+assert.equal((batchLimitFix.match(/create or replace function public\./g) || []).length, 1, 'batch-limit patch must replace only the prune RPC');
+assert.match(batchLimitFix, /delete_count > 100[\s\S]*BATCH_LIMIT_EXCEEDED/, 'batch-limit patch must reject oversized work before deletion');
 
 console.log('Data management source/UI/SQL contract passed.');
