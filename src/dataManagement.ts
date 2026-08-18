@@ -145,6 +145,7 @@ export function dataManagementErrorMessage(error: unknown) {
     REVISION_SET_CHANGED: '預覽後歷史版本集合已變更；本次未刪除，請刷新後重新選擇。',
     CURRENT_REVISION_PROTECTED: '目前正式 Revision 必須保留，未執行刪除。',
     CURRENT_REVISION_HISTORY_MISSING: '目前正式 Revision 的歷史列缺失；為避免誤刪，已停止。',
+    '57014': 'Supabase 空間統計逾時；未刪除任何資料。請先套用數據管理效能修補 SQL，再重新刷新。',
     RPC_TIMEOUT: '連線逾時，刪除結果尚未確認；請使用「對帳上次操作」。',
   };
   if (code && map[code]) return map[code];

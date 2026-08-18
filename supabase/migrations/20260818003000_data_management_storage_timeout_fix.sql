@@ -1,23 +1,8 @@
--- Ship Dynamics：Supabase 用量、單項邏輯量與歷史 revision 選擇性清理。
--- 現行正式入口仍使用 public.ship_dynamics_app_state whole-AppData authority；
--- 本 migration 只清理 public.ship_dynamics_app_revisions，不刪正式業務內容。
+-- Ship Dynamics 數據管理效能修補：正式環境有數千份 0.8–1.2 MiB revision snapshots。
+-- 只替換兩個既有 RPC 的量測方式；不建立、更新或刪除任何業務／revision 資料。
+-- 可重跑。應在 20260817143000_data_management_storage.sql 已部署後執行。
 
 begin;
-
-create table if not exists public.ship_dynamics_data_management_operations (
-  operation_id uuid primary key,
-  workspace_key text not null,
-  actor_user_id text not null,
-  command_type text not null,
-  request_payload jsonb not null,
-  status text not null check (status in ('STARTED', 'COMMITTED', 'REJECTED')),
-  result jsonb,
-  created_at timestamptz not null default now(),
-  completed_at timestamptz
-);
-
-alter table public.ship_dynamics_data_management_operations enable row level security;
-revoke all on table public.ship_dynamics_data_management_operations from public, anon, authenticated;
 
 create or replace function public.get_ship_dynamics_storage_stats(
   p_workspace_key text,

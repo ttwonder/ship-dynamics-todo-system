@@ -21,6 +21,7 @@ interface Props {
 }
 
 type DataView = 'overview' | 'items' | 'history';
+const HISTORY_PAGE_SIZE = 100;
 
 const revisionListLabel = (revisions: number[]) => revisions.length <= 12
   ? revisions.map(revision => `r${revision}`).join('、')
@@ -211,10 +212,16 @@ function ItemsView({ stats, items, query, setQuery, collection, setCollection }:
 }
 
 function HistoryView({ stats, owner, pending, acting, selected, setSelected, selectedBytes, onDelete }: { stats:ShipDynamicsStorageStats; owner:boolean; pending:boolean; acting:boolean; selected:number[]; setSelected:React.Dispatch<React.SetStateAction<number[]>>; selectedBytes:number; onDelete:()=>Promise<void> }) {
+  const pageCount = Math.max(1, Math.ceil(stats.revisions.length / HISTORY_PAGE_SIZE));
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(previous => Math.min(previous, pageCount)), [pageCount]);
+  const pageStart = (page - 1) * HISTORY_PAGE_SIZE;
+  const pageRows = stats.revisions.slice(pageStart, pageStart + HISTORY_PAGE_SIZE);
   const toggle = (revision:number) => setSelected(previous => previous.includes(revision) ? previous.filter(value => value !== revision) : [...previous, revision]);
   return <>
     <div className="data-management-retention-head"><div><b>{owner ? `已人工選擇 ${selected.length} 份` : '管理員可查看；只有 Owner 可清理'}</b><span>{owner ? `預估邏輯量 ${formatDataBytes(selectedBytes)}` : '正式資料與歷史版本均為唯讀'}</span></div>{owner && <><button className="btn small ghost" disabled={!selected.length || acting || pending} onClick={() => setSelected([])}>清除選擇</button><button className="btn danger" disabled={!selected.length || acting || pending} onClick={() => void onDelete()}>{acting ? '處理中…' : `刪除所選 ${selected.length} 份`}</button></>}</div>
-    <div className="data-management-table-wrap history"><table className="data-management-table"><thead><tr><th>選擇</th><th>Revision</th><th>保存時間</th><th>保存者</th><th>單份邏輯量</th><th>保護狀態</th></tr></thead><tbody>{stats.revisions.map(row => <tr key={row.revision} className={row.current ? 'current' : selected.includes(row.revision) ? 'selected' : ''}><td>{row.current ? <span className="data-management-lock">🔒</span> : <input type="checkbox" aria-label={`選擇刪除 revision ${row.revision}`} disabled={!owner || pending || acting} checked={selected.includes(row.revision)} onChange={() => toggle(row.revision)}/>}</td><td><b>r{row.revision}</b></td><td>{row.savedAt ? formatTaipeiDateTime(row.savedAt) : '未記錄'}</td><td>{row.savedBy || '未記錄'}</td><td>{formatDataBytes(row.logicalBytes)}</td><td>{row.current ? <strong>目前正式版本｜不可刪</strong> : '歷史快照'}</td></tr>)}</tbody></table></div>
+    <div className="data-management-history-pagination"><button className="btn small ghost" disabled={page <= 1} onClick={() => setPage(previous => Math.max(1, previous - 1))}>← 上一頁</button><label><span>第</span><select aria-label="歷史版本頁次" value={page} onChange={event => setPage(Number(event.target.value))}>{Array.from({ length: pageCount }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select><span>／{pageCount} 頁</span></label><button className="btn small ghost" disabled={page >= pageCount} onClick={() => setPage(previous => Math.min(pageCount, previous + 1))}>下一頁 →</button><em>顯示 {stats.revisions.length ? pageStart + 1 : 0}–{Math.min(pageStart + pageRows.length, stats.revisions.length)}／共 {stats.revisions.length} 份</em></div>
+    <div className="data-management-table-wrap history"><table className="data-management-table"><thead><tr><th>選擇</th><th>Revision</th><th>保存時間</th><th>保存者</th><th>單份邏輯量</th><th>保護狀態</th></tr></thead><tbody>{pageRows.map(row => <tr key={row.revision} className={row.current ? 'current' : selected.includes(row.revision) ? 'selected' : ''}><td>{row.current ? <span className="data-management-lock">🔒</span> : <input type="checkbox" aria-label={`選擇刪除 revision ${row.revision}`} disabled={!owner || pending || acting} checked={selected.includes(row.revision)} onChange={() => toggle(row.revision)}/>}</td><td><b>r{row.revision}</b></td><td>{row.savedAt ? formatTaipeiDateTime(row.savedAt) : '未記錄'}</td><td>{row.savedBy || '未記錄'}</td><td>{formatDataBytes(row.logicalBytes)}</td><td>{row.current ? <strong>目前正式版本｜不可刪</strong> : '歷史快照'}</td></tr>)}</tbody></table></div>
     <div className="data-management-warning danger"><b>刪除範圍</b><p>只會 DELETE 所勾選的 <code>ship_dynamics_app_revisions</code> 列；不會改動 <code>ship_dynamics_app_state</code>、目前 Revision、任何正式業務資料、Storage object、Lease 或一般操作紀錄。送出時會核對完整 revision 集合；預覽後若有新保存，整次 fail closed，不刪除任何版本。</p></div>
   </>;
 }
