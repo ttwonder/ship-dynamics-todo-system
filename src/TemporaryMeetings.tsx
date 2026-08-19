@@ -1196,7 +1196,8 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
             {editorWritable&&<button type="button" className="btn small green" onClick={()=>void save()}>{creating ? '建立並退出編輯' : '保存並退出編輯'}</button>}
           </div>
         </div>
-        <fieldset disabled={!editorWritable} className={`column-scroll temporary-form ${!editorWritable?'readonly-form':''}`} aria-readonly={!editorWritable}>
+        <div className={`column-scroll temporary-form ${!editorWritable?'readonly-form':''}`} aria-readonly={!editorWritable}>
+          <fieldset disabled={!editorWritable} className="temporary-form-fields">
           <div className="grid cols-3">
             <div className="field span-2"><label>會議主題 <span className="required-mark">*</span></label><input required aria-required="true" value={draft.subject} onChange={event => setDraft({ ...draft, subject: event.target.value })} placeholder="例如：颱風避風臨時協調會" /></div>
             <div className="field"><label>狀態 <span className="required-mark">*</span></label><select required aria-required="true" value={draft.status} onChange={event => setMeetingStatus(event.target.value as TemporaryMeetingStatus)}>{statuses.map(status => <option key={status}>{status}</option>)}</select></div>
@@ -1209,12 +1210,14 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
             <label className="aware-toggle meeting-morning-toggle"><input type="checkbox" checked={draft.includeInMorning} onChange={event=>setDraft({...draft,includeInMorning:event.target.checked})}/><span><b>納入早會</b><small>勾選後，本會議待辦才會進入早會討論與早會報告</small></span></label>
             <div className="field span-3"><label>召開緣由 <span className="required-mark">*</span></label><RichTextEditor ariaLabel="召開緣由" required readOnly={!editorWritable} value={draft.reason} onChange={reason=>setDraft({...draft,reason})} placeholder="說明為何召開本次臨會/專題" /></div>
             <div className="field span-3"><label>決議／會議結論</label><RichTextEditor ariaLabel="決議／會議結論" readOnly={!editorWritable} value={draft.resolution} onChange={resolution=>setDraft({...draft,resolution})} placeholder="記錄本次會議決議或結論" /></div>
-            <div className="field span-3 meeting-task-items-editor">
-              <div className="meeting-task-items-title"><label>待辦事項</label><button type="button" className="btn small primary" onClick={addTaskItem}>＋ 增加待辦事項</button></div>
+          </div>
+          </fieldset>
+            <div className="field meeting-task-items-editor">
+              <div className="meeting-task-items-title"><label>待辦事項</label><button type="button" className="btn small primary" disabled={!editorWritable} onClick={addTaskItem}>＋ 增加待辦事項</button></div>
               {draft.taskItems.map((item, index) => {
                 const completion=selectedDecisionStateByItemId.get(item.id);
                 const inlineLifecycleAction=Boolean(
-                  editorWritable&&selected&&statusOf(selected)!=='已完成'&&canCloseTasks
+                  editable&&selected&&statusOf(selected)!=='已完成'&&canCloseTasks
                   &&completion&&!completion.lifecycleConflict&&!completion.distributed
                   &&(completion.state==='open'||completion.state==='closed')
                 );
@@ -1224,21 +1227,20 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
                     <label htmlFor={`meeting-task-${item.id}`}>待辦事項 {index + 1}</label>
                     <span className={`meeting-decision-state state-${completion?.state||'pending'}`}>{completion?.lifecycleConflict?'狀態待同步':completion?.state==='closed'?'已完成':completion?.state==='open'?(completion.distributed?`分船完成 ${completion.completedVesselCount}/${completion.vesselCount}`:'未完成'):completion?.state==='duplicate'?'關聯重複':completion?.state==='missing'?'關聯待修復':completion?.state==='invalid'?'關聯異常':'保存後追蹤'}</span>
                     <span className="meeting-task-item-actions no-print">
-                      {editorWritable&&completion?.task&&!completion.lifecycleConflict&&(completion.state==='open'||completion.state==='closed')&&<button type="button" className="btn small primary meeting-inline-decision-update" disabled={lifecycleBusy} onClick={()=>void openDecisionTask(completion.task.id)}>更新</button>}
+                      {editable&&selected&&completion?.task&&!completion.lifecycleConflict&&(completion.state==='open'||completion.state==='closed')&&<button type="button" className="btn small primary meeting-inline-decision-update" disabled={lifecycleBusy} onClick={()=>void openDecisionTask(completion.task.id)}>更新</button>}
                       {inlineLifecycleAction&&(completion?.state==='closed'
                         ?<button type="button" className="btn small ghost meeting-inline-decision-transition" disabled={lifecycleBusy} onClick={()=>{if(completion.task)void transitionDecisionTask(completion.task.id,'reopen');else if(selected)void transitionUnlinkedDecisionItem(selected,item.id,'reopen');}}>重新開啟此待辦</button>
                         :<button type="button" className="btn small green meeting-inline-decision-transition" disabled={lifecycleBusy} onClick={()=>requestDecisionCompletion(completion?.task?{kind:'linked',taskId:completion.task.id,label:itemLabel}:{kind:'unlinked',meetingId:selectedId,itemId:item.id,label:itemLabel})}>快速結案</button>)}
-                      <button type="button" className="btn small ghost" onClick={() => removeTaskItem(item.id)}>移除此事項</button>
+                      <button type="button" className="btn small ghost" disabled={!editorWritable} onClick={() => removeTaskItem(item.id)}>移除此事項</button>
                     </span>
                   </div>
                   <RichTextEditor id={`meeting-task-${item.id}`} ariaLabel={`待辦事項 ${index+1}`} readOnly={!editorWritable} value={item.description} onChange={description=>updateTaskItem(item.id,description)} placeholder="填寫後保存，預設作為公司層決議待辦" />
-                  <div className="meeting-task-category-picker"><b>臨會/專題待辦分類</b><span>已選 {normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).length}</span><div className="temporary-chip-grid">{data.settings.meetingTaskCategories.map(category=>{const checked=normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).includes(category);return <label key={category} className={`meeting-task-category-chip ${checked?'selected':''}`}><input type="checkbox" checked={checked} onChange={()=>{const current=normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories);updateTaskItemCategories(item.id,checked?current.filter(value=>value!==category):[...current,category]);}}/><span>{category}</span></label>;})}</div></div>
-                  <label className="aware-toggle meeting-vessel-distribution-toggle"><input type="checkbox" checked={item.distributeToVessels===true} onChange={event=>toggleTaskItemDistribution(item.id,event.target.checked)}/><span><b>分派到涉及船舶單船跟蹤：</b><small>勾選後，該會議待辦會分派到所有涉及船舶並出現在單船待辦清單；各船分別更新進度，只有全部涉及船舶完成，該待辦才記為完成。未勾選則只在臨會/專題、我的待辦、待辦總表與已結案中流轉。</small></span></label>
+                  <div className="meeting-task-category-picker"><b>臨會/專題待辦分類</b><span>已選 {normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).length}</span><div className="temporary-chip-grid">{data.settings.meetingTaskCategories.map(category=>{const checked=normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories).includes(category);return <label key={category} className={`meeting-task-category-chip ${checked?'selected':''}`}><input type="checkbox" disabled={!editorWritable} checked={checked} onChange={()=>{const current=normalizeMeetingTaskCategoryList(item.categories,data.settings.meetingTaskCategories);updateTaskItemCategories(item.id,checked?current.filter(value=>value!==category):[...current,category]);}}/><span>{category}</span></label>;})}</div></div>
+                  <label className="aware-toggle meeting-vessel-distribution-toggle"><input type="checkbox" disabled={!editorWritable} checked={item.distributeToVessels===true} onChange={event=>toggleTaskItemDistribution(item.id,event.target.checked)}/><span><b>分派到涉及船舶單船跟蹤：</b><small>勾選後，該會議待辦會分派到所有涉及船舶並出現在單船待辦清單；各船分別更新進度，只有全部涉及船舶完成，該待辦才記為完成。未勾選則只在臨會/專題、我的待辦、待辦總表與已結案中流轉。</small></span></label>
                 </div>;
               })}
             </div>
-          </div>
-
+          <fieldset disabled={!editorWritable} className="temporary-form-fields">
           <div className="temporary-picker meeting-scope-picker">
             <div className="temporary-picker-title"><b>涉會船舶範圍</b><span>{resolvedVesselIds.length} 艘</span></div>
             <div className="meeting-scope-modes">
@@ -1267,7 +1269,8 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
             <div className="quick-status-bar"><textarea aria-label="會議最新狀態" value={quickStatus} onChange={event=>setQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();addStatus();}}} placeholder="快速輸入最新狀態…"/><button type="button" className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>
           </section>}
           {!creating && <section className="status-history meeting-status-history"><h3>狀態歷程</h3>{draft.statusLogs.length?draft.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{formatTaipeiDateTime(log.at)}｜{log.by}</small>{canDeleteMeetingStatusLog(log)&&<button type="button" className="btn small ghost no-print" onClick={()=>deleteStatusLog(log.id)}>刪除記錄</button>}</article>):<p className="muted">尚無狀態紀錄</p>}</section>}
-        </fieldset>
+          </fieldset>
+        </div>
       </section>
 
       <aside className="meeting-column temporary-summary-column">

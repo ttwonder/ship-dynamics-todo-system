@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
@@ -7,6 +9,7 @@ try {
   const workflow = await server.ssrLoadModule('/src/meetingTaskWorkflow.ts');
   const { normalizeAppData } = await server.ssrLoadModule('/src/normalize.ts');
   const { createInitialData } = await server.ssrLoadModule('/src/data/seed.ts');
+  const { default: TemporaryMeetingsPage } = await server.ssrLoadModule('/src/TemporaryMeetings.tsx');
   assert.equal(typeof workflow.meetingDecisionCompletionSummary, 'function', '臨會待辦需提供唯一關聯、完成與衝突的領域摘要');
   assert.equal(typeof workflow.planUnlinkedMeetingDecisionTransition, 'function', '編輯中保存後的未連結決議需由fresh snapshot規劃續接');
 
@@ -411,9 +414,12 @@ try {
   for (const label of ['完成此待辦', '快速結案', '重新開啟此待辦', '結案會議', '重新開啟會議', '待辦進度']) {
     assert.ok(meetingSource.includes(label), `會議頁缺少「${label}」入口或狀態`);
   }
-  assert.ok(meetingSource.includes('meeting-inline-decision-transition')&&meetingSource.includes('editorWritable&&selected'), '取得編輯權後，每筆可整體完成的待辦需在編輯卡片標題列提供inline完結操作');
+  assert.ok(meetingSource.includes('meeting-inline-decision-transition')&&meetingSource.includes("editable&&selected&&statusOf(selected)!=='已完成'&&canCloseTasks"), '唯讀會議畫面中的每筆有效待辦需直接提供inline完結操作');
   assert.ok(meetingSource.includes('aria-label="待辦完成日期"')&&meetingSource.includes('aria-label="待辦結案狀態"')&&meetingSource.includes('type="date"')&&meetingSource.includes('確認結案'), '快速結案需同時輸入完成日期與結案狀態並由使用者確認');
   assert.ok(meetingSource.includes('>更新</button>')&&meetingSource.includes('openDecisionTask(completion.task.id)'), '每筆有效linked會議待辦需在原卡片提供更新入口');
+  assert.ok(meetingSource.includes('className={`column-scroll temporary-form')&&meetingSource.includes('className="temporary-form-fields"'), '會議表單需將整場會議唯讀欄位與單筆待辦操作分層，不能用同一disabled fieldset封鎖待辦按鈕');
+  assert.ok(meetingSource.includes("editable&&selected&&completion?.task&&!completion.lifecycleConflict")&&!meetingSource.includes("editorWritable&&completion?.task&&!completion.lifecycleConflict"), '更新按鈕不應要求先取得整場會議編輯權');
+  assert.ok(meetingSource.includes('disabled={!editorWritable} onClick={addTaskItem}')&&meetingSource.includes('disabled={!editorWritable} onClick={() => removeTaskItem(item.id)}'), '唯讀時仍需停用增加／移除父會議待辦，只開放單筆更新與結案');
   assert.ok(meetingSource.includes('requestDecisionCompletion')&&meetingSource.includes("kind:'linked'")&&meetingSource.includes("kind:'unlinked'"), 'inline與右側按鈕需共用日期視窗並涵蓋linked與unlinked待辦');
   assert.ok(meetingSource.includes('同步關聯狀態'),'父子生命週期分歧時UI需提供明確修復操作，不能靜默投影');
   assert.ok(meetingSource.includes('completion?.task?.id===task.id'),'只有唯一綁定目前Task的completion才可顯示生命週期操作');
@@ -438,6 +444,33 @@ try {
   assert.ok(meetingSource.includes("runDurableRelatedMutation(meetingEditLockKey(meeting.id),'臨會/專題結案'") && meetingSource.includes("runDurableRelatedMutation(meetingEditLockKey(meeting.id),'臨會/專題重新開啟'"), '整場結案與重新開啟必須走meeting relation locks及durable save');
   assert.ok(meetingSource.includes('決議待辦進度'), '會議PDF需輸出決議待辦完成進度');
   assert.ok(normalizeSource.includes('closedDate:isClosed?(normalizeDateText(taskItem.closedDate)||undefined):undefined'), 'normalize需保留未指定船舶item的完成日期');
+
+  const ssrData=createInitialData();
+  const ssrUser={...ssrData.users[0],role:'owner',isActive:true};
+  const ssrVessel=ssrData.vessels.find(vessel=>vessel.isActive);
+  assert.ok(ssrVessel,'SSR fixture需有可用船舶');
+  ssrData.users=[ssrUser,...ssrData.users.slice(1)];
+  const ssrMeeting={
+    id:'meeting-readonly-actions',subject:'唯讀單筆操作',status:'追蹤中',meetingDate:'2026-08-19',
+    vesselScopeMode:'vessels',vesselTypeScopes:[],vessels:[ssrVessel.id],reason:'驗證唯讀操作',departments:[ssrUser.department],
+    participantUserIds:[ssrUser.id],trackingUserIds:[ssrUser.id],responsibleUserIds:[ssrUser.id],resolution:'',
+    taskDescription:'唯讀直接操作待辦',taskItems:[{id:'meeting-readonly-item',description:'唯讀直接操作待辦',categories:[ssrData.settings.meetingTaskCategories[0]],distributeToVessels:false,isClosed:false}],
+    expectedDate:'',priority:'中',isAbnormal:false,isInternalControl:false,includeInMorning:false,latestStatus:'',statusLogs:[],
+    createdBy:ssrUser.id,createdAt:'2026-08-19T00:00:00.000Z',updatedAt:'2026-08-19T00:00:00.000Z',
+  };
+  const ssrTask={...ssrData.tasks[0],id:'task-readonly-actions',vesselId:ssrVessel.id,vesselIds:[ssrVessel.id],vesselScopeMode:'vessels',vesselTypeScopes:[],sourceMeetingId:ssrMeeting.id,sourceMeetingItemId:'meeting-readonly-item',sourceType:'temporary',attentionDimension:'meeting',distributeToVessels:false,isInternalControl:false,isClosed:false,status:'待執行',statusLogs:[],ownerUserIds:[ssrUser.id],departments:[ssrUser.department],createdBy:ssrUser.id,updatedBy:ssrUser.id,createdAt:ssrMeeting.createdAt,updatedAt:ssrMeeting.updatedAt};
+  delete ssrTask.closedDate;delete ssrTask.closedBy;
+  ssrData.meetings=[ssrMeeting];ssrData.tasks=[ssrTask];
+  const readonlyHtml=renderToStaticMarkup(React.createElement(TemporaryMeetingsPage,{
+    data:ssrData,visibleVessels:ssrData.vessels.filter(vessel=>vessel.isActive),currentUser:ssrUser,canExportReports:true,canCloseTasks:true,
+    onOpenDecisionTask:async()=>true,onTransitionDecisionTask:async()=>true,setData:()=>{},commit:()=>{},claimItemLease:async()=>ssrData,requireItemLease:()=>true,releaseItemLease:async()=>true,runDurableRelatedMutation:async(_key,_label,apply)=>apply(),activeItemLeaseKey:'',
+  }));
+  const readonlyUpdateTag=readonlyHtml.match(/<button[^>]*meeting-inline-decision-update[^>]*>更新<\/button>/)?.[0]||'';
+  const readonlyCloseTag=readonlyHtml.match(/<button[^>]*meeting-inline-decision-transition[^>]*>快速結案<\/button>/)?.[0]||'';
+  assert.ok(readonlyUpdateTag&&!readonlyUpdateTag.includes('disabled=""'),'未取得整場會議編輯權時，更新按鈕仍需實際輸出且可點');
+  assert.ok(readonlyCloseTag&&!readonlyCloseTag.includes('disabled=""'),'未取得整場會議編輯權時，快速結案仍需實際輸出且可點');
+  assert.match(readonlyHtml,/disabled=""[^>]*>＋ 增加待辦事項<\/button>/,'唯讀畫面仍須停用新增父會議待辦');
+  assert.match(readonlyHtml,/disabled=""[^>]*>移除此事項<\/button>/,'唯讀畫面仍須停用移除父會議待辦');
 
   console.log('Meeting closure lifecycle contracts passed.');
 } finally {
