@@ -2102,6 +2102,11 @@ export default function App() {
     if(result!=='opened')taskOpenRequests.current.clearIfCurrent(requestGeneration);
     return result;
   };
+  const openMeetingTaskFromMeetingPage = async (taskId:string):Promise<TaskOpenResult> => {
+    const task=liveData.current.tasks.find(item=>item.id===taskId);
+    if(!task){alert('找不到對應的會議待辦');return 'failed';}
+    return openTask(task);
+  };
   const addTaskForVessel = async (vesselId: string, returnToVessel = false, returnToBatchManaged = false):Promise<boolean> => {
     if (!requireLogin()) return false;
     if(getSupabaseConfig()&&cloudWriteBlocked){alert('雲端寫入已阻擋；請先使用「同步最新（安全合併）」處理本機與雲端差異，再新增要事。');return false;}
@@ -3315,7 +3320,7 @@ export default function App() {
       return applied;
     },internalControlLockKeysForClosure);
   };
-  const transitionMeetingTaskFromMeetingPage = async (taskId: string, transition: 'complete' | 'reopen', requestedClosedDate?: string) => {
+  const transitionMeetingTaskFromMeetingPage = async (taskId: string, transition: 'complete' | 'reopen', requestedClosedDate?: string, requestedClosureStatus?: string) => {
     if(!currentUser||!canCloseTasks||!canEditMeetings||currentUser.role==='vessel'){
       alert('目前角色需同時具備管理會議與完成／重新開啟待辦權限');
       return false;
@@ -3345,8 +3350,13 @@ export default function App() {
       return false;
     }
     const selectedClosedDate=transition==='complete'&&!repairingLifecycle?trustedClosureDate(requestedClosedDate,''):'';
+    const selectedClosureStatus=transition==='complete'&&!repairingLifecycle?requestedClosureStatus?.trim()||'':'';
     if(transition==='complete'&&!repairingLifecycle&&!selectedClosedDate){
       alert('請先選擇有效的待辦完成日期');
+      return false;
+    }
+    if(transition==='complete'&&!repairingLifecycle&&!selectedClosureStatus){
+      alert('請填寫結案狀態');
       return false;
     }
     const actionLabel=repairingLifecycle?'同步臨會/專題待辦關聯狀態':transition==='complete'?'完成臨會/專題待辦':'重新開啟臨會/專題待辦';
@@ -3377,6 +3387,7 @@ export default function App() {
         if(!liveRepairingLifecycle&&((transition==='complete'&&isClosed)||(transition==='reopen'&&!isClosed))){failure=transition==='complete'?'待辦已完成':'待辦已重新開啟';return prev;}
         if(transition==='reopen'&&liveMeeting.status==='已完成'){failure='請先重新開啟整場會議';return prev;}
         if(transition==='complete'&&!liveRepairingLifecycle&&!selectedClosedDate){failure='待辦完成日期無效';return prev;}
+        if(transition==='complete'&&!liveRepairingLifecycle&&!selectedClosureStatus){failure='待辦結案狀態無效';return prev;}
         const at=nowIso();
         const closedDate=transition==='complete'&&!liveRepairingLifecycle?selectedClosedDate:trustedClosureDate(liveTask.closedDate,todayDate());
         const draft=clone(prev);
@@ -3386,7 +3397,7 @@ export default function App() {
         let targetMeeting:TemporaryMeeting;
         let repairedOnly=false;
         try{
-          const transitioned=transitionLinkedMeetingDecision(liveMeeting,liveTask,transition,{actorId:liveUser.id,actorName:liveUser.name,at,closedDate});
+          const transitioned=transitionLinkedMeetingDecision(liveMeeting,liveTask,transition,{actorId:liveUser.id,actorName:liveUser.name,at,closedDate,closureStatus:selectedClosureStatus||undefined});
           updatedTask=transitioned.task;
           targetMeeting=transitioned.meeting;
           repairedOnly=transitioned.repairedOnly;
@@ -4313,7 +4324,7 @@ export default function App() {
       {tab==='closed' && <ListPanel title="已結案清單" tasks={closedTasks} data={roleVisibleData} visibleVessels={activeVessels} filters={closedFilters} setFilters={setClosedFilters} fleetTags={fleetTags} userMap={userMap} exportedBy={currentUser.name} onEdit={openTask} onPrint={() => print('已結案清單')} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
       {tab==='internalControl' && canAccessTab(currentUser,'internalControl') && <InternalControlPage data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onDelete={removeInternalCase} onBatchClose={caseIds=>batchCompleteTasks([],caseIds)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
       {tab==='stats' && <DataAnalysisView data={roleVisibleData} vessels={canViewAllVessels?reportVessels:activeVessels} />}
-      {tab==='meeting' && <TemporaryMeetingsPage data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} canCloseTasks={canCloseTasks&&currentUser.role!=='vessel'} onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
+      {tab==='meeting' && <TemporaryMeetingsPage data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} canCloseTasks={canCloseTasks&&currentUser.role!=='vessel'} onOpenDecisionTask={openMeetingTaskFromMeetingPage} onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
 
       {tab==='reports' && <ReportCenter
         data={roleVisibleData} visibleVessels={activeVessels} user={currentUser} selected={agendaSelection} setSelected={setAgendaSelection}

@@ -47,7 +47,8 @@ type Props = {
   currentUser: UserAccount;
   canExportReports: boolean;
   canCloseTasks: boolean;
-  onTransitionDecisionTask: (taskId:string,transition:'complete'|'reopen',closedDate?:string)=>Promise<boolean>;
+  onOpenDecisionTask: (taskId:string)=>Promise<unknown>;
+  onTransitionDecisionTask: (taskId:string,transition:'complete'|'reopen',closedDate?:string,closureStatus?:string)=>Promise<boolean>;
   setData: Dispatch<SetStateAction<AppData>>;
   commit: (mutate: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => void;
   claimItemLease: (sectionKey:string,label:string)=>Promise<AppData|null>;
@@ -145,7 +146,7 @@ const draftFrom = (meeting?: TemporaryMeeting, tasks = [] as AppData['tasks'], m
   statusLogs: [...(meeting.statusLogs || [])],
 } : blankDraft();
 
-export default function TemporaryMeetingsPage({ data, visibleVessels, currentUser, canExportReports, canCloseTasks, onTransitionDecisionTask, setData, commit, claimItemLease, requireItemLease, releaseItemLease, runDurableRelatedMutation, activeItemLeaseKey }: Props) {
+export default function TemporaryMeetingsPage({ data, visibleVessels, currentUser, canExportReports, canCloseTasks, onOpenDecisionTask, onTransitionDecisionTask, setData, commit, claimItemLease, requireItemLease, releaseItemLease, runDurableRelatedMutation, activeItemLeaseKey }: Props) {
   const canViewAllMeetings = currentUser.role === 'owner' || currentUser.role === 'admin' || hasPermission(data.settings.rolePermissions, currentUser, 'viewAllVessels');
   const editable = canEditTemporaryMeetings(data.settings.rolePermissions, currentUser);
   const canDeleteMeetings = (currentUser.role === 'owner' || currentUser.role === 'admin') && editable;
@@ -177,6 +178,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const [lifecycleBusy,setLifecycleBusy]=useState(false);
   const [decisionClosureTarget,setDecisionClosureTarget]=useState<MeetingDecisionClosureTarget|null>(null);
   const [decisionClosureDate,setDecisionClosureDate]=useState(todayDate());
+  const [decisionClosureStatus,setDecisionClosureStatus]=useState('');
   const savingRef = useRef(false);
   const editBaselineRef = useRef<MeetingDraft | null>(null);
   const saveReachedLocalStateRef = useRef(false);
@@ -724,24 +726,34 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     return true;
   };
 
-  const transitionDecisionTask = async (taskId:string,transition:'complete'|'reopen',repairing=false,requestedClosedDate?:string) => {
+  const openDecisionTask = async (taskId:string) => {
+    if(lifecycleBusy)return;
+    if(editorWritable){const saved=await save();if(!saved)return;}
+    await onOpenDecisionTask(taskId);
+  };
+
+  const transitionDecisionTask = async (taskId:string,transition:'complete'|'reopen',repairing=false,requestedClosedDate?:string,requestedClosureStatus?:string) => {
     if(lifecycleBusy)return;
     if(!editable||!canCloseTasks)return alert('目前身份需同時具備管理會議與結案待辦權限');
     const selectedClosedDate=transition==='complete'&&!repairing?trustedClosureDate(requestedClosedDate,''):'';
+    const selectedClosureStatus=transition==='complete'&&!repairing?requestedClosureStatus?.trim()||'':'';
     if(transition==='complete'&&!repairing&&!selectedClosedDate)return alert('請先選擇有效的待辦完成日期');
+    if(transition==='complete'&&!repairing&&!selectedClosureStatus)return alert('請填寫結案狀態');
     if(editorWritable){const saved=await save();if(!saved)return;}
     setLifecycleBusy(true);
     try{
-      const completed=await onTransitionDecisionTask(taskId,transition,selectedClosedDate||undefined);
+      const completed=await onTransitionDecisionTask(taskId,transition,selectedClosedDate||undefined,selectedClosureStatus||undefined);
       if(completed)setNotice(repairing?'✓ 關聯狀態已同步':transition==='complete'?'✓ 待辦事項已完成':'✓ 待辦事項已重新開啟');
     }finally{setLifecycleBusy(false);}
   };
 
-  const transitionUnlinkedDecisionItem = async (meeting:TemporaryMeeting,itemId:string,transition:'complete'|'reopen',requestedClosedDate?:string) => {
+  const transitionUnlinkedDecisionItem = async (meeting:TemporaryMeeting,itemId:string,transition:'complete'|'reopen',requestedClosedDate?:string,requestedClosureStatus?:string) => {
     if(lifecycleBusy)return;
     if(!editable||!canCloseTasks)return alert('目前身份需同時具備管理會議與結案待辦權限');
     const selectedClosedDate=transition==='complete'?trustedClosureDate(requestedClosedDate,''):'';
+    const selectedClosureStatus=transition==='complete'?requestedClosureStatus?.trim()||'':'';
     if(transition==='complete'&&!selectedClosedDate)return alert('請先選擇有效的待辦完成日期');
+    if(transition==='complete'&&!selectedClosureStatus)return alert('請填寫結案狀態');
     let savedBeforeTransition=false;
     if(editorWritable){const saved=await save();if(!saved)return;savedBeforeTransition=true;}
     const sectionKey=meetingEditLockKey(meeting.id);
@@ -816,7 +828,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
           if(!liveItem||liveItem.task||summary.hasLinkConflict||liveMeeting.vessels.length){failure='此待辦已有Task關聯或關聯狀態不明確';return prev;}
           if((transition==='complete'&&liveItem.state==='closed')||(transition==='reopen'&&liveItem.state!=='closed')){failure=transition==='complete'?'待辦已完成':'待辦已重新開啟';return prev;}
           const at=nowIso();
-          const statusText=transition==='complete'?'待辦事項已完成':'待辦事項重新開啟';
+          const statusText=transition==='complete'?selectedClosureStatus:'待辦事項重新開啟';
           let draftData=structuredClone(prev);
           const target=draftData.meetings.find(item=>item.id===meeting.id)!;
           const targetItem=target.taskItems.find(item=>item.id===itemId);
@@ -859,6 +871,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const requestDecisionCompletion=(target:MeetingDecisionClosureTarget)=>{
     if(lifecycleBusy)return;
     setDecisionClosureDate(todayDate());
+    setDecisionClosureStatus('');
     setDecisionClosureTarget(target);
   };
 
@@ -866,15 +879,17 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     const target=decisionClosureTarget;
     if(!target||lifecycleBusy)return;
     const closedDate=trustedClosureDate(decisionClosureDate,'');
+    const closureStatus=decisionClosureStatus.trim();
     if(!closedDate)return alert('請選擇有效的待辦完成日期');
+    if(!closureStatus)return alert('請填寫結案狀態');
     setDecisionClosureTarget(null);
     if(target.kind==='linked'){
-      await transitionDecisionTask(target.taskId,'complete',false,closedDate);
+      await transitionDecisionTask(target.taskId,'complete',false,closedDate,closureStatus);
       return;
     }
     const meetings=liveDataRef.current.meetings.filter(meeting=>meeting.id===target.meetingId);
     if(meetings.length!==1)return alert('會議不存在或識別碼重複，未變更待辦狀態');
-    await transitionUnlinkedDecisionItem(meetings[0],target.itemId,'complete',closedDate);
+    await transitionUnlinkedDecisionItem(meetings[0],target.itemId,'complete',closedDate,closureStatus);
   };
 
   const transitionMeetingLifecycle = async (meeting:TemporaryMeeting,transition:'close'|'reopen') => {
@@ -1209,9 +1224,10 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
                     <label htmlFor={`meeting-task-${item.id}`}>待辦事項 {index + 1}</label>
                     <span className={`meeting-decision-state state-${completion?.state||'pending'}`}>{completion?.lifecycleConflict?'狀態待同步':completion?.state==='closed'?'已完成':completion?.state==='open'?(completion.distributed?`分船完成 ${completion.completedVesselCount}/${completion.vesselCount}`:'未完成'):completion?.state==='duplicate'?'關聯重複':completion?.state==='missing'?'關聯待修復':completion?.state==='invalid'?'關聯異常':'保存後追蹤'}</span>
                     <span className="meeting-task-item-actions no-print">
+                      {editorWritable&&completion?.task&&!completion.lifecycleConflict&&(completion.state==='open'||completion.state==='closed')&&<button type="button" className="btn small primary meeting-inline-decision-update" disabled={lifecycleBusy} onClick={()=>void openDecisionTask(completion.task.id)}>更新</button>}
                       {inlineLifecycleAction&&(completion?.state==='closed'
                         ?<button type="button" className="btn small ghost meeting-inline-decision-transition" disabled={lifecycleBusy} onClick={()=>{if(completion.task)void transitionDecisionTask(completion.task.id,'reopen');else if(selected)void transitionUnlinkedDecisionItem(selected,item.id,'reopen');}}>重新開啟此待辦</button>
-                        :<button type="button" className="btn small green meeting-inline-decision-transition" disabled={lifecycleBusy} onClick={()=>requestDecisionCompletion(completion?.task?{kind:'linked',taskId:completion.task.id,label:itemLabel}:{kind:'unlinked',meetingId:selectedId,itemId:item.id,label:itemLabel})}>完結此待辦</button>)}
+                        :<button type="button" className="btn small green meeting-inline-decision-transition" disabled={lifecycleBusy} onClick={()=>requestDecisionCompletion(completion?.task?{kind:'linked',taskId:completion.task.id,label:itemLabel}:{kind:'unlinked',meetingId:selectedId,itemId:item.id,label:itemLabel})}>快速結案</button>)}
                       <button type="button" className="btn small ghost" onClick={() => removeTaskItem(item.id)}>移除此事項</button>
                     </span>
                   </div>
@@ -1269,9 +1285,10 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   </section>
   {decisionClosureTarget&&<div className="modal-backdrop meeting-decision-date-backdrop" role="presentation">
     <form className="modal meeting-decision-date-modal" role="dialog" aria-modal="true" aria-labelledby="meeting-decision-date-title" onSubmit={event=>{event.preventDefault();void confirmDecisionCompletion();}}>
-      <div className="modal-header"><div><h2 id="meeting-decision-date-title">完結此待辦</h2><p>{decisionClosureTarget.label}</p></div><button type="button" className="btn small ghost" disabled={lifecycleBusy} onClick={()=>setDecisionClosureTarget(null)}>關閉</button></div>
-      <div className="field"><label htmlFor="meeting-decision-closure-date">完成日期</label><input autoFocus required id="meeting-decision-closure-date" aria-label="待辦完成日期" type="date" value={decisionClosureDate} onChange={event=>setDecisionClosureDate(event.target.value)}/><small>{decisionClosureTarget.kind==='linked'?'確認後，日期會同步寫入會議待辦與關聯待辦。':'確認後，日期會寫入此會議待辦。'}</small></div>
-      <div className="modal-actions"><button type="button" className="btn ghost" disabled={lifecycleBusy} onClick={()=>setDecisionClosureTarget(null)}>取消</button><button type="submit" className="btn green" disabled={lifecycleBusy||!decisionClosureDate}>確認完結</button></div>
+      <div className="modal-header"><div><h2 id="meeting-decision-date-title">快速結案</h2><p>{decisionClosureTarget.label}</p></div><button type="button" className="btn small ghost" disabled={lifecycleBusy} onClick={()=>setDecisionClosureTarget(null)}>關閉</button></div>
+      <div className="field"><label htmlFor="meeting-decision-closure-date">結案日期</label><input autoFocus required id="meeting-decision-closure-date" aria-label="待辦完成日期" type="date" value={decisionClosureDate} onChange={event=>setDecisionClosureDate(event.target.value)}/></div>
+      <div className="field"><label htmlFor="meeting-decision-closure-status">結案狀態／結果</label><textarea required id="meeting-decision-closure-status" aria-label="待辦結案狀態" value={decisionClosureStatus} onChange={event=>setDecisionClosureStatus(event.target.value)} placeholder="例如：改善完成並經確認有效"/><small>{decisionClosureTarget.kind==='linked'?'確認後會同步更新正式待辦、狀態歷程、會議及相關清單。':'確認後會寫入此會議待辦及會議狀態歷程。'}</small></div>
+      <div className="modal-actions"><button type="button" className="btn ghost" disabled={lifecycleBusy} onClick={()=>setDecisionClosureTarget(null)}>取消</button><button type="submit" className="btn green" disabled={lifecycleBusy||!decisionClosureDate||!decisionClosureStatus.trim()}>確認結案</button></div>
     </form>
   </div>}
   {printMode&&<section className="meeting-print print-only">

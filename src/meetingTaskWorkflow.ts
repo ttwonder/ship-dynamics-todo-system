@@ -329,6 +329,7 @@ export interface MeetingDecisionTaskTransitionContext {
   actorName: string;
   at: string;
   closedDate: string;
+  closureStatus?: string;
 }
 
 export function synchronizeLinkedMeetingDecisionLifecycle(
@@ -379,7 +380,9 @@ export function transitionMeetingDecisionTask(
   if ((transition === 'complete' && closed) || (transition === 'reopen' && !closed)) {
     throw new Error(transition === 'complete' ? '會議待辦已完成' : '會議待辦尚未完成');
   }
-  const status = transition === 'complete' ? '由臨會/專題標記完成' : '由臨會/專題重新開啟';
+  const closureStatus=context.closureStatus?.trim()||'';
+  if(transition==='complete'&&!closureStatus)throw new Error('請填寫結案狀態');
+  const status = transition === 'complete' ? closureStatus : '由臨會/專題重新開啟';
   const next: TaskItem = {
     ...task,
     status,
