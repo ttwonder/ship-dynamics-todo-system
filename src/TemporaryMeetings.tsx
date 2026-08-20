@@ -26,7 +26,7 @@ import { sortRecordsNewestCreated } from './recordSorting';
 import MeetingPeoplePicker from './MeetingPeoplePicker';
 import { paginateItems } from './pagination';
 import PaginationControls from './PaginationControls';
-import { meetingPdfVesselSummary } from './meetingPdf';
+import { meetingPdfDocumentTitle, meetingPdfVesselSummary } from './meetingPdf';
 import { addMeetingStatusRecord, sanitizeMeetingStatusMutation } from './meetingStatusWorkflow';
 import RichTextEditor from './RichTextEditor';
 import RichTextContent from './RichTextContent';
@@ -291,6 +291,11 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     if (!printMode) return;
     printInFlightRef.current = true;
     const modeClass = printMode === 'meetings' ? 'printing-meeting-detail' : 'printing-meeting-register';
+    const originalTitle=document.title;
+    const singleMeeting=printMode==='meetings'&&printMeetingIds.length===1
+      ?accessibleMeetings.find(meeting=>meeting.id===printMeetingIds[0])
+      :undefined;
+    if(singleMeeting)document.title=meetingPdfDocumentTitle(singleMeeting.subject,singleMeeting.meetingDate||todayDate());
     document.body.classList.add('printing-meetings', modeClass);
     let cleaned = false;
     let frame = 0;
@@ -298,6 +303,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
+      document.title=originalTitle;
       document.body.classList.remove('printing-meetings', modeClass);
       window.removeEventListener('afterprint', cleanup);
       if (frame) window.cancelAnimationFrame(frame);

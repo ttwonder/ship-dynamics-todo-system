@@ -14,6 +14,13 @@ export type MeetingPdfVessel = {
   shipType?: string;
 };
 
+const unsafePdfTitleChars = /[<>:"/\\|?*\u0000-\u001f]/g;
+
+export function meetingPdfDocumentTitle(subject: string, meetingDate: string): string {
+  const safeSubject = subject.replace(unsafePdfTitleChars, '-').replace(/\s+/g, ' ').trim().replace(/[. ]+$/g, '');
+  return `${safeSubject || '臨會／專題會議報告'}_${meetingDate.trim() || '未設定日期'}`;
+}
+
 export function meetingPdfVesselSummary(meeting: MeetingPdfScope, vessels: MeetingPdfVessel[]): string {
   if (meeting.vesselScopeMode === 'all') return '全部船舶';
   if (meeting.vesselScopeMode === 'types') {

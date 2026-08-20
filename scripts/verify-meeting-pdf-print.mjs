@@ -43,10 +43,15 @@ assert.equal(Object.values(meetingRegisterWidths).reduce((sum,width)=>sum+width,
 assert.ok(meetingRegisterWidths.subject>Math.max(...orderedPrintColumns.filter(name=>name!=='subject').map(name=>meetingRegisterWidths[name])),'會議主題必須是清單 PDF 唯一最寬欄位');
 assert.ok(meetingRegisterWidths.people>meetingRegisterWidths.vessels&&meetingRegisterWidths.vessels>meetingRegisterWidths.status,'追蹤人員、船舶及短內容欄位必須依資訊量合理分級');
 assert.ok(styles.includes('.meeting-print-register table{width:100%;border-collapse:collapse;margin-top:12px;table-layout:fixed}'),'清單 PDF 必須使用固定表格布局落實欄寬比例');
+assert.match(styles,/body\.printing-meeting-detail \.meeting-print-section \.rich-text-content\{[^}]*white-space:pre-wrap/,'單場會議 PDF 必須保留會議內文原有的換行與縮排');
 
 const server=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});
 try {
-  const { meetingPdfVesselSummary }=await server.ssrLoadModule('/src/meetingPdf.ts');
+  const { meetingPdfVesselSummary, meetingPdfDocumentTitle }=await server.ssrLoadModule('/src/meetingPdf.ts');
+  assert.equal(meetingPdfDocumentTitle('主機運轉時數檢討','2026-08-20'),'主機運轉時數檢討_2026-08-20','單場會議 PDF 文件名必須直接使用會議主題與召開日期');
+  assert.equal(meetingPdfDocumentTitle('每日/週報：格式檢討','2026-08-20'),'每日-週報：格式檢討_2026-08-20','PDF 文件名必須只替換 Windows 不允許的字元');
+  assert.match(meetings,/document\.title=meetingPdfDocumentTitle\(/,'單場會議列印前必須把瀏覽器文件名切換為會議主題與日期');
+  assert.match(meetings,/document\.title=originalTitle/,'列印結束後必須恢復網站原本標題');
   const vessels=[
     {id:'v1',name:'甲轮',shipType:'油轮'},
     {id:'v2',name:'乙轮',shipType:'散货轮'},

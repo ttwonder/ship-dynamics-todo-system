@@ -159,6 +159,7 @@
   body.printing-meeting-detail .meeting-print-section.card-like.wide{display:block}
   body.printing-meeting-detail .meeting-print-section h2{margin:0 0 2mm;color:#4b3c5a;font-size:11pt}
   body.printing-meeting-detail .meeting-print-section p{margin:0;white-space:pre-wrap;line-height:1.55}
+  body.printing-meeting-detail .meeting-print-section .rich-text-content{white-space:pre-wrap;overflow-wrap:anywhere}
   body.printing-meeting-detail .meeting-print-task-list{margin:0;padding:0;list-style:none;display:grid;gap:2mm}
   body.printing-meeting-detail .meeting-print-task-list li{display:grid;grid-template-columns:18mm minmax(0,1fr);gap:2mm;padding:2.5mm;border-radius:3mm;background:#faf7fb;border:1px solid #eee5ef;break-inside:avoid}
   body.printing-meeting-detail .meeting-print-task-list li>span{font-weight:900;color:#6d28d9}
