@@ -5,6 +5,9 @@ import { createServer } from 'vite';
 const server=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});
 try{
   const {upsertDailyMorningReport,dailyMorningReports}=await server.ssrLoadModule('/src/morningHistory.ts');
+  const {morningReportPdfDocumentTitle}=await server.ssrLoadModule('/src/morningReportPdf.ts');
+  assert.equal(morningReportPdfDocumentTitle('2026-08-20'),'船舶早會動態暨待辦報告_2026-08-20','早會 PDF 預設文件名必須使用固定報告名稱與報告日期');
+  assert.equal(morningReportPdfDocumentTitle('2026/08/20'),'船舶早會動態暨待辦報告_2026-08-20','即時預覽的台北顯示日期必須轉成 Windows 可保存的文件名日期');
   const vessel={id:'v1',name:'V1',shortName:'V1',fullName:'V1',shipType:'bulk',fleetCategory:'bulk fleet',fleetTags:[],assignedUserIds:[],delegateManagers:[],isActive:true,position:{source:'manual',location:'',speedKnots:0,navigationStatus:'停泊',lastPort:'',nextPort:'',eta:'',etb:'',etd:'',updatedAt:'2026-08-01T00:00:00Z',manualRemark:''},cargo:{source:'manual',loadStatus:'空載',name:'',quantity:'',items:[],updatedAt:'2026-08-01T00:00:00Z'},note:{statusList:[],statusSupplement:'',captain:'',chiefOfficer:'',chiefEngineer:'',firstEngineer:'',recentDynamics:'',subsequentDynamics:'',updatedAt:'2026-08-01T00:00:00Z'},weeklyAttention:[],createdAt:'2026-08-01T00:00:00Z',updatedAt:'2026-08-01T00:00:00Z'};
   const task=(id,extra={})=>({id,vesselId:'v1',vesselIds:['v1'],vesselScopeMode:'vessels',priority:'中',isAware:false,isAbnormal:false,isInternalControl:false,category:'其他',categories:['其他'],description:id,status:'',expectedDate:'',reportDate:'2026-08-03',departments:[],ownerUserIds:[],isClosed:false,sourceType:'morning',createdBy:'owner',updatedBy:'owner',createdAt:'2026-08-02T17:00:00Z',updatedAt:'2026-08-02T17:00:00Z',statusLogs:[],vesselProgress:[{vesselId:'v1',status:'',isClosed:false,statusLogs:[]}],...extra});
   const meeting={id:'m1',subject:'M',status:'追蹤中',meetingDate:'2026-08-03',vesselScopeMode:'vessels',vessels:['v1'],reason:'r',departments:[],participantUserIds:[],trackingUserIds:[],responsibleUserIds:[],resolution:'',taskDescription:'',taskItems:[],expectedDate:'',priority:'中',isAbnormal:false,isInternalControl:false,includeInMorning:true,createdBy:'owner',createdAt:'2026-08-02T17:00:00Z'};
@@ -26,6 +29,7 @@ try{
 }finally{await server.close();}
 
 const app=fs.readFileSync('src/App.tsx','utf8');
+const morningReportPdf=fs.readFileSync('src/morningReportPdf.ts','utf8');
 const morningWorkspace=fs.readFileSync('src/MorningWorkspace.tsx','utf8');
 const projection=fs.readFileSync('src/normalizedProjection.ts','utf8');
 const sql=fs.readFileSync('supabase/migrations/20260806093000_daily_morning_reports.sql','utf8');
@@ -35,6 +39,15 @@ assert.match(app,/reportPreviewSnapshot\.tasks/);
 assert.match(app,/reportPreviewMeetingIds[\s\S]*reportPreviewSnapshot\.meetings\.filter\(meeting=>reportPreviewMeetingIds\.has\(meeting\.id\)\)/,'history preview data must retain only meetings referenced by already-authorized snapshot tasks');
 assert.match(app,/reportPreviewAuthorizedVessels=data\.vessels\.filter\(vessel=>vesselMatchesUser\(vessel,currentUser,canViewAllVessels\)\)/,'frozen history authorization must include currently authorized inactive snapshot vessels without including unauthorized vessels');
 assert.match(app,/const vessels=reportDate\?visibleVessels:_selected\.length\?visibleVessels\.filter/,'historical preview must not let the live active-vessel selection truncate frozen history');
+assert.equal((app.match(/onOpenReport=\{openReportPreview\}/g)||[]).length,2,'船舶看板與早會工作台必須共用早會 PDF 預覽入口');
+assert.match(app,/onOpenPreview=\{openReportPreview\}/,'報告中心建立 PDF 必須共用早會 PDF 預覽入口');
+assert.match(app,/onOpenHistory=\{openHistoricalReport\}/,'每日早會歷史必須以凍結快照開啟同一 PDF 預覽');
+assert.match(app,/const effectiveReportDate=reportDate\|\|formatTaipeiDate\(new Date\(\)\)/,'早會 PDF 顯示與文件名必須共用同一報告日期');
+assert.match(app,/onClick=\{\(\)=>onPrint\(effectiveReportDate\)\}/,'早會 PDF 導出按鈕必須把實際報告日期交給文件名流程');
+assert.match(app,/const printReport = \(reportDate:string\) =>/,'早會 PDF 列印流程必須接收預覽中的報告日期');
+assert.match(app,/printMorningReportPdf\(reportDate\)/,'所有早會 PDF 入口必須共用文件名與列印清理流程');
+assert.match(morningReportPdf,/document\.title = morningReportPdfDocumentTitle\(reportDate\)/,'早會 PDF 列印前必須設定固定名稱與日期');
+assert.match(morningReportPdf,/document\.title = originalTitle/,'早會 PDF 列印結束後必須恢復網站原標題');
 assert.match(app,/useEffect\(\(\)=>\{setReportPreviewOpen\(false\);setReportPreviewHistoryId\(''\);\},\[currentUserId\]\)/,'identity switches must close historical report previews and clear existence signals');
 assert.match(app,/onSaveDailyMorning=\{saveDailyMorningHistory\}/);
 assert.match(morningWorkspace,/onSaveDailyMorning:\s*\(at:string\)=>Promise<boolean>/);
