@@ -183,6 +183,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const editBaselineRef = useRef<MeetingDraft | null>(null);
   const saveReachedLocalStateRef = useRef(false);
   const printInFlightRef = useRef(false);
+  const pendingDecisionFocusItemIdRef=useRef('');
   const liveDataRef=useRef(data);
   liveDataRef.current=data;
   const activeItemLeaseKeyRef=useRef(activeItemLeaseKey);
@@ -288,6 +289,14 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   }, [notice]);
 
   useEffect(() => {
+    if(!editorWritable||!pendingDecisionFocusItemIdRef.current)return;
+    const itemId=pendingDecisionFocusItemIdRef.current;
+    pendingDecisionFocusItemIdRef.current='';
+    const frame=window.requestAnimationFrame(()=>document.getElementById(`meeting-task-${itemId}`)?.focus({preventScroll:true}));
+    return ()=>window.cancelAnimationFrame(frame);
+  },[editorWritable,selectedId]);
+
+  useEffect(() => {
     if (!printMode) return;
     printInFlightRef.current = true;
     const modeClass = printMode === 'meetings' ? 'printing-meeting-detail' : 'printing-meeting-register';
@@ -342,15 +351,15 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     setQuickStatus('');
     setViewMode('workspace');
   };
-  const beginEditing = async (meeting: TemporaryMeeting) => {
-    if(!editable)return alert('修改臨會/專題需同時具備「新增及修改臨會/專題」與「查看全部船舶」權限');
+  const beginEditing = async (meeting: TemporaryMeeting):Promise<boolean> => {
+    if(!editable){alert('修改臨會/專題需同時具備「新增及修改臨會/專題」與「查看全部船舶」權限');return false;}
     let fresh=meeting;
     let snapshot=data;
     if(activeItemLeaseKey!==meetingEditLockKey(meeting.id)){
       const latest=await claimItemLease(meetingEditLockKey(meeting.id),`臨會/專題｜${meeting.subject||meeting.id}`);
-      if(!latest)return;
+      if(!latest)return false;
       const latestMeeting=latest.meetings.find(item=>item.id===meeting.id);
-      if(!latestMeeting){await releaseItemLease(meetingEditLockKey(meeting.id));return;}
+      if(!latestMeeting){await releaseItemLease(meetingEditLockKey(meeting.id));return false;}
       snapshot=latest;
       fresh=latestMeeting;
     }
@@ -365,6 +374,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     setBaseMeetingUpdatedAt(fresh.updatedAt||'');
     setQuickStatus('');
     setViewMode('workspace');
+    return true;
   };
   const startNew = async () => {
     if (!editable) return alert('修改臨會/專題需同時具備「新增及修改臨會/專題」與「查看全部船舶」權限');
@@ -736,6 +746,13 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     if(lifecycleBusy)return;
     if(editorWritable){const saved=await save();if(!saved)return;}
     await onOpenDecisionTask(taskId);
+  };
+
+  const openUnlinkedDecisionItem = async (meeting:TemporaryMeeting,itemId:string) => {
+    if(lifecycleBusy)return;
+    if(editorWritable){window.requestAnimationFrame(()=>document.getElementById(`meeting-task-${itemId}`)?.focus({preventScroll:true}));return;}
+    pendingDecisionFocusItemIdRef.current=itemId;
+    if(!await beginEditing(meeting))pendingDecisionFocusItemIdRef.current='';
   };
 
   const transitionDecisionTask = async (taskId:string,transition:'complete'|'reopen',repairing=false,requestedClosedDate?:string,requestedClosureStatus?:string) => {
@@ -1234,6 +1251,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
                     <span className={`meeting-decision-state state-${completion?.state||'pending'}`}>{completion?.lifecycleConflict?'狀態待同步':completion?.state==='closed'?'已完成':completion?.state==='open'?(completion.distributed?`分船完成 ${completion.completedVesselCount}/${completion.vesselCount}`:'未完成'):completion?.state==='duplicate'?'關聯重複':completion?.state==='missing'?'關聯待修復':completion?.state==='invalid'?'關聯異常':'保存後追蹤'}</span>
                     <span className="meeting-task-item-actions no-print">
                       {editable&&selected&&completion?.task&&!completion.lifecycleConflict&&(completion.state==='open'||completion.state==='closed')&&<button type="button" className="btn small primary meeting-inline-decision-update" disabled={lifecycleBusy} onClick={()=>void openDecisionTask(completion.task.id)}>更新</button>}
+                      {editable&&selected&&!selected.vessels.length&&completion&&!completion.task&&!completion.lifecycleConflict&&(completion.state==='open'||completion.state==='closed')&&<button type="button" className="btn small primary meeting-inline-decision-update" disabled={lifecycleBusy} onClick={()=>void openUnlinkedDecisionItem(selected,item.id)}>更新</button>}
                       {inlineLifecycleAction&&(completion?.state==='closed'
                         ?<button type="button" className="btn small ghost meeting-inline-decision-transition" disabled={lifecycleBusy} onClick={()=>{if(completion.task)void transitionDecisionTask(completion.task.id,'reopen');else if(selected)void transitionUnlinkedDecisionItem(selected,item.id,'reopen');}}>重新開啟此待辦</button>
                         :<button type="button" className="btn small green meeting-inline-decision-transition" disabled={lifecycleBusy} onClick={()=>requestDecisionCompletion(completion?.task?{kind:'linked',taskId:completion.task.id,label:itemLabel}:{kind:'unlinked',meetingId:selectedId,itemId:item.id,label:itemLabel})}>快速結案</button>)}

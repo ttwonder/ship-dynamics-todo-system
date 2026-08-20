@@ -472,6 +472,18 @@ try {
   assert.match(readonlyHtml,/disabled=""[^>]*>＋ 增加待辦事項<\/button>/,'唯讀畫面仍須停用新增父會議待辦');
   assert.match(readonlyHtml,/disabled=""[^>]*>移除此事項<\/button>/,'唯讀畫面仍須停用移除父會議待辦');
 
+  ssrData.meetings=[{...ssrMeeting,vessels:[]}];
+  ssrData.tasks=[];
+  const unlinkedReadonlyHtml=renderToStaticMarkup(React.createElement(TemporaryMeetingsPage,{
+    data:ssrData,visibleVessels:ssrData.vessels.filter(vessel=>vessel.isActive),currentUser:ssrUser,canExportReports:true,canCloseTasks:true,
+    onOpenDecisionTask:async()=>true,onTransitionDecisionTask:async()=>true,setData:()=>{},commit:()=>{},claimItemLease:async()=>ssrData,requireItemLease:()=>true,releaseItemLease:async()=>true,runDurableRelatedMutation:async(_key,_label,apply)=>apply(),activeItemLeaseKey:'',
+  }));
+  const unlinkedUpdateTag=unlinkedReadonlyHtml.match(/<button[^>]*meeting-inline-decision-update[^>]*>更新<\/button>/)?.[0]||'';
+  const unlinkedCloseTag=unlinkedReadonlyHtml.match(/<button[^>]*meeting-inline-decision-transition[^>]*>快速結案<\/button>/)?.[0]||'';
+  assert.ok(unlinkedUpdateTag&&!unlinkedUpdateTag.includes('disabled=""'),'未指定涉會船舶且尚無正式Task的會議待辦，也必須顯示可點擊的更新按鈕');
+  assert.ok(unlinkedCloseTag&&!unlinkedCloseTag.includes('disabled=""'),'未指定涉會船舶的會議待辦仍須保留快速結案');
+  assert.ok(meetingSource.includes('openUnlinkedDecisionItem(selected,item.id)'),'未連結待辦的更新按鈕必須取得整場會議編輯權並聚焦該事項');
+
   console.log('Meeting closure lifecycle contracts passed.');
 } finally {
   await server.close();
