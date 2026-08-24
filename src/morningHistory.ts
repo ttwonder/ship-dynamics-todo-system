@@ -40,13 +40,18 @@ function reportCutoff(report: AgendaReport): string | undefined {
   return validInstant(report.snapshot?.windowEndedAt) || validInstant(report.createdAt) || validInstant(report.snapshot?.capturedAt);
 }
 
-function latestManualCutoff(reports: AgendaReport[], endedAt: string, excludedReportId = ''): string | undefined {
-  const cutoffs = reports
+function latestManualReport(reports: AgendaReport[], endedAt: string, excludedReportId = ''): AgendaReport | undefined {
+  const candidates = reports
     .filter(report => report.id !== excludedReportId)
-    .map(reportCutoff)
-    .filter((value): value is string => Boolean(value) && value <= endedAt)
-    .sort();
-  return cutoffs[cutoffs.length - 1];
+    .map(report => ({ report, cutoff: reportCutoff(report) }))
+    .filter((entry): entry is { report: AgendaReport; cutoff: string } => Boolean(entry.cutoff) && entry.cutoff! <= endedAt)
+    .sort((left, right) => left.cutoff.localeCompare(right.cutoff));
+  return candidates[candidates.length - 1]?.report;
+}
+
+function latestManualCutoff(reports: AgendaReport[], endedAt: string, excludedReportId = ''): string | undefined {
+  const report = latestManualReport(reports, endedAt, excludedReportId);
+  return report ? reportCutoff(report) : undefined;
 }
 
 export function liveMorningWindow(reports: AgendaReport[], at?: Date | string | number): MorningWindow {
@@ -58,9 +63,39 @@ export function morningWindowIsAccumulatingNextMeeting(window: MorningWindow): b
   return Boolean(window.startedAt && taipeiDateKey(window.startedAt) === taipeiDateKey(window.endedAt));
 }
 
-export function morningItemChangedInWindow(item: { createdAt?: string; updatedAt?: string }, window: MorningWindow): boolean {
-  const instants = [validInstant(item.createdAt), validInstant(item.updatedAt)].filter((value): value is string => Boolean(value));
-  return instants.some(value => (!window.startedAt || value > window.startedAt) && value <= window.endedAt);
+export function morningBaselineSnapshot(reports: AgendaReport[], window: MorningWindow): MorningReportSnapshot | undefined {
+  if (!window.startedAt) return undefined;
+  const report = latestManualReport(reports, window.endedAt);
+  return report && reportCutoff(report) === window.startedAt ? report.snapshot : undefined;
+}
+
+const TECHNICAL_MORNING_KEYS = new Set(['createdAt', 'updatedAt', 'updatedBy', '_v7Id', '_v7Revision']);
+
+function morningBusinessValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(morningBusinessValue);
+  if (!value || typeof value !== 'object') return value;
+  const record = value as Record<string, unknown>;
+  const statusLog = typeof record.text === 'string' && 'at' in record;
+  return Object.fromEntries(Object.keys(record).sort().flatMap(key => {
+    if (TECHNICAL_MORNING_KEYS.has(key) || (statusLog && (key === 'id' || key === 'at'))) return [];
+    return [[key, morningBusinessValue(record[key])]];
+  }));
+}
+
+export function morningItemBusinessContentChanged(current: object, baseline: object): boolean {
+  return JSON.stringify(morningBusinessValue(current)) !== JSON.stringify(morningBusinessValue(baseline));
+}
+
+export function morningItemChangedInWindow(
+  item: { createdAt?: string; updatedAt?: string },
+  window: MorningWindow,
+  baseline?: { createdAt?: string; updatedAt?: string },
+): boolean {
+  const createdAt = validInstant(item.createdAt);
+  if (createdAt && (!window.startedAt || createdAt > window.startedAt) && createdAt <= window.endedAt) return true;
+  const updatedAt = validInstant(item.updatedAt);
+  if (!updatedAt || (window.startedAt && updatedAt <= window.startedAt) || updatedAt > window.endedAt) return false;
+  return baseline ? morningItemBusinessContentChanged(item, baseline) : true;
 }
 
 function cloneSnapshot(
@@ -91,21 +126,24 @@ function morningSnapshotContent(
   meetings: TemporaryMeeting[],
   vesselIds: string[],
   window: MorningWindow,
-  preservedTodayTaskIds: string[] = [],
-  preservedTodayInternalControlCaseIds: string[] = [],
+  baselineTasks: TaskItem[] = [],
+  baselineInternalControlCases: InternalControlCase[] = [],
 ) {
   const allowed = new Set(vesselIds);
   const visibleMeetings = meetings.filter(meeting => meeting.includeInMorning && !meeting.isInternalControl);
   const meetingIds = new Set(visibleMeetings.map(meeting => meeting.id));
-  const todayTaskIds = new Set(preservedTodayTaskIds);
-  const todayInternalControlCaseIds = new Set(preservedTodayInternalControlCaseIds);
-  tasks.forEach(task => {
-    if (!task.isInternalControl && (!task.isClosed || window.startedAt) && morningItemChangedInWindow(task, window)) todayTaskIds.add(task.id);
+  const discussionTasks = morningDiscussionTasks(tasks, visibleMeetings);
+  const baselineTaskById = new Map(baselineTasks.map(task => [task.id, task]));
+  const baselineCaseById = new Map(baselineInternalControlCases.map(item => [item.id, item]));
+  const todayTaskIds = new Set<string>();
+  const todayInternalControlCaseIds = new Set<string>();
+  discussionTasks.forEach(task => {
+    if (!task.isInternalControl && (!task.isClosed || window.startedAt) && morningItemChangedInWindow(task, window, baselineTaskById.get(task.id))) todayTaskIds.add(task.id);
   });
   internalControlCases.forEach(item => {
-    if ((!item.isClosed || window.startedAt) && morningItemChangedInWindow(item, window)) todayInternalControlCaseIds.add(item.id);
+    if ((!item.isClosed || window.startedAt) && morningItemChangedInWindow(item, window, baselineCaseById.get(item.id))) todayInternalControlCaseIds.add(item.id);
   });
-  const visibleTasks = morningDiscussionTasks(tasks, visibleMeetings).filter(task => {
+  const visibleTasks = discussionTasks.filter(task => {
     if (task.isInternalControl) return false;
     if (task.sourceMeetingId && !meetingIds.has(task.sourceMeetingId)) return false;
     const scopedIds = taskVesselIds(task).filter(id => allowed.has(id));
@@ -139,10 +177,12 @@ export function upsertDailyMorningReport<T extends MorningHistoryData>(data: T, 
   const manualCutoff = input.source === 'manual' || existing?.source === 'manual';
   const windowEndedAt = manualCutoff ? existingManualCutoff || capturedAt : capturedAt;
   const refreshingExistingManual = Boolean(existingManualCutoff && existing?.source === 'manual' && existing.snapshot);
+  const previousManualReport = latestManualReport(data.agendaReports, windowEndedAt, existing?.id);
+  const previousManualCutoff = previousManualReport ? reportCutoff(previousManualReport) : undefined;
   const window: MorningWindow = {
     startedAt: refreshingExistingManual
-      ? validInstant(existing?.snapshot?.windowStartedAt) || latestManualCutoff(data.agendaReports, windowEndedAt, existing?.id)
-      : latestManualCutoff(data.agendaReports, windowEndedAt, existing?.id),
+      ? validInstant(existing?.snapshot?.windowStartedAt) || previousManualCutoff
+      : previousManualCutoff,
     endedAt: windowEndedAt,
   };
   const content = refreshingExistingManual ? {
@@ -157,6 +197,8 @@ export function upsertDailyMorningReport<T extends MorningHistoryData>(data: T, 
     data.meetings,
     vesselIds,
     window,
+    previousManualReport?.snapshot?.tasks || [],
+    previousManualReport?.snapshot?.internalControlCases || [],
   );
   const snapshot = cloneSnapshot(
     vessels,

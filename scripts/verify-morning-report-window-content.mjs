@@ -3,7 +3,9 @@ import fs from 'node:fs';
 
 const app = fs.readFileSync('src/App.tsx', 'utf8');
 assert.match(app, /reportSnapshot\?:MorningReportSnapshot/,'PDF 預覽必須接收凍結快照的區間與本期 ID');
-assert.match(app, /classifyMorningAgenda\(\{/,'PDF 必須沿用工作台的要事／內控區間分類器');
+assert.match(app, /classifyMorningAgenda\(\{/,'PDF 預覽須使用與工作台相同的區間分類器');
+assert.match(app, /const reportBaseline=reportSnapshot\?undefined:morningBaselineSnapshot/, '即時 PDF 必須使用上一人工切點 baseline 排除純技術時間戳');
+assert.match(app, /baselineInternalControlCases:reportBaseline\?\.internalControlCases/, '即時 PDF 內控分類須使用 baseline 內容比較');
 assert.match(app, /todayTaskIds:reportSnapshot\?\.todayTaskIds/,'歷史 PDF 必須沿用保存時的本期要事 ID');
 assert.match(app, /todayInternalControlCaseIds:reportSnapshot\?\.todayInternalControlCaseIds/,'歷史 PDF 必須沿用保存時的本期內控 ID');
 assert.match(app, /<h2>內控議題<\/h2>/,'PDF 必須有 canonical 內控議題區段');

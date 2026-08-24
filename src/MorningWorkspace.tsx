@@ -15,7 +15,7 @@ import { userCanManageVesselByAssignmentOrDelegation } from './vesselDelegation'
 import VesselFilterControls from './VesselFilterControls';
 import { attentionFilterGroup, emptyVesselFilterState, hasActiveVesselFilters, matchingVesselIds, shipTypeFilterOptions, supervisorIdsForVessel, vesselSupervisorOptions } from './vesselDashboardFilters';
 import { formatTaipeiDateTime, taipeiDateKey, taipeiDaysDiff } from './taipeiTime';
-import { liveMorningWindow, morningWindowIsAccumulatingNextMeeting } from './morningHistory';
+import { liveMorningWindow, morningBaselineSnapshot, morningWindowIsAccumulatingNextMeeting } from './morningHistory';
 import { classifyMorningAgenda } from './morningAgenda';
 import { paginateMorningHistory } from './morningHistoryPagination';
 
@@ -114,6 +114,7 @@ export default function MorningWorkspaceView({ data, user, visibleVessels, selec
   useEffect(() => { if (!scopeIds.includes(newTaskVesselId)) setNewTaskVesselId(scopeIds[0] || ''); }, [scopeIds.join('|'), newTaskVesselId]);
 
   const morningWindow = liveMorningWindow(data.agendaReports);
+  const morningBaseline = morningBaselineSnapshot(data.agendaReports, morningWindow);
   const accumulatingNextMeeting = morningWindowIsAccumulatingNextMeeting(morningWindow);
   const activeAgendaTitle = accumulatingNextMeeting ? '下一場早會議題（累積中）' : '今日早會議題';
   const activeAgendaLabel = accumulatingNextMeeting ? '下一場議題' : '今日議題';
@@ -123,6 +124,8 @@ export default function MorningWorkspaceView({ data, user, visibleVessels, selec
     meetings: data.meetings,
     scopeVesselIds: scopeIds,
     window: morningWindow,
+    baselineTasks: morningBaseline?.tasks,
+    baselineInternalControlCases: morningBaseline?.internalControlCases,
   });
   const firstScopeIndex = (entry: AgendaEntry) => Math.min(...entryVesselIds(entry).map(id => scopeIds.indexOf(id)).filter(index => index >= 0));
   const sortEntries = (items: AgendaEntry[]) => [...items].sort((left, right) => {

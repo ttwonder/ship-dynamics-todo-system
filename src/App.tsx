@@ -45,7 +45,7 @@ import { morningDiscussionTasks } from './morningTaskScope';
 import { taskIsClosedForScope, taskIsClosedForVessel, taskProgressForVessel, taskProjectedProgressForScope, updateTaskVesselProgress, usesPerVesselProgress } from './taskVesselProgress';
 import { formatScheduleDisplay } from './scheduleTime';
 import { formatTaipeiDate, formatTaipeiDateTime, taipeiDateKey } from './taipeiTime';
-import { dailyMorningReports, liveMorningWindow, upsertDailyMorningReport } from './morningHistory';
+import { dailyMorningReports, liveMorningWindow, morningBaselineSnapshot, upsertDailyMorningReport } from './morningHistory';
 import { classifyMorningAgenda } from './morningAgenda';
 import { printMorningReportPdf } from './morningReportPdf';
 import RichTextContent from './RichTextContent';
@@ -4499,6 +4499,7 @@ function ReportPreviewModal({ data, visibleVessels, user, selected: _selected, r
     startedAt:reportSnapshot.windowStartedAt,
     endedAt:reportSnapshot.windowEndedAt||reportSnapshot.capturedAt,
   }:liveMorningWindow(data.agendaReports);
+  const reportBaseline=reportSnapshot?undefined:morningBaselineSnapshot(data.agendaReports,reportWindow);
   const reportAgenda=classifyMorningAgenda({
     tasks:data.tasks,
     internalControlCases:data.internalControlCases,
@@ -4507,6 +4508,8 @@ function ReportPreviewModal({ data, visibleVessels, user, selected: _selected, r
     window:reportWindow,
     todayTaskIds:reportSnapshot?.todayTaskIds,
     todayInternalControlCaseIds:reportSnapshot?.todayInternalControlCaseIds,
+    baselineTasks:reportBaseline?.tasks,
+    baselineInternalControlCases:reportBaseline?.internalControlCases,
   });
   const tasks=[...reportAgenda.todayTasks,...reportAgenda.historyTasks];
   const internalCases=[...reportAgenda.todayInternalControlCases,...reportAgenda.historyInternalControlCases];

@@ -7,6 +7,7 @@ try {
     upsertDailyMorningReport,
     liveMorningWindow,
     morningItemChangedInWindow,
+    morningItemBusinessContentChanged,
     morningWindowIsAccumulatingNextMeeting,
   } = await server.ssrLoadModule('/src/morningHistory.ts');
 
@@ -40,19 +41,32 @@ try {
     ...extra,
   });
 
+  previousReport.snapshot.tasks = [
+    task('historical-open'),
+    task('changed-open', { description: '切點前內容' }),
+    task('technical-only'),
+  ];
+  previousReport.snapshot.internalControlCases = [
+    internalCase('linked-case', { syncToTask: true, linkedTaskId: 'linked-internal-task', description: '切點前內控內容' }),
+    internalCase('standalone-historical-open'),
+    internalCase('standalone-technical'),
+  ];
+
   const changedAt = '2026-08-03T06:00:00.000Z';
   const base = {
     agendaReports: [previousReport],
     vessels: [vessel],
     tasks: [
       task('historical-open'),
-      task('changed-open', { updatedAt: changedAt }),
+      task('changed-open', { description: '切點後實質修改', updatedAt: changedAt }),
+      task('technical-only', { updatedAt: changedAt }),
       task('changed-closed', { isClosed: true, closedDate: '2026-08-03', updatedAt: changedAt }),
       task('historical-closed', { isClosed: true, closedDate: '2026-08-02' }),
       task('linked-internal-task', { isInternalControl: true, internalControlCaseId: 'linked-case', updatedAt: changedAt }),
     ],
     internalControlCases: [
-      internalCase('linked-case', { syncToTask: true, linkedTaskId: 'linked-internal-task', updatedAt: changedAt }),
+      internalCase('linked-case', { syncToTask: true, linkedTaskId: 'linked-internal-task', description: '切點後內控實質修改', updatedAt: changedAt }),
+      internalCase('standalone-technical', { updatedAt: changedAt }),
       internalCase('standalone-changed-closed', { isClosed: true, closedDate: '2026-08-03', updatedAt: changedAt }),
       internalCase('standalone-historical-open'),
       internalCase('standalone-historical-closed', { isClosed: true, closedDate: '2026-08-02' }),
@@ -69,9 +83,13 @@ try {
   const manual = upsertDailyMorningReport(scheduled.data, { at: firstManualAt, actorUserId: 'owner', source: 'manual' });
   assert.equal(manual.report.snapshot.windowStartedAt, previousCutoff, '本次早會區間必須承接上一次人工成功保存切點');
   assert.equal(manual.report.snapshot.windowEndedAt, firstManualAt, '當日第一次人工成功保存必須成為新切點');
-  assert.deepEqual(manual.report.snapshot.tasks.map(item => item.id).sort(), ['changed-closed', 'changed-open', 'historical-open'], '快照必須保留歷史未結，並納入區間內修改後結案的要事');
-  assert.deepEqual(manual.report.snapshot.internalControlCases.map(item => item.id).sort(), ['linked-case', 'standalone-changed-closed', 'standalone-historical-open'], '快照必須納入獨立及同步內控，並避免重複內控要事');
-  assert.equal(manual.report.taskCount, 6, '快照件數必須計算去重後的要事與內控');
+  assert.deepEqual(manual.report.snapshot.tasks.map(item => item.id).sort(), ['changed-closed', 'changed-open', 'historical-open', 'technical-only'], '快照必須保留歷史未結，並納入區間內修改後結案的要事');
+  assert.deepEqual(manual.report.snapshot.internalControlCases.map(item => item.id).sort(), ['linked-case', 'standalone-changed-closed', 'standalone-historical-open', 'standalone-technical'], '快照必須納入獨立及同步內控，並避免重複內控要事');
+  assert.deepEqual(manual.report.snapshot.todayTaskIds.sort(), ['changed-closed', 'changed-open'], '純技術 updatedAt 變化不得進入本期要事');
+  assert.deepEqual(manual.report.snapshot.todayInternalControlCaseIds.sort(), ['linked-case', 'standalone-changed-closed'], '純技術 updatedAt 變化不得進入本期內控');
+  assert.equal(manual.report.taskCount, 8, '快照件數必須計算去重後的要事與內控');
+  assert.equal(morningItemBusinessContentChanged(task('technical-only', { updatedAt: changedAt }), task('technical-only')), false, '只有技術時間戳不同不得算實質修改');
+  assert.equal(morningItemBusinessContentChanged(task('changed-open', { description: '新內容', updatedAt: changedAt }), task('changed-open', { description: '舊內容' })), true, '業務內容不同必須算實質修改');
 
   const secondManualAt = '2026-08-04T02:15:00.000Z';
   const postCutoffTask = task('post-cutoff-new', { createdAt: '2026-08-04T02:00:00.000Z', updatedAt: '2026-08-04T02:00:00.000Z' });
