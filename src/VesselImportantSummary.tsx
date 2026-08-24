@@ -60,7 +60,7 @@ export default function VesselImportantSummary({ vessel, tasks, internalControlC
       {vessel.position.manualRemark && <p className="manual-remark-summary"><strong>人工備註</strong>{vessel.position.manualRemark}</p>}
       {vessel.note.recentDynamics && <p><strong>近期／後續動態</strong>{vessel.note.recentDynamics}</p>}
       {abnormalMeetings.length > 0 && <p className="meeting-abnormal-summary"><strong>臨會/專題異常</strong>{canDiscloseMeetingSubjects ? abnormalMeetings.map(meeting => meeting.subject || '未命名會議').join('、') : `存在需關注之臨會/專題異常 ${abnormalMeetings.length} 件`}</p>}
-      {standaloneInternalCases.length > 0 && <p className="internal-control-summary"><strong>未同步內控</strong>{standaloneInternalCases.length} 件</p>}
+      {standaloneInternalCases.length > 0 && <p className="internal-control-summary"><strong className="internal-control-warning">未同步為要事的內控異常</strong>{standaloneInternalCases.length} 件</p>}
       {summaryTasks.length > 0 && <ul>{summaryTasks.map(task => <li key={task.id}>{task.isAbnormal && <span className="inline-abnormal">異常</span>}<span className={`badge ${priorityClass(task.priority)}`}>{task.priority}</span><RichTextContent compact value={task.description} fallback="尚未輸入要事內容"/></li>)}</ul>}
       {!dashboardHasSummary && <p>目前無重要摘要</p>}
     </div>
