@@ -14,6 +14,7 @@ import TemporaryMeetingsPage from './TemporaryMeetings';
 import { TaskEditModal, VesselEditModal } from './EditModals';
 import { normalizeAppData } from './normalize';
 import DashboardView from './Dashboard';
+import { scrollToDashboardVesselCard } from './dashboardVesselReturn';
 import BatchManagedVesselModal from './BatchManagedVesselModal';
 import VesselDetailPage from './VesselDetailPage';
 import WorkCenter from './WorkCenter';
@@ -294,6 +295,7 @@ export default function App() {
   const [filters, setFilters] = useState<FilterState>(emptyFilters);
   const [closedFilters, setClosedFilters] = useState<FilterState>({...emptyFilters,closedMode:'closed'});
   const [selectedVesselDetailId, setSelectedVesselDetailId] = useState('');
+  const dashboardReturnVesselIdRef=useRef('');
   const [editingVesselId, setEditingVesselId] = useState<string>('');
   const [editingTaskId, setEditingTaskId] = useState<string>('');
   const [requestedInternalControlCaseId,setRequestedInternalControlCaseId]=useState('');
@@ -1926,6 +1928,13 @@ export default function App() {
   useEffect(() => { setAgendaSelection(prev => prev.filter(id => activeVessels.some(v=>v.id===id))); }, [activeVessels]);
   useEffect(() => { setBatchSelectedVesselIds(prev => prev.filter(id => activeVessels.some(v=>v.id===id))); }, [activeVessels]);
   useEffect(() => { if (selectedVesselDetailId && !activeVessels.some(vessel=>vessel.id===selectedVesselDetailId)) setSelectedVesselDetailId(''); }, [activeVessels, selectedVesselDetailId]);
+  useEffect(()=>{
+    if(tab!=='dashboard'||selectedVesselDetailId)return;
+    const vesselId=dashboardReturnVesselIdRef.current;
+    if(!vesselId)return;
+    scrollToDashboardVesselCard(vesselId);
+    dashboardReturnVesselIdRef.current='';
+  },[tab,selectedVesselDetailId,dashboardVessels]);
   useEffect(() => { if (currentUser && (!canAccessTab(currentUser, tab) || (tab === 'reports' && !canExportReports))) setTab('dashboard'); }, [currentUser, tab, canExportReports]);
   useEffect(()=>{
     const quarantined=quarantinedCreationDraft;
@@ -2019,6 +2028,7 @@ export default function App() {
   };
   const closeVesselDetail = () => {
     invalidatePendingTaskOpen();
+    dashboardReturnVesselIdRef.current=selectedVesselDetailId;
     setSelectedVesselDetailId('');
   };
 

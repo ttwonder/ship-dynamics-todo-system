@@ -16,6 +16,7 @@ import VesselImportantSummary from './VesselImportantSummary';
 import { attentionFilterGroup, effectiveVesselManagerNames, emptyVesselFilterState, matchesVesselFilterGroups, shipTypeFilterOptions, supervisorIdsForVessel, vesselSupervisorOptions } from './vesselDashboardFilters';
 import { WEEKLY_ATTENTION_OPTIONS } from './weeklyAttention';
 import type { VesselAttentionSaveState } from './vesselAttentionSaveQueue';
+import { dashboardVesselCardId } from './dashboardVesselReturn';
 
 const attentionLevelLabel = (level: VesselAttentionLevel) => level === '特別關注' ? level : `${level}關注`;
 const automaticAttentionLevelLabel = (level: VesselAttentionLevel, hasPscWindow: boolean) =>
@@ -146,7 +147,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
         vessel.note.statusList.map(status => status === 'drydock/repiar' ? 'drydock/repair' : status).join('、'),
         vessel.note.statusSupplement.trim(),
       ].filter(Boolean).join('｜') || '未設定';
-      return <article key={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
+      return <article key={vessel.id} id={dashboardVesselCardId(vessel.id)} data-dashboard-vessel-id={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
         <div className="ship-card-head">
           <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${dashboardVesselDisplayName(vessel)} 單船詳情`}>{dashboardVesselDisplayName(vessel)}</button></div>
           <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<select disabled={!canEdit} className={`priority-pill attention-adjust attention-adjust-select ${level}`} aria-label={`${dashboardVesselDisplayName(vessel)} 關注程度`} title={canEdit?'直接選擇自動或不低於目前自動下限的手動關注度':'目前關注度'} value={selectedManualAttention} onChange={event=>onAdjustAttention(vessel.id,event.target.value as VesselAttentionLevel|'')}><option className={`attention-option ${vesselAttentionClass(attentionResult.automatic)}`} value="">自動：{automaticAttentionLevelLabel(attentionResult.automatic, attentionResult.hasPscWindow)}</option>{VESSEL_ATTENTION_LEVELS.map(option=><option className={`attention-option ${vesselAttentionClass(option)}`} key={option} value={option} disabled={!manualVesselAttentionAllowed(option,attentionResult.automatic)}>手動：{attentionLevelLabel(option)}</option>)}</select></div>
