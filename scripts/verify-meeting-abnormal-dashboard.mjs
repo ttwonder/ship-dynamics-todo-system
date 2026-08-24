@@ -5,6 +5,7 @@ import { createServer } from 'vite';
 const types = fs.readFileSync('src/types.ts','utf8');
 const meetingsPage = fs.readFileSync('src/TemporaryMeetings.tsx','utf8');
 const dashboard = fs.readFileSync('src/Dashboard.tsx','utf8');
+const vesselSummary = fs.readFileSync('src/VesselImportantSummary.tsx','utf8');
 const app = fs.readFileSync('src/App.tsx','utf8');
 const analysis = fs.readFileSync('src/DataAnalysis.tsx','utf8');
 
@@ -23,8 +24,8 @@ assert.ok(meetingsPage.includes("if(effectiveDraft.isInternalControl&&!effective
 assert.ok(meetingsPage.includes('liveMeeting.updatedAt !== meeting.updatedAt') && meetingsPage.includes("runDurableRelatedMutation(meetingEditLockKey(meeting.id),'臨會/專題刪除',apply)") && !meetingsPage.includes('prev.revision !== deleteSnapshot.revision') && meetingsPage.includes("'刪除臨會/專題', 'meeting'") && meetingsPage.includes('deletionNotices') && meetingsPage.includes("'刪除事項', 'task'") && meetingsPage.includes('meetingHistoricalVessels'), '刪除臨會需以完整關聯鎖、鎖後 meeting version 與原子 block expected-value fencing 保存，逐筆保留通知／稽核及完整歷史範圍，且不得因無關 revision 產生假衝突');
 assert.ok(meetingsPage.includes("reconciliation.internalControlCancelledIds.forEach") && meetingsPage.includes("'取消內部管控','task'") && meetingsPage.includes("internalControlCancellationRequested?'取消臨會/專題內部管控'") && meetingsPage.includes('已記錄取消人、時間及FLOW申報提醒'), '臨會取消內控需為每個待辦及會議留下專用稽核語義');
 assert.ok(meetingsPage.includes('parentAuthoritativeTaskTransition') && meetingsPage.includes('task.isInternalControl||liveMeeting.isInternalControl'), '父會議為內控但子待辦旗標不一致時，重存與刪除均須按父會議權威狀態進入取消授權、通知及稽核');
-assert.ok(dashboard.includes('meetingCreatesVesselAbnormalAlert') && dashboard.includes('臨會/專題異常'), '看板需顯示具體涉船臨會的異常提醒');
-assert.ok(dashboard.includes("canUseMeetings?abnormalMeetings.map") && dashboard.includes('存在需關注之臨會/專題異常'), '無會議內容權限時看板只可顯示去識別異常訊號，不得顯示標題');
+assert.ok(dashboard.includes('meetingCreatesVesselAbnormalAlert') && dashboard.includes('<VesselImportantSummary') && vesselSummary.includes('臨會/專題異常'), '看板需透過共用摘要顯示具體涉船臨會的異常提醒');
+assert.ok(vesselSummary.includes('canDiscloseMeetingSubjects ? abnormalMeetings.map') && vesselSummary.includes('存在需關注之臨會/專題異常'), '無會議內容權限時共用摘要只可顯示去識別異常訊號，不得顯示標題');
 assert.ok(analysis.includes('meetingCreatesVesselAbnormalAlert') && analysis.includes('hasMeetingAbnormal'), '數據分析的船舶關注度需納入與看板相同的臨會異常訊號');
 
 const server = await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});

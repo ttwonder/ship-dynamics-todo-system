@@ -45,14 +45,20 @@ assert.equal(value.color, '#000', '指定欄位數值必須是黑色');
 assert.ok(Number.parseFloat(value['font-size']) >= 15, '指定欄位數值至少需要15px');
 
 const cargo = declarationsFor('.ship-cargo');
-assert.equal(cargo.height, '64px', '每張船舶卡的貨名貨量區塊必須固定採用右側示例高度');
-assert.equal(cargo['min-height'], '64px', '短貨物內容也必須維持固定高度');
-assert.equal(cargo['max-height'], '64px', '長貨物內容不得撐高卡片');
-assert.equal(cargo.overflow, 'auto', '超出固定高度的貨物內容必須在區塊內捲動');
+assert.equal(cargo.height, '32px', '每張船舶卡的貨名貨量區塊必須縮為原高度一半');
+assert.equal(cargo['min-height'], '32px', '短貨物內容也必須維持固定高度');
+assert.equal(cargo['max-height'], '32px', '長貨物內容不得撐高卡片');
+assert.equal(cargo['overflow-y'], 'auto', '超出固定高度的貨物內容必須在區塊內垂直捲動');
+assert.equal(cargo['overflow-x'], 'hidden', '貨物內容不得產生橫向捲動');
 
 const cargoItems = declarationsFor('.ship-cargo .ship-data-value>span');
 assert.equal(cargoItems.color, '#000', '貨名貨量每筆內容必須是黑色');
 assert.equal(cargoItems['font-size'], '14px', '貨名貨量內容必須稍微縮小為14px');
 assert.equal(cargoItems['font-weight'], '400', '貨名貨量內容必須使用一般字重');
+
+const manualRemark = declarationsFor('.ship-summary-content .manual-remark-summary');
+assert.equal(manualRemark.color, '#111', '人工備註必須以接近純黑顯示，不得被摘要段落灰字覆蓋');
+assert.equal(manualRemark['font-size'], '16px', '人工備註字級必須放大為16px');
+assert.equal(manualRemark['font-weight'], '900', '人工備註必須使用醒目粗體');
 
 console.log('Dashboard card readability contracts passed.');

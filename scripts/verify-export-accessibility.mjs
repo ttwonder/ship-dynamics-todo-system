@@ -12,12 +12,13 @@ assert.match(meetings,/if \(!canExportReports\) return alert\('目前角色未�
 assert.match(meetings,/canExportReports&&/,'会议导出控件必须依权限显示');
 assert.match(meetings,/canExportReports&&<th className="no-print">選取<\/th>/,'无导出权限时必须隐藏选择栏');
 assert.match(meetings,/canExportReports&&<td className="no-print"><input aria-label=\{`選取會議/,'无导出权限时必须隐藏每列选择框');
-assert.match(app,/const reportVessels = activeVessels/,'报告中心只能接收当前用户授权船舶');
-assert.match(app,/const selectedIds=_selected\.filter\(id=>allowedIds\.has\(id\)\)[\s\S]*const reportScopeIds=vessels\.map\(v=>v\.id\)[\s\S]*const reportVesselIds=new Set\(reportScopeIds\)/,'报告选择必须先与授权范围取交集，并同步限制待办');
-assert.match(app,/const vessels=_selected\.length\?visibleVessels\.filter/,'非空选择与授权交集为空时不得回退全部授权船舶');
+assert.match(app,/const reportPreviewAuthorizedVessels=data\.vessels\.filter\(vessel=>vesselMatchesUser\(vessel,currentUser,canViewAllVessels\)\)/,'报告中心必须先建立当前用户授权船舶集合');
+assert.match(app,/const reportVessels=reportPreviewSnapshot[\s\S]*?: activeVessels;/,'实时报告只能接收当前授权船舶，历史快照也必须与当前授权范围取交集');
+assert.match(app,/const selectedIds=_selected\.filter\(id=>allowedIds\.has\(id\)\)[\s\S]*const reportScopeIds=vessels\.map\(v=>v\.id\)[\s\S]*classifyMorningAgenda\(\{[\s\S]*scopeVesselIds:reportScopeIds/,'报告选择必须先与授权范围取交集，并以相同范围分类早会要事与内控');
+assert.match(app,/const vessels=reportDate\?visibleVessels:_selected\.length\?visibleVessels\.filter/,'实时非空选择与授权交集为空时不得回退全部授权船舶；历史快照固定使用其授权范围');
 assert.match(app,/taskReportVesselLabel\(t,vessels\)[\s\S]*taskReportShipTypeLabel\(t,vessels\)/,'跨船报告列必须使用报告专用标签，未选择船不得显示为受限船舶');
 assert.match(fs.readFileSync(new URL('../src/taskVesselScope.ts',import.meta.url),'utf8'),/taskReportVesselLabel[\s\S]*return names\.join\('、'\) \|\| '-'[\s\S]*taskReportShipTypeLabel/,'报告专用标签必须只显示本次报告船舶交集，不添加受限船舶文案');
-assert.match(app,/const reportHistory=data\.agendaReports\.filter[\s\S]*report\.vesselIds\.every\(id=>allowedIds\.has\(id\)\)/,'历史报告元数据需按完整授权范围过滤');
+assert.match(app,/const reportHistory=dailyMorningReports\(data\.agendaReports\)\.filter\(report=>canViewAllReports\|\|\(report\.vesselIds\.length>0&&report\.vesselIds\.every\(id=>allowedIds\.has\(id\)\)\)\)/,'历史报告元数据需按完整授权范围过滤');
 assert.match(app,/disabled=\{!vessels\.length\}/,'空授权交集时必须禁用 PDF 输出');
 for (const label of ['目前位置','上一港','下一港','航行狀態','載況','ETA','ETB','ETD','貨名貨量','船舶狀態','要事']) {
   assert.ok(app.includes(label), `早會 PDF 必須包含「${label}」欄位`);

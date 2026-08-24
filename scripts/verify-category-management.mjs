@@ -19,7 +19,7 @@ try {
   const workflow = await server.ssrLoadModule('/src/meetingTaskWorkflow.ts');
   assert.deepEqual(
     workflow.meetingTaskItems({ id:'m-custom', taskItems:[{ id:'i-custom', description:'自訂分類待辦', categories:['危機干預'] }] }, [], ['船員管理','危機干預']),
-    [{ id:'i-custom', description:'自訂分類待辦', categories:['危機干預'], distributeToVessels:false }],
+    [{ id:'i-custom', description:'自訂分類待辦', categories:['危機干預'], distributeToVessels:false, isClosed:false, closedDate:undefined, closedBy:undefined }],
     '刷新臨會時必須依管理頁目前分類清單還原自訂分類，不得退回第一個「船員管理」',
   );
   assert.deepEqual(customized.tasks[0].categories, ['歷史分類'], '移除選項不得破壞歷史任務分類');

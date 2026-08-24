@@ -25,6 +25,10 @@ export function composeScheduleValue(date: string, time: string): string {
   return safeTime ? `${safeDate}T${safeTime}` : safeDate;
 }
 
+export function clearScheduleValue(): string {
+  return '';
+}
+
 export function formatScheduleDisplay(value = ''): string {
   const date = scheduleDateValue(value);
   if (!date) return '';

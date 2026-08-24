@@ -1,23 +1,23 @@
 import { useEffect, useState } from 'react';
-import type { InternalControlCase, ScheduleKind, TaskItem, UserAccount, Vessel, WeeklyAttentionKey } from './types';
+import type { InternalControlCase, ScheduleKind, TaskItem, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { daysDiff, todayDate } from './runtimeUtils';
 import { taipeiDateKey } from './taipeiTime';
 import { dashboardVesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
-import { deriveVesselAttention, unlinkedInternalControlCasesForVessel, vesselAttentionClass, vesselAttentionLabel, vesselAttentionPriorityCount } from './vesselAttention';
+import { deriveVesselAttention, manualVesselAttentionAllowed, VESSEL_ATTENTION_LEVELS, vesselAttentionClass, vesselAttentionLabel, vesselAttentionPriorityCount } from './vesselAttention';
 import QuickMorningPicker from './QuickMorningPicker';
-import { appearsInSingleVesselTasks, vesselAttentionTasks } from './taskAttention';
+import { vesselAttentionTasks } from './taskAttention';
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
 import { automaticScheduleKind, formatCompleteScheduleDisplay, nextScheduleKind } from './scheduleTime';
 import { userCanManageVesselByAssignmentOrDelegation } from './vesselDelegation';
 import { meetingCreatesVesselAbnormalAlert, type DashboardMeetingAlert } from './meetingVesselAttention';
-import RichTextContent from './RichTextContent';
 import VesselFilterControls from './VesselFilterControls';
+import VesselImportantSummary from './VesselImportantSummary';
 import { attentionFilterGroup, effectiveVesselManagerNames, emptyVesselFilterState, matchesVesselFilterGroups, shipTypeFilterOptions, supervisorIdsForVessel, vesselSupervisorOptions } from './vesselDashboardFilters';
 import { WEEKLY_ATTENTION_OPTIONS } from './weeklyAttention';
 import type { VesselAttentionSaveState } from './vesselAttentionSaveQueue';
 
-const PRIORITY_RANK = { 急: 0, 高: 1, 中: 2, 低: 3 } as const;
+const attentionLevelLabel = (level: VesselAttentionLevel) => level === '特別關注' ? level : `${level}關注`;
 
 interface DashboardProps {
   user: UserAccount;
@@ -36,7 +36,7 @@ interface DashboardProps {
   onToggleAttention: (vesselId: string, key: WeeklyAttentionKey) => void;
   attentionSaveStates?: Record<string, VesselAttentionSaveState>;
   onRetryAttentionSave?: (vesselId: string) => void;
-  onAdjustAttention: (vesselId: string) => void;
+  onAdjustAttention: (vesselId: string, manualAttentionLevel: VesselAttentionLevel | '') => void;
   onStartMeeting: (requestedIds?: string[]) => void;
   onOpenReport: () => void;
   onTaskMetric: (mode: 'open' | 'high' | 'overdue') => void;
@@ -125,7 +125,6 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
       const attentionTasks = vesselAttentionTasks(vesselTasks);
       const abnormalMeetings = abnormalMeetingsForVessel(vessel.id);
-      const standaloneInternalCases = unlinkedInternalControlCasesForVessel(internalControlCases, vessel.id);
       const attentionResult = deriveVesselAttention(vessel, attentionTasks, abnormalMeetings.length > 0, internalControlCases);
       const urgent = vesselAttentionPriorityCount(attentionResult, attentionTasks, '急');
       const high = vesselAttentionPriorityCount(attentionResult, attentionTasks, '高');
@@ -137,9 +136,8 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       const automaticKind = automaticScheduleKind(vessel.position, scheduleNow);
       const scheduleKind = scheduleByVessel[vessel.id] ?? automaticKind;
       const scheduleValue = formatCompleteScheduleDisplay(vessel.position[scheduleField[scheduleKind]])||'TBA';
-      const summaryTasks = vesselTasks.filter(appearsInSingleVesselTasks);
-      const sortedTasks = [...summaryTasks].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || Number(b.isAbnormal) - Number(a.isAbnormal));
       const highest = vesselAttentionLabel(attentionResult, attentionTasks);
+      const selectedManualAttention = manualVesselAttentionAllowed(attentionResult.manual, attentionResult.automatic) ? attentionResult.manual : '';
       const selectedForMeeting = selected.includes(vessel.id);
       const attentionSaveState = attentionSaveStates[vessel.id];
       const managerNames = effectiveVesselManagerNames(vessel, users);
@@ -150,12 +148,12 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       return <article key={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
         <div className="ship-card-head">
           <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${dashboardVesselDisplayName(vessel)} 單船詳情`}>{dashboardVesselDisplayName(vessel)}</button><div className="ship-type-supervisor"><span>{vessel.shipType || '-'}</span><i aria-hidden="true">｜</i><span>{managerNames.join('、') || '-'}</span></div></div>
-          <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<button type="button" disabled={!canEdit} className={`priority-pill attention-adjust ${level}`} title={canEdit?'點擊切換自動或不低於目前自動下限的手動關注度':'目前關注度'} onClick={()=>onAdjustAttention(vessel.id)}>{highest}</button></div>
+          <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<select disabled={!canEdit} className={`priority-pill attention-adjust attention-adjust-select ${level}`} aria-label={`${dashboardVesselDisplayName(vessel)} 關注程度`} title={canEdit?'直接選擇自動判定或不低於目前自動下限的手動關注度':'目前關注度'} value={selectedManualAttention} onChange={event=>onAdjustAttention(vessel.id,event.target.value as VesselAttentionLevel|'')}><option value="">自動判定（目前：{highest}）</option>{VESSEL_ATTENTION_LEVELS.map(option=><option key={option} value={option} disabled={!manualVesselAttentionAllowed(option,attentionResult.automatic)}>{attentionLevelLabel(option)}</option>)}</select></div>
         </div>
         <div className="ship-operation-grid">
           <div className="ship-route"><b>{vessel.position.lastPort || '未設定'}</b><span>→</span><b>{vessel.position.nextPort || '未設定'}</b></div>
           <div className="ship-position"><small>位置</small><b>{vessel.position.location || '未設定'}</b></div>
-          <div className="ship-navigation"><small className="ship-data-label">航行狀態</small><b className="ship-data-value">{vessel.position.navigationStatus === '航行' ? `${vessel.position.speedKnots || 0} kn` : vessel.position.navigationStatus}</b></div>
+          <div className="ship-navigation"><small className="ship-data-label">航行狀態</small><b className="ship-data-value">{vessel.position.navigationStatus}</b></div>
           <button type="button" className="ship-schedule" onClick={() => cycleSchedule(vessel.id, automaticKind)} title="點擊循環顯示 ETA／ETB／ETD"><b className="ship-data-label">{scheduleKind}</b><span className="ship-data-value">{scheduleValue}</span></button>
           <div className="ship-status"><small className="ship-data-label">狀態補充</small><b className="ship-data-value">{statusSupplement}</b></div>
           <div className="ship-load"><small>載況</small><b>{vessel.cargo.loadStatus}</b></div>
@@ -165,7 +163,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
           const active = vessel.weeklyAttention.includes(option.key);
           return <button type="button" key={option.key} disabled={!canEdit} className={`${active ? 'active' : ''} ${option.key === 'psc-window' ? 'psc' : ''}`} aria-pressed={active} onClick={() => onToggleAttention(vessel.id, option.key)}><i />{option.label}</button>;
         })}{attentionSaveState&&<div className={`weekly-attention-sync ${attentionSaveState.phase}`} role="status" title={attentionSaveState.message||''}>{attentionSaveState.phase==='error'?<button type="button" disabled={!canEdit} onClick={()=>onRetryAttentionSave(vessel.id)}>同步失敗，重試</button>:<span>{attentionSaveState.phase==='saving'?'同步中…':'待同步'}</span>}</div>}</div>
-        <div className="ship-summary"><b>重要摘要：</b><div className="ship-summary-content">{vessel.position.manualRemark&&<p><strong>人工備註</strong>{vessel.position.manualRemark}</p>}{vessel.note.recentDynamics&&<p><strong>近期／後續動態</strong>{vessel.note.recentDynamics}</p>}{abnormalMeetings.length>0&&<p className="meeting-abnormal-summary"><strong>臨會/專題異常</strong>{canUseMeetings?abnormalMeetings.map(meeting=>meeting.subject||'未命名會議').join('、'):`存在需關注之臨會/專題異常 ${abnormalMeetings.length} 件`}</p>}{standaloneInternalCases.length>0&&<p className="internal-control-summary"><strong>未同步內控</strong>{standaloneInternalCases.length} 件</p>}{sortedTasks.length ? <ul>{sortedTasks.map(task => <li key={task.id}>{task.isAbnormal && <span>異常</span>}<strong>{task.priority}</strong><RichTextContent compact value={task.description} fallback="尚未輸入要事內容"/></li>)}</ul> : !abnormalMeetings.length&&!standaloneInternalCases.length&&<p>目前無未結要事</p>}</div></div>
+        <VesselImportantSummary vessel={vessel} tasks={tasks} internalControlCases={internalControlCases} meetings={meetings} canDiscloseMeetingSubjects={canUseMeetings}/>
         <div className="ship-card-foot"><span className="task-mini"><i className="urgent">急 {urgent}</i><i className="high">高 {high}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print">{canEdit&&<button type="button" className={`btn small ${batchSelected.includes(vessel.id)?'green':'ghost'}`} aria-pressed={batchSelected.includes(vessel.id)} onClick={()=>setBatchSelected(batchSelected.includes(vessel.id)?batchSelected.filter(id=>id!==vessel.id):[...batchSelected,vessel.id])}>{batchSelected.includes(vessel.id)?'取消批量選取':'批量選取'}</button>}{canEdit && <button className="btn small" onClick={() => onEdit(vessel.id)}>快速更新</button>}{canCreateTasks && <button className="btn small ghost" onClick={() => onAddTask(vessel.id)}>新增要事</button>}{canUseMeetings&&<button className={`btn small ${selectedForMeeting ? 'pink' : 'ghost'}`} onClick={() => toggleMeeting(vessel.id)}>{selectedForMeeting ? '已選入會議' : '選入會議'}</button>}</div></div>
       </article>;
     })}</div>

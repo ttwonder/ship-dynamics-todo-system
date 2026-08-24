@@ -12,7 +12,7 @@ import MeetingPeoplePicker from './MeetingPeoplePicker';
 import { isRichTextEmpty, richTextToPlainText } from './richText';
 import { taskIsClosedForVessel, taskProgressForVessel, taskVesselProgressSummary, usesPerVesselProgress } from './taskVesselProgress';
 import { categoryChoicesForTask } from './taskCategories';
-import { composeScheduleValue, scheduleDateValue, scheduleTimeValue } from './scheduleTime';
+import { clearScheduleValue, composeScheduleValue, scheduleDateValue, scheduleTimeValue } from './scheduleTime';
 import { formatTaipeiDateTime } from './taipeiTime';
 export { scheduleDateValue as scheduleInputValue } from './scheduleTime';
 
@@ -91,10 +91,10 @@ function DropdownMultiPicker({ label, values, choices, onChange, disabled = fals
   </div>;
 }
 
-function ScheduleDateTimeField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+export function ScheduleDateTimeField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   const date = scheduleDateValue(value);
   const time = scheduleTimeValue(value);
-  return <div className="field schedule-date-time-field"><label>{label}</label><div className="schedule-date-time-inputs"><input type="date" aria-label={`${label} 日期`} value={date} onChange={event => onChange(composeScheduleValue(event.target.value, time))}/><input type="time" aria-label={`${label} 小時分鐘`} value={time} disabled={!date} onChange={event => onChange(composeScheduleValue(date, event.target.value))}/></div><small>選填；可只填日期，若填小時分鐘會顯示到 HH:mm；未選擇時顯示 TBA</small></div>;
+  return <div className="field schedule-date-time-field"><label>{label}</label><div className="schedule-date-time-inputs"><input type="date" aria-label={`${label} 日期`} value={date} onChange={event => onChange(composeScheduleValue(event.target.value, time))}/><input type="time" aria-label={`${label} 小時分鐘`} value={time} disabled={!date} onChange={event => onChange(composeScheduleValue(date, event.target.value))}/><button type="button" className="btn small ghost schedule-clear-button" aria-label={`${label} 清除`} disabled={!value} onClick={()=>onChange(clearScheduleValue())}>清除</button></div><small>選填；可只填日期，若填小時分鐘會顯示到 HH:mm；未選擇時顯示 TBA</small></div>;
 }
 
 export function VesselEditModal({ vessel, data, currentUser, close, onSave, addTask, editTask, leaseMode = 'editable', leaseMessage = '' }: { vessel?: Vessel; data: AppData; currentUser: UserAccount; close: () => void; onSave: (vessel: Vessel) => boolean | Promise<boolean>; addTask: (vesselId: string) => void; editTask: (taskId: string) => void; leaseMode?: 'editable'|'retrying'|'frozen'; leaseMessage?: string }) {
@@ -121,13 +121,12 @@ export function VesselEditModal({ vessel, data, currentUser, close, onSave, addT
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="vessel-edit-title"><div className="modal-header"><div><h2 id="vessel-edit-title">快速更新｜{vesselDisplayName(draft)}</h2><small>按「保存並關閉」才會寫入資料；按 Esc 等同取消</small></div><div className="heading-actions"><button type="button" className="btn ghost" disabled={saving} onClick={cancel}>{leaseMode==='frozen'?'放棄並關閉':'取消並關閉'}</button><button type="button" className="btn primary" disabled={saving||leaseMode!=='editable'} onClick={()=>void save()}>{saving?'正在確認雲端…':leaseMode==='retrying'?'正在重新確認編輯鎖…':leaseMode==='frozen'?'編輯鎖已失效，不能保存':'保存並關閉'}</button></div></div>
     {leaseMode!=='editable'&&<div className={`callout ${leaseMode==='frozen'?'danger':'warning'} vessel-lease-continuity-notice`} role="status"><b>{leaseMode==='frozen'?'多人協作鎖已失效':'多人協作鎖暫時無法確認'}</b><span>{leaseMessage||(leaseMode==='frozen'?'目前內容以唯讀方式保留，不能保存；可先複製內容，或明確放棄並關閉。':'正在重試；目前內容仍保留，可以繼續填寫，確認成功前不能保存。')}</span></div>}
     <fieldset disabled={leaseMode==='frozen'} className="vessel-editor-fields" aria-readonly={leaseMode==='frozen'}>
-    <div className="smart-ship-api-note"><b>智慧船舶接口預留</b><span>上下港、位置、速度／航行狀態、載況、ETA／ETB／ETD 與貨名貨量日後可自動同步；目前欄位同時支援手動修改，手動值會正常保存。</span></div>
+    <div className="smart-ship-api-note"><b>智慧船舶接口預留</b><span>上下港、位置、航行狀態、載況、ETA／ETB／ETD 與貨名貨量日後可自動同步；目前顯示欄位同時支援手動修改，手動值會正常保存。船速資料接口保留，待 AIS 接入後再啟用。</span></div>
     <div className="grid cols-4 vessel-operational-grid">
       <div className="field"><label>目前位置</label><input disabled={saving} value={draft.position.location} onChange={event => { const value = event.target.value; update(target => { target.position.location = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }); }}/></div>
       <div className="field"><label>上一港</label><input disabled={saving} value={draft.position.lastPort} onChange={event => { const value = event.target.value; update(target => { target.position.lastPort = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }); }}/></div>
       <div className="field"><label>下一港</label><input disabled={saving} value={draft.position.nextPort} onChange={event => { const value = event.target.value; update(target => { target.position.nextPort = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }); }}/></div>
       <div className="field"><label>航行狀態</label><select disabled={saving} value={draft.position.navigationStatus} onChange={event => { const value = event.target.value as NavigationStatus; update(target => { target.position.navigationStatus = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }); }}><option>航行</option><option>拋錨</option><option>進港中</option><option>出港中</option><option>停泊</option><option>漂航</option></select></div>
-      <div className="field"><label>速度（kn）</label><input disabled={saving} type="number" min="0" step="0.1" value={draft.position.speedKnots} onChange={event => { const value = Number(event.target.value || 0); update(target => { target.position.speedKnots = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }); }}/></div>
       <div className="field"><label>載況</label><select disabled={saving} value={draft.cargo.loadStatus} onChange={event => { const value = event.target.value as LoadStatus; update(target => { target.cargo.loadStatus = value; target.cargo.source = 'manual'; target.cargo.updatedAt = nowIso(); }); }}><option>空載</option><option>非空載</option><option>滿載</option></select></div>
       <ScheduleDateTimeField label="ETA" value={draft.position.eta} onChange={value => update(target => { target.position.eta = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); })}/>
       <ScheduleDateTimeField label="ETB" value={draft.position.etb} onChange={value => update(target => { target.position.etb = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); })}/>

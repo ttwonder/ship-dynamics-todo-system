@@ -20,7 +20,7 @@ assert.match(editor, /!readOnly&&!creating&&canClose&&<button/, '新增要事模
 assert.ok(editor.includes("creating?'取消並關閉':'取消'"), '新增要事取消按鈕必須標示取消並關閉');
 assert.ok(editor.includes("creating?'保存並關閉':'保存變更'"), '新增要事保存按鈕必須標示保存並關閉');
 
-assert.ok(workCenter.includes('const selectableInternalCases=(canComplete||canDelete||canPrint)?filteredInternalCases:[];'), '未同步內控待辦的可選性必須與完成、刪除、PDF任一真實能力一致');
+assert.ok(workCenter.includes('const selectableInternalCases=filteredInternalCases;'), '未同步內控列必須保持可選，讓普通操作員仍可個人移除、完成或匯出所選 PDF，不得只綁刪除權限');
 assert.ok(workCenter.includes('const selectable=selectableInternalCases.some(candidate=>candidate.id===item.id);') && workCenter.includes("className={`work-task-row internal-control-work-row ${selectable?'':'no-selection-row'}") && workCenter.includes('selectable&&<label className="work-task-select"><input type="checkbox" aria-label={`選取內控'), '可執行至少一項選取動作者必須能明確勾選未同步內控待辦');
 assert.match(styles, /\.work-task-row\.no-selection-row\{[^}]*grid-template-columns:minmax\(0,1fr\) auto/, '無勾選框待辦必須使用正文＋操作兩欄格線');
 assert.match(styles, /\.quick-status-bar\{[^}]*grid-template-columns:1fr[^}]*align-items:start/, '加入狀態記錄必須改成上下排列');

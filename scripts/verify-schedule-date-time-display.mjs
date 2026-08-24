@@ -5,18 +5,23 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 
 const editModals = fs.readFileSync('src/EditModals.tsx', 'utf8');
+const normalizedApp = fs.readFileSync('src/NormalizedApp.tsx', 'utf8');
 const dashboard = fs.readFileSync('src/Dashboard.tsx', 'utf8');
 const detail = fs.readFileSync('src/VesselDetailPage.tsx', 'utf8');
 
 assert.ok(editModals.includes('ScheduleDateTimeField'), '快速更新 ETA／ETB／ETD 需使用日期＋可選時間欄位元件');
 assert.ok(editModals.includes('type="date"') && editModals.includes('type="time"'), 'ETA／ETB／ETD 編輯需同時提供日期與小時分鐘輸入');
 assert.ok(!editModals.includes('type="datetime-local"'), '不得再用 datetime-local，否則無法保存純日期');
+assert.match(editModals, /aria-label=\{`\$\{label\} 清除`\}/, 'ETA／ETB／ETD 元件需提供 App 自己的清除按鈕');
+assert.ok(!normalizedApp.includes('type="datetime-local"'), 'normalized runtime 也不得退回手機無法可靠清除的 datetime-local');
+assert.match(normalizedApp, /<ScheduleDateTimeField key=\{field\} label=\{field\.toUpperCase\(\)\}/, 'normalized runtime 的 ETA／ETB／ETD 必須共用同一清除元件');
 assert.ok(dashboard.includes('formatCompleteScheduleDisplay'), '船舶看板需只顯示完整日期＋時間，缺值或缺時間顯示 TBA');
 assert.ok(detail.includes('formatScheduleDisplay'), '單船詳情需格式化 ETA／ETB／ETD 顯示');
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
   const schedule = await server.ssrLoadModule('/src/scheduleTime.ts');
+  assert.equal(schedule.clearScheduleValue(), '', '清除必須保存真正空字串，使日期與時間同時清空');
   assert.equal(schedule.scheduleDateValue('2026-07-17'), '2026-07-17');
   assert.equal(schedule.scheduleDateValue('2026-07-17T13:45'), '2026-07-17');
   assert.equal(schedule.scheduleDateValue('2026-07-17 13:45:00'), '2026-07-17');
@@ -48,6 +53,10 @@ try {
   assert.equal(schedule.nextScheduleKind('ETA'), 'ETB');
   assert.equal(schedule.nextScheduleKind('ETB'), 'ETD');
   assert.equal(schedule.nextScheduleKind('ETD'), 'ETA');
+
+  const { ScheduleDateTimeField } = await server.ssrLoadModule('/src/EditModals.tsx');
+  const scheduleEditorMarkup = renderToStaticMarkup(React.createElement(ScheduleDateTimeField, { label:'ETA', value:'2026-08-12T10:00', onChange(){} }));
+  assert.match(scheduleEditorMarkup, /<button[^>]*aria-label="ETA 清除"[^>]*>清除<\/button>/, 'ETA 編輯器需渲染明確清除按鈕，手機不依賴原生日期重置');
 
   const { default: Dashboard } = await server.ssrLoadModule('/src/Dashboard.tsx');
   const user = {

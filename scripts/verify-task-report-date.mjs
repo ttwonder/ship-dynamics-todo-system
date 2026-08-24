@@ -19,9 +19,11 @@ assert.ok(
 );
 assert.ok(
   morningSource.includes('const taskReportDate = (task: TaskItem) => task.reportDate || taipeiDateKey(task.createdAt || task.updatedAt);')
-    && morningSource.includes('taskReportDate(task) === todayKey')
-    && morningSource.includes('taskReportDate(task) < todayKey'),
-  '早會今日／歷史分組必須優先使用報告日期，舊資料則按台北日期回填',
+    && morningSource.includes('classifyMorningAgenda({')
+    && morningSource.includes('liveMorningWindow(data.agendaReports)')
+    && !morningSource.includes('taskReportDate(task) === todayKey')
+    && !morningSource.includes('taskReportDate(task) < todayKey'),
+  '報告日期只供顯示／舊資料回填；早會今日與歷史分組必須依首次成功保存切點區間',
 );
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });

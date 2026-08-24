@@ -7,6 +7,9 @@ export const VESSEL_ATTENTION_LEVELS: VesselAttentionLevel[] = ['低', '中', '�
 const attentionRank = (level: VesselAttentionLevel) => VESSEL_ATTENTION_LEVELS.indexOf(level);
 const higherAttention = (left: VesselAttentionLevel, right: VesselAttentionLevel): VesselAttentionLevel => attentionRank(left) >= attentionRank(right) ? left : right;
 
+export const manualVesselAttentionAllowed = (manual: VesselAttentionLevel | '', automatic: VesselAttentionLevel): boolean =>
+  !manual || attentionRank(manual) >= attentionRank(automatic);
+
 export const taskIndicatesAccident = (task: TaskItem) =>
   taskCategoriesOf(task).some(category => category.includes('事故'))
   || [task.description, task.status].some(value => value.includes('事故'));

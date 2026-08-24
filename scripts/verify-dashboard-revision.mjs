@@ -4,6 +4,7 @@ import fs from 'node:fs';
 const read = path => fs.readFileSync(path, 'utf8');
 const app = read('src/App.tsx');
 const dashboard = read('src/Dashboard.tsx');
+const vesselSummary = read('src/VesselImportantSummary.tsx');
 const weeklyAttention = read('src/weeklyAttention.ts');
 const types = read('src/types.ts');
 const modals = read('src/EditModals.tsx');
@@ -28,9 +29,10 @@ for (const status of ['航行','拋錨','進港中','出港中','停泊','漂航
 }
 assert.ok(modals.includes('智慧船舶接口'), '快速更新需说明资料可由智慧船舶接口同步');
 
-for (const label of ['異常存在', '位置', '貨名貨量', '重要摘要', '快速更新', '新增要事', '選入會議']) {
+for (const label of ['異常存在', '位置', '貨名貨量', '快速更新', '新增要事', '選入會議']) {
   assert.ok(dashboard.includes(label), `船舶看板需显示「${label}」`);
 }
+assert.ok(dashboard.includes('<VesselImportantSummary')&&vesselSummary.includes('重要摘要'), '船舶看板需掛載共用「重要摘要」');
 for (const label of ['換員操作', '加油加水', '物料配件', '維修', 'Survey', '稽核檢查', 'PSC窗開']) {
   assert.ok(weeklyAttention.includes(label), `船舶看板需提供「${label}」一周关注灯`);
 }
@@ -46,10 +48,10 @@ assert.ok(styles.includes('grid-template-areas:"route route" "position navigatio
 assert.ok(styles.includes('gap:6px;margin:10px 0 8px'), '船舶动态区块需缩小网格间距与上下留白');
 assert.ok(styles.includes('.ship-route{grid-area:route;margin:0;padding:8px 7px'), '航线区块需使用紧凑高度');
 assert.ok(styles.includes('.ship-route b{') && styles.includes('font-size:13px') && styles.includes('white-space:normal') && styles.includes('overflow-wrap:anywhere'), '看板上一港／下一港需小字並允許長港名自動換行');
-assert.ok(styles.includes('min-height:112px') && styles.includes('.ship-summary{') && styles.includes('flex:1'), '重要摘要需取得更高的最小高度与剩余空间');
+assert.ok(styles.includes('.ship-summary{flex-basis:160px;height:160px;min-height:160px'), '重要摘要需固定為 160px 並在內容超出時捲動');
 assert.ok(dashboard.includes("priority === '急'") && dashboard.includes('急 {urgent}'), '看板需显示急等级统计');
 assert.ok(app.includes('t.isAbnormal') && app.includes('異常</span>'), '清单及报告需显示异常资料');
-assert.ok(morning.includes('急:0') && morning.includes('異常'), '早会需按急等级排序并显示异常');
+assert.ok(morning.includes('急: 0') && morning.includes('異常'), '早会需按急等级排序并显示异常');
 assert.ok(meetingTasks.includes('priority,') && meetingTasks.includes('isAbnormal: isAbnormal || isInternalControl') && meetingTasks.includes('isInternalControl,'), '臨會/專題產生的要事需帶完整新資料契約');
 
 assert.ok(normalizer.includes("const priorities: TaskPriority[] = ['急', '高', '中', '低']"), '正規化器需接受急等级');

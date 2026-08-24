@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import fpmcLogo from './assets/fpmc-logo.png';
 import { createInitialData } from './data/seed';
-import type { AgendaReport, AppData, FilterState, InternalControlCase, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, WeeklyAttentionKey } from './types';
+import type { AgendaReport, AppData, FilterState, InternalControlCase, MorningReportSnapshot, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, sanitizeAppDataForStorage, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
 import { CloudBlockPatchUnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, claimEditLock, cloudStoragePayloadFor, fetchCloudData, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
@@ -31,7 +31,7 @@ import { vesselDisplayName } from './vesselDisplay';
 import { applyVesselOperationalDraft, vesselOperationalDraftEquals } from './vesselOperationalDraft';
 import { taskHasVessel, taskReportShipTypeLabel, taskReportVesselLabel, taskShipTypeLabel, taskVesselIds, taskVesselLabel, taskVessels } from './taskVesselScope';
 import { buildTaskReadOnlyEditorData, type TaskReadOnlyEditorData } from './taskReadOnlyProjection';
-import { deriveVesselAttention, nextManualVesselAttention } from './vesselAttention';
+import { deriveVesselAttention, manualVesselAttentionAllowed } from './vesselAttention';
 import { dashboardMeetingAlerts, meetingCreatesVesselAbnormalAlert } from './meetingVesselAttention';
 import { canEditTemporaryMeetings, meetingAppliesToUser } from './meetingAccess';
 import { completeSelectedTasksWithMeetingSync, sanitizeTaskSelection, validateBatchTaskSelection } from './batchTaskActions';
@@ -45,7 +45,8 @@ import { morningDiscussionTasks } from './morningTaskScope';
 import { taskIsClosedForScope, taskIsClosedForVessel, taskProgressForVessel, taskProjectedProgressForScope, updateTaskVesselProgress, usesPerVesselProgress } from './taskVesselProgress';
 import { formatScheduleDisplay } from './scheduleTime';
 import { formatTaipeiDate, formatTaipeiDateTime, taipeiDateKey } from './taipeiTime';
-import { dailyMorningReports, upsertDailyMorningReport } from './morningHistory';
+import { dailyMorningReports, liveMorningWindow, upsertDailyMorningReport } from './morningHistory';
+import { classifyMorningAgenda } from './morningAgenda';
 import { printMorningReportPdf } from './morningReportPdf';
 import RichTextContent from './RichTextContent';
 import { richTextToPlainText } from './richText';
@@ -1760,23 +1761,25 @@ export default function App() {
     if(lock.status==='owned'&&!await ensureCloudDurableBeforeLeaseRelease(sectionKey))return false;
     return releaseCurrentEditLock();
   };
-  const mutateVesselWithLease=async(vesselId:string,label:string,action:string,detail:string,updater:(vessel:Vessel,draft:AppData)=>void)=>{
+  const mutateVesselWithLease=async(vesselId:string,label:string,action:string,detail:string,updater:(vessel:Vessel,draft:AppData)=>string|void)=>{
     const sectionKey=`vessel:${vesselId}`;
     const fresh=await claimExclusiveItemLease(sectionKey,label);
     if(!fresh)return false;
     if(!requireMutationLease(sectionKey)){await releaseCurrentEditLock();return false;}
     let applied=false;
+    let rejectionMessage='';
     flushSync(()=>setData(prev=>{
       const actor=prev.users.find(user=>user.id===currentUser.id&&user.isActive);
       const vessel=prev.vessels.find(item=>item.id===vesselId&&item.isActive);
       if(prev.revision!==fresh.revision||!actor||!vessel||!hasPermission(prev.settings.rolePermissions,actor,'editBusinessContent')||!batchVisibleVesselIds(prev,actor).has(vesselId))return prev;
       const draft=clone(prev);
       const target=draft.vessels.find(item=>item.id===vesselId)!;
-      updater(target,draft);
+      rejectionMessage=updater(target,draft)||'';
+      if(rejectionMessage)return prev;
       applied=true;
       return withAudit(draft,actor,action,'vessel',vesselId,detail);
     }));
-    if(!applied){await releaseExclusiveItemLease(sectionKey);alert('船舶資料或權限已變更，本次未保存；請重新操作。');return false;}
+    if(!applied){await releaseExclusiveItemLease(sectionKey);alert(rejectionMessage||'船舶資料或權限已變更，本次未保存；請重新操作。');return false;}
     return releaseExclusiveItemLease(sectionKey);
   };
   const persistDashboardVesselAttention=async(vesselId:string,desired:WeeklyAttentionKey[])=>{
@@ -1842,12 +1845,18 @@ export default function App() {
     setSavePhase('dirty');
     setCloudStatus('正在重試保存關注燈…');
   };
-  const adjustDashboardVesselAttention=(vesselId:string)=>{
+  const adjustDashboardVesselAttention=(vesselId:string,manualAttentionLevel:VesselAttentionLevel|'')=>{
     if(!canEditBusinessContent)return alert('目前角色未獲授權調整關注度');
+    const visibleVessel=liveData.current.vessels.find(item=>item.id===vesselId&&item.isActive);
+    if(!visibleVessel)return alert('船舶資料已變更，請重新整理後再操作');
+    const visibleOpenTasks=vesselAttentionTasks(liveData.current.tasks.filter(task=>taskHasVessel(task,vesselId))).filter(task=>!taskIsClosedForVessel(task,vesselId));
+    const visibleAutomatic=deriveVesselAttention(visibleVessel,visibleOpenTasks,liveData.current.meetings.some(meeting=>meetingCreatesVesselAbnormalAlert(meeting,vesselId)),liveData.current.internalControlCases).automatic;
+    if(!manualVesselAttentionAllowed(manualAttentionLevel,visibleAutomatic))return alert(`不能低於目前自動判定：${visibleAutomatic}關注`);
     void mutateVesselWithLease(vesselId,`船舶關注度｜${vesselId}`,'調整船舶關注度','自動／低／中／高／急／特別關注（受自動下限保護）',(vessel,draft)=>{
       const openVesselTasks=vesselAttentionTasks(draft.tasks.filter(task=>taskHasVessel(task,vesselId))).filter(task=>!taskIsClosedForVessel(task,vesselId));
       const automatic=deriveVesselAttention(vessel,openVesselTasks,draft.meetings.some(meeting=>meetingCreatesVesselAbnormalAlert(meeting,vesselId)),draft.internalControlCases).automatic;
-      vessel.manualAttentionLevel=nextManualVesselAttention(vessel.manualAttentionLevel||'',automatic);
+      if(!manualVesselAttentionAllowed(manualAttentionLevel,automatic))return `自動判定已更新為${automatic}關注，本次未保存；請重新選擇。`;
+      vessel.manualAttentionLevel=manualAttentionLevel;
       vessel.updatedAt=nowIso();
     });
   };
@@ -1892,11 +1901,18 @@ export default function App() {
   const reportVessels=reportPreviewSnapshot
     ? reportPreviewSnapshot.vessels.filter(vessel=>reportPreviewAuthorizedVesselIds.has(vessel.id))
     : activeVessels;
+  const reportPreviewSnapshotInternalControlCases=reportPreviewSnapshot?.internalControlCases||[];
   const reportPreviewTasks=reportPreviewSnapshot?selectTasksVisibleToUser(reportPreviewSnapshot.tasks,currentUser,{
-    internalControlCases:[],
+    internalControlCases:reportPreviewSnapshotInternalControlCases,
     meetings:reportPreviewSnapshot.meetings,
     visibleVesselIds:reportVessels.map(vessel=>vessel.id),
   }):[];
+  const reportPreviewInternalControlCases=reportPreviewSnapshot?selectInternalControlCasesVisibleToUser(
+    reportPreviewSnapshotInternalControlCases,
+    reportPreviewSnapshot.tasks,
+    currentUser,
+    reportVessels.map(vessel=>vessel.id),
+  ):[];
   const reportPreviewMeetingIds=new Set(reportPreviewTasks.map(task=>task.sourceMeetingId).filter((id):id is string=>Boolean(id)));
   const reportPreviewMeetings=reportPreviewSnapshot?reportPreviewSnapshot.meetings.filter(meeting=>reportPreviewMeetingIds.has(meeting.id)):[];
   const reportPreviewData:AppData=reportPreviewSnapshot?{
@@ -1904,6 +1920,7 @@ export default function App() {
     vessels:reportVessels,
     meetings:reportPreviewMeetings,
     tasks:reportPreviewTasks,
+    internalControlCases:reportPreviewInternalControlCases,
   }:roleVisibleData;
   const myWorkTaskCount = currentUser ? selectUserWorkCenterTasks(roleVisibleData,currentUser,activeVessels).length + selectUserWorkCenterInternalCases(roleVisibleData,currentUser,activeVessels).length : 0;
   useEffect(() => { setAgendaSelection(prev => prev.filter(id => activeVessels.some(v=>v.id===id))); }, [activeVessels]);
@@ -4306,7 +4323,7 @@ export default function App() {
       <div className="print-only app-print-header"><h2>{printTitle || data.settings.systemTitle}</h2><p>列印時間：{formatTaipeiDateTime(new Date())}｜列印人：{currentUser.name}</p></div>
       {canAccessTab(currentUser,tab) && <>{tab==='dashboard' && selectedVesselDetail && <VesselDetailPage vessel={selectedVesselDetail} data={roleVisibleData} currentUser={currentUser} onBack={closeVesselDetail} onOpenInternalControl={()=>{if(!canAccessTab(currentUser,'internalControl'))return;navigateToTab('internalControl');}} onEditVessel={()=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(selectedVesselDetail.id);}} onAddTask={()=>addTaskForVessel(selectedVesselDetail.id)} onEditTask={id=>{const task=roleVisibleTasks.find(item=>item.id===id);if(task)openTask(task,selectedVesselDetail.id);}} canEditVessel={canEditBusinessContent} canCreateTasks={canCreateTasks} canEditTasks={canEditBusinessContent&&currentUser.role!=='vessel'} canViewInternalControl={canAccessTab(currentUser,'internalControl')} />}
       {tab==='dashboard' && !selectedVesselDetail && <DashboardView user={currentUser} users={roleVisibleData.users} vessels={dashboardVessels} tasks={roleVisibleTasks} internalControlCases={roleVisibleData.internalControlCases} meetings={dashboardMeetings} selected={agendaSelection} setSelected={setAgendaSelection} batchSelected={batchSelectedVesselIds} setBatchSelected={setBatchSelectedVesselIds} onOpenVessel={openVesselDetail} onEdit={id=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(id);}} onAddTask={addTaskForVessel} onToggleAttention={toggleDashboardVesselAttention} attentionSaveStates={vesselAttentionSaveStates} onRetryAttentionSave={retryDashboardVesselAttention} onAdjustAttention={adjustDashboardVesselAttention} onStartMeeting={(requestedIds) => { if (requestedIds) { const allowedIds=new Set(activeVessels.map(vessel=>vessel.id)); setAgendaSelection(Array.from(new Set(requestedIds.filter(id=>allowedIds.has(id))))); } else if (!agendaSelection.length) { const priority = activeVessels.filter(v => morningDiscussionTasks(roleVisibleTasks,roleVisibleMeetings).some(t => taskHasVessel(t,v.id) && !taskIsClosedForVessel(t,v.id) && (t.priority==='急'||t.priority==='高'))).slice(0,4).map(v=>v.id); setAgendaSelection(priority.length ? priority : activeVessels.slice(0,4).map(v=>v.id)); } navigateToTab('morning'); }} onOpenReport={openReportPreview} onTaskMetric={jumpToTaskList} onOpenBatchManagedVessels={()=>{void openBatchManagedVessels();}} canEdit={canEditBusinessContent} canCreateTasks={canCreateTasks} canUseMeetings={canUseMeetingWorkspace} canUseReports={canExportReports} />}
-      {tab==='morning' && <MorningWorkspaceView data={roleVisibleData} user={currentUser} visibleVessels={activeVessels} selected={agendaSelection} setSelected={setAgendaSelection} onEditTask={openTask} onAddTask={addTaskForVessel} onOpenVessel={openVesselEditor} onOpenTemporaryMeeting={()=>navigateToTab('meeting')} onOpenReport={openReportPreview} canSaveDailyMorning={currentUser.role==='owner'||currentUser.role==='admin'} onSaveDailyMorning={saveDailyMorningHistory} />}
+      {tab==='morning' && <MorningWorkspaceView data={roleVisibleData} user={currentUser} visibleVessels={activeVessels} selected={agendaSelection} setSelected={setAgendaSelection} onEditTask={openTask} onOpenInternalControl={caseId=>{if(caseId)setRequestedInternalControlCaseId(caseId);navigateToTab('internalControl');}} onAddTask={addTaskForVessel} onOpenVessel={openVesselEditor} onOpenTemporaryMeeting={()=>navigateToTab('meeting')} onOpenReport={openReportPreview} canSaveDailyMorning={currentUser.role==='owner'||currentUser.role==='admin'} onSaveDailyMorning={saveDailyMorningHistory} />}
 
       {tab==='total' && <ListPanel title={currentUser.role==='vessel'?'本船待辦清單':'總清單'} tasks={filteredTasks} data={roleVisibleData} visibleVessels={activeVessels} filters={filters} setFilters={setFilters} fleetTags={fleetTags} userMap={userMap} exportedBy={currentUser.name} onEdit={openTask} onPrint={() => print('船舶記事總清單')} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
       {tab==='work' && <WorkCenter
@@ -4339,7 +4356,7 @@ export default function App() {
     {currentUser.role!=='vessel'&&canEditBusinessContent&&(vesselEditorLeaseAuthorized||Boolean(vesselLeaseIncidentForEditor))&&editingVesselId&&activeVessels.some(vessel=>vessel.id===editingVesselId) && <VesselEditModal vessel={data.vessels.find(v=>v.id===editingVesselId)} data={roleVisibleData} currentUser={currentUser} leaseMode={vesselLeaseMode} leaseMessage={vesselLeaseIncidentForEditor?.message||''} close={()=>void closeVesselEditor(activeEditLockRef.current)} onSave={saveVesselEditorDraft} addTask={id=>{void addTaskForVessel(id,true).then(opened=>{if(opened)setEditingVesselId('');});}} editTask={id=>{const vesselId=editingVesselId;const task=data.tasks.find(item=>item.id===id);if(!task)return alert('找不到對應待辦');setEditingVesselId('');void (async()=>{const result=await openTask(task,vesselId,vesselId);if(result==='failed')void openVesselEditor(vesselId);})();}} />}
     {currentUser.role!=='vessel'&&canEditBusinessContent&&batchManagedOpen && <BatchManagedVesselModal vessels={batchSessionVessels} lockedVesselIds={batchLockedVesselIds} readOnly={batchManagedWriteSuspended} saving={batchManagedClosing} save={saveBatchManagedDrafts} cancel={()=>void cancelBatchManagedDrafts(renderedBatchManagedAuthorization)} close={()=>void closeBatchManaged(renderedBatchManagedAuthorization)} discard={()=>void discardBatchManagedChanges(renderedBatchManagedAuthorization)} onAddTask={id=>{void addTaskForVessel(id,false,true);}} />}
     {editingTask&&taskEditorLeaseAuthorized && <TaskEditModal task={editingTask} creating={creatingVisibleTask} data={taskEditorData} visibleVessels={taskEditorVisibleVessels} currentUser={taskEditorUser} canClose={!taskEditorReadOnly&&editingTaskCanMutate&&canCloseTasks&&currentUser.role!=='vessel'} canDelete={!taskEditorReadOnly&&editingTaskCanMutate&&canDeleteTasks} canCancelInternalControl={Boolean(!taskEditorReadOnly&&editingTaskCanMutate&&editingTask&&editingTaskScopeVessels.length===taskVesselIds(editingTask).length&&editingTaskScopeVessels.every(vessel=>canCancelInternalControl(currentUser,vessel)))} canEditOverall={!taskEditorReadOnly&&editingTaskCanMutate&&canEditOverallTask} initialProgressVesselId={taskProgressVesselId} readOnly={taskEditorReadOnly} readOnlyReason={taskReadOnlyReason} close={()=>void closeTaskEditor(taskEditorRequestGeneration)} onDraftChange={captureCreationDraft} onSave={saveTask} onSaveVesselProgress={saveTaskVesselProgress} onDelete={()=>deleteTask(editingTask)} />}
-    {currentUser.role!=='vessel'&&canExportReports&&reportPreviewOpen && <ReportPreviewModal data={reportPreviewData} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} reportDate={reportPreviewHistory?.businessDate} close={()=>{setReportPreviewOpen(false);setReportPreviewHistoryId('');}} onPrint={printReport} />}
+    {currentUser.role!=='vessel'&&canExportReports&&reportPreviewOpen && <ReportPreviewModal data={reportPreviewData} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} reportDate={reportPreviewHistory?.businessDate} reportSnapshot={reportPreviewSnapshot} close={()=>{setReportPreviewOpen(false);setReportPreviewHistoryId('');}} onPrint={printReport} />}
     {passwordModalOpen && <PersonalPasswordModal currentUser={currentUser} close={()=>setPasswordModalOpen(false)} commit={commit} />}
     {browserRecoveryOpen&&<BrowserRecoveryModal advanced={browserRecoveryAdvanced} phase={browserRecoveryPhase} message={browserRecoveryMessage} onClose={closeBrowserRecovery} onToggleAdvanced={()=>setBrowserRecoveryAdvanced(value=>!value)} onSafeRepair={()=>void runSafeBrowserRepair()} onFullReset={()=>void runFullBrowserReset()} />}
     {currentUser.role!=='vessel'&&!selectedVesselDetailId&&(['dashboard','morning','reports'] as Tab[]).includes(tab) && <div className="selection-dock no-print">涉會船舶 <b className="selected-vessel-count">{agendaSelection.length}</b> 艘 <button className="btn pink small" onClick={()=>navigateToTab('morning')}>進入早會</button><button className="btn primary small" onClick={openReportPreview}>預覽報告</button></div>}
@@ -4424,7 +4441,7 @@ function vesselReportStatus(v: Vessel) {
   ].filter(Boolean).join('｜') || '未設定';
 }
 function vesselReportNavigation(v: Vessel) {
-  return v.position.navigationStatus === '航行' ? `${v.position.navigationStatus}（${v.position.speedKnots || 0} kn）` : v.position.navigationStatus;
+  return v.position.navigationStatus;
 }
 function VesselReportNameCell({ v }: { v: Vessel }) {
   return <div className="report-vessel-name-cell"><strong>{vesselDisplayName(v)}</strong><div className="report-vessel-officers">
@@ -4452,7 +4469,7 @@ function VesselReportInfo({ v }: { v: Vessel }) {
   </div>;
 }
 
-function ReportPreviewModal({ data, visibleVessels, user, selected: _selected, reportDate, close, onPrint }: { data:AppData; visibleVessels:Vessel[]; user:UserAccount; selected:string[]; reportDate?:string; close:()=>void; onPrint:(reportDate:string)=>void }) {
+function ReportPreviewModal({ data, visibleVessels, user, selected: _selected, reportDate, reportSnapshot, close, onPrint }: { data:AppData; visibleVessels:Vessel[]; user:UserAccount; selected:string[]; reportDate?:string; reportSnapshot?:MorningReportSnapshot; close:()=>void; onPrint:(reportDate:string)=>void }) {
   const shellRef=useRef<HTMLDivElement>(null);
   const closeButtonRef=useRef<HTMLButtonElement>(null);
   const previousFocusRef=useRef<HTMLElement|null>(null);
@@ -4478,13 +4495,26 @@ function ReportPreviewModal({ data, visibleVessels, user, selected: _selected, r
   const selectedIds=_selected.filter(id=>allowedIds.has(id));
   const vessels=reportDate?visibleVessels:_selected.length?visibleVessels.filter(v=>selectedIds.includes(v.id)):visibleVessels;
   const reportScopeIds=vessels.map(v=>v.id);
-  const reportVesselIds=new Set(reportScopeIds);
-  const tasks=morningDiscussionTasks(data.tasks,data.meetings).filter(t=>taskVesselIds(t).some(id=>reportVesselIds.has(id))&&!taskIsClosedForScope(t,reportScopeIds));
+  const reportWindow=reportSnapshot?{
+    startedAt:reportSnapshot.windowStartedAt,
+    endedAt:reportSnapshot.windowEndedAt||reportSnapshot.capturedAt,
+  }:liveMorningWindow(data.agendaReports);
+  const reportAgenda=classifyMorningAgenda({
+    tasks:data.tasks,
+    internalControlCases:data.internalControlCases,
+    meetings:data.meetings,
+    scopeVesselIds:reportScopeIds,
+    window:reportWindow,
+    todayTaskIds:reportSnapshot?.todayTaskIds,
+    todayInternalControlCaseIds:reportSnapshot?.todayInternalControlCaseIds,
+  });
+  const tasks=[...reportAgenda.todayTasks,...reportAgenda.historyTasks];
+  const internalCases=[...reportAgenda.todayInternalControlCases,...reportAgenda.historyInternalControlCases];
   const companyDecisionTasks=tasks.filter(task=>isMeetingAttentionTask(task)&&!isVesselDelegatedMeetingTask(task));
   const ordinaryReportTasks=tasks.filter(appearsInSingleVesselTasks);
   const crossVesselTasks=ordinaryReportTasks.filter(task=>task.vesselScopeMode==='all'||task.vesselScopeMode==='types'||taskVesselIds(task).length>1);
   const singleVesselTasks=ordinaryReportTasks.filter(task=>!crossVesselTasks.includes(task));
-  return <div className="report-preview-modal" role="dialog" aria-modal="true" aria-labelledby="report-preview-title"><div ref={shellRef} tabIndex={-1} className="report-preview-shell"><div className="report-preview-actions no-print"><h2 id="report-preview-title">PDF 報告預覽</h2><span>A4 橫向</span><div className="spacer"/><button className="btn primary" disabled={!vessels.length} title={!vessels.length?'目前選擇不在授權範圍內':''} onClick={()=>onPrint(effectiveReportDate)}>導出／列印 PDF</button><button ref={closeButtonRef} className="btn ghost" onClick={close}>關閉</button></div><article className="report-paper"><header><h1>船舶早會動態暨待辦報告</h1><p>報告日期：{effectiveReportDate}　製表：{user.name}　資料版本：rev.{data.revision}</p></header><div className="report-kpis"><div>船舶<br/><b>{vessels.length}</b></div><div>單船要事<br/><b>{ordinaryReportTasks.length}</b></div><div>公司層決議<br/><b>{companyDecisionTasks.length}</b></div><div>逾期要事<br/><b>{ordinaryReportTasks.filter(t=>(daysDiff(t.expectedDate)??0)<0).length}</b></div></div><table className="vessel-report-table"><thead><tr><th>船舶</th><th>動態資料</th><th>要事</th><th>狀態／部門／期限</th></tr></thead><tbody>{vessels.map(v=>{const vt=singleVesselTasks.filter(t=>taskHasVessel(t,v.id));return vt.length?vt.map((t,i)=><tr key={`${v.id}-${t.id}`}>{i===0&&<td rowSpan={vt.length}><VesselReportNameCell v={v}/></td>}{i===0&&<td rowSpan={vt.length}><VesselReportInfo v={v}/></td>}<td><b>{t.priority}｜{taskCategoryLabel(t)}</b>{t.isAbnormal&&<span className="badge urgent">異常</span>}<RichTextContent compact value={t.description} fallback="-"/></td><td><ReportTaskStatusBlock task={t} scopeIds={reportScopeIds}/></td></tr>):<tr key={v.id}><td><VesselReportNameCell v={v}/></td><td><VesselReportInfo v={v}/></td><td colSpan={2}>目前無未結要事</td></tr>})}</tbody></table>{companyDecisionTasks.length>0&&<><h2>公司層決議案（臨會／專題）</h2><table><thead><tr><th>涉及範圍</th><th>船種</th><th>決議事項</th><th>狀態／部門／期限</th></tr></thead><tbody>{companyDecisionTasks.map(t=><tr key={t.id}><td className="task-vessel-scope"><b>{taskReportVesselLabel(t,vessels)}</b></td><td className="task-type-scope">{taskReportShipTypeLabel(t,vessels)}</td><td><b>會議議題｜{taskCategoryLabel(t)}</b><RichTextContent compact value={t.description} fallback="-"/></td><td><ReportTaskStatusBlock task={t} scopeIds={reportScopeIds}/></td></tr>)}</tbody></table></>}{crossVesselTasks.length>0&&<><h2>跨船單船要事</h2><table><thead><tr><th>船舶</th><th>船種</th><th>未結事項</th><th>狀態／部門／期限</th></tr></thead><tbody>{crossVesselTasks.map(t=><tr key={t.id}><td className="task-vessel-scope"><b>{taskReportVesselLabel(t,vessels)}</b></td><td className="task-type-scope">{taskReportShipTypeLabel(t,vessels)}</td><td><b>{t.priority}｜{taskCategoryLabel(t)}</b>{t.isAbnormal&&<span className="badge urgent">異常</span>}<RichTextContent compact value={t.description} fallback="-"/></td><td><ReportTaskStatusBlock task={t} scopeIds={reportScopeIds}/></td></tr>)}</tbody></table></>}<footer>{reportDate?'本報告使用當日保存快照，並依目前身份重新套用船舶授權。':'本報告依目前授權範圍、報告選擇及 Supabase／本機最新資料產生。'}</footer></article></div></div>;
+  return <div className="report-preview-modal" role="dialog" aria-modal="true" aria-labelledby="report-preview-title"><div ref={shellRef} tabIndex={-1} className="report-preview-shell"><div className="report-preview-actions no-print"><h2 id="report-preview-title">PDF 報告預覽</h2><span>A4 橫向</span><div className="spacer"/><button className="btn primary" disabled={!vessels.length} title={!vessels.length?'目前選擇不在授權範圍內':''} onClick={()=>onPrint(effectiveReportDate)}>導出／列印 PDF</button><button ref={closeButtonRef} className="btn ghost" onClick={close}>關閉</button></div><article className="report-paper"><header><h1>船舶早會動態暨待辦報告</h1><p>報告日期：{effectiveReportDate}　製表：{user.name}　資料版本：rev.{data.revision}</p></header><div className="report-kpis"><div>船舶<br/><b>{vessels.length}</b></div><div>單船要事<br/><b>{ordinaryReportTasks.length}</b></div><div>內控議題<br/><b>{internalCases.length}</b></div><div>公司層決議<br/><b>{companyDecisionTasks.length}</b></div><div>逾期要事<br/><b>{ordinaryReportTasks.filter(t=>!taskIsClosedForScope(t,reportScopeIds)&&(daysDiff(t.expectedDate)??0)<0).length}</b></div></div><table className="vessel-report-table"><thead><tr><th>船舶</th><th>動態資料</th><th>要事</th><th>狀態／部門／期限</th></tr></thead><tbody>{vessels.map(v=>{const vt=singleVesselTasks.filter(t=>taskHasVessel(t,v.id));return vt.length?vt.map((t,i)=><tr key={`${v.id}-${t.id}`}>{i===0&&<td rowSpan={vt.length}><VesselReportNameCell v={v}/></td>}{i===0&&<td rowSpan={vt.length}><VesselReportInfo v={v}/></td>}<td><b>{t.priority}｜{taskCategoryLabel(t)}</b>{taskIsClosedForScope(t,reportScopeIds)&&<span className="period-closed-badge">本期已結</span>}{t.isAbnormal&&<span className="badge urgent">異常</span>}<RichTextContent compact value={t.description} fallback="-"/></td><td><ReportTaskStatusBlock task={t} scopeIds={reportScopeIds}/></td></tr>):<tr key={v.id}><td><VesselReportNameCell v={v}/></td><td><VesselReportInfo v={v}/></td><td colSpan={2}>目前無早會要事</td></tr>})}</tbody></table>{internalCases.length>0&&<><h2>內控議題</h2><table><thead><tr><th>船舶</th><th>關注／分類</th><th>內控內容</th><th>狀態／部門</th></tr></thead><tbody>{internalCases.map(item=>{const vessel=vessels.find(candidate=>candidate.id===item.vesselId);return <tr key={item.id}><td><b>{vessel?vesselDisplayName(vessel):'未授權船舶'}</b></td><td><b>{item.priority}｜{item.category||'未分類'}</b>{item.isClosed&&<span className="period-closed-badge">本期已結</span>}</td><td><RichTextContent compact value={item.description} fallback="-"/></td><td><RichTextContent compact value={item.status} fallback="尚未更新狀態"/><small>{item.departments.join('、')||'未指定部門'}</small></td></tr>})}</tbody></table></>}{companyDecisionTasks.length>0&&<><h2>公司層決議案（臨會／專題）</h2><table><thead><tr><th>涉及範圍</th><th>船種</th><th>決議事項</th><th>狀態／部門／期限</th></tr></thead><tbody>{companyDecisionTasks.map(t=><tr key={t.id}><td className="task-vessel-scope"><b>{taskReportVesselLabel(t,vessels)}</b></td><td className="task-type-scope">{taskReportShipTypeLabel(t,vessels)}</td><td><b>會議議題｜{taskCategoryLabel(t)}</b>{taskIsClosedForScope(t,reportScopeIds)&&<span className="period-closed-badge">本期已結</span>}<RichTextContent compact value={t.description} fallback="-"/></td><td><ReportTaskStatusBlock task={t} scopeIds={reportScopeIds}/></td></tr>)}</tbody></table></>}{crossVesselTasks.length>0&&<><h2>跨船單船要事</h2><table><thead><tr><th>船舶</th><th>船種</th><th>未結事項</th><th>狀態／部門／期限</th></tr></thead><tbody>{crossVesselTasks.map(t=><tr key={t.id}><td className="task-vessel-scope"><b>{taskReportVesselLabel(t,vessels)}</b></td><td className="task-type-scope">{taskReportShipTypeLabel(t,vessels)}</td><td><b>{t.priority}｜{taskCategoryLabel(t)}</b>{taskIsClosedForScope(t,reportScopeIds)&&<span className="period-closed-badge">本期已結</span>}{t.isAbnormal&&<span className="badge urgent">異常</span>}<RichTextContent compact value={t.description} fallback="-"/></td><td><ReportTaskStatusBlock task={t} scopeIds={reportScopeIds}/></td></tr>)}</tbody></table></>}<footer>{reportDate?'本報告使用當日保存快照，並依目前身份重新套用船舶授權。':'本報告依目前授權範圍、報告選擇及 Supabase／本機最新資料產生。'}</footer></article></div></div>;
 }
 
 function FilterBar({ data, visibleVessels, filters, setFilters, fleetTags }: { data:AppData; visibleVessels:Vessel[]; filters:FilterState; setFilters:(f:FilterState)=>void; fleetTags:string[] }) {

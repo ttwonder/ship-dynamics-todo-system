@@ -15,7 +15,7 @@ assert.equal(recoveryButtons.length, 1, '「修復此瀏覽器」只能保留一
 assert.doesNotMatch(header, /browser-recovery-entry/, '修復入口不得再擠壓頁首身份區');
 assert.ok(saveStrip.includes('browser-recovery-entry'), '修復入口必須移到保存狀態列');
 assert.ok(saveStrip.indexOf('browser-recovery-entry') < saveStrip.indexOf('onClick={syncLatest}'), '修復入口必須位於「同步最新」左側');
-assert.ok(saveStrip.includes('openBrowserRecovery(staleBrowserRecoveryOffered)'), '移動後仍須保留一般與進階修復入口語意');
+assert.ok(saveStrip.includes('onClick={()=>openBrowserRecovery()}') && app.includes('setBrowserRecoveryAdvanced(true)') && saveStrip.includes("staleBrowserRecoveryOffered?'開啟瀏覽器修復與完整本機重設'"), '移動後修復入口仍須連接可見的進階修復視窗，並保留 stale 狀態提示');
 
 assert.match(app, /<nav className="nav topbar-primary-nav">/, '主導覽必須使用專用不裁切樣式掛點');
 assert.match(styles, /\.topbar-primary-nav\{[^}]*min-width:0[^}]*\}/, '主導覽必須允許在頁首彈性區正確收縮');

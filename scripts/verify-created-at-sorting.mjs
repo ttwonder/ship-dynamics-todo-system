@@ -29,7 +29,7 @@ try {
   assert.ok(workCenter.includes('compareCreatedNewestFirst'), '我的待辦混合要事／內控資料必須用同一個建立時間比較器');
   assert.ok(vesselDetail.includes("VesselTaskSort = 'created-desc'"), '單船要事清單必須提供最新建立排序');
   assert.ok(vesselDetailPage.includes("useState<VesselTaskSort>('created-desc')"), '單船要事清單預設必須是最新建立');
-  assert.ok(internalControlPage.includes('sortRecordsNewestCreated(filterInternalControlCases'), '內控未完／結案清單必須預設按最新建立');
+  assert.ok(internalControlPage.includes("useState<ListColumnSort>('created-desc')") && /sortListRecords\(\s*filterInternalControlCases/.test(internalControlPage), '內控未完／結案清單必須預設按最新建立，並支援同一排序器切換欄位');
   assert.ok(meetings.includes('sortRecordsNewestCreated(data.meetings.filter(appliesToUser))'), '臨會／專題清單必須預設按最新建立');
 } finally {
   await server.close();

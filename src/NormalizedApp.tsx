@@ -26,7 +26,7 @@ import VesselDetailPage from './VesselDetailPage';
 import InternalControlPage from './InternalControlPage';
 import NormalizedMeetings from './NormalizedMeetings';
 import NormalizedManagement from './NormalizedManagement';
-import { TaskEditModal } from './EditModals';
+import { ScheduleDateTimeField, TaskEditModal } from './EditModals';
 import { canAccessAllVessels, hasPermission } from './permissions';
 import { taskHasVessel, taskVesselIds, taskVesselLabel } from './taskVesselScope';
 import { usesPerVesselProgress } from './taskVesselProgress';
@@ -312,12 +312,9 @@ function VesselEditor({
         onChange={event => change({ position: { ...draft.position, source: 'manual', lastPort: event.target.value } })}/></label>
       <label>下一港<input value={draft.position.nextPort}
         onChange={event => change({ position: { ...draft.position, source: 'manual', nextPort: event.target.value } })}/></label>
-      <label>航速（kn）<input type="number" min="0" step="0.1" value={draft.position.speedKnots}
-        onChange={event => change({ position: { ...draft.position, source: 'manual', speedKnots: Number(event.target.value) } })}/></label>
-      {(['eta', 'etb', 'etd'] as const).map(field => <label key={field}>{field.toUpperCase()}
-        <input type="datetime-local" value={draft.position[field]?.slice(0, 16) || ''}
-          onChange={event => change({ position: { ...draft.position, source: 'manual', [field]: event.target.value } })}/>
-      </label>)}
+      {(['eta', 'etb', 'etd'] as const).map(field => <ScheduleDateTimeField key={field} label={field.toUpperCase()}
+        value={draft.position[field] || ''}
+        onChange={value => change({ position: { ...draft.position, source: 'manual', [field]: value } })}/>)}
       <label>載況<select value={draft.cargo.loadStatus}
         onChange={event => change({ cargo: { ...draft.cargo, source: 'manual', loadStatus: event.target.value as Vessel['cargo']['loadStatus'] } })}>
         {['空載', '非空載', '滿載'].map(value => <option key={value}>{value}</option>)}
@@ -783,13 +780,10 @@ export default function NormalizedApp() {
           const vessel = visibleVessels.find(item => item.id === vesselId);
           if (vessel) void run(() => controller.toggleWeeklyAttention(vessel, key));
         }}
-        onAdjustAttention={vesselId => {
+        onAdjustAttention={(vesselId, manualAttentionLevel) => {
           const vessel = visibleVessels.find(item => item.id === vesselId);
           if (!vessel) return;
-          const value = prompt('人工關注程度：急、高、中、低、特別關注；留空取消',
-            vessel.manualAttentionLevel || '');
-          if (value === null) return;
-          void run(() => controller.setManualAttention(vessel, value.trim() || null));
+          void run(() => controller.setManualAttention(vessel, manualAttentionLevel || null));
         }}
         onStartMeeting={() => setTab('meetings')} onOpenReport={() => setTab('reports')}
         onTaskMetric={mode => setTab(mode === 'open' ? 'tasks' : 'tasks')}
@@ -817,6 +811,7 @@ export default function NormalizedApp() {
       : tab === 'morning' ? <MorningWorkspaceView data={data} user={user}
         visibleVessels={visibleVessels} selected={selectedVessels} setSelected={setSelectedVessels}
         onEditTask={(task, vesselId) => openTask(task, vesselId)}
+        onOpenInternalControl={caseId=>{if(caseId)setRequestedInternalControlCaseId(caseId);setTab('internal');}}
         onAddTask={addTask} onOpenVessel={setDetailVesselId}
         onOpenTemporaryMeeting={() => setTab('meetings')} onOpenReport={() => setTab('reports')}
         canSaveDailyMorning={user.role==='owner'||user.role==='admin'}

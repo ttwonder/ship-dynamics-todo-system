@@ -247,8 +247,13 @@ export interface AgendaReport {
 
 export interface MorningReportSnapshot {
   capturedAt: string;
+  windowStartedAt?: string;
+  windowEndedAt?: string;
+  todayTaskIds?: string[];
+  todayInternalControlCaseIds?: string[];
   vessels: Vessel[];
   tasks: TaskItem[];
+  internalControlCases?: InternalControlCase[];
   meetings: TemporaryMeeting[];
 }
 

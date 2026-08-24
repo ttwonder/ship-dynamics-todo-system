@@ -5,8 +5,8 @@ const dashboard = fs.readFileSync('src/Dashboard.tsx', 'utf8');
 const app = fs.readFileSync('src/App.tsx', 'utf8');
 const styles = fs.readFileSync('src/styles.css', 'utf8');
 
-assert.ok(dashboard.includes('className="ship-cargo-items"'), '貨名貨量必須使用可在同一行流動並自動換行的容器');
-assert.ok(dashboard.includes('<small>狀態補充</small>'), '船舶卡片欄位名稱必須改為「狀態補充」');
+assert.ok(dashboard.includes('className="ship-cargo-items ship-data-value"'), '貨名貨量必須使用可在同一行流動並自動換行的容器');
+assert.ok(dashboard.includes('className="ship-data-label">狀態補充</small>'), '船舶卡片欄位名稱必須改為「狀態補充」');
 assert.ok(dashboard.includes('vessel.note.statusSupplement'), '狀態補充卡片必須顯示自由輸入內容');
 assert.ok(styles.includes('.dashboard-view>.metric-grid .metric-card'), '看板統計卡必須有局部緊湊樣式，不得影響全站統計卡');
 assert.match(styles, /\.dashboard-view>\.metric-grid \.metric-card\{[^}]*justify-content:center[^}]*text-align:center/, '六張統計卡必須使用同一套置中樣式，不再保留靠左卡片');

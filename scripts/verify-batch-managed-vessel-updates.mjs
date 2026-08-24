@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 const app = fs.readFileSync('src/App.tsx', 'utf8');
 const dashboard = fs.readFileSync('src/Dashboard.tsx', 'utf8');
+const vesselSummary = fs.readFileSync('src/VesselImportantSummary.tsx', 'utf8');
 const batch = fs.existsSync('src/BatchManagedVesselModal.tsx') ? fs.readFileSync('src/BatchManagedVesselModal.tsx', 'utf8') : '';
 const styles = fs.readFileSync('src/styles.css', 'utf8');
 
@@ -19,9 +20,10 @@ assert.ok(app.includes('batchManaged:returnToBatchManaged') && app.includes('ret
 assert.ok(app.includes('addTaskForVessel(id,false,true)'), '批量清單的新增要事需設定返回批量清單');
 assert.ok(app.includes('void openBatchManagedVessels()'), '關閉新增要事後需重新取得全部船舶鎖才可回到批量清單');
 
-for (const label of ['目前位置','上一港','下一港','航行狀態','速度','載況','ETA','ETB','ETD','貨名貨量','人工備註','近期動態']) {
+for (const label of ['目前位置','上一港','下一港','航行狀態','載況','ETA','ETB','ETD','貨名貨量','人工備註','近期動態']) {
   assert.ok(batch.includes(label), `批量更新清單缺少欄位：${label}`);
 }
+assert.ok(!batch.includes('value={vessel.position.speedKnots}'), '船速欄位暫時隱藏時，批量更新不得仍提供人工輸入');
 for (const status of ['航行','拋錨','進港中','出港中','停泊','漂航']) {
   assert.ok(batch.includes(`<option>${status}</option>`), `批量更新航行狀態需提供「${status}」`);
 }
@@ -31,7 +33,7 @@ assert.ok(batch.includes('ScheduleDateTimeField'), '批量清單需沿用 ETA／
 assert.ok(batch.includes('composeScheduleValue'), '批量清單需保存純日期或日期時間');
 assert.ok(batch.includes('parseCargoLines') && batch.includes('cargoLines'), '批量清單需支援貨名貨量多行編輯');
 assert.ok(batch.includes('value={vessel.position.manualRemark}') && batch.includes('target.position.manualRemark = value'), '批量清單的人工備註必須讀寫與快速更新相同的 position.manualRemark 欄位');
-assert.ok(dashboard.includes('<strong>人工備註</strong>{vessel.position.manualRemark}'), '單船卡片必須顯示批量更新所寫入的人工備註');
+assert.ok(dashboard.includes('<VesselImportantSummary') && vesselSummary.includes('<strong>人工備註</strong>{vessel.position.manualRemark}'), '單船卡片的共用重要摘要必須顯示批量更新所寫入的人工備註');
 assert.ok(batch.includes('onAddTask(vessel.id)'), '每艘船最後需提供新增要事按鈕');
 assert.ok(batch.includes('const [draftVessels,setDraftVessels]=useState<Vessel[]>') && batch.includes('setDraftVessels(previous=>'), '批量清單欄位必須只更新modal草稿，不得逐欄寫入AppData');
 assert.ok(batch.includes('await save(structuredClone(draftVessels))') && app.includes('const saveBatchManagedDrafts=async('), '批量清單只有保存按鍵才可把整批草稿交給App層提交');

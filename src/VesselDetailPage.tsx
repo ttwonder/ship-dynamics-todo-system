@@ -72,7 +72,7 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
     </div>
     <div className="page-heading vessel-detail-heading"><div><h1>{vesselDisplayName(vessel)}</h1><p>{vessel.shipType || '未設定船種'}｜{vessel.fullName || vessel.name}</p></div><span className={`priority-pill ${vesselAttentionClass(attention.effective)}`}>{vesselAttentionLabel(attention, attentionTaskItems)}</span></div>
     <div className="vessel-detail-metrics">
-      <div><small>未結待辦／內控</small><b>{openCount}</b></div><div><small>已結案待辦／內控</small><b>{closedCount}</b></div><div><small>目前位置</small><b>{value(vessel.position.location)}</b></div><div><small>航行狀態</small><b>{vessel.position.navigationStatus === '航行' ? `${vessel.position.speedKnots || 0} kn` : value(vessel.position.navigationStatus)}</b></div>
+      <div><small>未結待辦／內控</small><b>{openCount}</b></div><div><small>已結案待辦／內控</small><b>{closedCount}</b></div><div><small>目前位置</small><b>{value(vessel.position.location)}</b></div><div><small>航行狀態</small><b>{value(vessel.position.navigationStatus)}</b></div>
     </div>
 
     <div className="vessel-detail-grid">
@@ -95,7 +95,7 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
         <div className="vessel-detail-secondary-top">
           <section className="panel vessel-info-panel"><h2>航行與港口</h2><dl>
             <div><dt>目前位置</dt><dd>{value(vessel.position.location)}</dd></div><div><dt>航行狀態</dt><dd>{value(vessel.position.navigationStatus)}</dd></div>
-            <div><dt>速度</dt><dd>{vessel.position.speedKnots || 0} kn</dd></div><div><dt>上一港</dt><dd>{value(vessel.position.lastPort)}</dd></div>
+            <div><dt>上一港</dt><dd>{value(vessel.position.lastPort)}</dd></div>
             <div><dt>下一港</dt><dd>{value(vessel.position.nextPort)}</dd></div><div><dt>航線</dt><dd>{value(vessel.position.lastPort)} → {value(vessel.position.nextPort)}</dd></div>
           </dl></section>
           <section className="panel vessel-info-panel"><h2>時間與資料來源</h2><dl>
