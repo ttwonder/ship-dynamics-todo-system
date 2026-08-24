@@ -58,7 +58,10 @@ assert.equal(cargoItems['font-weight'], '400', '貨名貨量內容必須使用�
 
 const manualRemark = declarationsFor('.ship-summary-content .manual-remark-summary');
 assert.equal(manualRemark.color, '#111', '人工備註必須以接近純黑顯示，不得被摘要段落灰字覆蓋');
-assert.equal(manualRemark['font-size'], '16px', '人工備註字級必須放大為16px');
+assert.equal(manualRemark['font-size'], '14px', '人工備註與其他摘要正文必須統一為14px中間值');
 assert.equal(manualRemark['font-weight'], '900', '人工備註必須使用醒目粗體');
+
+const summaryContent = declarationsFor('.ship-summary-content');
+assert.equal(summaryContent['font-size'], '14px', '船隊看板的動態、要事、內控與空狀態正文必須統一放大為14px');
 
 console.log('Dashboard card readability contracts passed.');

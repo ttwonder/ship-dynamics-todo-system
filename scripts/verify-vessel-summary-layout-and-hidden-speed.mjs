@@ -23,11 +23,12 @@ assert.match(compactSummary, /richTextToPlainText\(task\.description\)/, 'compac
 assert.match(styles, /\.ship-cargo\{[^}]*height:32px;[^}]*min-height:32px;[^}]*max-height:32px;[^}]*overflow-y:auto/, '貨名貨量須固定 32px 並垂直捲動');
 assert.match(styles, /\.ship-summary\{[^}]*height:160px;[^}]*min-height:160px/, '桌面重要摘要須固定 160px');
 assert.match(styles, /\.ship-summary-title\{[^}]*writing-mode:vertical-rl/, '重要摘要標題須直向排列');
-assert.match(styles, /\.manual-remark-summary\{[^}]*font-size:16px;[^}]*font-weight:900;[^}]*color:#111/, '人工備註須放大、加粗及使用黑色');
+assert.match(styles, /\.manual-remark-summary\{[^}]*font-size:14px;[^}]*font-weight:900;[^}]*color:#111/, '人工備註須與其他摘要正文統一為14px，並保留粗黑強調');
 assert.match(styles, /\.ship-card>\.ship-summary\{[^}]*margin-top:auto/, '船卡剩餘高度必須留在摘要上方，使各卡摘要下緣對齊');
 assert.match(styles, /\.ship-card-foot\{[^}]*margin-top:0/, '摘要與卡片底部操作列之間不得吸收不定高度空白');
-assert.match(styles, /\.morning-vessel-summary\{[^}]*height:64px;[^}]*overflow-y:hidden/, '早會左欄摘要外框須固定桌面高度且不建立第二層捲動');
-assert.match(styles, /\.morning-vessel-summary \.ship-summary-content\{[^}]*height:100%;[^}]*max-height:none;[^}]*overflow-y:auto/, '早會摘要內文必須填滿外框後才在內部捲動，不得固定在 58px 中途截斷');
+assert.match(styles, /\.ship-summary\.morning-vessel-summary\{[^}]*flex-basis:112px;[^}]*height:112px;[^}]*min-height:112px;[^}]*overflow:clip/, '早會左欄摘要須放大為112px，外框裁切且不得建立第二條滾動條');
+assert.equal((styles.match(/\.ship-summary\.morning-vessel-summary\{/g) || []).length, 1, '早會摘要外框只能有一個權威樣式規則，避免互相覆寫後重現雙滾動');
+assert.match(styles, /\.morning-vessel-summary \.ship-summary-content\{[^}]*height:100%;[^}]*max-height:none;[^}]*font-size:14px;[^}]*overflow-y:auto;[^}]*scrollbar-gutter:auto/, '早會摘要只允許正文層單一捲動，並統一使用14px正文');
 assert.match(styles, /\.mini-ship-head\{[^}]*justify-content:flex-start/, '早會左欄船名列必須從左側開始排列');
 assert.match(styles, /\.mini-ship-head>b\{[^}]*flex:1[^}]*text-align:left/, '勾選框後的船名必須左對齊，狀態徽章才留在右側');
 
