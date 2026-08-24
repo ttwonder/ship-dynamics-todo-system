@@ -109,6 +109,7 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
           <div className="span-2"><dt>未來一週關注</dt><dd>{vessel.weeklyAttention.map(item=>attentionLabels[item]||item).join('、') || '無'}</dd></div>
           <div className="span-2"><dt>人工動態備註</dt><dd>{value(vessel.position.manualRemark)}</dd></div>
           <div className="span-2"><dt>近期／後續動態</dt><dd>{value(vessel.note.recentDynamics)}</dd></div>
+          <div className="span-2"><dt>船舶保養維護概況</dt><dd>{value(vessel.note.maintenanceOverview)}</dd></div>
           {vessel.note.subsequentDynamics&&<div className="span-2"><dt>後續動態（舊資料）</dt><dd>{vessel.note.subsequentDynamics}</dd></div>}
           <div><dt>動態更新時間</dt><dd>{dateTime(vessel.note.updatedAt)}</dd></div><div><dt>目前查看人</dt><dd>{currentUser.name}</dd></div>
         </dl></section>

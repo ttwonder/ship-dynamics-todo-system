@@ -402,6 +402,7 @@ export function normalizeAppData(value: unknown): AppData | null {
           chiefEngineer: text(note.chiefEngineer),
           firstEngineer: text(note.firstEngineer),
           recentDynamics,
+          maintenanceOverview: text(note.maintenanceOverview),
           subsequentDynamics: '',
           updatedAt: text(note.updatedAt, timestamp),
         },

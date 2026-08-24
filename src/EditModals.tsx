@@ -145,6 +145,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, onSave, addT
         <div className="field"><label>大管輪</label><input disabled={saving} value={draft.note.firstEngineer} onChange={event => { const value = event.target.value; update(target => { target.note.firstEngineer = value; target.note.updatedAt = nowIso(); }); }}/></div>
       </div>
     </div>
+    <div className="field vessel-maintenance-overview-field"><label>船舶保養維護概況</label><textarea disabled={saving} value={draft.note.maintenanceOverview} placeholder="填寫目前保養、修繕進度與後續維護安排；空白時詳情與 PDF 顯示「-」" onChange={event => { const value = event.target.value; update(target => { target.note.maintenanceOverview = value; target.note.updatedAt = nowIso(); }); }}/></div>
     <section className="vessel-dynamics-section">
       <div className="vessel-dynamics-section-title"><h3>船舶動態</h3><span>快捷狀態與自由補充可分別使用</span></div>
       <div className="vessel-status-edit-grid">

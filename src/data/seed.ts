@@ -771,7 +771,7 @@ export function createInitialData(): AppData {
       items: index % 2 === 0 ? [{ name: '待確認', quantity: 'TBA' }] : [],
       updatedAt: now.toISOString(),
     },
-    note: { statusList: [], statusSupplement: '', captain: '', chiefOfficer: '', chiefEngineer: '', firstEngineer: '', recentDynamics: '', subsequentDynamics: '', updatedAt: now.toISOString() },
+    note: { statusList: [], statusSupplement: '', captain: '', chiefOfficer: '', chiefEngineer: '', firstEngineer: '', recentDynamics: '', maintenanceOverview: '', subsequentDynamics: '', updatedAt: now.toISOString() },
     weeklyAttention: [],
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),

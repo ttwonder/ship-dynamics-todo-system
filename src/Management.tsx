@@ -225,7 +225,7 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
           id, createdAt: at, updatedAt: at, name: '', shortName: '', fullName: '', shipType: '', fleetCategory: 'tanker fleet', fleetTags: [], assignedUserIds: [], delegateManagers: [], isActive: true,
           position: { source: 'manual', location: '', speedKnots: 0, navigationStatus: '航行', lastPort: '', nextPort: '', eta: '', etb: '', etd: '', updatedAt: at, manualRemark: '' },
           cargo: { source: 'manual', loadStatus: '空載', name: '', quantity: '', items: [], updatedAt: at },
-          note: { statusList: [], statusSupplement: '', captain: '', chiefOfficer: '', chiefEngineer: '', firstEngineer: '', recentDynamics: '', subsequentDynamics: '', updatedAt: at },
+          note: { statusList: [], statusSupplement: '', captain: '', chiefOfficer: '', chiefEngineer: '', firstEngineer: '', recentDynamics: '', maintenanceOverview: '', subsequentDynamics: '', updatedAt: at },
           weeklyAttention: [],
         };
         d.vessels.push(vessel);

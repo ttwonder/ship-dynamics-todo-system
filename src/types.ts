@@ -68,6 +68,7 @@ export interface VesselNote {
   chiefEngineer: string;
   firstEngineer: string;
   recentDynamics: string;
+  maintenanceOverview: string;
   subsequentDynamics: string;
   updatedAt: string;
 }

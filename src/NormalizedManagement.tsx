@@ -116,6 +116,7 @@ function newVesselDraft(): Vessel {
       chiefEngineer: '',
       firstEngineer: '',
       recentDynamics: '',
+      maintenanceOverview: '',
       subsequentDynamics: '',
       updatedAt: timestamp,
     },

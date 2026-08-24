@@ -4452,7 +4452,7 @@ function VesselReportNameCell({ v }: { v: Vessel }) {
   </div></div>;
 }
 
-function VesselReportInfo({ v }: { v: Vessel }) {
+export function VesselReportInfo({ v }: { v: Vessel }) {
   return <div className="report-vessel-info">
     <div><b>目前位置：</b>{valueOrDash(v.position.location)}</div>
     <div><b>上一港：</b>{valueOrDash(v.position.lastPort)}</div>
@@ -4466,6 +4466,7 @@ function VesselReportInfo({ v }: { v: Vessel }) {
     <div><b>船舶狀態：</b>{vesselReportStatus(v)}</div>
     <div><b>人工備註：</b>{valueOrDash(v.position.manualRemark)}</div>
     <div><b>近期／後續動態：</b>{valueOrDash(v.note.recentDynamics)}</div>
+    <div className="report-vessel-maintenance"><b>船舶保養維護概況</b><span>{valueOrDash(v.note.maintenanceOverview)}</span></div>
   </div>;
 }
 
