@@ -375,3 +375,23 @@
 .morning-vessel-summary .ship-summary-content{display:grid;gap:4px;height:auto;max-height:58px;color:#111;font-size:12px;font-weight:800;line-height:1.4;overflow-y:auto}
 .morning-vessel-summary .ship-summary-content>span{display:block}.morning-vessel-summary .ship-summary-title{font-size:10px}.morning-summary-task{display:flex!important;align-items:flex-start;gap:4px}.morning-summary-task>.rich-text-content{min-width:0}.morning-summary-task>.rich-text-content p{margin:0}
 @media(max-width:620px){.ship-summary{flex-basis:160px;height:160px;min-height:160px}}
+
+/* Dashboard attention, card-bottom alignment and morning-card polish */
+.ship-card-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start}
+.ship-card-head>.ship-type-supervisor{grid-column:1/-1;display:grid;grid-template-columns:max-content max-content max-content minmax(0,1fr);align-items:baseline;width:100%}
+.ship-manager-label{white-space:nowrap}
+.ship-type-supervisor>span.ship-manager-names{min-width:0;word-break:keep-all;overflow-wrap:normal;white-space:normal}
+.attention-adjust-select{transition:background-color .15s,color .15s,box-shadow .15s}
+.attention-adjust-select option.attention-option.low{background:#e4f7ed;color:#276f53}
+.attention-adjust-select option.attention-option.mid{background:#fff3c9;color:#806016}
+.attention-adjust-select option.attention-option.high{background:#fde3ec;color:#a53d63}
+.attention-adjust-select option.attention-option.urgent{background:#f0192c;color:#fff}
+.attention-adjust-select option.attention-option.special{background:#6f36b7;color:#fff}
+.ship-card>.ship-summary{margin-top:auto}
+.ship-card-foot{margin-top:0}
+.morning-vessel-summary{height:64px;min-height:64px;flex-basis:64px;overflow-x:hidden;overflow-y:hidden}
+.morning-vessel-summary .ship-summary-content{height:100%;max-height:none;overflow-y:auto}
+.mini-ship-head{justify-content:flex-start;gap:6px}
+.mini-ship-head>b{flex:1;min-width:0;text-align:left}
+.mini-ship-head>.meeting-check{margin-right:0}
+@media(max-width:520px){.ship-card-head{grid-template-columns:1fr}.ship-head-badges{grid-column:1}.ship-card-head>.ship-type-supervisor{grid-column:1}}

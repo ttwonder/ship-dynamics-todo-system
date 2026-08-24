@@ -4,7 +4,7 @@ import { daysDiff, todayDate } from './runtimeUtils';
 import { taipeiDateKey } from './taipeiTime';
 import { dashboardVesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
-import { deriveVesselAttention, manualVesselAttentionAllowed, VESSEL_ATTENTION_LEVELS, vesselAttentionClass, vesselAttentionLabel, vesselAttentionPriorityCount } from './vesselAttention';
+import { deriveVesselAttention, manualVesselAttentionAllowed, VESSEL_ATTENTION_LEVELS, vesselAttentionClass, vesselAttentionPriorityCount } from './vesselAttention';
 import QuickMorningPicker from './QuickMorningPicker';
 import { vesselAttentionTasks } from './taskAttention';
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
@@ -136,7 +136,6 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       const automaticKind = automaticScheduleKind(vessel.position, scheduleNow);
       const scheduleKind = scheduleByVessel[vessel.id] ?? automaticKind;
       const scheduleValue = formatCompleteScheduleDisplay(vessel.position[scheduleField[scheduleKind]])||'TBA';
-      const highest = vesselAttentionLabel(attentionResult, attentionTasks);
       const selectedManualAttention = manualVesselAttentionAllowed(attentionResult.manual, attentionResult.automatic) ? attentionResult.manual : '';
       const selectedForMeeting = selected.includes(vessel.id);
       const attentionSaveState = attentionSaveStates[vessel.id];
@@ -147,8 +146,9 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       ].filter(Boolean).join('｜') || '未設定';
       return <article key={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
         <div className="ship-card-head">
-          <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${dashboardVesselDisplayName(vessel)} 單船詳情`}>{dashboardVesselDisplayName(vessel)}</button><div className="ship-type-supervisor"><span>{vessel.shipType || '-'}</span><i aria-hidden="true">｜</i><span>{managerNames.join('、') || '-'}</span></div></div>
-          <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<select disabled={!canEdit} className={`priority-pill attention-adjust attention-adjust-select ${level}`} aria-label={`${dashboardVesselDisplayName(vessel)} 關注程度`} title={canEdit?'直接選擇自動判定或不低於目前自動下限的手動關注度':'目前關注度'} value={selectedManualAttention} onChange={event=>onAdjustAttention(vessel.id,event.target.value as VesselAttentionLevel|'')}><option value="">自動判定（目前：{highest}）</option>{VESSEL_ATTENTION_LEVELS.map(option=><option key={option} value={option} disabled={!manualVesselAttentionAllowed(option,attentionResult.automatic)}>{attentionLevelLabel(option)}</option>)}</select></div>
+          <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${dashboardVesselDisplayName(vessel)} 單船詳情`}>{dashboardVesselDisplayName(vessel)}</button></div>
+          <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<select disabled={!canEdit} className={`priority-pill attention-adjust attention-adjust-select ${level}`} aria-label={`${dashboardVesselDisplayName(vessel)} 關注程度`} title={canEdit?'直接選擇自動或不低於目前自動下限的手動關注度':'目前關注度'} value={selectedManualAttention} onChange={event=>onAdjustAttention(vessel.id,event.target.value as VesselAttentionLevel|'')}><option className={`attention-option ${vesselAttentionClass(attentionResult.automatic)}`} value="">自動：{attentionLevelLabel(attentionResult.automatic)}</option>{VESSEL_ATTENTION_LEVELS.map(option=><option className={`attention-option ${vesselAttentionClass(option)}`} key={option} value={option} disabled={!manualVesselAttentionAllowed(option,attentionResult.automatic)}>手動：{attentionLevelLabel(option)}</option>)}</select></div>
+          <div className="ship-type-supervisor"><span>{vessel.shipType || '-'}</span><i aria-hidden="true">｜</i><span className="ship-manager-label">分管：</span><span className="ship-manager-names">{managerNames.join('、') || '-'}</span></div>
         </div>
         <div className="ship-operation-grid">
           <div className="ship-route"><b>{vessel.position.lastPort || '未設定'}</b><span>→</span><b>{vessel.position.nextPort || '未設定'}</b></div>

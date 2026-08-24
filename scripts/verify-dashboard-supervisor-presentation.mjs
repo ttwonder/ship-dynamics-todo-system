@@ -24,7 +24,10 @@ assert.match(styles, /\.vessel-supervisor-options label\{[^}]*grid-template-colu
 assert.ok(dashboard.includes('className="ship-type-supervisor"'), '每張船卡必須有船型與有效經管人員的共同資訊列');
 assert.ok(dashboard.includes('effectiveVesselManagerNames(vessel, users)'), '船卡姓名必須使用全部有效直接經管與已激活代管人員，不得再限制為督導部門');
 assert.ok(!dashboard.includes('supervisors.filter(option => assignedSupervisorIds.has(option.id))'), '船卡不得再借用只含督導部門的篩選候選清單');
+assert.ok(dashboard.includes('className="ship-manager-names"'), '分管人員必須使用可橫向換列的獨立容器');
 assert.ok(dashboard.includes("managerNames.join('、') || '-'"), '船卡必須顯示全部有效經管人員姓名，未分管時顯示半形 -');
 assert.match(styles, /\.ship-type-supervisor\{[^}]*font-size:13px/, '船型與有效經管人員姓名必須使用一致且放大後的 13px 字級');
+assert.match(styles, /\.ship-card-head>\.ship-type-supervisor\{[^}]*grid-column:1\/-1/, '船型與分管人員列必須橫跨整張船卡，不得被右側狀態下拉壓成窄欄');
+assert.match(styles, /\.ship-type-supervisor>span\.ship-manager-names\{[^}]*word-break:keep-all[^}]*overflow-wrap:normal/, '分管姓名規則必須有足夠優先級，不得被既有最後一欄規則改回姓名中途逐字斷行');
 
 console.log('Dashboard metrics, filters, supervisor picker and card metadata presentation contracts passed.');

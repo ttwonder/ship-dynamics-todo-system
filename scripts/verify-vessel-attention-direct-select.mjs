@@ -18,11 +18,22 @@ try {
   const task = { id:'t1', vesselId:'v1', vesselIds:['v1'], vesselScopeMode:'vessels', vesselTypeScopes:[], priority:'低', attentionDimension:'task', isAware:false, isAbnormal:true, isInternalControl:false, category:'其他', categories:['其他'], description:'異常', status:'', expectedDate:'', reportDate:'', departments:[], ownerUserIds:[], isClosed:false, sourceType:'morning', createdBy:'u1', updatedBy:'u1', createdAt:'', updatedAt:'', statusLogs:[], vesselProgress:[] };
   const markup = renderToStaticMarkup(React.createElement(Dashboard,{ user, users:[user], vessels:[vessel], tasks:[task], internalControlCases:[], meetings:[], selected:[], setSelected(){}, batchSelected:[], setBatchSelected(){}, onOpenVessel(){}, onEdit(){}, onAddTask(){}, onToggleAttention(){}, onAdjustAttention(){}, onStartMeeting(){}, onOpenReport(){}, onTaskMetric(){}, onOpenBatchManagedVessels(){}, canEdit:true, canCreateTasks:true, canUseMeetings:true, canUseReports:true }));
   assert.match(markup, /<select[^>]*aria-label="TEST 關注程度"/, '狀態膠囊須改為直接選擇的下拉選單');
-  assert.match(markup, /<option value="" selected="">自動判定（目前：高關注 異常）<\/option>/, '下拉須提供恢復自動判定並保留自動判定原因');
+  assert.match(markup, /<select[^>]*class="[^"]*attention-adjust-select high[^"]*"/, '自動高關注時，下拉本體必須套用高關注色階');
+  assert.match(markup, /<option class="attention-option high" value="" selected="">自動：高關注<\/option>/, '自動狀態只顯示「自動：狀態」，不得保留「自動判定」或括號');
+  assert.doesNotMatch(markup, /自動判定（|（目前：/, '關注下拉不得再顯示「自動判定」或括號說明');
   assert.doesNotMatch(markup, /attention-current-label/, '卡片頭部不得在下拉旁重複顯示另一份狀態文字');
-  assert.match(markup, /<option value="低" disabled="">低關注<\/option>/, '低於自動下限的選項須停用');
-  assert.match(markup, /<option value="中" disabled="">中關注<\/option>/, '中關注低於高關注自動下限時須停用');
-  assert.match(markup, /<option value="特別關注">特別關注<\/option>/, '須可一次直接選擇特別關注');
+  assert.match(markup, /<option class="attention-option low" value="低" disabled="">手動：低關注<\/option>/, '低於自動下限的手動選項須停用並保留低關注色階');
+  assert.match(markup, /<option class="attention-option mid" value="中" disabled="">手動：中關注<\/option>/, '中關注低於高關注自動下限時須停用並保留中關注色階');
+  assert.match(markup, /<option class="attention-option special" value="特別關注">手動：特別關注<\/option>/, '須可一次直接選擇有獨立色階的手動特別關注');
+
+  const manualMarkup = renderToStaticMarkup(React.createElement(Dashboard,{ user, users:[user], vessels:[{ ...vessel, manualAttentionLevel:'特別關注' }], tasks:[task], internalControlCases:[], meetings:[], selected:[], setSelected(){}, batchSelected:[], setBatchSelected(){}, onOpenVessel(){}, onEdit(){}, onAddTask(){}, onToggleAttention(){}, onAdjustAttention(){}, onStartMeeting(){}, onOpenReport(){}, onTaskMetric(){}, onOpenBatchManagedVessels(){}, canEdit:true, canCreateTasks:true, canUseMeetings:true, canUseReports:true }));
+  assert.match(manualMarkup, /<select[^>]*class="[^"]*attention-adjust-select special[^"]*"/, '手動改為特別關注後，下拉本體色階必須跟著切換');
+  assert.match(manualMarkup, /<option class="attention-option special" value="特別關注" selected="">手動：特別關注<\/option>/, '手動狀態必須顯示「手動：狀態」');
+
+  const styles = fs.readFileSync('src/styles.css','utf8');
+  for (const level of ['low','mid','high','urgent','special']) {
+    assert.match(styles, new RegExp(`\\.attention-adjust-select option\\.attention-option\\.${level}\\{[^}]*background:[^;}]+;[^}]*color:`), `${level} 下拉選項必須有獨立背景與文字色`);
+  }
 
   const app = fs.readFileSync('src/App.tsx','utf8');
   const normalized = fs.readFileSync('src/NormalizedApp.tsx','utf8');
