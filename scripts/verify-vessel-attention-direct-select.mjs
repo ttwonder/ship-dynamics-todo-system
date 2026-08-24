@@ -19,7 +19,9 @@ try {
   const markup = renderToStaticMarkup(React.createElement(Dashboard,{ user, users:[user], vessels:[vessel], tasks:[task], internalControlCases:[], meetings:[], selected:[], setSelected(){}, batchSelected:[], setBatchSelected(){}, onOpenVessel(){}, onEdit(){}, onAddTask(){}, onToggleAttention(){}, onAdjustAttention(){}, onStartMeeting(){}, onOpenReport(){}, onTaskMetric(){}, onOpenBatchManagedVessels(){}, canEdit:true, canCreateTasks:true, canUseMeetings:true, canUseReports:true }));
   assert.match(markup, /<select[^>]*aria-label="TEST 關注程度"/, '狀態膠囊須改為直接選擇的下拉選單');
   assert.match(markup, /<select[^>]*class="[^"]*attention-adjust-select high[^"]*"/, '自動高關注時，下拉本體必須套用高關注色階');
-  assert.match(markup, /<option class="attention-option high" value="" selected="">自動：高關注<\/option>/, '自動狀態只顯示「自動：狀態」，不得保留「自動判定」或括號');
+  assert.match(markup, /<option class="attention-option high" value="" selected="">自動：高關注<\/option>/, '非 PSC 來源的自動高關注仍只顯示一般自動狀態');
+  const pscMarkup = renderToStaticMarkup(React.createElement(Dashboard,{ user, users:[user], vessels:[{ ...vessel, weeklyAttention:['psc-window'] }], tasks:[], internalControlCases:[], meetings:[], selected:[], setSelected(){}, batchSelected:[], setBatchSelected(){}, onOpenVessel(){}, onEdit(){}, onAddTask(){}, onToggleAttention(){}, onAdjustAttention(){}, onStartMeeting(){}, onOpenReport(){}, onTaskMetric(){}, onOpenBatchManagedVessels(){}, canEdit:true, canCreateTasks:true, canUseMeetings:true, canUseReports:true }));
+  assert.match(pscMarkup, /<option class="attention-option high" value="" selected="">自動：高關注-PSC<\/option>/, 'PSC 窗口開啟且自動等級為高時必須顯示 PSC 來源');
   assert.doesNotMatch(markup, /自動判定（|（目前：/, '關注下拉不得再顯示「自動判定」或括號說明');
   assert.doesNotMatch(markup, /attention-current-label/, '卡片頭部不得在下拉旁重複顯示另一份狀態文字');
   assert.match(markup, /<option class="attention-option low" value="低" disabled="">手動：低關注<\/option>/, '低於自動下限的手動選項須停用並保留低關注色階');
