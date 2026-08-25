@@ -335,6 +335,7 @@ export class NormalizedUiController {
         equipmentSubcategory: task.equipmentSubcategory,
         expectedDate: task.expectedDate,
         ownerUserIds: task.ownerUserIds,
+        isAbnormal: task.isAbnormal,
       });
     }
     const taskKey = `task:${task.id}`;
@@ -1136,6 +1137,7 @@ export class NormalizedUiController {
       equipmentSubcategory?: string;
       expectedDate: string;
       ownerUserIds: string[];
+      isAbnormal?: boolean;
     },
     recoveryIntent?: InternalCaseRecoveryIntent,
   ): Promise<'committed' | 'drafted'> {
@@ -1159,6 +1161,9 @@ export class NormalizedUiController {
             expectedDate: taskProjection.expectedDate,
             categories: taskProjection.categories,
             ownerUserIds: taskProjection.ownerUserIds,
+            ...(typeof taskProjection.isAbnormal === 'boolean'
+              ? { isAbnormal: taskProjection.isAbnormal }
+              : {}),
           })
         : null;
     const oldVesselId = recoveryIntent?.oldVesselId || initial.vesselId;

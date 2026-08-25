@@ -574,8 +574,12 @@ begin
   if exists (
     select 1
     from jsonb_object_keys(p_task) key
-    where key not in ('id', 'expectedDate', 'categories', 'ownerUserIds')
+    where key not in ('id', 'expectedDate', 'categories', 'ownerUserIds', 'isAbnormal')
   ) or btrim(coalesce(p_task ->> 'id', '')) = '' then
+    raise exception using errcode = 'P0001', message = 'invalid-task-metadata';
+  end if;
+  if p_task ? 'isAbnormal'
+     and jsonb_typeof(p_task -> 'isAbnormal') <> 'boolean' then
     raise exception using errcode = 'P0001', message = 'invalid-task-metadata';
   end if;
   if btrim(coalesce(p_task ->> 'expectedDate', '')) <> '' then
@@ -1788,7 +1792,10 @@ begin
         status = btrim(p_case ->> 'status'),
         priority = p_case ->> 'priority',
         is_internal_control = true,
-        is_abnormal = true,
+        is_abnormal = case
+          when p_task ? 'isAbnormal' then (p_task ->> 'isAbnormal')::boolean
+          else t.is_abnormal
+        end,
         is_aware = (p_case ->> 'isAware')::boolean,
         is_closed = v_is_closed,
         closed_date = v_closed_date,

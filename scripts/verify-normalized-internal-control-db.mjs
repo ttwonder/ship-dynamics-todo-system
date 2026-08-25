@@ -9,6 +9,12 @@ const root = resolve(here, '..');
 const baseSchemaPath = resolve(root, 'supabase', 'normalized-schema.sql');
 const coreSchemaPath = resolve(root, 'supabase', 'normalized-core-domain.sql');
 const migrationPath = resolve(root, 'supabase', 'normalized-internal-control.sql');
+const abnormalHotfixPath = resolve(
+  root,
+  'supabase',
+  'migrations',
+  '20260825154500_preserve_internal_task_abnormal.sql',
+);
 const db = new PGlite();
 
 const ids = {
@@ -64,6 +70,7 @@ const operations = {
   withdrawMeetingSource: 'b1000000-0000-4000-8000-000000000032',
   withdrawCrossVessel: 'b1000000-0000-4000-8000-000000000033',
   withdrawVesselDenied: 'b1000000-0000-4000-8000-000000000034',
+  preserveUncheckedAbnormal: 'b1000000-0000-4000-8000-000000000035',
 };
 
 await db.exec(`
@@ -79,6 +86,7 @@ await db.exec(`
 await db.exec(await readFile(baseSchemaPath, 'utf8'));
 await db.exec(await readFile(coreSchemaPath, 'utf8'));
 await db.exec(await readFile(migrationPath, 'utf8'));
+await db.exec(await readFile(abnormalHotfixPath, 'utf8'));
 
 await db.exec(`
   insert into auth.users(id,email) values
@@ -806,12 +814,13 @@ const linkedUpdate = await updateInternalCase({
     expectedDate: '2026-09-05',
     categories: ['Fleet', 'Safety'],
     ownerUserIds: [ids.owner, ids.operator],
+    isAbnormal: false,
   },
 });
 assert.equal(Number(linkedUpdate.caseVersion), 2);
 assert.equal(Number(linkedUpdate.taskVersion), 2);
 const linkedTaskProjection = await db.query(`
-  select t.expected_date::text as expected_date,
+  select t.expected_date::text as expected_date, t.is_abnormal,
     array(select c.category from public.sd_task_categories c
       where c.workspace_id=t.workspace_id and c.task_id=t.id order by c.ordinal) as categories,
     array(select o.owner_id::text from public.sd_task_owners o
@@ -821,9 +830,42 @@ const linkedTaskProjection = await db.query(`
 `);
 assert.deepEqual(linkedTaskProjection.rows[0], {
   expected_date: '2026-09-05',
+  is_abnormal: false,
   categories: ['Fleet', 'Safety'],
   owners: [ids.owner, ids.operator],
 }, 'the cross-aggregate update must atomically preserve all editable linked-task projection fields');
+
+await db.exec('begin');
+try {
+  const preservedAbnormal = await updateInternalCase({
+    userId: ids.owner,
+    operationId: operations.preserveUncheckedAbnormal,
+    caseId: linkedCaseId,
+    baseCaseVersion: 2,
+    payload: { ...linkedUpdatedPayload, status: 'Case-only refresh' },
+    caseLease: linkedCaseLease,
+    ownerSession: sessions.owner,
+    taskId: linkedTaskId,
+    baseTaskVersion: 2,
+    taskLease: linkedTaskLease,
+    task: {
+      id: linkedTaskId,
+      expectedDate: '2026-09-05',
+      categories: ['Fleet', 'Safety'],
+      ownerUserIds: [ids.owner, ids.operator],
+    },
+  });
+  assert.equal(Number(preservedAbnormal.caseVersion), 3);
+  assert.equal(Number(preservedAbnormal.taskVersion), 3);
+  const preservedRow = await db.query(`
+    select is_abnormal from public.sd_tasks
+    where workspace_id='${ids.workspace}' and id='${linkedTaskId}'
+  `);
+  assert.equal(preservedRow.rows[0].is_abnormal, false,
+    'later internal-case edits that omit the task flag must preserve the saved false value');
+} finally {
+  await db.exec('rollback');
+}
 
 const beforeRollback = await db.query(`
   select c.description, c.status, c.version,

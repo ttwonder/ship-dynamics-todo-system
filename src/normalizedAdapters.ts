@@ -193,7 +193,9 @@ export function internalCaseCommandPayload(item: InternalControlCase): JsonObjec
 
 export function linkedInternalTaskCommandPayload(
   item: InternalControlCase,
-  task: Pick<TaskItem, 'id' | 'expectedDate' | 'categories' | 'ownerUserIds'> | undefined,
+  task: (Pick<TaskItem, 'id' | 'expectedDate' | 'categories' | 'ownerUserIds'> & {
+    isAbnormal?: boolean;
+  }) | undefined,
 ): JsonObject | null {
   if (!item.syncToTask) return null;
   return {
@@ -201,6 +203,7 @@ export function linkedInternalTaskCommandPayload(
     expectedDate: task?.expectedDate || item.reportDate,
     categories: task?.categories?.length ? task.categories : [item.category].filter(Boolean),
     ownerUserIds: task?.ownerUserIds || [],
+    ...(typeof task?.isAbnormal === 'boolean' ? { isAbnormal: task.isAbnormal } : {}),
   };
 }
 

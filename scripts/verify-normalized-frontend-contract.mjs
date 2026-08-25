@@ -513,6 +513,24 @@ try {
     ownerUserIds: [actorId],
   }, 'linked internal-case edits must carry the editable task projection into the cross-aggregate RPC');
 
+  linkedUpdateInput = undefined;
+  await new NormalizedUiController(linkedRuntime).saveTask({
+    ...linkedTask,
+    category: 'Safety',
+    categories: ['Safety', 'Fleet'],
+    expectedDate: '2026-09-05',
+    reportDate: '2026-07-26',
+    departments: ['Operations'],
+    ownerUserIds: [actorId],
+    isAbnormal: false,
+    createdBy: actorId,
+    updatedBy: actorId,
+    createdAt: '2026-07-26T00:00:00Z',
+    statusLogs: [],
+  }, false);
+  assert.equal(linkedUpdateInput.taskPayload.isAbnormal, false,
+    'unchecking abnormal in the task editor must reach the authoritative internal-case RPC as false');
+
   linkedRefreshes = [];
   linkedLeaseRequests = [];
   linkedLeaseReleases = 0;
