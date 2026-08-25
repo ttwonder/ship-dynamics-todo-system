@@ -290,6 +290,51 @@ try{
     'an exact origin-bound withdrawal bundle must not require generic deleteTasks',
   );
   assert.equal(withdrawalAuthBase.settings.rolePermissions.operator.deleteTasks,false,'the dedicated command must leave generic operator deletion disabled');
+
+  const productionShapeWithdrawalBase=structuredClone(withdrawalAuthBase);
+  Object.assign(productionShapeWithdrawalBase.tasks.find(task=>task.id===withdrawalTaskId),{
+    equipmentSubcategory:undefined,
+    internalControlCancelledAt:undefined,
+    internalControlCancelledBy:undefined,
+    sourceMeetingId:undefined,
+    sourceMeetingItemId:undefined,
+  });
+  Object.assign(productionShapeWithdrawalBase.internalControlCases[0],{
+    closedBy:undefined,
+    closedDate:undefined,
+    equipmentSubcategory:undefined,
+  });
+  const productionShapeWithdrawalNext=structuredClone(withdrawalAuthNext);
+  Object.assign(productionShapeWithdrawalNext.internalControlCases[0],{
+    closedBy:undefined,
+    closedDate:undefined,
+    equipmentSubcategory:undefined,
+  });
+  const productionShapeTask=productionShapeWithdrawalBase.tasks.find(task=>task.id===withdrawalTaskId);
+  const productionShapeOps=patch.buildCloudBlockPatch(productionShapeWithdrawalBase,productionShapeWithdrawalNext);
+  const productionShapeTaskDelete=productionShapeOps.find(operation=>operation.kind==='entity'&&operation.collection==='tasks'&&operation.entityId===withdrawalTaskId);
+  assert.equal(Object.hasOwn(productionShapeTask,'sourceMeetingId'),true,'normalized production data must preserve its optional undefined property shape');
+  assert.equal(Object.hasOwn(productionShapeTaskDelete.expected,'sourceMeetingId'),false,'the JSON cloud patch must omit undefined properties');
+  assert.doesNotThrow(
+    ()=>auth.assertActorAuthorizedForAppDataChange(productionShapeWithdrawalBase,productionShapeWithdrawalNext,withdrawalActor.id),
+    'an exact production-shaped withdrawal must not require generic deleteTasks when JSON patch construction omits normalized undefined properties',
+  );
+  const productionShapeGenericDeleteNext=structuredClone(productionShapeWithdrawalBase);
+  productionShapeGenericDeleteNext.tasks=productionShapeGenericDeleteNext.tasks.filter(task=>task.id!==ordinaryTask.id);
+  assert.throws(
+    ()=>auth.assertActorAuthorizedForAppDataChange(productionShapeWithdrawalBase,productionShapeGenericDeleteNext,withdrawalActor.id),
+    error=>error instanceof auth.CloudPatchAuthorizationError&&error.reason==='missing-deleteTasks',
+    'JSON-compatible withdrawal matching must not grant production-shaped generic task deletion',
+  );
+  const forgedNullWithdrawalOps=structuredClone(productionShapeOps);
+  const forgedNullTaskDelete=forgedNullWithdrawalOps.find(operation=>operation.kind==='entity'&&operation.collection==='tasks'&&operation.entityId===withdrawalTaskId);
+  forgedNullTaskDelete.expected.sourceMeetingId=null;
+  assert.throws(
+    ()=>auth.assertActorAuthorizedForCloudBlockPatch(productionShapeWithdrawalBase,forgedNullWithdrawalOps,withdrawalActor.id),
+    error=>error instanceof auth.CloudPatchAuthorizationError&&error.reason==='missing-deleteTasks',
+    'JSON-compatible withdrawal matching must distinguish an omitted optional field from an explicit null',
+  );
+
   const assertWithdrawalBundleRejected=(prepare,message)=>{
     const candidateBase=structuredClone(withdrawalAuthBase);
     const candidateNext=structuredClone(withdrawalAuthNext);

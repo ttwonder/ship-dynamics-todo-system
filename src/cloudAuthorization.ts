@@ -20,6 +20,11 @@ const stable=(value:unknown):string=>{
   return JSON.stringify(value);
 };
 const equal=(left:unknown,right:unknown)=>stable(left)===stable(right);
+const jsonComparable=(value:unknown):unknown=>{
+  const serialized=JSON.stringify(value);
+  return serialized===undefined?undefined:JSON.parse(serialized);
+};
+const jsonEqual=(left:unknown,right:unknown)=>equal(jsonComparable(left),jsonComparable(right));
 
 const activeVessels=(data:AppData)=>data.vessels.filter(vessel=>vessel.isActive);
 
@@ -218,7 +223,7 @@ const exactDeletionMembership=(
   if(entities.some(operation=>operation.value!==null
     ||!operation.expected
     ||operation.entityId!==String(operation.expected.id||'')
-    ||!equal(expectedById.get(operation.entityId),operation.expected)))return false;
+    ||!jsonEqual(expectedById.get(operation.entityId),operation.expected)))return false;
   if(!ordered)return orders.length===0;
   if(!expectedDeleted.length)return orders.length===0;
   if(orders.length!==1)return false;
@@ -266,7 +271,7 @@ function exactWithdrawalAuditBundle(
   const deleted=entities.filter(operation=>operation.expected&&!operation.value);
   if(deleted.length!==deletedIds.size||entities.length!==added.length+deleted.length)return false;
   return deleted.every(operation=>deletedIds.has(operation.entityId)
-    &&equal(data.auditLogs.find(item=>item.id===operation.entityId),operation.expected));
+    &&jsonEqual(data.auditLogs.find(item=>item.id===operation.entityId),operation.expected));
 }
 
 function exactOriginBoundTaskSyncWithdrawals(data:AppData,operations:readonly CloudBlockPatchOperation[],actor:UserAccount){
@@ -289,8 +294,8 @@ function exactOriginBoundTaskSyncWithdrawals(data:AppData,operations:readonly Cl
   if(tasksById.length!==1||casesById.length!==1)return none;
   const task=tasksById[0];
   const item=casesById[0];
-  if(!equal(task,taskDelete.expected)
-    ||!equal(item,caseUpdate.expected)
+  if(!jsonEqual(task,taskDelete.expected)
+    ||!jsonEqual(item,caseUpdate.expected)
     ||item.origin!=='internal-control'
     ||item.isClosed
     ||item.syncToTask!==true
