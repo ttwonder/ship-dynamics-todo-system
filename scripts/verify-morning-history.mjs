@@ -46,6 +46,10 @@ assert.match(app,/const effectiveReportDate=reportDate\|\|formatTaipeiDate\(new 
 assert.match(app,/onClick=\{\(\)=>onPrint\(effectiveReportDate\)\}/,'早會 PDF 導出按鈕必須把實際報告日期交給文件名流程');
 assert.match(app,/const printReport = \(reportDate:string\) =>/,'早會 PDF 列印流程必須接收預覽中的報告日期');
 assert.match(app,/printMorningReportPdf\(reportDate\)/,'所有早會 PDF 入口必須共用文件名與列印清理流程');
+assert.match(app,/<div>內控議題<br\/><b>\{internalCases\.length\}<\/b><\/div>/,'早會 PDF 必須保留內控件數 KPI');
+assert.doesNotMatch(app,/\{internalCases\.length>0&&<><h2>內控議題<\/h2>/,'早會 PDF 不得在底部另列內控清單');
+assert.match(app,/公司層決議案（臨會／專題）/,'移除內控清單不得刪除公司層決議區塊');
+assert.match(app,/跨船單船要事/,'移除內控清單不得刪除跨船要事區塊');
 assert.match(morningReportPdf,/document\.title = morningReportPdfDocumentTitle\(reportDate\)/,'早會 PDF 列印前必須設定固定名稱與日期');
 assert.match(morningReportPdf,/document\.title = originalTitle/,'早會 PDF 列印結束後必須恢復網站原標題');
 assert.match(app,/useEffect\(\(\)=>\{setReportPreviewOpen\(false\);setReportPreviewHistoryId\(''\);\},\[currentUserId\]\)/,'identity switches must close historical report previews and clear existence signals');

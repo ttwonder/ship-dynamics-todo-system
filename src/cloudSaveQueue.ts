@@ -84,6 +84,7 @@ type VisibleSaveStateOptions<T> = {
 };
 
 export function hasUnconfirmedVisibleChanges<T>(options: VisibleSaveStateOptions<T>): boolean {
+  if(options.confirmed&&options.equals(options.live,options.confirmed))return false;
   if(options.lastSaved&&!options.lastSavedWasRendered&&options.visibleBaseline){
     return !options.equals(options.live,options.visibleBaseline);
   }

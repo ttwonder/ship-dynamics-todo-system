@@ -81,6 +81,16 @@ try {
     confirmedRevision:2,
   }), false, 'durable handoff 尚未 commit 畫面時，不得把預期的畫面差異誤判為新修改');
   assert.equal(queue.hasUnconfirmedVisibleChanges({
+    live:durableSnapshot,
+    confirmed:durableSnapshot,
+    lastSaved:durableSnapshot,
+    lastSavedWasRendered:false,
+    visibleBaseline,
+    equals,
+    liveRevision:2,
+    confirmedRevision:2,
+  }), false, 'durable handoff 的雲端確認結果先套回畫面時，不得誤報成較新的本機修改');
+  assert.equal(queue.hasUnconfirmedVisibleChanges({
     live:{ revision:2, tasks:[{ id:'other-change' }] },
     confirmed:durableSnapshot,
     lastSaved:durableSnapshot,
