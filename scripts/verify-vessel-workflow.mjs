@@ -65,7 +65,12 @@ try {
   assert.equal(Boolean(cancelled.internalControlCancelledAt), true);
   assert.equal(cancelled.internalControlCancelledBy, 'sup');
   const selected = workflow.validateInternalControlTransition({...task,isInternalControl:false}, {...task,isInternalControl:true,isAbnormal:false}, operator, vessel);
-  assert.equal(selected.isAbnormal, true, '内控必然属于异常');
+  assert.equal(selected.isAbnormal, false, '內控分類與近期異常必須保持獨立');
+  const uncheckedLinkedTask = workflow.validateInternalControlTransition(task, {...task,isAbnormal:false}, operator, vessel);
+  assert.equal(uncheckedLinkedTask.isAbnormal, false, '既有關聯要事取消近期異常後不得在保存邊界復活');
+  const closedInternalTask = {...task,isClosed:true};
+  const uncheckedClosedTask = workflow.validateInternalControlTransition(closedInternalTask, {...closedInternalTask,isAbnormal:false}, operator, vessel);
+  assert.equal(uncheckedClosedTask.isAbnormal, false, '已結案內控歷史也不得把獨立異常值強制改回 true');
   const multiVesselTask={...task,vesselIds:['v1','v2']};
   const movedToManagedVessel={...multiVesselTask,vesselId:'v2',vesselIds:['v2'],isInternalControl:true};
   assert.equal(workflow.internalControlTransitionRequested(multiVesselTask,movedToManagedVessel),true,'移除原內控涉船也屬取消轉換');

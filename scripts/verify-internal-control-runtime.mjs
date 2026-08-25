@@ -358,10 +358,12 @@ try {
   assert.equal(stats.byPriority.find(item => item.label === '高')?.count, 1);
   assert.equal(stats.monthlyTrend.find(item => item.label === '2026-07')?.count, 1);
 
-  const task = workflow.internalControlCaseToTask(baseCase, { id: 'task1', ownerUserIds: ['u1'], actorId: 'u1', at: '2026-07-23T02:00:00.000Z' });
+  const task = workflow.internalControlCaseToTask(baseCase, { id: 'task1', ownerUserIds: ['u1'], isAbnormal: false, actorId: 'u1', at: '2026-07-23T02:00:00.000Z' });
   assert.equal(task.internalControlCaseId, 'ic1');
   assert.equal(task.isInternalControl, true);
-  assert.equal(task.isAbnormal, true);
+  assert.equal(task.isAbnormal, false);
+  const abnormalTask = workflow.internalControlCaseToTask(baseCase, { id: 'task-abnormal', ownerUserIds: ['u1'], isAbnormal: true, actorId: 'u1', at: '2026-07-23T02:00:00.000Z' });
+  assert.equal(abnormalTask.isAbnormal, true);
   assert.deepEqual(task.categories, ['設備故障']);
   const batchResult = batchActions.completeSelectedTasks([task], [task.id], {
     actorId: 'u1', actorName: '甲', at: '2026-07-23T02:20:00.000Z', closedDate: '2026-07-23',
@@ -583,10 +585,25 @@ try {
     tasks: [],
     internalControlCases: [],
   };
-  const created = dataLayer.createInternalControlCases(draft, [{ ...baseCase, id: 'batch-1', syncToTask: true }], draft.users[0], '2026-07-23T03:00:00.000Z');
+  const created = dataLayer.createInternalControlCases(
+    draft,
+    [{ ...baseCase, id: 'batch-1', syncToTask: true }],
+    draft.users[0],
+    '2026-07-23T03:00:00.000Z',
+    {
+      'batch-1': {
+        categories: ['設備故障'],
+        equipmentSubcategory: baseCase.equipmentSubcategory,
+        expectedDate: '',
+        ownerUserIds: ['u1'],
+        isAbnormal: false,
+      },
+    },
+  );
   assert.deepEqual(created.caseIds, ['batch-1']);
   assert.equal(draft.internalControlCases.length, 1);
   assert.equal(draft.tasks.length, 1);
+  assert.equal(draft.tasks[0].isAbnormal, false);
   assert.equal(draft.internalControlCases[0].linkedTaskId, draft.tasks[0].id);
   assert.equal(draft.tasks[0].internalControlCaseId, 'batch-1');
   assert.equal(draft.internalControlCases[0].statusLogs.length, 1, 'required initial status should become an immutable history entry');

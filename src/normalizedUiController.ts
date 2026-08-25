@@ -79,7 +79,8 @@ const INTERNAL_CASE_KEYS = [
   'syncToTask', 'linkedTaskId', 'origin', 'isClosed', 'closedDate', 'closedBy',
   'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'statusLogs',
 ] as const;
-const INTERNAL_TASK_KEYS = ['id', 'expectedDate', 'categories', 'ownerUserIds'] as const;
+const INTERNAL_TASK_KEYS = ['id', 'expectedDate', 'categories', 'ownerUserIds', 'isAbnormal'] as const;
+const REQUIRED_INTERNAL_TASK_KEYS = ['id', 'expectedDate', 'categories', 'ownerUserIds'] as const;
 const STATUS_LOG_KEYS = ['id', 'at', 'by', 'byUserId', 'text'] as const;
 
 function isRecord(value: unknown): value is JsonObject {
@@ -158,11 +159,12 @@ function validInternalCaseDraft(value: unknown): value is InternalControlCase {
 }
 
 function validInternalTaskDraft(value: unknown): value is JsonObject {
-  if (!isRecord(value) || !hasExactKeys(value, INTERNAL_TASK_KEYS)) return false;
+  if (!isRecord(value) || !hasExactKeys(value, INTERNAL_TASK_KEYS, REQUIRED_INTERNAL_TASK_KEYS)) return false;
   return validEntityId(value.id)
     && nonEmptyText(value.expectedDate)
     && stringList(value.categories)
-    && stringList(value.ownerUserIds);
+    && stringList(value.ownerUserIds)
+    && (value.isAbnormal === undefined || typeof value.isAbnormal === 'boolean');
 }
 
 function validReplayEnvelope(value: unknown, command: string): boolean {
@@ -770,8 +772,12 @@ export class NormalizedUiController {
       equipmentSubcategory?: string;
       expectedDate: string;
       ownerUserIds: string[];
+      isAbnormal: boolean;
     },
   ): Promise<'committed' | 'drafted'> {
+    if (item.syncToTask && typeof taskProjection?.isAbnormal !== 'boolean') {
+      throw new Error('同步要事時必須先選擇是否標記為近期內需要特別關注的異常');
+    }
     const caseKey = `internal-case:${item.id}`;
     const caseCreateLeaseKey = `internal-case-create:${item.vesselId}`;
     const linkedTask = taskProjection
@@ -780,6 +786,7 @@ export class NormalizedUiController {
           expectedDate: taskProjection.expectedDate,
           categories: taskProjection.categories,
           ownerUserIds: taskProjection.ownerUserIds,
+          isAbnormal: taskProjection.isAbnormal,
         }
       : undefined;
     if (!isOnline()) {
@@ -1020,9 +1027,15 @@ export class NormalizedUiController {
       equipmentSubcategory?: string;
       expectedDate: string;
       ownerUserIds: string[];
+      isAbnormal: boolean;
     }> = {},
   ): Promise<'committed' | 'drafted'> {
     if (!items.length) throw new Error('The internal-case batch is empty.');
+    for (const item of items) {
+      if (item.syncToTask && typeof projections[item.id]?.isAbnormal !== 'boolean') {
+        throw new Error('同步要事時必須先選擇是否標記為近期內需要特別關注的異常');
+      }
+    }
     const operationId = this.runtime.commands.createOperationId();
     const batchKey = `internal-case-batch:${operationId}`;
     const prepared = items.map(item => {
@@ -1033,6 +1046,7 @@ export class NormalizedUiController {
             expectedDate: projection?.expectedDate || item.reportDate,
             categories: projection?.categories?.length ? projection.categories : [item.category],
             ownerUserIds: projection?.ownerUserIds || [],
+            isAbnormal: projection.isAbnormal,
           }
         : undefined;
       const taskPayload = linkedInternalTaskCommandPayload(item, linkedTask);
@@ -1607,6 +1621,7 @@ export class NormalizedUiController {
         ownerUserIds: Array.isArray(linked.ownerUserIds)
           ? linked.ownerUserIds.filter((value): value is string => typeof value === 'string')
           : [],
+        isAbnormal: typeof linked.isAbnormal === 'boolean' ? linked.isAbnormal : false,
       } : undefined);
     }
   }

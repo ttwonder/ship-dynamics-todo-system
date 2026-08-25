@@ -1314,7 +1314,10 @@ begin
       'ordinary',
       'task',
       true,
-      true,
+      case
+        when p_task ? 'isAbnormal' then (p_task ->> 'isAbnormal')::boolean
+        else false
+      end,
       (p_case ->> 'isAware')::boolean,
       v_is_closed,
       v_closed_date,
@@ -1879,7 +1882,10 @@ begin
       'ordinary',
       'task',
       true,
-      true,
+      case
+        when p_task ? 'isAbnormal' then (p_task ->> 'isAbnormal')::boolean
+        else false
+      end,
       (p_case ->> 'isAware')::boolean,
       v_is_closed,
       v_closed_date,
@@ -3984,7 +3990,10 @@ begin
         'ordinary',
         'task',
         true,
-        true,
+        case
+          when v_task ? 'isAbnormal' then (v_task ->> 'isAbnormal')::boolean
+          else false
+        end,
         (v_case ->> 'isAware')::boolean,
         v_is_closed,
         v_closed_date,

@@ -176,12 +176,10 @@ export function validateInternalControlTransition<T extends InternalControlTaskS
   const result = { ...next };
   if (internalControlStateClosed(previous) && previous.isInternalControl) {
     result.isInternalControl = true;
-    result.isAbnormal = true;
     if (previous.vesselId) result.vesselId = previous.vesselId;
     if (previous.vesselIds) result.vesselIds = [...previous.vesselIds];
     return result;
   }
-  if (result.isInternalControl) result.isAbnormal = true;
   if (internalControlTransitionRequested(previous, result)) {
     const vessels = Array.isArray(vesselOrVessels) ? vesselOrVessels : [vesselOrVessels];
     const previousIds = internalControlScopeIds(previous);

@@ -30,6 +30,8 @@ for (const relative of [
   'supabase/normalized-schema.sql',
   'supabase/normalized-core-domain.sql',
   'supabase/normalized-internal-control.sql',
+  'supabase/migrations/20260825154500_preserve_internal_task_abnormal.sql',
+  'supabase/migrations/20260825191500_linked_task_abnormal_choice.sql',
 ]) {
   await db.exec(await readFile(resolve(root, relative), 'utf8'));
 }
@@ -104,6 +106,7 @@ const items = caseIds.map((caseId, index) => ({
     expectedDate: `2026-08-${index + 10}`,
     categories: ['Safety'],
     ownerUserIds: [ids.operator],
+    isAbnormal: index === 1,
   },
   taskLeaseKey: 'task-create:vessel-a',
   taskOwnerSession: ownerSession,
@@ -207,6 +210,15 @@ assert.deepEqual(committedCounts.rows[0], {
   cases: 2, tasks: 2, links: 2, case_events: 2, task_events: 2,
   audits: 4, notices: 2, operations: 1,
 });
+const committedAbnormalChoices = await db.query(`
+  select id, is_abnormal from public.sd_tasks
+  where workspace_id='${ids.workspace}'
+  order by id
+`);
+assert.deepEqual(committedAbnormalChoices.rows, [
+  { id: 'task-batch-a', is_abnormal: true },
+  { id: 'task-batch-b', is_abnormal: false },
+], 'batch-created linked tasks must persist each explicit abnormal choice independently');
 const replay = await invoke(successOperation);
 assert.equal(replay.replayed, true);
 assert.deepEqual(replay.caseIds, caseIds);

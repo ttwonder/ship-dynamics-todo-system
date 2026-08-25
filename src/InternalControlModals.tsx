@@ -12,6 +12,17 @@ import { richTextToPlainText } from './richText';
 const REPORT_SOURCES: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))];
 
+const LINKED_TASK_ABNORMAL_PROMPT = '是否將這筆關聯要事勾選「近期內需要特別關注的異常」？\n\n按「確定」：勾選異常。\n按「取消」：不勾選異常，但仍會建立關聯要事。';
+type TaskSyncChoice = { syncToTask: false } | { syncToTask: true; isAbnormal: boolean };
+
+export function internalControlTaskSyncChoice(
+  checked: boolean,
+  confirmChoice: (message: string) => boolean = message => window.confirm(message),
+): TaskSyncChoice {
+  if (!checked) return { syncToTask: false };
+  return { syncToTask: true, isAbnormal: confirmChoice(LINKED_TASK_ABNORMAL_PROMPT) };
+}
+
 type BatchRow = {
   key: string;
   description: string;
@@ -27,11 +38,12 @@ type BatchRow = {
   taskEquipmentSubcategory: string;
   taskExpectedDate: string;
   taskOwnerUserIds: string[];
+  taskIsAbnormal: boolean;
 };
 
 const newRow = (category: string): BatchRow => ({
   key: uid('ic-row'), description: '', priority: '低', category, equipmentSubcategory: '', isAware: false, status: '', departments: [], closedDate: '', syncToTask: false,
-  taskCategories: category ? [category] : [], taskEquipmentSubcategory: '', taskExpectedDate: '', taskOwnerUserIds: [],
+  taskCategories: category ? [category] : [], taskEquipmentSubcategory: '', taskExpectedDate: '', taskOwnerUserIds: [], taskIsAbnormal: false,
 });
 
 const defaultOwnerIds = (data: AppData, vesselId: string) => {
@@ -67,7 +79,16 @@ export function BatchCreateModal({ data, user, vessels, close, save }: { data: A
   const [reportSource, setReportSource] = useState<InternalControlReportSource>('日常');
   const [rows, setRows] = useState<BatchRow[]>([newRow(categories[0] || '設備故障')]);
   const update = (key: string, patch: Partial<BatchRow>) => setRows(previous => previous.map(row => row.key === key ? { ...row, ...patch } : row));
-  const projectionFor = (row: BatchRow): InternalControlTaskProjection => ({ categories: row.taskCategories, equipmentSubcategory: row.taskEquipmentSubcategory || row.equipmentSubcategory || undefined, expectedDate: row.taskExpectedDate, ownerUserIds: row.taskOwnerUserIds });
+  const projectionFor = (row: BatchRow): InternalControlTaskProjection => ({ categories: row.taskCategories, equipmentSubcategory: row.taskEquipmentSubcategory || row.equipmentSubcategory || undefined, expectedDate: row.taskExpectedDate, ownerUserIds: row.taskOwnerUserIds, isAbnormal: row.taskIsAbnormal });
+  const changeTaskSync = (row: BatchRow, checked: boolean) => {
+    const choice = internalControlTaskSyncChoice(checked);
+    update(row.key, {
+      syncToTask: choice.syncToTask,
+      taskIsAbnormal: choice.syncToTask ? choice.isAbnormal : row.taskIsAbnormal,
+      taskCategories: row.taskCategories.length ? row.taskCategories : [row.category],
+      taskOwnerUserIds: choice.syncToTask ? defaultOwnerIds(data, vesselId) : row.taskOwnerUserIds,
+    });
+  };
   const submit = async () => {
     const at = new Date().toISOString();
     const candidates: InternalControlCase[] = rows.map(row => ({
@@ -97,9 +118,9 @@ export function BatchCreateModal({ data, user, vessels, close, save }: { data: A
       <div className="ic-batch-row-head"><h3>第 {index + 1} 筆</h3>{rows.length > 1 && <button className="btn small danger" onClick={() => setRows(previous => previous.filter(item => item.key !== row.key))}>刪除本筆</button>}</div>
       <div className="grid cols-3 ic-case-classification-row"><div className="field"><label>關注程度 *</label><select value={row.priority} onChange={event => update(row.key, { priority: event.target.value as TaskPriority })}>{data.settings.priorities.map(priority => <option key={priority}>{priority}</option>)}</select></div><div className="field"><label>事件分類 *</label><select value={row.category} onChange={event => { const category = event.target.value; update(row.key, { category, equipmentSubcategory: category === '設備故障' ? row.equipmentSubcategory : '', taskCategories: row.taskCategories.length <= 1 ? [category] : row.taskCategories }); }}>{categories.map(category => <option key={category}>{category}</option>)}</select></div><div className="field"><label>設備故障細項{row.category === '設備故障' ? ' *' : ''}</label><select disabled={row.category !== '設備故障'} value={row.equipmentSubcategory} onChange={event => update(row.key, { equipmentSubcategory: event.target.value })}><option value="">{row.category === '設備故障' ? '請選擇' : '不適用'}</option>{data.settings.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-2 ic-case-content-row"><div className="field"><label>事項內容 *</label><textarea value={row.description} onChange={event => update(row.key, { description: event.target.value })}/></div><div className="field"><label>解決計劃／最新狀態 *</label><textarea value={row.status} onChange={event => update(row.key, { status: event.target.value })}/></div></div>
-      <div className="ic-inline-options"><label><input type="checkbox" checked={row.isAware} onChange={event => update(row.key, { isAware: event.target.checked })}/>標記為知曉事項</label><label><input type="checkbox" checked={row.syncToTask} onChange={event => update(row.key, { syncToTask: event.target.checked, taskCategories: row.taskCategories.length ? row.taskCategories : [row.category], taskOwnerUserIds: event.target.checked ? defaultOwnerIds(data, vesselId) : row.taskOwnerUserIds })}/>同步到要事</label><div className="field"><label>結案日期（可選）</label><input type="date" value={row.closedDate} onChange={event => update(row.key, { closedDate: event.target.value })}/></div></div>
+      <div className="ic-inline-options"><label><input type="checkbox" checked={row.isAware} onChange={event => update(row.key, { isAware: event.target.checked })}/>標記為知曉事項</label><label><input type="checkbox" checked={row.syncToTask} onChange={event => changeTaskSync(row, event.target.checked)}/>同步到要事</label><div className="field"><label>結案日期（可選）</label><input type="date" value={row.closedDate} onChange={event => update(row.key, { closedDate: event.target.value })}/></div></div>
       <DepartmentPicker values={row.departments} choices={data.settings.departments} onChange={departments => update(row.key, { departments })}/>
-      {row.syncToTask && <TaskProjectionFields data={data} vesselId={vesselId} projection={projectionFor(row)} onChange={projection => update(row.key, { taskCategories: projection.categories, taskEquipmentSubcategory: projection.equipmentSubcategory || '', taskExpectedDate: projection.expectedDate, taskOwnerUserIds: projection.ownerUserIds })}/>}
+      {row.syncToTask && <TaskProjectionFields data={data} vesselId={vesselId} projection={projectionFor(row)} onChange={projection => update(row.key, { taskCategories: projection.categories, taskEquipmentSubcategory: projection.equipmentSubcategory || '', taskExpectedDate: projection.expectedDate, taskOwnerUserIds: projection.ownerUserIds, taskIsAbnormal: projection.isAbnormal === true })}/>}
     </article>)}</div>
     <div className="modal-actions"><button className="btn ghost" onClick={() => setRows(previous => [...previous, newRow(categories[0] || '設備故障')])}>＋ 新增一筆</button><button className="btn ghost" onClick={close}>取消</button><button className="btn primary" onClick={submit}>保存 {rows.length} 筆案件</button></div>
   </div></div>;
@@ -113,11 +134,17 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
     equipmentSubcategory: linkedTask?.equipmentSubcategory || item.equipmentSubcategory,
     expectedDate: linkedTask?.expectedDate || '',
     ownerUserIds: linkedTask ? [...linkedTask.ownerUserIds] : defaultOwnerIds(data, item.vesselId),
+    isAbnormal: linkedTask?.isAbnormal ?? false,
   });
   const [logText, setLogText] = useState('');
   const [withdrawing,setWithdrawing]=useState(false);
   const categories = unique([...data.settings.taskCategories, draft.category, '設備故障']);
   const change = (patch: Partial<InternalControlCase>) => setDraft(previous => ({ ...previous, ...patch }));
+  const changeTaskSync = (checked: boolean) => {
+    const choice = internalControlTaskSyncChoice(checked);
+    change({ syncToTask: choice.syncToTask });
+    if (choice.syncToTask) setProjection(previous => ({ ...previous, isAbnormal: choice.isAbnormal }));
+  };
   const addLog = () => { const text = logText.trim(); if (!text) return; setDraft(previous => ({ ...previous, status: text, statusLogs: [{ id: uid('client-log'), at: '', by: '', text }, ...previous.statusLogs] })); setLogText(''); };
   const submit = async () => {
     const errors = validateInternalControlCase(draft);
@@ -141,7 +168,7 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
       <div className="grid cols-3"><div className="field"><label>船舶 *</label><select value={draft.vesselId} onChange={event => { const vesselId = event.target.value; change({ vesselId }); setProjection(previous => ({ ...previous, ownerUserIds: defaultOwnerIds(data, vesselId) })); }}>{vessels.map(value => <option key={value.id} value={value.id}>{vesselDisplayName(value)}</option>)}</select></div><div className="field"><label>報告日期 *</label><input type="date" value={draft.reportDate} onChange={event => change({ reportDate: event.target.value })}/></div><div className="field"><label>報告來源 *</label><select value={draft.reportSource} onChange={event => change({ reportSource: event.target.value as InternalControlReportSource })}>{REPORT_SOURCES.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-3 ic-case-classification-row"><div className="field"><label>關注程度 *</label><select value={draft.priority} onChange={event => change({ priority: event.target.value as TaskPriority })}>{data.settings.priorities.map(priority => <option key={priority}>{priority}</option>)}</select></div><div className="field"><label>事件分類 *</label><select value={draft.category} onChange={event => change({ category: event.target.value, equipmentSubcategory: event.target.value === '設備故障' ? draft.equipmentSubcategory : undefined })}>{categories.map(category => <option key={category}>{category}</option>)}</select></div><div className="field"><label>設備故障細項{draft.category === '設備故障' ? ' *' : ''}</label><select disabled={draft.category !== '設備故障'} value={draft.equipmentSubcategory || ''} onChange={event => change({ equipmentSubcategory: event.target.value })}><option value="">{draft.category === '設備故障' ? '請選擇' : '不適用'}</option>{data.settings.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-2 ic-case-content-row"><div className="field"><label>事項內容 *</label><textarea value={draft.description} onChange={event => change({ description: event.target.value })}/></div><div className="field"><label>解決計劃／最新狀態 *</label><textarea value={draft.status} onChange={event => change({ status: event.target.value })}/></div></div>
-      <div className="ic-inline-options"><label><input type="checkbox" checked={draft.isAware} onChange={event => change({ isAware: event.target.checked })}/>知曉事項</label><label><input type="checkbox" checked={draft.syncToTask} disabled={Boolean(item.linkedTaskId)} onChange={event => change({ syncToTask: event.target.checked })}/>{item.linkedTaskId ? '已同步要事' : '同步到要事'}</label></div>
+      <div className="ic-inline-options"><label><input type="checkbox" checked={draft.isAware} onChange={event => change({ isAware: event.target.checked })}/>知曉事項</label><label><input type="checkbox" checked={draft.syncToTask} disabled={Boolean(item.linkedTaskId)} onChange={event => changeTaskSync(event.target.checked)}/>{item.linkedTaskId ? '已同步要事' : '同步到要事'}</label></div>
       <DepartmentPicker values={draft.departments} choices={data.settings.departments} onChange={departments => change({ departments })}/>
       {draft.syncToTask && <TaskProjectionFields data={data} vesselId={draft.vesselId} projection={projection} onChange={setProjection}/>}
       <section className="ic-status-add"><h3>加入狀態記錄</h3><div><textarea value={logText} onChange={event => setLogText(event.target.value)} placeholder="輸入本次最新進度、處理結果或備註…"/><button type="button" className="btn green" onClick={addLog}>加入狀態記錄</button></div></section>

@@ -15,6 +15,12 @@ const abnormalHotfixPath = resolve(
   'migrations',
   '20260825154500_preserve_internal_task_abnormal.sql',
 );
+const abnormalChoicePath = resolve(
+  root,
+  'supabase',
+  'migrations',
+  '20260825191500_linked_task_abnormal_choice.sql',
+);
 const db = new PGlite();
 
 const ids = {
@@ -87,6 +93,7 @@ await db.exec(await readFile(baseSchemaPath, 'utf8'));
 await db.exec(await readFile(coreSchemaPath, 'utf8'));
 await db.exec(await readFile(migrationPath, 'utf8'));
 await db.exec(await readFile(abnormalHotfixPath, 'utf8'));
+await db.exec(await readFile(abnormalChoicePath, 'utf8'));
 
 await db.exec(`
   insert into auth.users(id,email) values
@@ -194,12 +201,13 @@ function casePayload({
   };
 }
 
-function taskPayload(id) {
+function taskPayload(id, overrides = {}) {
   return {
     id,
     expectedDate: '2026-08-15',
     categories: ['Safety'],
     ownerUserIds: [ids.operator],
+    ...overrides,
   };
 }
 
@@ -458,7 +466,7 @@ const invokeMaterializingUpdate = operationId => asUser(ids.owner, async () => {
       'task-create:vessel-a',
       sessions.ownerSecond,
       materializeTaskLease.fencingToken,
-      JSON.stringify(taskPayload(materializedTaskId)),
+      JSON.stringify(taskPayload(materializedTaskId, { isAbnormal: false })),
       'materialize',
     ],
   );
@@ -501,6 +509,11 @@ assert.deepEqual(
     taskId: materializedTaskId, taskVersion: 1,
   },
 );
+assert.equal((await db.query(`
+  select is_abnormal from public.sd_tasks
+  where workspace_id='${ids.workspace}' and id='${materializedTaskId}'
+`)).rows[0]?.is_abnormal, false,
+'materializing a linked task must persist the explicit unchecked abnormal choice');
 const materializedReplay = await invokeMaterializingUpdate(operations.materializeSuccess);
 assert.equal(materializedReplay.replayed, true,
   'materialization replay must return the stable outer operation result');
@@ -641,7 +654,7 @@ assert.deepEqual(
 const linkedRows = await db.query(`
   select c.description as case_description, c.version as case_version,
          t.description as task_description, t.version as task_version,
-         t.is_internal_control,
+         t.is_internal_control, t.is_abnormal,
          l.case_id, l.task_id,
          (select count(*)::integer from public.sd_task_vessels tv
            where tv.workspace_id=t.workspace_id and tv.task_id=t.id
@@ -659,6 +672,7 @@ assert.deepEqual(linkedRows.rows[0], {
   task_description: 'Atomic linked evidence',
   task_version: 1,
   is_internal_control: true,
+  is_abnormal: false,
   case_id: linkedCaseId,
   task_id: linkedTaskId,
   exact_scope_count: 1,

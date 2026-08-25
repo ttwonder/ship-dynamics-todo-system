@@ -6,11 +6,41 @@ const server = await createServer({ server: { middlewareMode: true }, appType: '
 try {
   const { createInitialData } = await server.ssrLoadModule('/src/data/seed.ts');
   const dataLayer = await server.ssrLoadModule('/src/internalControlData.ts');
+  const modalModule = await server.ssrLoadModule('/src/InternalControlModals.tsx');
   const { deleteTaskBatchFromDraft } = await server.ssrLoadModule('/src/App.tsx');
   const pageSource = await readFile(new URL('../src/InternalControlPage.tsx', import.meta.url), 'utf8');
   const modalSource = await readFile(new URL('../src/InternalControlModals.tsx', import.meta.url), 'utf8');
+  const taskModalSource = await readFile(new URL('../src/EditModals.tsx', import.meta.url), 'utf8');
   const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
   const normalizedAppSource = await readFile(new URL('../src/NormalizedApp.tsx', import.meta.url), 'utf8');
+  assert.equal(typeof modalModule.internalControlTaskSyncChoice, 'function', 'sync toggle must open one explicit abnormal-state choice');
+  let promptText = '';
+  const withoutAbnormal = modalModule.internalControlTaskSyncChoice(true, message => {
+    promptText = message;
+    return false;
+  });
+  assert.deepEqual(withoutAbnormal, { syncToTask: true, isAbnormal: false }, 'choosing no abnormal must still establish the task link');
+  assert.match(promptText, /近期內需要特別關注的異常/);
+  assert.match(promptText, /不勾選.*仍會建立關聯要事/s);
+  const withAbnormal = modalModule.internalControlTaskSyncChoice(true, () => true);
+  assert.deepEqual(withAbnormal, { syncToTask: true, isAbnormal: true }, 'choosing abnormal must establish a checked derived task');
+  let askedWhileDisabling = false;
+  assert.deepEqual(
+    modalModule.internalControlTaskSyncChoice(false, () => { askedWhileDisabling = true; return true; }),
+    { syncToTask: false },
+    'turning synchronization off must not ask an abnormal-state question',
+  );
+  assert.equal(askedWhileDisabling, false);
+  assert.doesNotMatch(
+    modalSource,
+    /checked=\{projection\.isAbnormal\s*===\s*true\}/,
+    'the internal-control modal must not expose a persistent abnormal checkbox; later edits belong to the task editor',
+  );
+  assert.doesNotMatch(
+    taskModalSource,
+    /target\.isInternalControl\s*=\s*value\s*;\s*if\s*\(value\)\s*target\.isAbnormal\s*=\s*true/,
+    'the task editor must not overwrite its independent abnormal checkbox when internal-control classification changes',
+  );
   const data = createInitialData();
   const actor = data.users.find(user => user.role === 'owner') || data.users[0];
   const vessel = data.vessels.find(item => item.isActive) || data.vessels[0];
@@ -27,12 +57,28 @@ try {
     isAware: false, status: `${id} 狀態`, departments: [department], syncToTask, isClosed: false,
     createdBy: actor.id, updatedBy: actor.id, createdAt: at, updatedAt: at, origin: 'internal-control', statusLogs: [],
   });
-  const projection = { categories: [category], expectedDate: '2026-08-01', ownerUserIds: [actor.id] };
+  const projection = { categories: [category], expectedDate: '2026-08-01', ownerUserIds: [actor.id], isAbnormal: false };
   const assertAtomicRejection = (draft, action, expected, message) => {
     const before = structuredClone(draft);
     assert.throws(action, expected, message);
     assert.deepEqual(draft, before, `${message} must leave the complete draft unchanged`);
   };
+  assertAtomicRejection(
+    data,
+    () => dataLayer.createInternalControlCases(
+      data,
+      [makeCase('reject-missing-abnormal-choice', true)],
+      actor,
+      at,
+      {
+        'reject-missing-abnormal-choice': {
+          categories: [category], expectedDate: '2026-08-01', ownerUserIds: [actor.id],
+        },
+      },
+    ),
+    /是否.*近期內需要特別關注的異常/,
+    'creating a linked task without an explicit abnormal choice must be rejected',
+  );
   const invalidOwnerFixtures = [
     { ...structuredClone(actor), id: 'inactive-owner', role: 'operator', isActive: false, managedVesselIds: [vessel.id] },
     { ...structuredClone(actor), id: 'vessel-owner', role: 'vessel', isActive: true, managedVesselIds: [vessel.id] },
@@ -108,6 +154,16 @@ try {
   assert.deepEqual(data.tasks[0].categories, projection.categories);
   assert.equal(data.tasks[0].expectedDate, projection.expectedDate);
   assert.deepEqual(data.tasks[0].ownerUserIds, projection.ownerUserIds);
+  assert.equal(data.tasks[0].isAbnormal, false, '初次同步選擇不需要近期異常時，派生要事必須明確保存 false');
+
+  dataLayer.createInternalControlCases(data, [makeCase('create-linked-abnormal', true)], actor, '2026-07-24T02:04:00.000Z', {
+    'create-linked-abnormal': { ...projection, isAbnormal: true },
+  });
+  assert.equal(
+    data.tasks.find(task => task.internalControlCaseId === 'create-linked-abnormal')?.isAbnormal,
+    true,
+    '初次同步選擇需要近期異常時，派生要事必須明確保存 true',
+  );
 
   dataLayer.createInternalControlCases(data, [makeCase('later-link', false)], actor, '2026-07-24T02:05:00.000Z');
   const standalone = structuredClone(data.internalControlCases.find(item => item.id === 'later-link'));
@@ -117,12 +173,14 @@ try {
   const laterTask = data.tasks.find(task => task.id === linkedLater.linkedTaskId);
   assert.equal(laterTask?.internalControlCaseId, linkedLater.id);
   assert.equal(laterTask?.expectedDate, projection.expectedDate);
+  assert.equal(laterTask?.isAbnormal, false, '既有案件稍後建立同步要事時也必須採用明確 false');
 
   const editedProjection = { categories: [category], expectedDate: '2026-08-15', ownerUserIds: [] };
   dataLayer.updateInternalControlCase(data, structuredClone(linkedLater), linkedLater.updatedAt, actor, '2026-07-24T02:07:00.000Z', editedProjection);
   const editedTask = data.tasks.find(task => task.id === linkedLater.linkedTaskId);
   assert.equal(editedTask?.expectedDate, editedProjection.expectedDate, 'edit modal must directly update task-only fields');
   assert.deepEqual(editedTask?.ownerUserIds, []);
+  assert.equal(editedTask?.isAbnormal, false, '後續案件同步未改異常欄位時，不得把既有 false 重設為 true');
 
   assert.equal(typeof dataLayer.withdrawInternalControlTaskSync, 'function', 'a dedicated origin-bound sync withdrawal command must exist');
   const withdrawalDraft = structuredClone(data);
@@ -182,10 +240,18 @@ try {
 
   const resyncCandidate = structuredClone(retainedCase);
   resyncCandidate.syncToTask = true;
-  const resyncedCase = dataLayer.updateInternalControlCase(withdrawalDraft, resyncCandidate, retainedCase.updatedAt, actor, '2026-07-24T02:07:45.000Z', editedProjection);
+  const resyncedCase = dataLayer.updateInternalControlCase(
+    withdrawalDraft,
+    resyncCandidate,
+    retainedCase.updatedAt,
+    actor,
+    '2026-07-24T02:07:45.000Z',
+    { ...editedProjection, isAbnormal: false },
+  );
   assert.ok(resyncedCase.linkedTaskId, 'a retained case may be synchronized again later');
   assert.notEqual(resyncedCase.linkedTaskId, originalTaskId, 're-synchronization after withdrawal must create a new task identity');
   assert.equal(withdrawalDraft.tasks.find(task => task.id === resyncedCase.linkedTaskId)?.internalControlCaseId, retainedCase.id);
+  assert.equal(withdrawalDraft.tasks.find(task => task.id === resyncedCase.linkedTaskId)?.isAbnormal, false);
 
   const rejectWithdrawal = (mutate, expectedCaseAt, expectedTaskAt, expectedError, message) => {
     const draft = structuredClone(eligibleWithdrawalBase);

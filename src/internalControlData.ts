@@ -21,6 +21,7 @@ export type InternalControlTaskProjection = {
   equipmentSubcategory?: string;
   expectedDate: string;
   ownerUserIds: string[];
+  isAbnormal: boolean;
 };
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -185,12 +186,18 @@ const taskProjection = (
   const equipmentSubcategory = (input?.equipmentSubcategory ?? existing?.equipmentSubcategory ?? item.equipmentSubcategory)?.trim() || undefined;
   if (categories.includes('設備故障') && !equipmentSubcategory) throw new Error('同步要事的設備故障細項為必填');
   const ownerUserIds = [...new Set(input?.ownerUserIds ?? existing?.ownerUserIds ?? assignedTaskOwners(draft, item.vesselId))];
+  const isAbnormal = typeof input?.isAbnormal === 'boolean'
+    ? input.isAbnormal
+    : existing?.isAbnormal;
+  if (typeof isAbnormal !== 'boolean') {
+    throw new Error('同步要事時必須先選擇是否標記為近期內需要特別關注的異常');
+  }
   const vessel = draft.vessels.find(entry => entry.id === item.vesselId && entry.isActive);
   if (!vessel) throw new Error('找不到有效船舶');
   if (ownerUserIds.some(id => !isEligibleTaskOwner(draft.settings?.rolePermissions, draft.users.find(user => user.id === id), [vessel]))) {
     throw new Error('同步要事的追蹤窗口包含停用、船舶帳號或無最終船舶權限的人員');
   }
-  return { categories, equipmentSubcategory, expectedDate: (input?.expectedDate ?? existing?.expectedDate ?? '').trim(), ownerUserIds };
+  return { categories, equipmentSubcategory, expectedDate: (input?.expectedDate ?? existing?.expectedDate ?? '').trim(), ownerUserIds, isAbnormal };
 };
 
 function reciprocalLinkedTask(draft: InternalControlDataDraft, item: InternalControlCase, cancellingTaskId?: string): { index: number; task: TaskItem } | undefined {
@@ -339,6 +346,7 @@ export function updateInternalControlCase(
         equipmentSubcategory: appliedProjection.categories.includes('設備故障') ? appliedProjection.equipmentSubcategory : undefined,
         expectedDate: appliedProjection.expectedDate,
         ownerUserIds: appliedProjection.ownerUserIds,
+        isAbnormal: appliedProjection.isAbnormal ?? linkedTask.isAbnormal,
       },
     };
   } else if (establishingLink) {

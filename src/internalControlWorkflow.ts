@@ -214,6 +214,7 @@ interface CaseToTaskOptions {
   categories?: string[];
   equipmentSubcategory?: string;
   expectedDate?: string;
+  isAbnormal: boolean;
   actorId: string;
   at: string;
 }
@@ -228,7 +229,7 @@ export function internalControlCaseToTask(item: InternalControlCase, options: Ca
     priority: item.priority,
     attentionDimension: 'task',
     isAware: item.isAware,
-    isAbnormal: true,
+    isAbnormal: options.isAbnormal,
     isInternalControl: true,
     internalControlCaseId: item.id,
     category: categories[0] || item.category,

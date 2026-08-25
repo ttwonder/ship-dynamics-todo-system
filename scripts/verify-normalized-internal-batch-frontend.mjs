@@ -37,6 +37,7 @@ try {
     categories: ['Safety'],
     expectedDate: `2026-08-${String(index + 10).padStart(2, '0')}`,
     ownerUserIds: [actorId],
+    isAbnormal: index === 1,
   }]));
   const persistedCaseIds = [];
   let atomicBatchCalls = 0;
@@ -73,6 +74,16 @@ try {
       },
     },
   };
+
+  const missingChoiceProjections = structuredClone(projections);
+  delete missingChoiceProjections[items[0].id].isAbnormal;
+  await assert.rejects(
+    () => new NormalizedUiController(runtime).createInternalCaseBatch(items, missingChoiceProjections),
+    /是否.*近期內需要特別關注的異常/,
+    'a synchronized normalized batch row must carry an explicit abnormal choice',
+  );
+  assert.equal(atomicBatchCalls, 0, 'missing choice must reject before any command RPC');
+  assert.deepEqual(claimedLeaseRequests, [], 'missing choice must reject before any lease claim');
 
   await assert.rejects(
     () => new NormalizedUiController(runtime).createInternalCaseBatch(items, projections),
@@ -139,6 +150,11 @@ try {
     );
     assert.equal(offline.draft.entries.every(entry => typeof entry.linkedTask?.id === 'string'), true,
       'projected task identities must be fixed before the offline batch is persisted');
+    assert.deepEqual(
+      offline.draft.entries.map(entry => entry.linkedTask?.isAbnormal),
+      [false, true],
+      'explicit linked-task abnormal choices must survive the durable offline batch envelope',
+    );
 
     const recoveredBatchCalls = [];
     const recoveredLegacyCalls = [];

@@ -505,12 +505,14 @@ try {
     categories: ['Safety', 'Fleet'],
     equipmentSubcategory: undefined,
     ownerUserIds: [actorId],
+    isAbnormal: false,
   });
   assert.deepEqual(linkedUpdateInput.taskPayload, {
     id: 'task-projection',
     expectedDate: '2026-09-05',
     categories: ['Safety', 'Fleet'],
     ownerUserIds: [actorId],
+    isAbnormal: false,
   }, 'linked internal-case edits must carry the editable task projection into the cross-aggregate RPC');
 
   linkedUpdateInput = undefined;
