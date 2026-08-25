@@ -297,7 +297,7 @@ export function syncInternalControlCaseToLinkedTask(item: InternalControlCase, t
     vesselProgress: [],
     priority: item.priority,
     isAware: item.isAware,
-    isAbnormal: true,
+    isAbnormal: task.isAbnormal,
     isInternalControl: true,
     internalControlCaseId: item.id,
     category: item.category,

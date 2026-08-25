@@ -12,7 +12,9 @@ import { taskVesselIds } from './taskVesselScope';
 import { isEligibleTaskOwner } from './permissions';
 import { taipeiDateKey } from './taipeiTime';
 
-export type InternalControlDataDraft = Pick<AppData, 'users' | 'vessels' | 'tasks' | 'internalControlCases'> & Partial<Pick<AppData, 'settings'>>;
+export { internalControlTaskSyncWithdrawalEligibility } from './internalControlTaskSyncWithdrawal';
+
+export type InternalControlDataDraft = Pick<AppData, 'users' | 'vessels' | 'tasks' | 'internalControlCases'> & Partial<Pick<AppData, 'settings' | 'notifications' | 'taskDismissals'>>;
 export type InternalControlActor = Pick<UserAccount, 'id' | 'name'>;
 export type InternalControlTaskProjection = {
   categories: string[];
@@ -73,10 +75,20 @@ function assertValidInternalControlCase(item: InternalControlCase): void {
   if (errors.length) throw new Error(`內控案件缺少必填欄位：${errors.join('、')}`);
 }
 
-const uniqueTaskId = (draft: Pick<InternalControlDataDraft, 'tasks'>, caseId: string) => {
-  let id = `internal-task-${caseId}`;
-  let suffix = 2;
-  while (draft.tasks.some(task => task.id === id)) id = `internal-task-${caseId}-${suffix++}`;
+const uniqueTaskId = (
+  draft: Pick<InternalControlDataDraft, 'tasks'>,
+  caseId: string,
+  preserveInitialIdentity = false,
+) => {
+  const baseId = `internal-task-${caseId}`;
+  if (preserveInitialIdentity) {
+    let id = baseId;
+    let suffix = 2;
+    while (draft.tasks.some(task => task.id === id)) id = `${baseId}-${suffix++}`;
+    return id;
+  }
+  let id = uid(baseId);
+  while (draft.tasks.some(task => task.id === id)) id = uid(baseId);
   return id;
 };
 
@@ -246,7 +258,7 @@ export function createInternalControlCases(
     assignedTaskOwners(draft, item.vesselId);
     if (!item.syncToTask) return;
     const projection = taskProjection(draft, item, projections[item.id]);
-    const taskId = uniqueTaskId({ tasks: [...draft.tasks, ...createdTasks] }, item.id);
+    const taskId = uniqueTaskId({ tasks: [...draft.tasks, ...createdTasks] }, item.id, true);
     const task = internalControlCaseToTask(item, {
       id: taskId,
       ...projection,
@@ -339,6 +351,58 @@ export function updateInternalControlCase(
   if (linkedTaskUpdate) draft.tasks[linkedTaskUpdate.index] = linkedTaskUpdate.task;
   if (linkedTaskCreate) draft.tasks.unshift(linkedTaskCreate);
   return saved;
+}
+
+type WithdrawableInternalControlTaskSync = {
+  item: InternalControlCase;
+  reciprocal: { index: number; task: TaskItem };
+};
+
+function assertWithdrawableInternalControlTaskSync(draft: InternalControlDataDraft, caseId: string): WithdrawableInternalControlTaskSync {
+  assertInternalControlLinkIntegrity(draft);
+  const matches = draft.internalControlCases.filter(item => item.id === caseId);
+  if (matches.length !== 1) throw new Error('內控案件不存在或識別碼重複');
+  const item = matches[0];
+  if (item.origin !== 'internal-control') throw new Error('只有由內控案件建立的同步要事可以撤回');
+  if (item.isClosed) throw new Error('已結案內控案件必須先重新開啟，才可撤回同步要事');
+  const reciprocal = reciprocalLinkedTask(draft, item);
+  if (!reciprocal) throw new Error('關聯要事不存在，已停止撤回以避免單邊更新');
+  const task = reciprocal.task;
+  const vesselIds = taskVesselIds(task);
+  if (vesselIds.length !== 1 || vesselIds[0] !== item.vesselId || task.vesselId !== item.vesselId) {
+    throw new Error('內控案件與關聯要事的船舶範圍不一致');
+  }
+  if (isMeetingTaskSource(task)
+    || task.sourceType !== 'morning'
+    || task.attentionDimension === 'meeting'
+    || Boolean(task.sourceMeetingId || task.sourceMeetingItemId)
+    || task.distributeToVessels === true) {
+    throw new Error('臨會／專題或其他來源要事不可由內控案件撤回');
+  }
+  return { item, reciprocal };
+}
+
+export function withdrawInternalControlTaskSync(
+  draft: InternalControlDataDraft,
+  caseId: string,
+  expectedCaseUpdatedAt: string,
+  expectedTaskUpdatedAt: string,
+  actor: InternalControlActor,
+  at: string,
+): { caseId: string; taskId: string } {
+  const { item, reciprocal } = assertWithdrawableInternalControlTaskSync(draft, caseId);
+  if (item.updatedAt !== expectedCaseUpdatedAt) throw new Error('內控案件已由其他人更新，請重新開啟');
+  const task = reciprocal.task;
+  if (task.updatedAt !== expectedTaskUpdatedAt) throw new Error('關聯要事已由其他人更新，請重新開啟');
+
+  item.syncToTask = false;
+  delete item.linkedTaskId;
+  item.updatedBy = actor.id;
+  item.updatedAt = at;
+  draft.tasks.splice(reciprocal.index, 1);
+  if (draft.notifications) draft.notifications = draft.notifications.filter(notice => notice.taskId !== task.id);
+  if (draft.taskDismissals) draft.taskDismissals = draft.taskDismissals.filter(dismissal => dismissal.itemKind !== 'task' || dismissal.itemId !== task.id);
+  return { caseId: item.id, taskId: task.id };
 }
 
 export function deleteInternalControlCase(

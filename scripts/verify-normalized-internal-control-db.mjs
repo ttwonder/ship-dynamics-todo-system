@@ -57,6 +57,13 @@ const operations = {
   materializeSuccess: 'b1000000-0000-4000-8000-000000000025',
   wrongVesselCreateLease: 'b1000000-0000-4000-8000-000000000026',
   createLeaseEditProbe: 'b1000000-0000-4000-8000-000000000027',
+  withdrawTaskSync: 'b1000000-0000-4000-8000-000000000028',
+  withdrawRollback: 'b1000000-0000-4000-8000-000000000029',
+  withdrawStale: 'b1000000-0000-4000-8000-000000000030',
+  withdrawTaskOrigin: 'b1000000-0000-4000-8000-000000000031',
+  withdrawMeetingSource: 'b1000000-0000-4000-8000-000000000032',
+  withdrawCrossVessel: 'b1000000-0000-4000-8000-000000000033',
+  withdrawVesselDenied: 'b1000000-0000-4000-8000-000000000034',
 };
 
 await db.exec(`
@@ -490,6 +497,102 @@ const materializedReplay = await invokeMaterializingUpdate(operations.materializ
 assert.equal(materializedReplay.replayed, true,
   'materialization replay must return the stable outer operation result');
 
+assert.equal(await release(
+  ids.owner,
+  `internal-case:${standaloneCaseId}`,
+  sessions.ownerSecond,
+  standaloneSecondLease.fencingToken,
+), true);
+const withdrawalCaseLease = await claim(
+  ids.operator,
+  `internal-case:${standaloneCaseId}`,
+  'internal-case',
+  standaloneCaseId,
+  sessions.operator,
+);
+const withdrawalTaskLease = await claim(
+  ids.operator,
+  `task:${materializedTaskId}`,
+  'internal-task',
+  materializedTaskId,
+  sessions.operator,
+);
+const operatorDeletePermission = await db.query(`
+  select coalesce((
+    select enabled from public.sd_role_permissions
+    where workspace_id='${ids.workspace}' and role='operator' and permission_key='deleteTasks'
+  ), false) as enabled
+`);
+assert.equal(operatorDeletePermission.rows[0]?.enabled, false,
+  'operator generic deleteTasks permission must remain disabled while the dedicated withdrawal command succeeds');
+const withdrawMaterializedTask = () => asUser(ids.operator, async () => {
+  const result = await db.query(
+    `select public.command_ship_dynamics_withdraw_internal_case_task_sync(
+      $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint,
+      $8::bigint,$9,$10::uuid,$11::bigint
+    ) as result`,
+    [
+      operations.withdrawTaskSync,
+      ids.workspace,
+      standaloneCaseId,
+      2,
+      `internal-case:${standaloneCaseId}`,
+      sessions.operator,
+      withdrawalCaseLease.fencingToken,
+      1,
+      `task:${materializedTaskId}`,
+      sessions.operator,
+      withdrawalTaskLease.fencingToken,
+    ],
+  );
+  return result.rows[0].result;
+});
+const withdrawn = await withdrawMaterializedTask();
+assert.deepEqual({
+  status: withdrawn.status,
+  replayed: withdrawn.replayed,
+  caseId: withdrawn.caseId,
+  caseVersion: Number(withdrawn.caseVersion),
+  taskId: withdrawn.taskId,
+  taskVersion: Number(withdrawn.taskVersion),
+  deleted: withdrawn.deleted,
+}, {
+  status: 'committed', replayed: false,
+  caseId: standaloneCaseId, caseVersion: 3,
+  taskId: materializedTaskId, taskVersion: 2,
+  deleted: true,
+});
+const withdrawalEvidence = await db.query(`
+  select c.is_closed, c.status, c.version,
+    (select count(*)::integer from public.sd_internal_case_task_links l
+      where l.workspace_id=c.workspace_id and l.case_id=c.id) as link_count,
+    (select count(*)::integer from public.sd_internal_case_status_events e
+      where e.workspace_id=c.workspace_id and e.case_id=c.id
+        and e.event_kind='unlinked') as withdrawal_event_count,
+    (select count(*)::integer from public.sd_audit_events a
+      where a.workspace_id=c.workspace_id and a.entity_id=c.id
+        and a.command='withdraw_internal_case_task_sync') as withdrawal_audit_count,
+    t.is_deleted, t.version as task_version,
+    (select count(*)::integer from public.sd_task_vessels tv
+      where tv.workspace_id=t.workspace_id and tv.task_id=t.id and tv.is_active_scope) as active_scope_count
+  from public.sd_internal_cases c
+  join public.sd_tasks t on t.workspace_id=c.workspace_id and t.id='${materializedTaskId}'
+  where c.workspace_id='${ids.workspace}' and c.id='${standaloneCaseId}'
+`);
+assert.deepEqual(withdrawalEvidence.rows[0], {
+  is_closed: false,
+  status: 'Materializing',
+  version: 3,
+  link_count: 0,
+  withdrawal_event_count: 1,
+  withdrawal_audit_count: 1,
+  is_deleted: true,
+  task_version: 2,
+  active_scope_count: 0,
+}, 'withdrawal must delete only the derived task while preserving the open case and its status');
+const withdrawnReplay = await withdrawMaterializedTask();
+assert.equal(withdrawnReplay.replayed, true, 'lost-ack retry must return the original withdrawal result');
+
 const linkedCaseId = 'case-linked';
 const linkedTaskId = 'task-linked';
 const linkedCaseCreateLease = await claim(
@@ -560,6 +663,128 @@ const linkedCaseLease = await claim(
   linkedCaseId,
   sessions.owner,
 );
+
+const invokeLinkedWithdrawal = ({
+  operationId,
+  userId = ids.owner,
+  baseCaseVersion = 1,
+  baseTaskVersion = 1,
+} = {}) => asUser(userId, async () => {
+  const result = await db.query(
+    `select public.command_ship_dynamics_withdraw_internal_case_task_sync(
+      $1::uuid,$2::uuid,$3,$4::bigint,$5,$6::uuid,$7::bigint,
+      $8::bigint,$9,$10::uuid,$11::bigint
+    ) as result`,
+    [
+      operationId,
+      ids.workspace,
+      linkedCaseId,
+      baseCaseVersion,
+      `internal-case:${linkedCaseId}`,
+      sessions.owner,
+      linkedCaseLease.fencingToken,
+      baseTaskVersion,
+      `task:${linkedTaskId}`,
+      sessions.owner,
+      linkedTaskLease.fencingToken,
+    ],
+  );
+  return result.rows[0].result;
+});
+const linkedWithdrawalSnapshot = async () => (await db.query(`
+  select jsonb_build_object(
+    'caseRow', (select to_jsonb(c) from public.sd_internal_cases c
+      where c.workspace_id='${ids.workspace}' and c.id='${linkedCaseId}'),
+    'taskRow', (select to_jsonb(t) from public.sd_tasks t
+      where t.workspace_id='${ids.workspace}' and t.id='${linkedTaskId}'),
+    'links', (select coalesce(jsonb_agg(to_jsonb(l) order by l.case_id,l.task_id),'[]'::jsonb)
+      from public.sd_internal_case_task_links l where l.workspace_id='${ids.workspace}'
+        and (l.case_id='${linkedCaseId}' or l.task_id='${linkedTaskId}')),
+    'taskScopes', (select coalesce(jsonb_agg(to_jsonb(tv) order by tv.vessel_id),'[]'::jsonb)
+      from public.sd_task_vessels tv where tv.workspace_id='${ids.workspace}' and tv.task_id='${linkedTaskId}'),
+    'caseEvents', (select count(*) from public.sd_internal_case_status_events e
+      where e.workspace_id='${ids.workspace}' and e.case_id='${linkedCaseId}'),
+    'taskEvents', (select count(*) from public.sd_task_status_events e
+      where e.workspace_id='${ids.workspace}' and e.task_id='${linkedTaskId}'),
+    'notifications', (select coalesce(jsonb_agg(to_jsonb(n) order by n.id),'[]'::jsonb)
+      from public.sd_notifications n where n.workspace_id='${ids.workspace}' and n.task_id='${linkedTaskId}'),
+    'operations', (select count(*) from public.sd_operations o where o.workspace_id='${ids.workspace}'),
+    'audits', (select count(*) from public.sd_audit_events a where a.workspace_id='${ids.workspace}')
+  ) as snapshot
+`)).rows[0].snapshot;
+
+await db.exec(`
+  create function public.test_fail_withdraw_task_phase()
+  returns trigger language plpgsql as $$
+  begin
+    if new.task_id = '${linkedTaskId}' and new.status = '已刪除' then
+      raise exception 'injected-withdraw-task-phase';
+    end if;
+    return new;
+  end;
+  $$;
+  create trigger test_fail_withdraw_task_phase
+    before insert on public.sd_task_status_events
+    for each row execute function public.test_fail_withdraw_task_phase();
+`);
+const beforeWithdrawalRollback = await linkedWithdrawalSnapshot();
+await assert.rejects(
+  () => invokeLinkedWithdrawal({ operationId: operations.withdrawRollback }),
+  /injected-withdraw-task-phase/i,
+  'a late task-history failure must roll back case, link, task, scope, notification, operation, and audit writes',
+);
+assert.deepEqual(await linkedWithdrawalSnapshot(), beforeWithdrawalRollback);
+await db.exec(`
+  drop trigger test_fail_withdraw_task_phase on public.sd_task_status_events;
+  drop function public.test_fail_withdraw_task_phase();
+`);
+
+const beforeStaleWithdrawal = await linkedWithdrawalSnapshot();
+await assert.rejects(
+  () => invokeLinkedWithdrawal({ operationId: operations.withdrawStale, baseCaseVersion: 99 }),
+  /version-conflict/i,
+);
+assert.deepEqual(await linkedWithdrawalSnapshot(), beforeStaleWithdrawal);
+
+await db.exec(`update public.sd_internal_cases set origin='task'
+  where workspace_id='${ids.workspace}' and id='${linkedCaseId}'`);
+const beforeTaskOriginWithdrawal = await linkedWithdrawalSnapshot();
+await assert.rejects(
+  () => invokeLinkedWithdrawal({ operationId: operations.withdrawTaskOrigin }),
+  /withdrawal-not-eligible/i,
+);
+assert.deepEqual(await linkedWithdrawalSnapshot(), beforeTaskOriginWithdrawal);
+await db.exec(`update public.sd_internal_cases set origin='internal-control'
+  where workspace_id='${ids.workspace}' and id='${linkedCaseId}'`);
+
+await db.exec(`update public.sd_tasks set attention_dimension='meeting'
+  where workspace_id='${ids.workspace}' and id='${linkedTaskId}'`);
+const beforeMeetingSourceWithdrawal = await linkedWithdrawalSnapshot();
+await assert.rejects(
+  () => invokeLinkedWithdrawal({ operationId: operations.withdrawMeetingSource }),
+  /withdrawal-not-eligible/i,
+);
+assert.deepEqual(await linkedWithdrawalSnapshot(), beforeMeetingSourceWithdrawal);
+await db.exec(`update public.sd_tasks set attention_dimension='task'
+  where workspace_id='${ids.workspace}' and id='${linkedTaskId}'`);
+
+await db.exec(`update public.sd_task_vessels set vessel_id='vessel-b'
+  where workspace_id='${ids.workspace}' and task_id='${linkedTaskId}' and is_active_scope`);
+const beforeCrossVesselWithdrawal = await linkedWithdrawalSnapshot();
+await assert.rejects(
+  () => invokeLinkedWithdrawal({ operationId: operations.withdrawCrossVessel }),
+  /scope-conflict/i,
+);
+assert.deepEqual(await linkedWithdrawalSnapshot(), beforeCrossVesselWithdrawal);
+await db.exec(`update public.sd_task_vessels set vessel_id='vessel-a'
+  where workspace_id='${ids.workspace}' and task_id='${linkedTaskId}' and is_active_scope`);
+
+const beforeVesselWithdrawal = await linkedWithdrawalSnapshot();
+await assert.rejects(
+  () => invokeLinkedWithdrawal({ operationId: operations.withdrawVesselDenied, userId: ids.vessel }),
+  /not-authorized/i,
+);
+assert.deepEqual(await linkedWithdrawalSnapshot(), beforeVesselWithdrawal);
 
 const linkedUpdatedPayload = casePayload({
   description: 'Atomic linked evidence updated',

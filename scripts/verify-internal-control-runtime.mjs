@@ -256,6 +256,24 @@ try {
   assert.equal(migrated.internalControlCases[0].linkedTaskId, 'legacy-task');
   assert.deepEqual(migrated.settings.equipmentFailureSubcategories, workflow.DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES);
 
+  const explicitNormalInternalTask = structuredClone(migrated.tasks[0]);
+  explicitNormalInternalTask.isAbnormal = false;
+  const explicitNormalReadback = normalizeModule.normalizeAppData({
+    ...structuredClone(migrated),
+    tasks: [explicitNormalInternalTask],
+  });
+  assert.ok(explicitNormalReadback);
+  assert.equal(explicitNormalReadback.tasks[0].isAbnormal, false, 'an explicit task abnormal=false must survive authoritative read normalization even while internal control remains enabled');
+  const resyncedExplicitNormalTask = workflow.syncInternalControlCaseToLinkedTask(
+    { ...structuredClone(explicitNormalReadback.internalControlCases[0]), description: '內控案件後續更新' },
+    explicitNormalReadback.tasks[0],
+    'u1',
+    '2026-07-23T00:30:00.000Z',
+  );
+  assert.equal(resyncedExplicitNormalTask.isAbnormal, false, 'editing the linked internal-control case must preserve the task abnormal=false choice');
+  assert.ok(editModalsSource.includes('近期需特別關注的異常（勾選後看板顯示「異常存在」）'), 'task editor must explain that the abnormal flag is an independently editable attention signal');
+  assert.ok(!editModalsSource.includes('<span>異常（看板顯示「異常存在」）</span>'), 'task editor must not retain the ambiguous old abnormal label');
+
   const invalidDateMigration = normalizeModule.normalizeAppData({
     ...structuredClone(migrated),
     tasks: [],

@@ -830,6 +830,45 @@ export class NormalizedCommandClient {
     });
   }
 
+  withdrawInternalCaseTaskSync(input: {
+    caseId: string;
+    baseCaseVersion: number;
+    caseLease: LeaseProof;
+    baseTaskVersion: number;
+    taskLease: LeaseProof;
+    operationId?: string;
+  }) {
+    const request = {
+      caseId: input.caseId,
+      baseCaseVersion: input.baseCaseVersion,
+      caseLeaseKey: input.caseLease.leaseKey,
+      caseOwnerSession: input.caseLease.ownerSession,
+      caseFencingToken: input.caseLease.fencingToken,
+      baseTaskVersion: input.baseTaskVersion,
+      taskLeaseKey: input.taskLease.leaseKey,
+      taskOwnerSession: input.taskLease.ownerSession,
+      taskFencingToken: input.taskLease.fencingToken,
+    };
+    return this.#repository.executeCommand({
+      rpc: 'command_ship_dynamics_withdraw_internal_case_task_sync',
+      command: 'withdraw_internal_case_task_sync',
+      operationId: input.operationId || uuid(),
+      entityKey: `internal-case:${input.caseId}`,
+      request,
+      args: {
+        p_case_id: input.caseId,
+        p_base_case_version: input.baseCaseVersion,
+        p_case_lease_key: input.caseLease.leaseKey,
+        p_case_owner_session: input.caseLease.ownerSession,
+        p_case_fencing_token: input.caseLease.fencingToken,
+        p_base_task_version: input.baseTaskVersion,
+        p_task_lease_key: input.taskLease.leaseKey,
+        p_task_owner_session: input.taskLease.ownerSession,
+        p_task_fencing_token: input.taskLease.fencingToken,
+      },
+    });
+  }
+
   deleteInternalCase(input: {
     caseId: string;
     baseCaseVersion: number;

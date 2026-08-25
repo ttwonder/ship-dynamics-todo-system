@@ -166,6 +166,12 @@ try {
       taskLease: entityLease('task:task-c'),
       taskPayload: { id: 'task-c', expectedDate: null, categories: ['Safety'], ownerUserIds: [actorId] },
     }),
+    () => commands.withdrawInternalCaseTaskSync({
+      caseId: 'case-a', baseCaseVersion: 2,
+      caseLease: entityLease('internal-case:case-a'),
+      baseTaskVersion: 1,
+      taskLease: entityLease('task:task-derived'),
+    }),
     () => commands.updateUser({
       userId: '33333333-3333-4333-8333-333333333333',
       baseMembershipVersion: 1,
@@ -221,6 +227,17 @@ try {
       'credential material must not enter durable operation metadata',
     );
   }
+  const withdrawalRpc = client.calls.find(call =>
+    call.name === 'command_ship_dynamics_withdraw_internal_case_task_sync');
+  assert.ok(withdrawalRpc, 'withdrawal must reach its dedicated RPC');
+  assert.equal('p_task_id' in withdrawalRpc.args, false,
+    'withdrawal RPC args must not accept an arbitrary task ID');
+  const withdrawalReservation = client.calls.find(call =>
+    call.name === 'reserve_ship_dynamics_operation'
+      && call.args.p_command === 'withdraw_internal_case_task_sync');
+  assert.ok(withdrawalReservation);
+  assert.equal('taskId' in withdrawalReservation.args.p_request, false,
+    'durable withdrawal request must derive task identity from the parent link');
 
   const rejectedClient = new MockClient();
   rejectedClient.reservationResult = {
@@ -430,8 +447,25 @@ try {
     updatedAt: '2026-07-26T00:00:00Z',
     statusLogs: [],
   };
+  const linkedTask = {
+    id: 'task-projection',
+    description: 'Derived internal-control task',
+    vesselId: 'v1',
+    vesselIds: ['v1'],
+    status: '追蹤中',
+    priority: '中',
+    sourceType: 'morning',
+    attentionDimension: 'task',
+    isInternalControl: true,
+    internalControlCaseId: 'case-projection',
+    isAbnormal: true,
+    isAware: false,
+    isClosed: false,
+    distributeToVessels: false,
+    updatedAt: '2026-07-26T00:00:00Z',
+  };
   const linkedProjection = {
-    data: { tasks: [], vessels: [{ id: 'v1' }], internalControlCases: [linkedCase] },
+    data: { tasks: [linkedTask], vessels: [{ id: 'v1' }], internalControlCases: [linkedCase] },
     versions: new Map([
       ['internal-case:case-projection', 3],
       ['task:task-projection', 5],
@@ -443,19 +477,27 @@ try {
     ]),
   };
   let linkedUpdateInput;
+  let withdrawalInput;
+  let linkedLeaseRequests = [];
+  let linkedRefreshes = [];
+  let linkedLeaseReleases = 0;
   const linkedRuntime = {
     projection: linkedProjection,
-    refreshEntities: async () => linkedProjection,
+    refreshEntities: async keys => { linkedRefreshes.push([...keys]); return linkedProjection; },
     loadDraft: () => null,
     removeDraft: () => undefined,
     commands: {
-      claimLeaseSet: async requests => requests.map((request, index) => ({
-        leaseKey: request.leaseKey,
-        ownerSession: lease.ownerSession,
-        fencingToken: lease.fencingToken + index,
-      })),
-      releaseLeaseSet: async () => undefined,
+      claimLeaseSet: async requests => {
+        linkedLeaseRequests = structuredClone(requests);
+        return requests.map((request, index) => ({
+          leaseKey: request.leaseKey,
+          ownerSession: lease.ownerSession,
+          fencingToken: lease.fencingToken + index,
+        }));
+      },
+      releaseLeaseSet: async () => { linkedLeaseReleases += 1; },
       updateInternalCase: async input => { linkedUpdateInput = input; },
+      withdrawInternalCaseTaskSync: async input => { withdrawalInput = input; },
     },
   };
   await new NormalizedUiController(linkedRuntime).updateInternalCase(linkedCase, {
@@ -470,6 +512,90 @@ try {
     categories: ['Safety', 'Fleet'],
     ownerUserIds: [actorId],
   }, 'linked internal-case edits must carry the editable task projection into the cross-aggregate RPC');
+
+  linkedRefreshes = [];
+  linkedLeaseRequests = [];
+  linkedLeaseReleases = 0;
+  await new NormalizedUiController(linkedRuntime).withdrawInternalCaseTaskSync(
+    linkedCase,
+    linkedTask.updatedAt,
+  );
+  assert.deepEqual(linkedRefreshes, [
+    ['internal-case:case-projection'],
+    ['internal-case:case-projection', 'task:task-projection'],
+    ['internal-case:case-projection', 'task:task-projection'],
+  ], 'withdrawal must derive the child after parent refresh and refresh both aggregates after commit');
+  assert.deepEqual(linkedLeaseRequests, [
+    { leaseKey: 'internal-case:case-projection', entityType: 'internal-case', entityId: 'case-projection' },
+    { leaseKey: 'task:task-projection', entityType: 'internal-task', entityId: 'task-projection' },
+  ]);
+  assert.deepEqual(withdrawalInput, {
+    caseId: 'case-projection',
+    baseCaseVersion: 3,
+    caseLease: {
+      leaseKey: 'internal-case:case-projection',
+      ownerSession: lease.ownerSession,
+      fencingToken: lease.fencingToken,
+    },
+    baseTaskVersion: 5,
+    taskLease: {
+      leaseKey: 'task:task-projection',
+      ownerSession: lease.ownerSession,
+      fencingToken: lease.fencingToken + 1,
+    },
+  });
+  assert.equal('taskId' in withdrawalInput, false,
+    'controller must not convert its derived child into an arbitrary task-id command argument');
+  assert.equal(linkedLeaseReleases, 1);
+
+  linkedLeaseRequests = [];
+  const originalLinkedTaskUpdatedAt = linkedTask.updatedAt;
+  linkedTask.updatedAt = '2026-07-26T00:00:01Z';
+  await assert.rejects(
+    () => new NormalizedUiController(linkedRuntime).withdrawInternalCaseTaskSync(
+      linkedCase,
+      originalLinkedTaskUpdatedAt,
+    ),
+    /較新版本|重新開啟/,
+  );
+  assert.deepEqual(linkedLeaseRequests, [], 'stale child version must fail before claiming either lease');
+  linkedTask.updatedAt = originalLinkedTaskUpdatedAt;
+
+  linkedLeaseRequests = [];
+  linkedTask.attentionDimension = 'meeting';
+  await assert.rejects(
+    () => new NormalizedUiController(linkedRuntime).withdrawInternalCaseTaskSync(
+      linkedCase,
+      linkedTask.updatedAt,
+    ),
+    /唯一雙向關聯|重新開啟/,
+  );
+  assert.deepEqual(linkedLeaseRequests, [], 'meeting-derived source must fail before claiming either lease');
+  linkedTask.attentionDimension = 'task';
+
+  const previousNavigatorForWithdrawal = globalThis.navigator;
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { onLine: false },
+  });
+  linkedRefreshes = [];
+  linkedLeaseRequests = [];
+  try {
+    await assert.rejects(
+      () => new NormalizedUiController(linkedRuntime).withdrawInternalCaseTaskSync(
+        linkedCase,
+        linkedTask.updatedAt,
+      ),
+      /離線時不能撤回同步要事/,
+    );
+  } finally {
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: previousNavigatorForWithdrawal,
+    });
+  }
+  assert.deepEqual(linkedRefreshes, []);
+  assert.deepEqual(linkedLeaseRequests, [], 'offline withdrawal must not queue a destructive draft or claim leases');
 
   const materializingCase = {
     ...linkedCase,

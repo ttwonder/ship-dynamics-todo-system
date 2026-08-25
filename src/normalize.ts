@@ -442,7 +442,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       priority: oneOf(item.priority, priorities, '中'),
       attentionDimension,
       isAware: bool(item.isAware),
-      isAbnormal: bool(item.isAbnormal) || bool(item.isInternalControl),
+      isAbnormal: bool(item.isAbnormal),
       isInternalControl: bool(item.isInternalControl),
       internalControlCancelledAt: text(item.internalControlCancelledAt) || undefined,
       internalControlCancelledBy: text(item.internalControlCancelledBy) || undefined,

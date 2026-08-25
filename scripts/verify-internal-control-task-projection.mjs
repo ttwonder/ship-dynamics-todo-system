@@ -9,6 +9,8 @@ try {
   const { deleteTaskBatchFromDraft } = await server.ssrLoadModule('/src/App.tsx');
   const pageSource = await readFile(new URL('../src/InternalControlPage.tsx', import.meta.url), 'utf8');
   const modalSource = await readFile(new URL('../src/InternalControlModals.tsx', import.meta.url), 'utf8');
+  const appSource = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const normalizedAppSource = await readFile(new URL('../src/NormalizedApp.tsx', import.meta.url), 'utf8');
   const data = createInitialData();
   const actor = data.users.find(user => user.role === 'owner') || data.users[0];
   const vessel = data.vessels.find(item => item.isActive) || data.vessels[0];
@@ -102,6 +104,7 @@ try {
   data.internalControlCases = [];
   dataLayer.createInternalControlCases(data, [makeCase('create-linked', true)], actor, at, { 'create-linked': projection });
   assert.equal(data.tasks.length, 1, 'create sync must atomically create the linked task');
+  assert.equal(data.tasks[0].id, 'internal-task-create-linked', 'initial synchronization must preserve the established deterministic task identity');
   assert.deepEqual(data.tasks[0].categories, projection.categories);
   assert.equal(data.tasks[0].expectedDate, projection.expectedDate);
   assert.deepEqual(data.tasks[0].ownerUserIds, projection.ownerUserIds);
@@ -120,6 +123,89 @@ try {
   const editedTask = data.tasks.find(task => task.id === linkedLater.linkedTaskId);
   assert.equal(editedTask?.expectedDate, editedProjection.expectedDate, 'edit modal must directly update task-only fields');
   assert.deepEqual(editedTask?.ownerUserIds, []);
+
+  assert.equal(typeof dataLayer.withdrawInternalControlTaskSync, 'function', 'a dedicated origin-bound sync withdrawal command must exist');
+  const withdrawalDraft = structuredClone(data);
+  const withdrawalCase = withdrawalDraft.internalControlCases.find(item => item.id === 'create-linked');
+  const withdrawalTask = withdrawalDraft.tasks.find(task => task.id === withdrawalCase?.linkedTaskId);
+  assert.ok(withdrawalCase && withdrawalTask, 'withdrawal fixture must contain one reciprocal linked pair');
+  const originalTaskId = withdrawalTask.id;
+  const originalCaseStatus = withdrawalCase.status;
+  const originalCaseUpdatedAt = withdrawalCase.updatedAt;
+  const originalTaskUpdatedAt = withdrawalTask.updatedAt;
+  const historicalReport = {
+    id: 'withdrawal-history', title: '已保存早會', vesselIds: [vessel.id], createdBy: actor.id, createdAt: at, taskCount: 2,
+    snapshot: { capturedAt: at, vessels: [structuredClone(vessel)], tasks: [structuredClone(withdrawalTask)], internalControlCases: [structuredClone(withdrawalCase)], meetings: [] },
+  };
+  withdrawalDraft.agendaReports = [historicalReport];
+  withdrawalDraft.notifications = [
+    { id: 'withdraw-target-notice', userId: actor.id, vesselId: vessel.id, taskId: originalTaskId, kind: 'task_updated', title: 'target', message: 'target', actorId: actor.id, createdAt: at },
+    { id: 'withdraw-other-notice', userId: actor.id, vesselId: vessel.id, taskId: 'other-task', kind: 'task_updated', title: 'other', message: 'other', actorId: actor.id, createdAt: at },
+  ];
+  withdrawalDraft.taskDismissals = [
+    { id: 'withdraw-target-dismissal', userId: actor.id, itemKind: 'task', itemId: originalTaskId, dismissedAt: at, dismissedBy: actor.id },
+    { id: 'withdraw-other-dismissal', userId: actor.id, itemKind: 'task', itemId: 'other-task', dismissedAt: at, dismissedBy: actor.id },
+  ];
+  const eligibleWithdrawalBase = structuredClone(withdrawalDraft);
+  assert.equal(typeof dataLayer.internalControlTaskSyncWithdrawalEligibility, 'function', 'the UI needs a read-only eligibility result from the same domain guard');
+  assert.deepEqual(
+    dataLayer.internalControlTaskSyncWithdrawalEligibility(eligibleWithdrawalBase, withdrawalCase.id),
+    { eligible: true, taskId: originalTaskId },
+    'an active origin-bound reciprocal pair must be visibly withdrawable',
+  );
+  const taskOriginEligibilityDraft = structuredClone(eligibleWithdrawalBase);
+  taskOriginEligibilityDraft.internalControlCases.find(item => item.id === withdrawalCase.id).origin = 'task';
+  assert.equal(dataLayer.internalControlTaskSyncWithdrawalEligibility(taskOriginEligibilityDraft, withdrawalCase.id).eligible, false, 'a task-origin relation must not expose withdrawal');
+  const historicalBefore = structuredClone(withdrawalDraft.agendaReports);
+  const withdrawnAt = '2026-07-24T02:07:30.000Z';
+  const withdrawn = dataLayer.withdrawInternalControlTaskSync(
+    withdrawalDraft,
+    withdrawalCase.id,
+    originalCaseUpdatedAt,
+    originalTaskUpdatedAt,
+    actor,
+    withdrawnAt,
+  );
+  assert.deepEqual(withdrawn, { caseId: withdrawalCase.id, taskId: originalTaskId });
+  const retainedCase = withdrawalDraft.internalControlCases.find(item => item.id === withdrawalCase.id);
+  assert.ok(retainedCase, 'withdrawal must retain the parent internal-control case');
+  assert.equal(retainedCase.isClosed, false, 'withdrawal must not close the parent case');
+  assert.equal(retainedCase.status, originalCaseStatus, 'withdrawal must preserve the parent business status');
+  assert.equal(retainedCase.syncToTask, false);
+  assert.equal(retainedCase.linkedTaskId, undefined);
+  assert.equal(retainedCase.updatedAt, withdrawnAt);
+  assert.equal(retainedCase.updatedBy, actor.id);
+  assert.equal(withdrawalDraft.tasks.some(task => task.id === originalTaskId), false, 'withdrawal must remove only the exact generated task');
+  assert.deepEqual(withdrawalDraft.notifications.map(item => item.id), ['withdraw-other-notice'], 'withdrawal must clear live notifications scoped to the removed task');
+  assert.deepEqual(withdrawalDraft.taskDismissals.map(item => item.id), ['withdraw-other-dismissal'], 'withdrawal must clear personal dismissal receipts scoped to the removed task');
+  assert.deepEqual(withdrawalDraft.agendaReports, historicalBefore, 'withdrawal must not rewrite frozen morning-history snapshots');
+
+  const resyncCandidate = structuredClone(retainedCase);
+  resyncCandidate.syncToTask = true;
+  const resyncedCase = dataLayer.updateInternalControlCase(withdrawalDraft, resyncCandidate, retainedCase.updatedAt, actor, '2026-07-24T02:07:45.000Z', editedProjection);
+  assert.ok(resyncedCase.linkedTaskId, 'a retained case may be synchronized again later');
+  assert.notEqual(resyncedCase.linkedTaskId, originalTaskId, 're-synchronization after withdrawal must create a new task identity');
+  assert.equal(withdrawalDraft.tasks.find(task => task.id === resyncedCase.linkedTaskId)?.internalControlCaseId, retainedCase.id);
+
+  const rejectWithdrawal = (mutate, expectedCaseAt, expectedTaskAt, expectedError, message) => {
+    const draft = structuredClone(eligibleWithdrawalBase);
+    mutate?.(draft);
+    assertAtomicRejection(
+      draft,
+      () => dataLayer.withdrawInternalControlTaskSync(draft, withdrawalCase.id, expectedCaseAt, expectedTaskAt, actor, withdrawnAt),
+      expectedError,
+      message,
+    );
+  };
+  rejectWithdrawal(draft => { draft.internalControlCases.find(item => item.id === withdrawalCase.id).origin = 'task'; }, originalCaseUpdatedAt, originalTaskUpdatedAt, /只有由內控案件建立/, 'a task-origin case must never delete its pre-existing source task');
+  rejectWithdrawal(draft => { const item = draft.internalControlCases.find(entry => entry.id === withdrawalCase.id); item.isClosed = true; item.closedDate = '2026-07-24'; item.closedBy = actor.id; }, originalCaseUpdatedAt, originalTaskUpdatedAt, /已結案/, 'a closed case must be reopened before sync withdrawal');
+  rejectWithdrawal(undefined, 'stale-case-version', originalTaskUpdatedAt, /內控案件已由其他人更新/, 'a stale parent version must reject sync withdrawal');
+  rejectWithdrawal(undefined, originalCaseUpdatedAt, 'stale-task-version', /關聯要事已由其他人更新/, 'a stale child version must reject sync withdrawal');
+  rejectWithdrawal(draft => { const task = draft.tasks.find(entry => entry.id === originalTaskId); task.vesselId = otherVessel.id; task.vesselIds = [otherVessel.id]; }, originalCaseUpdatedAt, originalTaskUpdatedAt, /船舶範圍不一致/, 'a cross-vessel linked task must reject sync withdrawal');
+  rejectWithdrawal(draft => { const task = draft.tasks.find(entry => entry.id === originalTaskId); task.sourceType = 'temporary'; task.attentionDimension = 'meeting'; task.sourceMeetingId = 'meeting-parent'; task.sourceMeetingItemId = 'meeting-item'; }, originalCaseUpdatedAt, originalTaskUpdatedAt, /唯一雙向關係|臨會/, 'a meeting-derived task must reject internal-case sync withdrawal');
+  rejectWithdrawal(draft => { draft.tasks.push(structuredClone(draft.tasks.find(entry => entry.id === originalTaskId))); }, originalCaseUpdatedAt, originalTaskUpdatedAt, /唯一雙向關係/, 'a duplicate linked task identity must reject sync withdrawal');
+  rejectWithdrawal(draft => { draft.internalControlCases.push(structuredClone(draft.internalControlCases.find(entry => entry.id === withdrawalCase.id))); }, originalCaseUpdatedAt, originalTaskUpdatedAt, /唯一雙向關係/, 'a duplicate parent identity must reject sync withdrawal');
+  rejectWithdrawal(draft => { draft.tasks.find(entry => entry.id === originalTaskId).internalControlCaseId = 'different-case'; }, originalCaseUpdatedAt, originalTaskUpdatedAt, /唯一雙向關係/, 'a one-sided relation must reject sync withdrawal');
 
   const beforeDeleteCount = data.tasks.length;
   dataLayer.deleteInternalControlCase(data, linkedLater.id, data.internalControlCases.find(item => item.id === linkedLater.id).updatedAt);
@@ -196,6 +282,12 @@ try {
   assert.ok(modalSource.includes('ic-case-classification-row') && modalSource.includes('ic-case-content-row'), 'create and edit forms need explicit classification and content rows');
   assert.ok(modalSource.includes('同步要事設定') && modalSource.includes('要事分類 *') && modalSource.includes('預計完成日期') && modalSource.includes('追蹤窗口'), 'sync toggle must reveal task-equivalent options');
   assert.ok(modalSource.includes('刪除案件') && modalSource.includes('onDelete'), 'edit modal must expose a permission-gated delete action');
+  assert.ok(modalSource.includes('撤回同步要事') && modalSource.includes('保留此內控案件') && modalSource.includes('重新同步會建立新的要事') && modalSource.includes('onWithdrawSync'), 'edit modal must expose an explicit confirmed sync-withdrawal action');
+  assert.ok(pageSource.includes('internalControlTaskSyncWithdrawalEligibility') && pageSource.includes('canWithdrawSync') && pageSource.includes('onWithdrawTaskSync'), 'internal-control page must gate withdrawal from the shared domain eligibility result');
+  assert.ok(appSource.includes('withdrawInternalControlTaskSync') && appSource.includes('withdrawInternalCaseTaskSync') && appSource.includes('onWithdrawTaskSync={withdrawInternalCaseTaskSync}'), 'the legacy composition root must wire the modal action to the dedicated atomic helper');
+  assert.ok(normalizedAppSource.includes('controller.withdrawInternalCaseTaskSync')
+    && normalizedAppSource.includes('onWithdrawTaskSync={withdrawInternalCaseTaskSync}'),
+  'the normalized production composition root must wire the modal action to the dedicated controller command');
   console.log('Internal-control task projection runtime contracts passed.');
 } finally {
   await server.close();

@@ -202,6 +202,153 @@ try{
   assert.ok(primaryNoticeOps.some(operation=>operation.kind==='order'&&operation.collection==='notifications'),'real notification membership changes must retain their order operation');
   assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(sideEffectBase,primaryNoticeOps,operator.id),'derived order suppression must not bypass ordinary primary authorization');
 
+  const withdrawalAuthBase=structuredClone(remote);
+  const withdrawalActor=withdrawalAuthBase.users.find(user=>user.id===operator.id);
+  const withdrawalVessel=withdrawalAuthBase.vessels[0];
+  withdrawalAuthBase.settings.rolePermissions.operator={
+    ...withdrawalAuthBase.settings.rolePermissions.operator,
+    editBusinessContent:true,
+    deleteTasks:false,
+  };
+  const withdrawalCaseId='withdraw-auth-case';
+  const withdrawalTaskId='withdraw-auth-task';
+  const withdrawalAt='2026-08-07T01:10:00.000Z';
+  const withdrawalAuditAt='2026-08-07T01:10:00.001Z';
+  const derivedTask={
+    ...structuredClone(ownedTask),
+    id:withdrawalTaskId,
+    vesselId:withdrawalVessel.id,
+    vesselIds:[withdrawalVessel.id],
+    distributeToVessels:false,
+    sourceType:'morning',
+    attentionDimension:'task',
+    isInternalControl:true,
+    internalControlCaseId:withdrawalCaseId,
+    updatedBy:withdrawalActor.id,
+    updatedAt:'2026-08-07T01:00:00.000Z',
+  };
+  delete derivedTask.sourceMeetingId;
+  delete derivedTask.sourceMeetingItemId;
+  const ordinaryTask={...structuredClone(ownedTask),id:'withdraw-auth-ordinary-task',vesselId:withdrawalVessel.id,vesselIds:[withdrawalVessel.id],isInternalControl:false,internalControlCaseId:undefined};
+  const derivedCase={
+    id:withdrawalCaseId,
+    vesselId:withdrawalVessel.id,
+    reportDate:'2026-08-07',
+    reportSource:'日常',
+    description:'可撤回同步的內控案件',
+    priority:'中',
+    category:'一般事項',
+    isAware:false,
+    status:'持續追蹤',
+    departments:[],
+    syncToTask:true,
+    linkedTaskId:withdrawalTaskId,
+    origin:'internal-control',
+    isClosed:false,
+    createdBy:withdrawalActor.id,
+    updatedBy:withdrawalActor.id,
+    createdAt:'2026-08-07T01:00:00.000Z',
+    updatedAt:'2026-08-07T01:00:00.000Z',
+    statusLogs:[],
+  };
+  withdrawalAuthBase.tasks=[derivedTask,ordinaryTask];
+  withdrawalAuthBase.internalControlCases=[derivedCase];
+  withdrawalAuthBase.notifications=[
+    {id:'withdraw-auth-notice',userId:owner.id,vesselId:withdrawalVessel.id,taskId:withdrawalTaskId,title:'target',message:'target',createdAt:withdrawalAt},
+    {id:'withdraw-auth-other-notice',userId:owner.id,vesselId:withdrawalVessel.id,taskId:ordinaryTask.id,title:'other',message:'other',createdAt:withdrawalAt},
+  ];
+  withdrawalAuthBase.taskDismissals=[
+    {id:'withdraw-auth-dismissal',userId:owner.id,itemKind:'task',itemId:withdrawalTaskId,dismissedAt:withdrawalAt,dismissedBy:owner.id},
+    {id:'withdraw-auth-other-dismissal',userId:owner.id,itemKind:'task',itemId:ordinaryTask.id,dismissedAt:withdrawalAt,dismissedBy:owner.id},
+  ];
+  withdrawalAuthBase.auditLogs=[];
+
+  const genericDeleteNext=structuredClone(withdrawalAuthBase);
+  genericDeleteNext.tasks=genericDeleteNext.tasks.filter(task=>task.id!==ordinaryTask.id);
+  assert.throws(
+    ()=>auth.assertActorAuthorizedForCloudBlockPatch(withdrawalAuthBase,patch.buildCloudBlockPatch(withdrawalAuthBase,genericDeleteNext),withdrawalActor.id),
+    error=>error instanceof auth.CloudPatchAuthorizationError&&error.reason==='missing-deleteTasks',
+    'the dedicated exception must not grant generic task deletion to an operator',
+  );
+
+  const withdrawalAuthNext=structuredClone(withdrawalAuthBase);
+  const retainedAuthCase=withdrawalAuthNext.internalControlCases[0];
+  retainedAuthCase.syncToTask=false;
+  delete retainedAuthCase.linkedTaskId;
+  retainedAuthCase.updatedBy=withdrawalActor.id;
+  retainedAuthCase.updatedAt=withdrawalAt;
+  withdrawalAuthNext.tasks=withdrawalAuthNext.tasks.filter(task=>task.id!==withdrawalTaskId);
+  withdrawalAuthNext.notifications=withdrawalAuthNext.notifications.filter(notice=>notice.taskId!==withdrawalTaskId);
+  withdrawalAuthNext.taskDismissals=withdrawalAuthNext.taskDismissals.filter(dismissal=>dismissal.itemKind!=='task'||dismissal.itemId!==withdrawalTaskId);
+  withdrawalAuthNext.auditLogs.unshift({
+    id:'withdraw-auth-audit',at:withdrawalAuditAt,actorId:withdrawalActor.id,actorName:withdrawalActor.name,actorRole:withdrawalActor.role,
+    action:'撤回同步要事',entityType:'internal-control',entityId:withdrawalCaseId,detail:`撤回同步要事 ${withdrawalTaskId}；內控案件保持未結案`,
+  });
+  const withdrawalAuthOps=patch.buildCloudBlockPatch(withdrawalAuthBase,withdrawalAuthNext);
+  assert.doesNotThrow(
+    ()=>auth.assertActorAuthorizedForCloudBlockPatch(withdrawalAuthBase,withdrawalAuthOps,withdrawalActor.id),
+    'an exact origin-bound withdrawal bundle must not require generic deleteTasks',
+  );
+  assert.equal(withdrawalAuthBase.settings.rolePermissions.operator.deleteTasks,false,'the dedicated command must leave generic operator deletion disabled');
+  const assertWithdrawalBundleRejected=(prepare,message)=>{
+    const candidateBase=structuredClone(withdrawalAuthBase);
+    const candidateNext=structuredClone(withdrawalAuthNext);
+    prepare(candidateBase,candidateNext);
+    assert.throws(
+      ()=>auth.assertActorAuthorizedForCloudBlockPatch(candidateBase,patch.buildCloudBlockPatch(candidateBase,candidateNext),withdrawalActor.id),
+      auth.CloudPatchAuthorizationError,
+      message,
+    );
+  };
+  assertWithdrawalBundleRejected((_base,next)=>{
+    next.tasks=next.tasks.filter(task=>task.id!==ordinaryTask.id);
+  },'a valid withdrawal must not smuggle an unrelated task deletion');
+  assertWithdrawalBundleRejected((_base,next)=>{
+    next.internalControlCases[0].description='夾帶一般案件內容改寫';
+  },'a withdrawal bundle must contain only the declared parent link transition');
+  assertWithdrawalBundleRejected((candidateBase,candidateNext)=>{
+    candidateBase.internalControlCases[0].origin='task';
+    candidateNext.internalControlCases[0].origin='task';
+  },'a task-origin parent must preserve its pre-existing source task');
+  assertWithdrawalBundleRejected((candidateBase,candidateNext)=>{
+    for(const target of [candidateBase.internalControlCases[0],candidateNext.internalControlCases[0]]){
+      target.isClosed=true;target.closedDate='2026-08-07';target.closedBy=withdrawalActor.id;
+    }
+  },'a closed internal-control case must not use the withdrawal exception');
+  assertWithdrawalBundleRejected((candidateBase,candidateNext)=>{
+    for(const candidate of [candidateBase,candidateNext]){
+      const task=candidate.tasks.find(item=>item.id===withdrawalTaskId);
+      if(!task)continue;
+      task.sourceType='temporary';task.attentionDimension='meeting';task.sourceMeetingId='meeting-parent';task.sourceMeetingItemId='meeting-item';
+    }
+  },'a meeting-derived task must not use the internal-control withdrawal exception');
+  assertWithdrawalBundleRejected((candidateBase,candidateNext)=>{
+    for(const candidate of [candidateBase,candidateNext]){
+      const task=candidate.tasks.find(item=>item.id===withdrawalTaskId);
+      if(!task)continue;
+      task.vesselId=candidate.vessels[1].id;task.vesselIds=[candidate.vessels[1].id];
+    }
+  },'a cross-vessel linked task must not use the withdrawal exception');
+  assertWithdrawalBundleRejected((candidateBase,candidateNext)=>{
+    const duplicate={...structuredClone(candidateBase.tasks.find(item=>item.id===withdrawalTaskId)),id:'withdraw-auth-duplicate-claim'};
+    candidateBase.tasks.push(duplicate);
+    candidateNext.tasks.push(structuredClone(duplicate));
+  },'a duplicate reciprocal claim must fail closed');
+  assertWithdrawalBundleRejected((_base,next)=>{
+    next.auditLogs=[];
+  },'withdrawal without its exact action audit must be rejected');
+  assertWithdrawalBundleRejected((_base,next)=>{
+    next.notifications=next.notifications.filter(notice=>notice.id!=='withdraw-auth-other-notice');
+  },'withdrawal must not use side-effect cleanup to remove an unrelated notification');
+  const staleWithdrawalOps=structuredClone(withdrawalAuthOps);
+  const staleTaskDelete=staleWithdrawalOps.find(operation=>operation.kind==='entity'&&operation.collection==='tasks'&&operation.entityId===withdrawalTaskId);
+  staleTaskDelete.expected.updatedAt='stale-task-version';
+  assert.throws(
+    ()=>auth.assertActorAuthorizedForCloudBlockPatch(withdrawalAuthBase,staleWithdrawalOps,withdrawalActor.id),
+    auth.CloudPatchAuthorizationError,
+    'a forged stale child expectation must not receive the withdrawal exception',
+  );
+
   const stampedAuditRaceBase=structuredClone(remote);
   const stampedAuditRaceTask=stampedAuditRaceBase.tasks.find(task=>task.id===ownedTask.id);
   const stampedAuditRaceClient=structuredClone(stampedAuditRaceBase);

@@ -30,6 +30,7 @@ import {
   vesselProfileCommandValue,
 } from './normalizedAdapters';
 import { taskProgressForVessel } from './taskVesselProgress';
+import { internalControlTaskSyncWithdrawalEligibility } from './internalControlTaskSyncWithdrawal';
 
 type JsonObject = Record<string, unknown>;
 
@@ -1226,6 +1227,72 @@ export class NormalizedUiController {
     await this.runtime.refreshEntities(committedRefreshKeys);
     this.#clearDraft(caseKey);
     return 'committed';
+  }
+
+  async withdrawInternalCaseTaskSync(
+    candidate: InternalControlCase,
+    expectedTaskUpdatedAt: string,
+  ): Promise<void> {
+    if (!isOnline()) throw new Error('離線時不能撤回同步要事。');
+    const caseKey = `internal-case:${candidate.id}`;
+    await this.runtime.refreshEntities([caseKey]);
+    let projection = this.#projection();
+    let currentCase = projection.data.internalControlCases.find(item => item.id === candidate.id);
+    if (!currentCase
+        || currentCase.updatedAt !== candidate.updatedAt
+        || currentCase.linkedTaskId !== candidate.linkedTaskId) {
+      throw new NormalizedCommandError(
+        'version',
+        'internal-task-sync-withdrawal-case-stale',
+        '內控案件或同步關聯已更新；請關閉後重新開啟再撤回。',
+      );
+    }
+    const taskId = currentCase.linkedTaskId;
+    if (!taskId) throw new Error('此內控案件沒有可撤回的同步要事。');
+    const taskKey = `task:${taskId}`;
+    await this.runtime.refreshEntities([caseKey, taskKey]);
+    projection = this.#projection();
+    currentCase = projection.data.internalControlCases.find(item => item.id === candidate.id);
+    const eligibility = internalControlTaskSyncWithdrawalEligibility(projection.data, candidate.id);
+    const task = eligibility.eligible
+      ? projection.data.tasks.find(item => item.id === eligibility.taskId)
+      : undefined;
+    if (!currentCase
+        || currentCase.updatedAt !== candidate.updatedAt
+        || currentCase.linkedTaskId !== taskId
+        || !eligibility.eligible
+        || eligibility.taskId !== taskId
+        || !task
+        || task.updatedAt !== expectedTaskUpdatedAt) {
+      const reason = !eligibility.eligible && 'reason' in eligibility
+        ? eligibility.reason
+        : '內控案件或關聯要事已有較新版本';
+      throw new NormalizedCommandError(
+        'version',
+        'internal-task-sync-withdrawal-stale',
+        `${reason}；請關閉後重新開啟再撤回。`,
+      );
+    }
+    const leases = await this.runtime.commands.claimLeaseSet([
+      { leaseKey: caseKey, entityType: 'internal-case', entityId: candidate.id },
+      { leaseKey: taskKey, entityType: 'internal-task', entityId: taskId },
+    ]);
+    try {
+      const leaseMap = new Map(leases.map(item => [item.leaseKey, item]));
+      const caseLease = leaseMap.get(caseKey);
+      const taskLease = leaseMap.get(taskKey);
+      if (!caseLease || !taskLease) throw new Error('撤回同步要事的雙實體租約不完整。');
+      await this.runtime.commands.withdrawInternalCaseTaskSync({
+        caseId: candidate.id,
+        baseCaseVersion: projection.versions.get(caseKey),
+        caseLease,
+        baseTaskVersion: projection.versions.get(taskKey),
+        taskLease,
+      });
+    } finally {
+      await this.runtime.commands.releaseLeaseSet(leases);
+    }
+    await this.runtime.refreshEntities([caseKey, taskKey]);
   }
 
   async deleteInternalCase(item: InternalControlCase) {

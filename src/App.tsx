@@ -24,7 +24,7 @@ import { selectUserWorkCenterInternalCases, selectUserWorkCenterTasks, taskBelon
 import { markOwnNotificationsRead } from './notificationReadReceipts';
 import { clearDismissalsForNewTaskAssignments, dismissWorkCenterItems, workCenterDismissalId } from './taskDismissals';
 import InternalControlPage from './InternalControlPage';
-import { closeLinkedInternalControlCaseAfterTaskDelete, createInternalControlCases, deleteInternalControlCase, reconcileInternalControlAfterTaskSave, syncLinkedInternalControlCasesFromTasks, updateInternalControlCase, type InternalControlTaskProjection } from './internalControlData';
+import { closeLinkedInternalControlCaseAfterTaskDelete, createInternalControlCases, deleteInternalControlCase, reconcileInternalControlAfterTaskSave, syncLinkedInternalControlCasesFromTasks, updateInternalControlCase, withdrawInternalControlTaskSync, type InternalControlTaskProjection } from './internalControlData';
 import { buildTaskNotificationsForVessels, buildTaskScopeChangeNotifications, canAccessTab, canAcquireTaskEditLock, canCancelInternalControl, canDeleteTask, canUseVessel, internalControlTransitionRequested, selectInternalControlCasesVisibleToUser, selectTasksVisibleToUser, taskSourceLabel, trustedClosureDate, validateInternalControlTransition } from './taskWorkflow';
 import { repairPendingCompanyLevelNotificationOverflow } from './notificationCompaction';
 import { isMeetingTaskSource, mergeAttentionFromCategories, normalizeMeetingTaskCategoryList, normalizeTaskCategoryList, taskCategoriesOf, taskCategoryLabel } from './taskCategories';
@@ -2359,6 +2359,41 @@ export default function App() {
     if(attempted&&!applied)alert(failure);
     return durable;
   };
+  const withdrawInternalCaseTaskSync = async (candidate: InternalControlCase, expectedTaskUpdatedAt: string, expectedRevision: number) => {
+    if(!requireMutationLease(internalControlEditLockKey(candidate.id)))return false;
+    let applied=false;
+    let attempted=false;
+    let failure='同步要事未撤回：資料、關聯或權限已變更';
+    const apply=()=>{
+      attempted=true;
+      flushSync(()=>setData(prev=>{
+      const liveUser=prev.users.find(user=>user.id===currentUser.id&&user.isActive);
+      if(!liveUser||liveUser.role==='vessel'||!hasPermission(prev.settings.rolePermissions,liveUser,'editBusinessContent')){failure='目前身份無權撤回內控案件的同步要事';return prev;}
+      const matchingCases=prev.internalControlCases.filter(item=>item.id===candidate.id);
+      if(matchingCases.length!==1){failure='內控案件不存在或識別碼重複';return prev;}
+      const previous=matchingCases[0];
+      if(previous.linkedTaskId!==candidate.linkedTaskId){failure='同步關聯已變更，請重新開啟後再試';return prev;}
+      const matchingTasks=previous.linkedTaskId?prev.tasks.filter(task=>task.id===previous.linkedTaskId):[];
+      if(matchingTasks.length!==1){failure='關聯要事不存在或識別碼重複';return prev;}
+      const linkedTask=matchingTasks[0];
+      if(prev.revision!==expectedRevision||previous.updatedAt!==candidate.updatedAt||linkedTask.updatedAt!==expectedTaskUpdatedAt){failure='案件或關聯要事已由其他人更新，請重新開啟後再試';return prev;}
+      const vessel=prev.vessels.find(item=>item.id===previous.vesselId&&item.isActive);
+      if(!vessel||!canAccessAllVessels(prev.settings.rolePermissions,liveUser,[vessel])){failure='目前身份無權撤回此船舶的同步要事';return prev;}
+      const draft=clone(prev);
+      let result:{caseId:string;taskId:string};
+      try{result=withdrawInternalControlTaskSync(draft,candidate.id,candidate.updatedAt,expectedTaskUpdatedAt,liveUser,nowIso());}
+      catch(error:any){failure=error.message||String(error);return prev;}
+      applied=true;
+      return withAudit(draft,liveUser,'撤回同步要事','internal-control',result.caseId,`撤回同步要事 ${result.taskId}；內控案件保持未結案`);
+      }));
+      return applied;
+    };
+    const durable=await runDurableRelatedMutation(internalControlEditLockKey(candidate.id),'撤回同步要事',apply);
+    if(attempted&&!applied)alert(failure);
+    else if(durable)alert('同步要事已撤回；內控案件與既有早會歷史已保留。重新同步時會建立新的要事。');
+    else if(applied)alert('撤回尚未取得雲端確認，編輯器保持開啟；請勿重複操作，系統會繼續查證。');
+    return durable;
+  };
   const removeInternalCase = async (candidate: InternalControlCase, expectedRevision: number) => {
     if(!requireMutationLease(internalControlEditLockKey(candidate.id)))return false;
     let applied=false;
@@ -4353,7 +4388,7 @@ export default function App() {
         markAllRead={()=>setData(previous=>markOwnNotificationsRead(previous,currentUser.id,nowIso()))}
       />}
       {tab==='closed' && <ListPanel title="已結案清單" tasks={closedTasks} data={roleVisibleData} visibleVessels={activeVessels} filters={closedFilters} setFilters={setClosedFilters} fleetTags={fleetTags} userMap={userMap} exportedBy={currentUser.name} onEdit={openTask} onPrint={() => print('已結案清單')} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
-      {tab==='internalControl' && canAccessTab(currentUser,'internalControl') && <InternalControlPage data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onDelete={removeInternalCase} onBatchClose={caseIds=>batchCompleteTasks([],caseIds)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
+      {tab==='internalControl' && canAccessTab(currentUser,'internalControl') && <InternalControlPage data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onWithdrawTaskSync={withdrawInternalCaseTaskSync} onDelete={removeInternalCase} onBatchClose={caseIds=>batchCompleteTasks([],caseIds)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
       {tab==='stats' && <DataAnalysisView data={roleVisibleData} vessels={canViewAllVessels?reportVessels:activeVessels} />}
       {tab==='meeting' && <TemporaryMeetingsPage data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} canCloseTasks={canCloseTasks&&currentUser.role!=='vessel'} onOpenDecisionTask={openMeetingTaskFromMeetingPage} onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
 

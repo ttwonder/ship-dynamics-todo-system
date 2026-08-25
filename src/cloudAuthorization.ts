@@ -4,6 +4,7 @@ import { hasActiveVesselDelegation } from './vesselDelegation';
 import { buildCloudBlockPatch, type CloudBlockCollection, type CloudBlockPatchOperation } from './cloudBlockPatch';
 import { taskBelongsToUserWorkCenter } from './workCenterScope';
 import { isTaipeiBusinessDay, taipeiDateKey } from './taipeiTime';
+import { isMeetingTaskSource } from './taskCategories';
 
 export class CloudPatchAuthorizationError extends Error{
   constructor(readonly reason:string){super(`Cloud patch authorization rejected: ${reason}`);this.name='CloudPatchAuthorizationError';}
@@ -200,7 +201,157 @@ function authorizedCrossUserTaskDismissalResets(data:AppData,operations:readonly
   return resets;
 }
 
-function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extract<CloudBlockPatchOperation,{kind:'entity'}>,crossUserTaskDismissalResets:Set<string>){
+type EntityPatchOperation=Extract<CloudBlockPatchOperation,{kind:'entity'}>;
+type OrderPatchOperation=Extract<CloudBlockPatchOperation,{kind:'order'}>;
+
+const exactDeletionMembership=(
+  base:readonly Record<string,unknown>[],
+  entities:readonly EntityPatchOperation[],
+  orders:readonly OrderPatchOperation[],
+  shouldDelete:(entity:Record<string,unknown>)=>boolean,
+  ordered:boolean,
+)=>{
+  const expectedDeleted=base.filter(shouldDelete);
+  if(entities.length!==expectedDeleted.length)return false;
+  const expectedById=new Map(expectedDeleted.map(entity=>[String(entity.id||''),entity]));
+  if(expectedById.size!==expectedDeleted.length)return false;
+  if(entities.some(operation=>operation.value!==null
+    ||!operation.expected
+    ||operation.entityId!==String(operation.expected.id||'')
+    ||!equal(expectedById.get(operation.entityId),operation.expected)))return false;
+  if(!ordered)return orders.length===0;
+  if(!expectedDeleted.length)return orders.length===0;
+  if(orders.length!==1)return false;
+  const deletedIds=new Set(expectedDeleted.map(entity=>String(entity.id||'')));
+  const baseIds=base.map(entity=>String(entity.id||''));
+  return equal(orders[0].expectedIds,baseIds)
+    &&equal(orders[0].valueIds,baseIds.filter(id=>!deletedIds.has(id)));
+};
+
+function exactWithdrawalAuditBundle(
+  data:AppData,
+  entities:readonly EntityPatchOperation[],
+  orders:readonly OrderPatchOperation[],
+  actor:UserAccount,
+  caseId:string,
+  taskId:string,
+  at:string,
+){
+  const added=entities.filter(operation=>!operation.expected&&operation.value);
+  if(added.length!==1)return false;
+  const audit=added[0].value!;
+  const expectedKeys=['action','actorId','actorName','actorRole','at','detail','entityId','entityType','id'].sort();
+  const auditTime=Date.parse(String(audit.at||''));
+  const mutationTime=Date.parse(at);
+  if(!equal(Object.keys(audit).sort(),expectedKeys)
+    ||!String(audit.id||'')
+    ||data.auditLogs.some(item=>item.id===audit.id)
+    ||!Number.isFinite(auditTime)
+    ||!Number.isFinite(mutationTime)
+    ||auditTime<mutationTime
+    ||auditTime-mutationTime>60_000
+    ||audit.actorId!==actor.id
+    ||audit.actorName!==actor.name
+    ||audit.actorRole!==actor.role
+    ||audit.action!=='撤回同步要事'
+    ||audit.entityType!=='internal-control'
+    ||audit.entityId!==caseId
+    ||audit.detail!==`撤回同步要事 ${taskId}；內控案件保持未結案`)return false;
+  const baseIds=data.auditLogs.map(item=>item.id);
+  const expectedValueIds=[String(audit.id),...baseIds].slice(0,500);
+  if(orders.length!==1
+    ||!equal(orders[0].expectedIds,baseIds)
+    ||!equal(orders[0].valueIds,expectedValueIds))return false;
+  const deletedIds=new Set(baseIds.filter(id=>!expectedValueIds.includes(id)));
+  const deleted=entities.filter(operation=>operation.expected&&!operation.value);
+  if(deleted.length!==deletedIds.size||entities.length!==added.length+deleted.length)return false;
+  return deleted.every(operation=>deletedIds.has(operation.entityId)
+    &&equal(data.auditLogs.find(item=>item.id===operation.entityId),operation.expected));
+}
+
+function exactOriginBoundTaskSyncWithdrawals(data:AppData,operations:readonly CloudBlockPatchOperation[],actor:UserAccount){
+  const none=new Set<string>();
+  if(actor.role==='vessel'||!hasPermission(data.settings.rolePermissions,actor,'editBusinessContent'))return none;
+  if(operations.some(operation=>operation.kind==='settings'
+    ||!new Set<CloudBlockCollection>(['tasks','internalControlCases','taskDismissals','notifications','auditLogs']).has(operation.collection)))return none;
+  const entities=operations.filter((operation):operation is EntityPatchOperation=>operation.kind==='entity');
+  const orders=operations.filter((operation):operation is OrderPatchOperation=>operation.kind==='order');
+  const taskEntities=entities.filter(operation=>operation.collection==='tasks');
+  const caseEntities=entities.filter(operation=>operation.collection==='internalControlCases');
+  if(taskEntities.length!==1||caseEntities.length!==1)return none;
+  const taskDelete=taskEntities[0];
+  const caseUpdate=caseEntities[0];
+  if(!taskDelete.expected||taskDelete.value||!caseUpdate.expected||!caseUpdate.value)return none;
+  const taskId=taskDelete.entityId;
+  const caseId=caseUpdate.entityId;
+  const tasksById=data.tasks.filter(task=>task.id===taskId);
+  const casesById=data.internalControlCases.filter(item=>item.id===caseId);
+  if(tasksById.length!==1||casesById.length!==1)return none;
+  const task=tasksById[0];
+  const item=casesById[0];
+  if(!equal(task,taskDelete.expected)
+    ||!equal(item,caseUpdate.expected)
+    ||item.origin!=='internal-control'
+    ||item.isClosed
+    ||item.syncToTask!==true
+    ||item.linkedTaskId!==taskId
+    ||task.isInternalControl!==true
+    ||task.internalControlCaseId!==caseId
+    ||data.internalControlCases.filter(candidate=>candidate.linkedTaskId===taskId).length!==1
+    ||data.tasks.filter(candidate=>candidate.internalControlCaseId===caseId).length!==1)return none;
+  const taskScope=entityVesselIds('tasks',task as unknown as Record<string,unknown>);
+  if(taskScope.length!==1
+    ||taskScope[0]!==item.vesselId
+    ||task.vesselId!==item.vesselId
+    ||task.distributeToVessels===true
+    ||task.sourceType!=='morning'
+    ||Boolean(task.sourceMeetingItemId)
+    ||isMeetingTaskSource(task))return none;
+  const fields=changedFields(caseUpdate.expected,caseUpdate.value);
+  if(!fields.has('syncToTask')
+    ||!fields.has('linkedTaskId')
+    ||!fields.has('updatedAt')
+    ||[...fields].some(field=>!new Set(['syncToTask','linkedTaskId','updatedAt','updatedBy']).has(field))
+    ||caseUpdate.value.syncToTask!==false
+    ||Object.prototype.hasOwnProperty.call(caseUpdate.value,'linkedTaskId')
+    ||caseUpdate.value.updatedBy!==actor.id
+    ||typeof caseUpdate.value.updatedAt!=='string'
+    ||!Number.isFinite(Date.parse(caseUpdate.value.updatedAt)))return none;
+  assertEntityScope(data,actor,'tasks',taskDelete.expected,null);
+  assertEntityScope(data,actor,'internalControlCases',caseUpdate.expected,caseUpdate.value);
+
+  const taskOrders=orders.filter(operation=>operation.collection==='tasks');
+  const taskIds=data.tasks.map(candidate=>candidate.id);
+  if(taskOrders.length!==1
+    ||!equal(taskOrders[0].expectedIds,taskIds)
+    ||!equal(taskOrders[0].valueIds,taskIds.filter(id=>id!==taskId)))return none;
+  const caseOrders=orders.filter(operation=>operation.collection==='internalControlCases');
+  if(caseOrders.length)return none;
+  const notificationEntities=entities.filter(operation=>operation.collection==='notifications');
+  const notificationOrders=orders.filter(operation=>operation.collection==='notifications');
+  if(!exactDeletionMembership(
+    data.notifications as unknown as Record<string,unknown>[],
+    notificationEntities,
+    notificationOrders,
+    notice=>notice.taskId===taskId,
+    true,
+  ))return none;
+  const dismissalEntities=entities.filter(operation=>operation.collection==='taskDismissals');
+  const dismissalOrders=orders.filter(operation=>operation.collection==='taskDismissals');
+  if(!exactDeletionMembership(
+    data.taskDismissals as unknown as Record<string,unknown>[],
+    dismissalEntities,
+    dismissalOrders,
+    dismissal=>dismissal.itemKind==='task'&&dismissal.itemId===taskId,
+    false,
+  ))return none;
+  const auditEntities=entities.filter(operation=>operation.collection==='auditLogs');
+  const auditOrders=orders.filter(operation=>operation.collection==='auditLogs');
+  if(!exactWithdrawalAuditBundle(data,auditEntities,auditOrders,actor,caseId,taskId,String(caseUpdate.value.updatedAt)))return none;
+  return new Set([taskId]);
+}
+
+function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extract<CloudBlockPatchOperation,{kind:'entity'}>,crossUserTaskDismissalResets:Set<string>,withdrawnTaskIds:Set<string>){
   const {collection,expected,value}=operation;
   const fields=changedFields(expected,value);
   if(collection==='users'){
@@ -220,7 +371,7 @@ function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extra
   }
   if(collection==='tasks'){
     if(!expected)permission(data,actor,'createTasks');
-    else if(!value)permission(data,actor,'deleteTasks');
+    else if(!value&&!withdrawnTaskIds.has(operation.entityId))permission(data,actor,'deleteTasks');
     else{
       if([...fields].some(field=>STATUS_FIELDS.has(field)))permission(data,actor,'closeTasks');
       if([...fields].some(field=>!STATUS_FIELDS.has(field)&&field!=='updatedAt'&&field!=='updatedBy'))permission(data,actor,'editBusinessContent');
@@ -257,8 +408,9 @@ function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extra
     const dismissalUserId=String(dismissal.userId||'');
     const actorOwned=dismissalUserId===actor.id&&dismissal.dismissedBy===actor.id;
     const exactCrossUserReset=Boolean(!value&&expected&&itemKind==='task'&&dismissal.dismissedBy===dismissalUserId&&crossUserTaskDismissalResets.has(taskDismissalResetKey(dismissalUserId,itemId)));
-    if(!actorOwned&&!exactCrossUserReset)throw new CloudPatchAuthorizationError('task-dismissal-must-belong-to-actor');
-    if(exactCrossUserReset)return;
+    const exactWithdrawalCleanup=Boolean(!value&&expected&&itemKind==='task'&&withdrawnTaskIds.has(itemId));
+    if(!actorOwned&&!exactCrossUserReset&&!exactWithdrawalCleanup)throw new CloudPatchAuthorizationError('task-dismissal-must-belong-to-actor');
+    if(exactCrossUserReset||exactWithdrawalCleanup)return;
     if(itemKind==='task'){
       const task=data.tasks.find(item=>item.id===itemId);
       if(!task)throw new CloudPatchAuthorizationError('task-dismissal-target-missing');
@@ -366,6 +518,7 @@ export function assertActorAuthorizedForCloudBlockPatch(data:AppData,operations:
   if(!actor)throw new CloudPatchAuthorizationError('actor-missing-or-inactive');
   const sideEffects:CloudBlockPatchOperation[]=[];
   const crossUserTaskDismissalResets=authorizedCrossUserTaskDismissalResets(data,operations);
+  const withdrawnTaskIds=exactOriginBoundTaskSyncWithdrawals(data,operations,actor);
   const entityOperationCollections=new Set(operations.filter((operation):operation is Extract<CloudBlockPatchOperation,{kind:'entity'}>=>operation.kind==='entity').map(operation=>operation.collection));
   let authorizedPrimary=false;
   for(const operation of operations){
@@ -378,7 +531,7 @@ export function assertActorAuthorizedForCloudBlockPatch(data:AppData,operations:
       if([...fields].some(field=>field!=='rolePermissions'&&field!=='lastCloudSyncAt'))permission(data,actor,'manageSystemSettings');
       authorizedPrimary=true;
     }else if(operation.kind==='entity'){
-      authorizeEntityOperation(data,actor,operation,crossUserTaskDismissalResets);
+      authorizeEntityOperation(data,actor,operation,crossUserTaskDismissalResets,withdrawnTaskIds);
       authorizedPrimary=true;
     }else{
       if(!entityOperationCollections.has(operation.collection))authorizeOrderOperation(data,actor,operation.collection);

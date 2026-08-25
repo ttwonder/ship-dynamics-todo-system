@@ -3126,6 +3126,276 @@ begin
 end;
 $$;
 
+create function public.command_ship_dynamics_withdraw_internal_case_task_sync(
+  p_operation_id uuid,
+  p_workspace_id uuid,
+  p_case_id text,
+  p_base_case_version bigint,
+  p_case_lease_key text,
+  p_case_owner_session uuid,
+  p_case_fencing_token bigint,
+  p_base_task_version bigint,
+  p_task_lease_key text,
+  p_task_owner_session uuid,
+  p_task_fencing_token bigint
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_actor uuid := auth.uid();
+  v_request jsonb;
+  v_replay jsonb;
+  v_result jsonb;
+  v_case public.sd_internal_cases%rowtype;
+  v_task public.sd_tasks%rowtype;
+  v_task_id text;
+  v_case_version bigint;
+  v_task_version bigint;
+  v_scope_count integer;
+begin
+  perform public.sd_internal_assert_actor(p_workspace_id, 'editBusinessContent');
+  if btrim(coalesce(p_case_id, '')) = '' then
+    raise exception using errcode = 'P0001', message = 'invalid-case';
+  end if;
+  v_request := jsonb_build_object(
+    'caseId', p_case_id,
+    'baseCaseVersion', p_base_case_version,
+    'caseLeaseKey', p_case_lease_key,
+    'caseOwnerSession', p_case_owner_session,
+    'caseFencingToken', p_case_fencing_token,
+    'baseTaskVersion', p_base_task_version,
+    'taskLeaseKey', p_task_lease_key,
+    'taskOwnerSession', p_task_owner_session,
+    'taskFencingToken', p_task_fencing_token
+  );
+  v_replay := public.sd_internal_operation_replay(
+    p_workspace_id,
+    p_operation_id,
+    'withdraw_internal_case_task_sync',
+    'internal-case:' || p_case_id,
+    v_request
+  );
+  if v_replay is not null then return v_replay; end if;
+
+  select * into v_case
+  from public.sd_internal_cases c
+  where c.workspace_id = p_workspace_id
+    and c.id = p_case_id
+    and not c.is_deleted
+    and public.sd_can_mutate_internal_vessel(
+      p_workspace_id, c.vessel_id, 'editBusinessContent'
+    );
+  if not found then
+    raise exception using errcode = 'P0001', message = 'not-authorized';
+  end if;
+  if v_case.is_closed or v_case.origin <> 'internal-control' then
+    raise exception using errcode = 'P0001', message = 'withdrawal-not-eligible';
+  end if;
+
+  select l.task_id into v_task_id
+  from public.sd_internal_case_task_links l
+  where l.workspace_id = p_workspace_id and l.case_id = p_case_id;
+  if not found or btrim(coalesce(v_task_id, '')) = ''
+     or (select count(*) from public.sd_internal_case_task_links l
+         where l.workspace_id = p_workspace_id and l.case_id = p_case_id) <> 1
+     or (select count(*) from public.sd_internal_case_task_links l
+         where l.workspace_id = p_workspace_id and l.task_id = v_task_id) <> 1 then
+    raise exception using errcode = 'P0001', message = 'link-conflict';
+  end if;
+
+  perform public.sd_internal_assert_ordered_leases(
+    p_workspace_id,
+    p_case_id,
+    p_case_lease_key,
+    p_case_owner_session,
+    p_case_fencing_token,
+    v_task_id,
+    p_task_lease_key,
+    p_task_owner_session,
+    p_task_fencing_token
+  );
+
+  select * into v_case
+  from public.sd_internal_cases c
+  where c.workspace_id = p_workspace_id and c.id = p_case_id
+  for update;
+  if not found
+     or v_case.version <> p_base_case_version
+     or v_case.is_deleted
+     or v_case.is_closed
+     or v_case.origin <> 'internal-control' then
+    raise exception using errcode = '40001', message = 'version-conflict';
+  end if;
+
+  select * into v_task
+  from public.sd_tasks t
+  where t.workspace_id = p_workspace_id and t.id = v_task_id
+  for update;
+  if not found
+     or v_task.version <> p_base_task_version
+     or v_task.is_deleted
+     or v_task.is_closed then
+    raise exception using errcode = '40001', message = 'version-conflict';
+  end if;
+  if v_task.source_kind <> 'ordinary'
+     or v_task.source_type <> 'morning'
+     or v_task.attention_dimension <> 'task'
+     or not v_task.is_internal_control
+     or v_task.source_meeting_id is not null
+     or v_task.source_meeting_item_id is not null then
+    raise exception using errcode = 'P0001', message = 'withdrawal-not-eligible';
+  end if;
+  if not exists (
+    select 1 from public.sd_internal_case_task_links l
+    where l.workspace_id = p_workspace_id
+      and l.case_id = p_case_id
+      and l.task_id = v_task_id
+  ) then
+    raise exception using errcode = 'P0001', message = 'link-conflict';
+  end if;
+  select count(*)::integer into v_scope_count
+  from public.sd_task_vessels tv
+  where tv.workspace_id = p_workspace_id
+    and tv.task_id = v_task_id
+    and tv.is_active_scope;
+  if v_scope_count <> 1 or not exists (
+    select 1 from public.sd_task_vessels tv
+    where tv.workspace_id = p_workspace_id
+      and tv.task_id = v_task_id
+      and tv.vessel_id = v_case.vessel_id
+      and tv.is_active_scope
+  ) then
+    raise exception using errcode = 'P0001', message = 'scope-conflict';
+  end if;
+
+  update public.sd_internal_cases c
+  set version = c.version + 1,
+      updated_at = clock_timestamp(),
+      updated_by = v_actor
+  where c.workspace_id = p_workspace_id
+    and c.id = p_case_id
+    and c.version = p_base_case_version
+    and not c.is_deleted
+    and not c.is_closed
+  returning c.version into v_case_version;
+  if not found then
+    raise exception using errcode = '40001', message = 'version-conflict';
+  end if;
+
+  delete from public.sd_internal_case_task_links l
+  where l.workspace_id = p_workspace_id
+    and l.case_id = p_case_id
+    and l.task_id = v_task_id;
+  if not found then
+    raise exception using errcode = 'P0001', message = 'link-conflict';
+  end if;
+  insert into public.sd_internal_case_status_events(
+    workspace_id, id, case_id, event_kind, status, actor_id
+  ) values (
+    p_workspace_id, p_operation_id, p_case_id, 'unlinked', v_case.status, v_actor
+  );
+
+  perform public.sd_core_emit_task_notifications(
+    p_workspace_id, v_task_id, v_actor, p_operation_id, 'task_deleted'
+  );
+  update public.sd_tasks t
+  set status_before_close = t.status,
+      status = '已刪除',
+      is_deleted = true,
+      deleted_at = clock_timestamp(),
+      deleted_by = v_actor,
+      version = t.version + 1,
+      updated_at = clock_timestamp(),
+      updated_by = v_actor
+  where t.workspace_id = p_workspace_id
+    and t.id = v_task_id
+    and t.version = p_base_task_version
+    and not t.is_deleted
+  returning t.version into v_task_version;
+  if not found then
+    raise exception using errcode = '40001', message = 'version-conflict';
+  end if;
+  update public.sd_task_vessels tv
+  set is_active_scope = false,
+      version = tv.version + 1,
+      updated_at = clock_timestamp(),
+      updated_by = v_actor
+  where tv.workspace_id = p_workspace_id
+    and tv.task_id = v_task_id
+    and tv.is_active_scope;
+  insert into public.sd_task_status_events(
+    workspace_id, id, task_id, status, actor_id
+  ) values (
+    p_workspace_id,
+    public.sd_core_event_id(p_operation_id, 'task-status:' || v_task_id),
+    v_task_id,
+    '已刪除',
+    v_actor
+  );
+
+  v_result := jsonb_build_object(
+    'status', 'committed',
+    'replayed', false,
+    'caseId', p_case_id,
+    'caseVersion', v_case_version,
+    'taskId', v_task_id,
+    'taskVersion', v_task_version,
+    'deleted', true,
+    'casePreserved', true
+  );
+  perform public.sd_internal_record_operation(
+    p_workspace_id,
+    p_operation_id,
+    'withdraw_internal_case_task_sync',
+    'internal-case:' || p_case_id,
+    v_request,
+    jsonb_build_object('case', p_base_case_version, 'task', p_base_task_version),
+    jsonb_build_object(
+      'case', jsonb_build_object(
+        'leaseKey', p_case_lease_key,
+        'ownerSession', p_case_owner_session,
+        'fencingToken', p_case_fencing_token
+      ),
+      'task', jsonb_build_object(
+        'leaseKey', p_task_lease_key,
+        'ownerSession', p_task_owner_session,
+        'fencingToken', p_task_fencing_token
+      )
+    ),
+    v_result,
+    'internal-case',
+    p_case_id,
+    jsonb_build_object(
+      'caseVersion', v_case_version,
+      'taskId', v_task_id,
+      'taskVersion', v_task_version,
+      'taskDeleted', true,
+      'casePreserved', true
+    )
+  );
+  insert into public.sd_audit_events(
+    workspace_id, id, actor_id, command, entity_type, entity_id, detail
+  ) values (
+    p_workspace_id,
+    public.sd_core_event_id(p_operation_id, 'audit:task:' || v_task_id),
+    v_actor,
+    'withdraw_internal_case_task_sync',
+    'task',
+    v_task_id,
+    jsonb_build_object(
+      'taskVersion', v_task_version,
+      'caseId', p_case_id,
+      'casePreserved', true
+    )
+  );
+  return v_result;
+end;
+$$;
+
 create function public.command_ship_dynamics_delete_task_preserving_internal_case(
   p_operation_id uuid,
   p_workspace_id uuid,
@@ -3961,6 +4231,9 @@ revoke all on function public.command_ship_dynamics_reopen_internal_case(
 revoke all on function public.command_ship_dynamics_delete_internal_case(
   uuid, uuid, text, bigint, text, uuid, bigint, bigint, text, uuid, bigint
 ) from public;
+revoke all on function public.command_ship_dynamics_withdraw_internal_case_task_sync(
+  uuid, uuid, text, bigint, text, uuid, bigint, bigint, text, uuid, bigint
+) from public;
 revoke all on function public.command_ship_dynamics_delete_task_preserving_internal_case(
   uuid, uuid, text, bigint, text, uuid, bigint, text, bigint, text, uuid, bigint
 ) from public;
@@ -3992,6 +4265,9 @@ grant execute on function public.command_ship_dynamics_reopen_internal_case(
   uuid, uuid, text, bigint, text, uuid, bigint, text, bigint, text, uuid, bigint
 ) to authenticated;
 grant execute on function public.command_ship_dynamics_delete_internal_case(
+  uuid, uuid, text, bigint, text, uuid, bigint, bigint, text, uuid, bigint
+) to authenticated;
+grant execute on function public.command_ship_dynamics_withdraw_internal_case_task_sync(
   uuid, uuid, text, bigint, text, uuid, bigint, bigint, text, uuid, bigint
 ) to authenticated;
 grant execute on function public.command_ship_dynamics_delete_task_preserving_internal_case(

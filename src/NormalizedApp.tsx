@@ -667,6 +667,17 @@ export default function NormalizedApp() {
     if (outcome === 'drafted') alert('目前離線：船端進度已保存為個人草稿。');
     return true;
   };
+  const withdrawInternalCaseTaskSync = async (
+    item: InternalControlCase,
+    expectedTaskUpdatedAt: string,
+  ) => {
+    const committed = await runBoolean(() =>
+      controller.withdrawInternalCaseTaskSync(item, expectedTaskUpdatedAt));
+    if (committed) {
+      alert('同步要事已撤回；內控案件與既有早會歷史已保留。重新同步時會建立新的要事。');
+    }
+    return committed;
+  };
   const deleteNormalizedSelection = async (taskIds: string[], caseIds: string[]) => {
     if (!canDelete) return false;
     const uniqueTaskIds = [...new Set(taskIds)];
@@ -851,6 +862,7 @@ export default function NormalizedApp() {
           Boolean(await run(() => controller.createInternalCaseBatch(items, projections)))}
         onUpdate={async (item, _updatedAt, _revision, taskProjection) =>
           Boolean(await run(() => controller.updateInternalCase(item, taskProjection)))}
+        onWithdrawTaskSync={withdrawInternalCaseTaskSync}
         onDelete={item => runBoolean(() => controller.deleteInternalCase(item))}
         onBatchClose={caseIds => completeNormalizedSelection([], caseIds)}
         onBatchDelete={caseIds => deleteNormalizedSelection([], caseIds)}

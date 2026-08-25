@@ -13,6 +13,7 @@ import { paginateItems } from './pagination';
 import PaginationControls from './PaginationControls';
 import { BatchCreateModal, CaseEditModal } from './InternalControlModals';
 import type { InternalControlTaskProjection } from './internalControlData';
+import { internalControlTaskSyncWithdrawalEligibility } from './internalControlTaskSyncWithdrawal';
 import { internalControlEditLockKey } from './exclusiveItemEditLock';
 import { vesselSupervisorOptions } from './vesselDashboardFilters';
 import { sanitizeInternalControlSelection } from './batchInternalControlActions';
@@ -45,6 +46,7 @@ type Props = {
   onRequestedCaseHandled?: () => void;
   onCreate: (items: InternalControlCase[], expectedRevision: number, projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean>;
   onUpdate: (item: InternalControlCase, expectedUpdatedAt: string, expectedRevision: number, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>;
+  onWithdrawTaskSync: (item: InternalControlCase, expectedTaskUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>;
   onDelete: (item: InternalControlCase, expectedRevision: number) => boolean | Promise<boolean>;
   onBatchClose: (caseIds: string[]) => boolean | Promise<boolean>;
   onBatchDelete: (caseIds: string[]) => boolean | Promise<boolean>;
@@ -68,11 +70,12 @@ const optionList = (values: string[]): MultiOption[] => values.filter(Boolean).m
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
 const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
 
-export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, requestedCaseId, onRequestedCaseHandled, onCreate, onUpdate, onDelete, onBatchClose, onBatchDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
+export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, requestedCaseId, onRequestedCaseHandled, onCreate, onUpdate, onWithdrawTaskSync, onDelete, onBatchClose, onBatchDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
   const [subpage, setSubpage] = useState<Subpage>('open');
   const [filters, setFilters] = useState<InternalControlFilters>(() => emptyFilters(defaultInternalControlVesselSelection(user, vessels)));
   const [batchOpen, setBatchOpen] = useState(false);
   const [editing, setEditing] = useState<InternalControlCase | null>(null);
+  const [editingTaskSyncVersion,setEditingTaskSyncVersion]=useState<{taskId:string;updatedAt:string}|null>(null);
   const [editorAuthorizationEpoch,setEditorAuthorizationEpoch]=useState('');
   const [batchAuthorizationEpoch,setBatchAuthorizationEpoch]=useState('');
   const [page, setPage] = useState(1);
@@ -109,6 +112,21 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const canMutateItem=canEdit||canClose||canDelete;
   const itemLeaseEnforced=activeItemLeaseKey!==undefined;
   const editorWritable=!canMutateItem||!itemLeaseEnforced||Boolean(editing&&activeItemLeaseKey===internalControlEditLockKey(editing.id));
+  const liveWithdrawalEligibility=editing?internalControlTaskSyncWithdrawalEligibility(data,editing.id):null;
+  const liveWithdrawalTask=liveWithdrawalEligibility?.eligible?data.tasks.find(task=>task.id===liveWithdrawalEligibility.taskId):undefined;
+  const canWithdrawSync=Boolean(canEdit
+    &&editorWritable
+    &&editingTaskSyncVersion
+    &&liveWithdrawalEligibility?.eligible
+    &&liveWithdrawalEligibility.taskId===editingTaskSyncVersion.taskId
+    &&liveWithdrawalTask?.updatedAt===editingTaskSyncVersion.updatedAt);
+  const withdrawSyncReason=!editorWritable
+    ?'目前未持有此案件的編輯鎖'
+    :liveWithdrawalEligibility&&'reason' in liveWithdrawalEligibility
+      ?liveWithdrawalEligibility.reason
+      :editingTaskSyncVersion&&liveWithdrawalTask?.updatedAt!==editingTaskSyncVersion.updatedAt
+        ?'關聯要事已更新，請關閉後重新開啟'
+        :'';
 
   useEffect(() => setPage(1), [subpage, JSON.stringify(filters),columnSort]);
   useEffect(()=>{
@@ -117,7 +135,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
       return next.length===previous.length&&next.every((id,index)=>id===previous[index])?previous:next;
     });
   },[selectableCaseIdsKey]);
-  useEffect(()=>{setEditing(null);setBatchOpen(false);setEditorAuthorizationEpoch('');setBatchAuthorizationEpoch('');},[authorizationEpoch]);
+  useEffect(()=>{setEditing(null);setEditingTaskSyncVersion(null);setBatchOpen(false);setEditorAuthorizationEpoch('');setBatchAuthorizationEpoch('');},[authorizationEpoch]);
   useEffect(() => {
     setFilters(previous => {
       const defaultSelection=defaultInternalControlVesselSelection(user,vessels);
@@ -150,13 +168,18 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   };
   const openCase=async(item:InternalControlCase)=>{
     let fresh=item;
+    let freshData=data;
     if(canMutateItem){
       const snapshot=claimItemLease?await claimItemLease(internalControlEditLockKey(item.id),`內控異常｜${richTextToPlainText(item.description)||item.id}`):data;
       if(!snapshot)return;
       const latest=snapshot.internalControlCases.find(candidate=>candidate.id===item.id);
       if(!latest){if(releaseItemLease)await releaseItemLease(internalControlEditLockKey(item.id));return;}
       fresh=latest;
+      freshData=snapshot;
     }
+    const withdrawalEligibility=internalControlTaskSyncWithdrawalEligibility(freshData,fresh.id);
+    const linkedTask=withdrawalEligibility.eligible?freshData.tasks.find(task=>task.id===withdrawalEligibility.taskId):undefined;
+    setEditingTaskSyncVersion(withdrawalEligibility.eligible&&linkedTask?{taskId:withdrawalEligibility.taskId,updatedAt:linkedTask.updatedAt}:null);
     setEditorAuthorizationEpoch(authorizationEpoch);
     setEditing(structuredClone(fresh));
   };
@@ -172,6 +195,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const closeEditor=async()=>{
     if(editing&&canMutateItem&&activeItemLeaseKey===internalControlEditLockKey(editing.id)&&releaseItemLease&&!await releaseItemLease(internalControlEditLockKey(editing.id)))return;
     setEditing(null);
+    setEditingTaskSyncVersion(null);
   };
   const toggleAllCases=()=>setSelectedCaseIds(allSelected?[]:selectableCases.map(item=>item.id));
   const toggleCase=(id:string)=>setSelectedCaseIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);
@@ -229,6 +253,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
     {visibleEditing && editing && <CaseEditModal
       item={editing} data={data} vessels={vessels}
       canEdit={canEdit&&editorWritable} canClose={canClose&&editorWritable} canDelete={canDelete&&editorWritable}
+      showWithdrawSync={Boolean(canEdit&&editingTaskSyncVersion)} canWithdrawSync={canWithdrawSync} withdrawSyncReason={withdrawSyncReason}
       close={() => void closeEditor()}
       save={async (candidate, projection) => {
         if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
@@ -237,6 +262,11 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
           return true;
         }
         return false;
+      }}
+      onWithdrawSync={async candidate => {
+        if(!editingTaskSyncVersion)return false;
+        if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
+        return onWithdrawTaskSync(candidate,editingTaskSyncVersion.updatedAt,data.revision);
       }}
       onDelete={async candidate => {
         if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
