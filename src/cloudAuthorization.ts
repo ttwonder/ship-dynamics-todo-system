@@ -160,8 +160,11 @@ function assertDailyMorningReportAuthorization(actor:UserAccount,expected:Record
   const vesselIds=Array.isArray(value.vesselIds)?value.vesselIds.map(String):[];
   const snapshotVessels=Array.isArray(snapshot?.vessels)?snapshot.vessels as Array<Record<string,unknown>>:[];
   const snapshotTasks=Array.isArray(snapshot?.tasks)?snapshot.tasks as Array<Record<string,unknown>>:[];
+  const snapshotInternalControlCases=Array.isArray(snapshot?.internalControlCases)?snapshot.internalControlCases as Array<Record<string,unknown>>:[];
   const snapshotMeetings=Array.isArray(snapshot?.meetings)?snapshot.meetings as Array<Record<string,unknown>>:[];
   const snapshotVesselIds=snapshotVessels.map(vessel=>String(vessel.id||''));
+  const snapshotVesselIdSet=new Set(snapshotVesselIds);
+  const validInternalControlScope=snapshotInternalControlCases.every(item=>Boolean(String(item.id||''))&&snapshotVesselIdSet.has(String(item.vesselId||'')));
   const sameVesselScope=equal([...new Set(vesselIds)].sort(),[...new Set(snapshotVesselIds)].sort());
   if(value.kind!=='daily-morning'
     || value.source!=='manual'
@@ -172,7 +175,8 @@ function assertDailyMorningReportAuthorization(actor:UserAccount,expected:Record
     || !isTaipeiBusinessDay(capturedAt)
     || !sameVesselScope
     || snapshotVesselIds.some(id=>!id)
-    || Number(value.taskCount)!==snapshotTasks.length
+    || !validInternalControlScope
+    || Number(value.taskCount)!==snapshotTasks.length+snapshotInternalControlCases.length
     || snapshotTasks.some(task=>task.isInternalControl===true)
     || snapshotMeetings.some(meeting=>meeting.isInternalControl===true)){
     throw new CloudPatchAuthorizationError('invalid-daily-morning-report');

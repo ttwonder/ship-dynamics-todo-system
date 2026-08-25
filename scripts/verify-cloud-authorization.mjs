@@ -6,6 +6,7 @@ try{
   const auth=await server.ssrLoadModule('/src/cloudAuthorization.ts');
   const rebase=await server.ssrLoadModule('/src/cloudRebase.ts');
   const patch=await server.ssrLoadModule('/src/cloudBlockPatch.ts');
+  const history=await server.ssrLoadModule('/src/morningHistory.ts');
   const {createInitialData}=await server.ssrLoadModule('/src/data/seed.ts');
   const base=createInitialData();
   const owner=base.users[0];
@@ -309,6 +310,39 @@ try{
   const dailyOps=patch.buildCloudBlockPatch(dailyBase,dailyNext);
   assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(dailyBase,dailyOps,operator.id),auth.CloudPatchAuthorizationError,'exportReports alone must not authorize an official daily-morning snapshot');
   assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(dailyBase,dailyOps,owner.id),'Owner may save a valid manual daily-morning snapshot');
+  const latestInternalControlBase={
+    ...structuredClone(dailyBase),
+    tasks:[],
+    meetings:[],
+    agendaReports:[],
+    internalControlCases:[{
+      id:'daily-internal-latest',
+      vesselId:dailyBase.vessels[0].id,
+      priority:'高',
+      category:'其他',
+      description:'最新內控異常資訊',
+      status:'追蹤中',
+      departments:['海技組'],
+      reportSource:'其他',
+      isClosed:false,
+      createdAt:'2026-08-06T00:30:00.000Z',
+      updatedAt:'2026-08-06T00:45:00.000Z',
+    }],
+  };
+  const generatedDaily=history.upsertDailyMorningReport(latestInternalControlBase,{at:'2026-08-06T01:00:00.000Z',actorUserId:owner.id,source:'manual'});
+  assert.equal(generatedDaily.status,'saved');
+  assert.equal(generatedDaily.report.taskCount,1,'每日早會快照件數必須包含最新內控異常');
+  assert.deepEqual(generatedDaily.report.snapshot.internalControlCases.map(item=>item.id),['daily-internal-latest'],'每日早會快照必須保存最新內控異常內容');
+  assert.equal(generatedDaily.report.snapshot.internalControlCases[0].description,'最新內控異常資訊','每日早會快照不得只保存舊內容或識別碼');
+  const generatedDailyOps=patch.buildCloudBlockPatch(latestInternalControlBase,generatedDaily.data);
+  assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(latestInternalControlBase,generatedDailyOps,owner.id),'Owner must be able to save the latest generator-produced daily snapshot with canonical internal-control cases');
+  const invalidInternalCount=structuredClone(generatedDaily.data);
+  invalidInternalCount.agendaReports[0].taskCount=0;
+  assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(latestInternalControlBase,patch.buildCloudBlockPatch(latestInternalControlBase,invalidInternalCount),owner.id),auth.CloudPatchAuthorizationError,'daily-morning taskCount must equal ordinary tasks plus canonical internal-control cases');
+  const invalidInternalScope=structuredClone(generatedDaily.data);
+  invalidInternalScope.agendaReports[0].snapshot.internalControlCases[0].vesselId='outside-snapshot-vessel';
+  const invalidInternalScopeOps=patch.buildCloudBlockPatch(latestInternalControlBase,invalidInternalScope);
+  assert.throws(()=>auth.assertActorAuthorizedForCloudBlockPatch(latestInternalControlBase,invalidInternalScopeOps,owner.id),auth.CloudPatchAuthorizationError,'daily-morning internal-control snapshots must stay inside the exact report vessel scope');
   const leakingDaily=structuredClone(dailyNext);
   leakingDaily.agendaReports[0].snapshot.tasks=[{id:'hidden-internal',isInternalControl:true,vesselId:dailyBase.vessels[0].id}];
   leakingDaily.agendaReports[0].taskCount=1;
