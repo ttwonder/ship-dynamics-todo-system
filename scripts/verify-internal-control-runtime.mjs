@@ -298,6 +298,49 @@ try {
   assert.deepEqual(taskScope.taskVesselIds(legacyScopeRepair.tasks[0]), ['v1'], 'legacy ordinary internal-control tasks must be repaired to their canonical single vessel');
   assert.deepEqual(legacyScopeRepair.tasks[0].ownerUserIds, [], 'legacy stale owners must not survive canonical scope repair');
 
+  const alternateTrackingOwner = {
+    ...structuredClone(migrated.users[0]),
+    id: 'alternate-tracking-owner',
+    name: '替代追蹤窗口',
+    username: 'alternate-tracking-owner',
+    role: 'admin',
+    passwordHash: '',
+    isActive: true,
+    managedVesselIds: [],
+  };
+  const reopenedAfterTrackingOwnerSave = normalizeModule.normalizeAppData({
+    ...structuredClone(migrated),
+    users: [...structuredClone(migrated.users), alternateTrackingOwner],
+    tasks: [{
+      ...structuredClone(migrated.tasks[0]),
+      ownerUserIds: [alternateTrackingOwner.id],
+    }],
+  });
+  assert.ok(reopenedAfterTrackingOwnerSave);
+  assert.deepEqual(
+    reopenedAfterTrackingOwnerSave.tasks[0].ownerUserIds,
+    [alternateTrackingOwner.id],
+    'a valid edited tracking-window selection must survive the cloud save response and reopen normalization',
+  );
+
+  const legacyTaskWithoutTrackingOwners = structuredClone(migrated.tasks[0]);
+  delete legacyTaskWithoutTrackingOwners.ownerUserIds;
+  const legacyTrackingOwnerBackfill = normalizeModule.normalizeAppData({
+    ...structuredClone(migrated),
+    users: [alternateTrackingOwner],
+    vessels: [{
+      ...structuredClone(migrated.vessels[0]),
+      assignedUserIds: [alternateTrackingOwner.id],
+    }],
+    tasks: [legacyTaskWithoutTrackingOwners],
+  });
+  assert.ok(legacyTrackingOwnerBackfill);
+  assert.deepEqual(
+    legacyTrackingOwnerBackfill.tasks[0].ownerUserIds,
+    [alternateTrackingOwner.id],
+    'a legacy internal-control task without an owner field must still backfill its vessel tracking-window default',
+  );
+
   const duplicateLegacyLink = normalizeModule.normalizeAppData({
     ...structuredClone(migrated),
     tasks: [

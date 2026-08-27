@@ -21,7 +21,7 @@ import type {
   WeeklyAttentionKey,
 } from './types';
 import { nowIso } from './utils';
-import { normalizeRolePermissions } from './permissions';
+import { isEligibleTaskOwner, normalizeRolePermissions } from './permissions';
 import { isMeetingTaskSource, normalizeConfiguredMeetingTaskCategories, normalizeConfiguredTaskCategories, normalizeMeetingTaskCategoryList, normalizeTaskCategoryList, sanitizeEditableMeetingTaskCategories, sanitizeEditableTaskCategories } from './taskCategories';
 import { normalizeVesselDelegateManagers } from './vesselDelegation';
 import { canonicalizeMeetingTaskItemIds } from './meetingTaskItemIds';
@@ -296,6 +296,7 @@ export function normalizeAppData(value: unknown): AppData | null {
   const timestamp = text(raw.updatedAt, nowIso());
   const meetingTaskDescriptionWasProvided = new Map(objects(raw.meetings).map(item => [text(item.id), Object.prototype.hasOwnProperty.call(item, 'taskDescription')]));
   const meetingTaskItemsWereProvided = new Map(objects(raw.meetings).map(item => [text(item.id), Object.prototype.hasOwnProperty.call(item, 'taskItems')]));
+  const taskOwnerUserIdsWereProvided = new Map(objects(raw.tasks).map(item => [text(item.id), Object.prototype.hasOwnProperty.call(item, 'ownerUserIds')]));
   const normalizedTaskCategories = finite(settings.taskCategorySchemaVersion) === 2
     ? sanitizeEditableTaskCategories(settings.taskCategories)
     : normalizeConfiguredTaskCategories(settings.taskCategories);
@@ -510,7 +511,16 @@ export function normalizeAppData(value: unknown): AppData | null {
       delete task.closedBy;
     }
     const canonicalVessel = normalized.vessels.find(vessel => vessel.id === task.vesselId && vessel.isActive);
-    task.ownerUserIds = (canonicalVessel?.assignedUserIds || []).filter(id => normalized.users.some(user => user.id === id && user.isActive && user.role !== 'vessel'));
+    const ownerUserIds = taskOwnerUserIdsWereProvided.get(task.id)
+      ? task.ownerUserIds
+      : canonicalVessel?.assignedUserIds || [];
+    task.ownerUserIds = canonicalVessel
+      ? Array.from(new Set(ownerUserIds.filter(id => isEligibleTaskOwner(
+          normalized.settings.rolePermissions,
+          normalized.users.find(user => user.id === id),
+          [canonicalVessel],
+        ))))
+      : [];
     let linked = normalized.internalControlCases.find(item => (
       item.id === task.internalControlCaseId
       && !claimedInternalControlCaseIds.has(item.id)
