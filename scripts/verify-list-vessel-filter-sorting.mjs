@@ -73,6 +73,9 @@ try {
   assert.ok((appSource.match(/className="task-list-date-column"/g) || []).length >= 4 && appSource.includes('taipeiDateKey(t.createdAt)'), '發佈日期與期限必須共用等寬欄位 class，並顯示台北發佈日期');
   assert.ok(stylesSource.includes('.batch-task-table .task-list-date-column{width:110px;min-width:110px;max-width:110px;white-space:nowrap}'), '發佈日期與期限欄必須共用相同固定寬度');
   assert.ok(stylesSource.includes('.batch-task-table .task-item-column{min-width:300px}'), '待辦總表與已結案的分類／事項欄必須至少保留 300px，避免被其他固定欄位壓窄');
+  assert.ok(appSource.includes('topTableScrollRef') && appSource.includes('bottomTableScrollRef') && appSource.includes('tableScrollWidth') && appSource.includes('new ResizeObserver(updateTableScrollWidth)'), '待辦總表與已結案必須量測實際表格寬度，供上方橫向捲動條使用');
+  assert.ok(appSource.includes('className="table-scroll-top no-print"') && appSource.includes('aria-label="表格上方橫向捲動"') && appSource.includes("onScroll={()=>syncTableScroll('top')}") && appSource.includes("onScroll={()=>syncTableScroll('bottom')}"), '表格上方與下方捲動區必須雙向同步');
+  assert.ok(stylesSource.includes('.table-scroll-top{') && stylesSource.includes('.table-scroll-top-spacer{height:1px}'), '上方橫向捲動條必須有可見軌道及對應表格寬度的 spacer');
   assert.ok(internalControlSource.includes('<VesselListFilter') && internalControlSource.includes('ariaLabel="內控清單船舶篩選"'), '內控未完與結案必須使用共用多船選擇器');
   assert.ok(internalControlSource.includes("nextListColumnSort(columnSort,'vessel')") && internalControlSource.includes("nextListColumnSort(columnSort,'date')") && internalControlSource.includes("nextListColumnSort(columnSort,'closed-date')"), '內控表格必須可依船舶、報告日期及結案日期正反排序');
   assert.ok(normalizedSource.includes("'歸一化已結案船舶篩選':'歸一化待辦清單船舶篩選'"), 'normalized待辦總表與已結案必須使用授權船舶共用選擇器');
