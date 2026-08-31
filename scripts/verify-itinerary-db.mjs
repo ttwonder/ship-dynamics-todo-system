@@ -5,7 +5,9 @@ import { PGlite } from '@electric-sql/pglite';
 const db = new PGlite();
 const foundation = await readFile('supabase/normalized-schema.sql', 'utf8');
 const migration = await readFile('supabase/migrations/20260831090000_itinerary_subsystem.sql', 'utf8');
+const rolloutBootstrapMigration = await readFile('supabase/migrations/20260831110000_itinerary_rollout_bootstrap.sql', 'utf8');
 const readbackSql = await readFile('supabase/itinerary-readback.sql', 'utf8');
+const rolloutBootstrapReadbackSql = await readFile('supabase/itinerary-rollout-bootstrap-readback.sql', 'utf8');
 const ids = {
   workspace: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   owner: '11111111-1111-4111-8111-111111111111',
@@ -85,8 +87,10 @@ try {
     insert into public.ship_dynamics_app_state values('default',77,'{"untouched":true}');
   `);
   await db.exec(migration);
+  await db.exec(rolloutBootstrapMigration);
 
   const ownerInitial = await rollout(ids.owner);
+  assert.equal(ownerInitial.version, 1);
   assert.equal(ownerInitial.main_enabled, false);
   assert.equal(ownerInitial.ship_portal_enabled, false);
   assert.equal(ownerInitial.role_permissions.owner.view, true);
@@ -114,6 +118,7 @@ try {
   assert.equal((await updateRollout(1, rolloutOp, true, false, rolePermissions())).replayed, true);
   await assert.rejects(() => updateRollout(1, rolloutOp, true, true, rolePermissions()), /operation-mismatch/i);
   assert.equal((await rollout(ids.owner)).main_enabled, true);
+  assert.equal((await rollout(ids.owner)).version, 2);
   assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'owner'])), true);
   assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'admin'])), false);
   assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'vessel'])), false);
@@ -188,6 +193,7 @@ try {
   assert.equal(Number(await scalar("select count(*)::int from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
 
   await db.exec(migration);
+  await db.exec(rolloutBootstrapMigration);
   assert.equal(Number(await scalar('select version from public.sd_itinerary_rollout where workspace_id=$1::uuid', [ids.workspace])), 4);
   assert.equal(Number(await scalar("select revision from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
   assert.equal(Number(await scalar("select count(*)::int from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
@@ -214,6 +220,8 @@ try {
     authenticatedOfficeSaveExecute: true,
     authenticatedDirectDocumentSelect: false,
   });
+  const bootstrapReadback = (await db.query(rolloutBootstrapReadbackSql)).rows[0];
+  assert.ok(Object.values(bootstrapReadback).every(Boolean));
 
   console.log('itinerary_postgres_contract=PASS');
 } finally {

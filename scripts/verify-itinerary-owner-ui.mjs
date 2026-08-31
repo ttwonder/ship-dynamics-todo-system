@@ -26,6 +26,26 @@ try {
   const disabled = rollout.disabledItineraryRollout('owner');
   assert.equal(disabled.mainEnabled, false);
   assert.equal(disabled.permissions.view, false);
+  assert.equal(disabled.version, null);
+
+  const bootstrap = rollout.parseItineraryRollout({
+    version: 1,
+    main_enabled: false,
+    ship_portal_enabled: false,
+    role_permissions: {
+      owner: { view: true, edit: true, import: true, export: true, calendar: true },
+    },
+  }, 'owner');
+  assert.equal(bootstrap.mainEnabled, false);
+  assert.equal(bootstrap.version, 1);
+  assert.equal(bootstrap.authStatus, 'verified');
+  assert.equal(rollout.ownerCanBootstrapItinerary('owner', bootstrap), false);
+  assert.equal(rollout.ownerCanManageItineraryRollout('owner', bootstrap), true);
+  assert.equal(rollout.ownerCanManageItineraryRollout('admin', bootstrap), false);
+
+  const ownerWithoutSession = rollout.disabledItineraryRollout('owner');
+  assert.equal(rollout.ownerCanBootstrapItinerary('owner', ownerWithoutSession), true);
+  assert.equal(rollout.ownerCanBootstrapItinerary('admin', ownerWithoutSession), false);
 
   const parsed = rollout.parseItineraryRollout({
     main_enabled: true,
@@ -43,6 +63,9 @@ try {
   assert.match(dashboardSource, /itineraryRollout\.permissions\.view/);
   assert.match(dashboardSource, /切換 Itinerary 視圖/);
   assert.match(dashboardSource, /返回船舶卡片/);
+  assert.match(dashboardSource, /ItineraryOwnerRolloutDialog/);
+  assert.match(dashboardSource, /驗證 Itinerary Owner/);
+  assert.match(dashboardSource, /Itinerary 試行設定/);
   assert.match(dashboardSource, /<ItineraryDashboard[\s\S]*vessels=\{visible\}/);
   assert.doesNotMatch(itineraryDashboardSource, /user\.role\s*[!=]==?\s*['"]owner['"]/, 'cloud action permissions must remain configurable after the Owner-only pilot');
   assert.match(itineraryDashboardSource, /backend&&displayMode==='table'/, 'the cloud repository must mount the same production table path as local demo');

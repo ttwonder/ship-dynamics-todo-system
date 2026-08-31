@@ -8,6 +8,7 @@ export type ItineraryPermissionAction = 'view' | 'edit' | 'import' | 'export' | 
 export type ItineraryPermissions = Record<ItineraryPermissionAction, boolean>;
 
 export interface ItineraryRollout {
+  version: number | null;
   mainEnabled: boolean;
   shipPortalEnabled: boolean;
   permissions: ItineraryPermissions;
@@ -30,7 +31,7 @@ export function disabledItineraryRollout(
   authStatus: ItineraryRollout['authStatus'] = 'not-required',
   authMessage = '',
 ): ItineraryRollout {
-  return { mainEnabled: false, shipPortalEnabled: false, permissions: noPermissions(), demoMode: false, loading: false, source: 'disabled', authStatus, authMessage };
+  return { version: null, mainEnabled: false, shipPortalEnabled: false, permissions: noPermissions(), demoMode: false, loading: false, source: 'disabled', authStatus, authMessage };
 }
 
 export function localItineraryDemoRequested(location: LocationLike): boolean {
@@ -43,6 +44,7 @@ export function localItineraryDemoRequested(location: LocationLike): boolean {
 export function localDemoRollout(role: UserRole, location: LocationLike): ItineraryRollout {
   if (role !== 'owner' || !localItineraryDemoRequested(location)) return disabledItineraryRollout(role);
   return {
+    version: null,
     mainEnabled: true,
     shipPortalEnabled: false,
     permissions: { view: true, edit: true, import: true, export: true, calendar: true },
@@ -62,7 +64,15 @@ export function parseItineraryRollout(value: unknown, role: UserRole): Itinerary
   const payload = Array.isArray(value) ? record(value[0]) : record(value);
   const rolePermissions = record(payload?.role_permissions);
   const permissionRow = record(rolePermissions?.[role]);
-  if (payload?.main_enabled !== true || !permissionRow || permissionRow.view !== true) return disabledItineraryRollout(role, 'verified');
+  const rawVersion = payload?.version;
+  const version = typeof rawVersion === 'number' && Number.isSafeInteger(rawVersion) && rawVersion > 0 ? rawVersion : null;
+  if (payload?.main_enabled !== true || !permissionRow || permissionRow.view !== true) {
+    return {
+      ...disabledItineraryRollout(role, 'verified'),
+      version,
+      shipPortalEnabled: payload?.ship_portal_enabled === true,
+    };
+  }
   const permissions: ItineraryPermissions = {
     view: permissionRow.view === true,
     edit: permissionRow.edit === true,
@@ -71,6 +81,7 @@ export function parseItineraryRollout(value: unknown, role: UserRole): Itinerary
     calendar: permissionRow.calendar === true,
   };
   return {
+    version,
     mainEnabled: true,
     shipPortalEnabled: payload.ship_portal_enabled === true,
     permissions,
@@ -80,6 +91,18 @@ export function parseItineraryRollout(value: unknown, role: UserRole): Itinerary
     authStatus: 'verified',
     authMessage: '',
   };
+}
+
+export function ownerCanBootstrapItinerary(role: UserRole, rollout: ItineraryRollout): boolean {
+  return role === 'owner' && !rollout.loading && !rollout.demoMode && rollout.authStatus !== 'verified';
+}
+
+export function ownerCanManageItineraryRollout(role: UserRole, rollout: ItineraryRollout): boolean {
+  return role === 'owner'
+    && !rollout.loading
+    && !rollout.demoMode
+    && rollout.authStatus === 'verified'
+    && rollout.version !== null;
 }
 
 export async function fetchItineraryRollout(user: Pick<UserAccount, 'department' | 'name' | 'username' | 'role'>, location?: LocationLike): Promise<ItineraryRollout> {

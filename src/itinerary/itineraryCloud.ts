@@ -10,6 +10,7 @@ export const ITINERARY_OFFICE_SESSION_STORAGE_KEY = 'ship-dynamics.itinerary.sup
 
 let officeClient: SupabaseClient | null = null;
 let officeClientKey = '';
+type ItineraryRpcClient = Pick<SupabaseClient, 'rpc'>;
 
 export function getItineraryOfficeClient(config: ResolvedSupabaseConfig | null = getSupabaseConfig()): SupabaseClient | null {
   if (!config) return null;
@@ -38,7 +39,7 @@ function requiredConfig(): ResolvedSupabaseConfig {
   return config;
 }
 
-async function rpc<T>(client: SupabaseClient, name: string, args: Record<string, unknown>): Promise<T> {
+async function rpc<T>(client: ItineraryRpcClient, name: string, args: Record<string, unknown>): Promise<T> {
   const { data, error } = await client.rpc(name, args);
   if (error) throw new Error(message(error));
   return data as T;
@@ -71,6 +72,74 @@ function saveFailure(error: unknown): ItinerarySaveResult {
 }
 
 export interface PublicItineraryVessel { id: string; name: string; shortName: string }
+
+export interface ItineraryOwnerRolloutUpdateInput {
+  expectedVersion: number;
+  mainEnabled: boolean;
+  operationId: string;
+}
+
+export interface ItineraryOwnerRolloutUpdateResult {
+  ok: true;
+  version: number;
+  mainEnabled: boolean;
+  shipPortalEnabled: false;
+  replayed: boolean;
+}
+
+const disabledRolePermissions = () => ({
+  admin: { view: false, edit: false, import: false, export: false, calendar: false },
+  operator: { view: false, edit: false, import: false, export: false, calendar: false },
+  vessel: { view: false, edit: false, import: false, export: false, calendar: false },
+});
+
+function parseOwnerRolloutUpdateResult(
+  value: Record<string, unknown>,
+  input: ItineraryOwnerRolloutUpdateInput,
+  recovered = false,
+): ItineraryOwnerRolloutUpdateResult {
+  const version = Number(value.version);
+  if (value.ok !== true || !Number.isSafeInteger(version) || version < 1
+      || value.mainEnabled !== input.mainEnabled || value.shipPortalEnabled !== false) {
+    throw new Error('Itinerary rollout 回應格式不正確。');
+  }
+  return { ok: true, version, mainEnabled: input.mainEnabled, shipPortalEnabled: false, replayed: recovered || value.replayed === true };
+}
+
+export async function updateOwnerItineraryRollout(
+  input: ItineraryOwnerRolloutUpdateInput,
+  config: ResolvedSupabaseConfig = requiredConfig(),
+  client: ItineraryRpcClient | null = getItineraryOfficeClient(config),
+): Promise<ItineraryOwnerRolloutUpdateResult> {
+  if (!client) throw new Error('Itinerary authenticated client is unavailable.');
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1 || !input.operationId.trim()) {
+    throw new Error('Itinerary rollout 請求格式不正確。');
+  }
+  const args = {
+    p_workspace_key: config.workspaceKey,
+    p_expected_version: input.expectedVersion,
+    p_operation_id: input.operationId,
+    p_main_enabled: input.mainEnabled,
+    p_ship_portal_enabled: false,
+    p_role_permissions: disabledRolePermissions(),
+  };
+  try {
+    return parseOwnerRolloutUpdateResult(
+      await rpc<Record<string, unknown>>(client, 'sd_itinerary_owner_update_rollout', args),
+      input,
+    );
+  } catch (error) {
+    try {
+      const status = await rpc<Record<string, unknown>>(client, 'sd_itinerary_operation_status_office', {
+        p_workspace_key: config.workspaceKey,
+        p_operation_id: input.operationId,
+      });
+      return parseOwnerRolloutUpdateResult(status, input, true);
+    } catch {
+      throw error;
+    }
+  }
+}
 
 export class OfficeItineraryCloudRepository {
   readonly config: ResolvedSupabaseConfig;
