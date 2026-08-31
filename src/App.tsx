@@ -14,6 +14,7 @@ import TemporaryMeetingsPage from './TemporaryMeetings';
 import { TaskEditModal, VesselEditModal } from './EditModals';
 import { normalizeAppData } from './normalize';
 import DashboardView from './Dashboard';
+import { clearItineraryOfficeSession, shouldClearItineraryOfficeSession } from './itinerary/itineraryOfficeAuth';
 import { scrollToDashboardVesselCard } from './dashboardVesselReturn';
 import BatchManagedVesselModal from './BatchManagedVesselModal';
 import VesselDetailPage from './VesselDetailPage';
@@ -290,7 +291,7 @@ export default function App() {
   const [currentUserId, setCurrentUserIdState] = useState(() => localStorage.getItem(CURRENT_USER_KEY) || '');
   const liveCurrentUserId = useRef(currentUserId);
   const identitySessionGeneration=useRef(0);
-  const setCurrentUserId=(nextUserId:string)=>{identitySessionGeneration.current+=1;liveCurrentUserId.current=nextUserId;setCurrentUserIdState(nextUserId);};
+  const setCurrentUserId=(nextUserId:string)=>{const previousUserId=liveCurrentUserId.current;if(shouldClearItineraryOfficeSession(previousUserId,nextUserId))void clearItineraryOfficeSession();identitySessionGeneration.current+=1;liveCurrentUserId.current=nextUserId;setCurrentUserIdState(nextUserId);};
   const [tab, setTab] = useState<Tab>('dashboard');
   const [filters, setFilters] = useState<FilterState>(emptyFilters);
   const [closedFilters, setClosedFilters] = useState<FilterState>({...emptyFilters,closedMode:'closed'});
@@ -571,6 +572,7 @@ export default function App() {
     }
   }, [data, cloudBootstrapped, cloudWriteBlocked, cloudInitializationAllowed]);
   useEffect(()=>()=>{if(saveToastTimer.current)window.clearTimeout(saveToastTimer.current);},[]);
+  useEffect(()=>{if(!liveCurrentUserId.current)void clearItineraryOfficeSession();},[]);
   useEffect(() => { currentUserId ? localStorage.setItem(CURRENT_USER_KEY, currentUserId) : localStorage.removeItem(CURRENT_USER_KEY); }, [currentUserId]);
   useEffect(()=>{taskOpenRequests.current.invalidate();},[tab]);
   useEffect(() => {

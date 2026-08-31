@@ -129,11 +129,18 @@ security definer
 set search_path = pg_catalog, public
 as $$
 declare
-  v_role text := public.sd_membership_role(p_workspace_id);
+  v_role text;
   v_permission public.sd_itinerary_role_permissions%rowtype;
 begin
+  select m.role into v_role
+  from public.sd_memberships m
+  join public.sd_login_options login
+    on login.workspace_id=m.workspace_id and login.user_id=m.user_id
+   and login.is_active and not login.must_change_password
+  where m.workspace_id=p_workspace_id and m.user_id=auth.uid() and m.is_active;
   if v_role is null then return false; end if;
   if v_role = 'owner' then return true; end if;
+  if v_role = 'vessel' then return false; end if;
   select * into v_permission
   from public.sd_itinerary_role_permissions p
   where p.workspace_id = p_workspace_id and p.role = v_role;
@@ -385,15 +392,45 @@ stable
 security definer
 set search_path = pg_catalog, public
 as $$
-declare v_workspace uuid;v_role text;v_rollout public.sd_itinerary_rollout%rowtype;v_permission public.sd_itinerary_role_permissions%rowtype;
+declare
+  v_workspace uuid;
+  v_role text;
+  v_rollout public.sd_itinerary_rollout%rowtype;
+  v_permission public.sd_itinerary_role_permissions%rowtype;
+  v_identity jsonb;
 begin
-  v_workspace:=public.sd_itinerary_workspace_id(p_workspace_key);v_role:=public.sd_membership_role(v_workspace);
-  if v_workspace is null or v_role is null then return jsonb_build_object('main_enabled',false,'ship_portal_enabled',false,'role_permissions','{}'::jsonb);end if;
+  v_workspace:=public.sd_itinerary_workspace_id(p_workspace_key);
+  if v_workspace is null then return jsonb_build_object('main_enabled',false,'ship_portal_enabled',false,'office_identity',null,'role_permissions','{}'::jsonb);end if;
+  select m.role,jsonb_build_object('department',login.department,'display_name',login.display_name,'username_label',login.username_label,'role',m.role)
+  into v_role,v_identity
+  from public.sd_memberships m
+  join public.sd_login_options login
+    on login.workspace_id=m.workspace_id and login.user_id=m.user_id
+   and login.is_active and not login.must_change_password
+  where m.workspace_id=v_workspace and m.user_id=auth.uid() and m.is_active;
+  if v_role is null or v_identity is null then return jsonb_build_object('main_enabled',false,'ship_portal_enabled',false,'office_identity',null,'role_permissions','{}'::jsonb);end if;
   select * into v_rollout from public.sd_itinerary_rollout where workspace_id=v_workspace;
   select * into v_permission from public.sd_itinerary_role_permissions where workspace_id=v_workspace and role=v_role;
   return jsonb_build_object('main_enabled',coalesce(v_rollout.main_enabled,false),'ship_portal_enabled',coalesce(v_rollout.ship_portal_enabled,false),
+    'office_identity',v_identity,
     'role_permissions',jsonb_build_object(v_role,jsonb_build_object('view',v_role='owner' or coalesce(v_permission.can_view,false),'edit',v_role='owner' or coalesce(v_permission.can_edit,false),'import',v_role='owner' or coalesce(v_permission.can_import,false),'export',v_role='owner' or coalesce(v_permission.can_export,false),'calendar',v_role='owner' or coalesce(v_permission.can_calendar,false))));
 end;
+$$;
+
+create or replace function public.sd_itinerary_get_office_entry(p_workspace_key text,p_role text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $$
+  select case
+    when p_role not in ('owner','admin','operator') then false
+    else coalesce(r.main_enabled,false) and (p_role='owner' or coalesce(permission.can_view,false))
+  end
+  from (select public.sd_itinerary_workspace_id(p_workspace_key) id) workspace
+  left join public.sd_itinerary_rollout r on r.workspace_id=workspace.id
+  left join public.sd_itinerary_role_permissions permission on permission.workspace_id=workspace.id and permission.role=p_role
 $$;
 
 create or replace function public.sd_itinerary_get_public_rollout(p_workspace_key text)
@@ -580,7 +617,7 @@ end;$$;
 create or replace function public.sd_itinerary_operation_status_office(p_workspace_key text,p_operation_id uuid)
 returns jsonb language plpgsql stable security definer set search_path=pg_catalog,public as $$
 declare v_workspace uuid:=public.sd_itinerary_workspace_id(p_workspace_key);v_actor uuid:=auth.uid();v_result jsonb;begin
-  if v_actor is null then raise exception using errcode='P0001',message='not-authorized';end if;
+  if v_actor is null or not public.sd_itinerary_can_action(v_workspace,'view') then raise exception using errcode='P0001',message='not-authorized';end if;
   select o.result into v_result from public.sd_itinerary_operations o where o.workspace_id=v_workspace and o.operation_id=p_operation_id and o.actor_kind='office' and o.actor_key=v_actor::text;
   return coalesce(v_result,jsonb_build_object('status','missing'));
 end;$$;
@@ -602,8 +639,16 @@ end;$$;
 create or replace function public.sd_itinerary_owner_update_rollout(p_workspace_key text,p_expected_version bigint,p_operation_id uuid,p_main_enabled boolean,p_ship_portal_enabled boolean,p_role_permissions jsonb)
 returns jsonb language plpgsql volatile security definer set search_path=pg_catalog,public as $$
 declare v_workspace uuid:=public.sd_itinerary_workspace_id(p_workspace_key);v_actor uuid:=auth.uid();v_request jsonb;v_replay jsonb;v_version bigint;v_role text;v_value jsonb;v_result jsonb;begin
-  if v_actor is null or public.sd_membership_role(v_workspace)<>'owner' or jsonb_typeof(p_role_permissions)<>'object' then raise exception using errcode='P0001',message='owner-required';end if;
+  if v_actor is null or public.sd_membership_role(v_workspace)<>'owner'
+     or not exists(select 1 from public.sd_login_options login where login.workspace_id=v_workspace and login.user_id=v_actor and login.is_active and not login.must_change_password)
+     or jsonb_typeof(p_role_permissions)<>'object' then raise exception using errcode='P0001',message='owner-required';end if;
   if exists(select 1 from jsonb_object_keys(p_role_permissions) k where k not in ('admin','operator','vessel')) then raise exception using errcode='P0001',message='invalid-role-permissions';end if;
+  if coalesce((p_role_permissions#>>'{vessel,view}')::boolean,false)
+     or coalesce((p_role_permissions#>>'{vessel,edit}')::boolean,false)
+     or coalesce((p_role_permissions#>>'{vessel,import}')::boolean,false)
+     or coalesce((p_role_permissions#>>'{vessel,export}')::boolean,false)
+     or coalesce((p_role_permissions#>>'{vessel,calendar}')::boolean,false)
+  then raise exception using errcode='P0001',message='invalid-role-permissions';end if;
   v_request:=jsonb_build_object('expectedVersion',p_expected_version,'mainEnabled',p_main_enabled,'shipPortalEnabled',p_ship_portal_enabled,'rolePermissions',p_role_permissions);
   v_replay:=public.sd_itinerary_operation_replay(v_workspace,p_operation_id,'office',v_actor::text,'rollout',v_request);if v_replay is not null then return v_replay;end if;
   update public.sd_itinerary_rollout set main_enabled=p_main_enabled,ship_portal_enabled=p_ship_portal_enabled,version=version+1,updated_at=clock_timestamp(),updated_by=v_actor
@@ -632,8 +677,9 @@ revoke all on table public.sd_itinerary_rollout,public.sd_itinerary_role_permiss
 
 revoke all on function public.sd_itinerary_workspace_id(text),public.sd_itinerary_can_action(uuid,text),public.sd_itinerary_json_instant_valid(jsonb),public.sd_itinerary_rows_valid(jsonb),public.sd_itinerary_document_json(text,text,text,bigint,jsonb,timestamptz,text,text),public.sd_itinerary_operation_replay(uuid,uuid,text,text,text,jsonb),public.sd_itinerary_claim_lease_internal(uuid,text,text,text,text,text,integer),public.sd_itinerary_assert_live_lease(uuid,text,text,text,uuid,text,bigint),public.sd_itinerary_document_for_vessel(uuid,text,text),public.sd_itinerary_renew_lease_internal(uuid,text,text,text,uuid,text,bigint,integer),public.sd_itinerary_release_lease_internal(uuid,text,text,text,uuid,text,bigint),public.sd_itinerary_save_internal(text,text,bigint,uuid,jsonb,text,text,uuid,text,uuid,text,bigint) from public,anon,authenticated;
 
-revoke all on function public.sd_itinerary_get_rollout(text),public.sd_itinerary_load_many(text,text[]),public.sd_itinerary_claim_office_lease(text,text,text,text,integer),public.sd_itinerary_renew_office_lease(text,text,uuid,text,bigint,integer),public.sd_itinerary_release_office_lease(text,text,uuid,text,bigint),public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text),public.sd_itinerary_operation_status_office(text,uuid),public.sd_itinerary_history(text,text,integer),public.sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb) from public,anon,authenticated;
+revoke all on function public.sd_itinerary_get_rollout(text),public.sd_itinerary_get_office_entry(text,text),public.sd_itinerary_load_many(text,text[]),public.sd_itinerary_claim_office_lease(text,text,text,text,integer),public.sd_itinerary_renew_office_lease(text,text,uuid,text,bigint,integer),public.sd_itinerary_release_office_lease(text,text,uuid,text,bigint),public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text),public.sd_itinerary_operation_status_office(text,uuid),public.sd_itinerary_history(text,text,integer),public.sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb) from public,anon,authenticated;
 grant execute on function public.sd_itinerary_get_rollout(text),public.sd_itinerary_load_many(text,text[]),public.sd_itinerary_claim_office_lease(text,text,text,text,integer),public.sd_itinerary_renew_office_lease(text,text,uuid,text,bigint,integer),public.sd_itinerary_release_office_lease(text,text,uuid,text,bigint),public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text),public.sd_itinerary_operation_status_office(text,uuid),public.sd_itinerary_history(text,text,integer),public.sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb) to authenticated;
+grant execute on function public.sd_itinerary_get_office_entry(text,text) to anon,authenticated;
 
 revoke all on function public.sd_itinerary_get_public_rollout(text),public.sd_itinerary_public_list_vessels(text),public.sd_itinerary_public_load(text,text),public.sd_itinerary_claim_public_lease(text,text,text,text,integer),public.sd_itinerary_renew_public_lease(text,text,uuid,text,text,bigint,integer),public.sd_itinerary_release_public_lease(text,text,uuid,text,text,bigint),public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint),public.sd_itinerary_operation_status_public(text,uuid,text) from public,anon,authenticated;
 grant execute on function public.sd_itinerary_get_public_rollout(text),public.sd_itinerary_public_list_vessels(text),public.sd_itinerary_public_load(text,text),public.sd_itinerary_claim_public_lease(text,text,text,text,integer),public.sd_itinerary_renew_public_lease(text,text,uuid,text,text,bigint,integer),public.sd_itinerary_release_public_lease(text,text,uuid,text,text,bigint),public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint),public.sd_itinerary_operation_status_public(text,uuid,text) to anon,authenticated;
