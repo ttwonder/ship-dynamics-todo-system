@@ -12,6 +12,7 @@ import { createShipDraft, hasShipDraftBusinessContent, trimTrailingBlankShipRows
 import { buildItineraryMailto } from './itineraryEmail';
 import { PublicItineraryCloudRepository, type PublicItineraryVessel } from './itineraryCloud';
 import { pendingOperationForDocument } from './itineraryOperation';
+import { selectLatestItineraryDocument } from './itineraryFreshness';
 import ShipItineraryEditor from './ShipItineraryEditor';
 
 interface EditorState {
@@ -89,7 +90,8 @@ export default function ShipItineraryPortal() {
     void Promise.resolve(backend.loadDocument(selectedVesselId)).then(document => {
       if (!current) return;
       const vessel = vessels.find(item => item.id === selectedVesselId);
-      setLatest(document || createEmptyItineraryDocument({ workspaceKey: cloudBackend?.config.workspaceKey || 'local-itinerary-demo', vesselId: selectedVesselId, vesselName: vessel?.name || selectedVesselId }));
+      const loaded = document || createEmptyItineraryDocument({ workspaceKey: cloudBackend?.config.workspaceKey || 'local-itinerary-demo', vesselId: selectedVesselId, vesselName: vessel?.name || selectedVesselId });
+      setLatest(previous => selectLatestItineraryDocument(previous, loaded));
     }).catch(error => { if (current) setNotice(error instanceof Error ? error.message : 'Itinerary 載入失敗。'); });
     return () => { current = false; };
   }, [backend, cloudBackend, selectedVesselId, vessels]);
@@ -99,7 +101,7 @@ export default function ShipItineraryPortal() {
     let current = true;
     const publish = (document: ItineraryDocument | null) => {
       if (!current || !document) return;
-      setLatest(document);
+      setLatest(previous => selectLatestItineraryDocument(previous, document));
       setEditor(previous => previous && document.revision > previous.baseRevision ? { ...previous, readOnly: true, remoteUpdated: true } : previous);
     };
     const onStorage = (event: StorageEvent) => {
@@ -159,12 +161,22 @@ export default function ShipItineraryPortal() {
       setNotice(`目前由「${claim.holderLabel}」編輯中，暫時不能修改。`);
       return;
     }
-    let draft = createShipDraft(latest, mode);
+    let editingBase: ItineraryDocument;
+    try {
+      const reloaded = await Promise.resolve(backend.loadDocument(latest.vesselId));
+      editingBase = selectLatestItineraryDocument(latest, reloaded) || latest;
+    } catch (error) {
+      await Promise.resolve(backend.releaseLease(claim.lease));
+      setNotice(error instanceof Error ? error.message : '取得最新 Itinerary 失敗，未開啟編輯器。');
+      return;
+    }
+    setLatest(previous => selectLatestItineraryDocument(previous, editingBase));
+    let draft = createShipDraft(editingBase, mode);
     let pendingOperation: ItineraryPendingOperation | undefined;
-    const key = itineraryDraftKey(latest.workspaceKey, latest.vesselId, draftActorId);
+    const key = itineraryDraftKey(editingBase.workspaceKey, editingBase.vesselId, draftActorId);
     const saved = await readItineraryDraft(key);
-    if (saved && saved.baseRevision === latest.revision && window.confirm('找到本機草稿，是否恢復？')) { draft = saved.document; pendingOperation = saved.pendingOperation; }
-    setEditor({ draft, baseRevision: latest.revision, lease: claim.lease, dirty: Boolean(saved), readOnly: false, remoteUpdated: false, pendingOperation });
+    if (saved && saved.baseRevision === editingBase.revision && window.confirm('找到本機草稿，是否恢復？')) { draft = saved.document; pendingOperation = saved.pendingOperation; }
+    setEditor({ draft, baseRevision: editingBase.revision, lease: claim.lease, dirty: Boolean(saved), readOnly: false, remoteUpdated: false, pendingOperation });
     setNotice('');
   };
 
@@ -232,7 +244,17 @@ export default function ShipItineraryPortal() {
       ? await localBackend.claimLease(latest.vesselId, { holderId, holderLabel: `船端：${latest.vesselName}` }, 75)
       : await cloudBackend!.claimLease(latest.vesselId, holderId, 75);
     if (claim.ok === false) { setNotice(`最新版本仍由「${claim.holderLabel}」編輯中。`); return; }
-    setEditor({ draft: createShipDraft(latest, 'latest'), baseRevision: latest.revision, lease: claim.lease, dirty: false, readOnly: false, remoteUpdated: false, pendingOperation: undefined });
+    let editingBase: ItineraryDocument;
+    try {
+      const reloaded = await Promise.resolve(backend.loadDocument(latest.vesselId));
+      editingBase = selectLatestItineraryDocument(latest, reloaded) || latest;
+    } catch (error) {
+      await Promise.resolve(backend.releaseLease(claim.lease));
+      setNotice(error instanceof Error ? error.message : '取得最新 Itinerary 失敗，原草稿已保留。');
+      return;
+    }
+    setLatest(previous => selectLatestItineraryDocument(previous, editingBase));
+    setEditor({ draft: createShipDraft(editingBase, 'latest'), baseRevision: editingBase.revision, lease: claim.lease, dirty: false, readOnly: false, remoteUpdated: false, pendingOperation: undefined });
     setNotice('已載入最新版本；先前草稿仍保留至下一次修改。');
   };
 

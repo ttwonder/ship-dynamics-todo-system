@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { createServer } from 'vite';
 
 class MemoryStorage {
@@ -16,6 +17,9 @@ const server = await createServer({ root: process.cwd(), server: { middlewareMod
 try {
   const types = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
   const collaboration = await server.ssrLoadModule('/src/itinerary/itineraryCollaboration.ts');
+  const freshnessPath = 'src/itinerary/itineraryFreshness.ts';
+  assert.equal(fs.existsSync(freshnessPath), true, 'ship and office polling need one revision-monotonic merge contract');
+  const freshness = await server.ssrLoadModule(`/${freshnessPath}`);
   let now = Date.parse('2026-08-31T08:00:00Z');
   let id = 0;
   const storage = new MemoryStorage();
@@ -85,6 +89,19 @@ try {
   const loaded = backend.loadDocument('vessel-a');
   assert.equal(loaded.revision, 1);
   assert.equal(loaded.rows[0].portDockName, 'KAOHSIUNG');
+  const newer = { ...structuredClone(loaded), revision: 2 };
+  newer.rows[0].portDockName = 'BUSAN';
+  assert.equal(freshness.selectLatestItineraryDocument(newer, loaded), newer, 'a late older poll must not replace a newer document');
+  assert.equal(freshness.selectLatestItineraryDocument(loaded, newer), newer, 'a higher committed revision must be accepted');
+  assert.equal(freshness.selectLatestItineraryDocument(newer, null), newer, 'a missing poll result must not erase the current document');
+  assert.equal(freshness.selectLatestItineraryDocument(newer, { ...newer, rows: loaded.rows }), newer, 'same-revision late data must not replace the already-published document');
+  const merged = freshness.mergeLatestItineraryDocuments({ 'vessel-a': newer }, { 'vessel-a': loaded, 'vessel-b': vesselB });
+  assert.equal(merged['vessel-a'], newer);
+  assert.equal(merged['vessel-b'], vesselB);
+  const dashboardSource = fs.readFileSync('src/itinerary/ItineraryDashboard.tsx', 'utf8');
+  const shipPortalSource = fs.readFileSync('src/itinerary/ShipItineraryPortal.tsx', 'utf8');
+  assert.match(dashboardSource, /mergeLatestItineraryDocuments\(previous,\s*materialized\)/, 'office polling must merge revisions monotonically');
+  assert.match(shipPortalSource, /selectLatestItineraryDocument\(previous,\s*document\)/, 'ship polling must merge revisions monotonically');
   assert.ok(storage.keys().every(key => key.startsWith('ship-dynamics-itinerary/demo/')));
 
   console.log('itinerary_local_collaboration=PASS');

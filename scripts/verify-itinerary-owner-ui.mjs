@@ -119,6 +119,16 @@ try {
   assert.match(dashboardSource, /<ItineraryDashboard[\s\S]*vessels=\{visible\}/);
   assert.doesNotMatch(itineraryDashboardSource, /user\.role\s*[!=]==?\s*['"]owner['"]/, 'cloud action permissions must remain configurable after the Owner-only pilot');
   assert.match(itineraryDashboardSource, /backend&&displayMode==='table'/, 'the cloud repository must mount the same production table path as local demo');
+  const officeEditConfirmation = "if (!window.confirm('請盡量以船端修改為主，確定要修改嗎？')) return;";
+  const confirmationIndex = itineraryDashboardSource.indexOf(officeEditConfirmation);
+  const leaseClaimIndex = itineraryDashboardSource.indexOf('await backend.claimLease', confirmationIndex);
+  assert.ok(confirmationIndex >= 0, 'office manual edit must show the exact ship-first confirmation');
+  assert.ok(leaseClaimIndex > confirmationIndex, 'cancelling the office edit confirmation must happen before claiming a vessel lease');
+  const importApplyBlock = itineraryDashboardSource.slice(itineraryDashboardSource.indexOf('const applyImports = async'), itineraryDashboardSource.indexOf('return <section'));
+  const importClaimIndex = importApplyBlock.indexOf('backend.claimLease');
+  const importLoadIndex = importApplyBlock.indexOf('backend.loadDocument');
+  const importSaveIndex = importApplyBlock.indexOf('backend.save');
+  assert.ok(importClaimIndex >= 0 && importLoadIndex > importClaimIndex && importSaveIndex > importLoadIndex, 'office Excel overwrite must claim, reload authority, then CAS-save over the latest revision');
 
   console.log('itinerary_owner_rollout_and_dashboard_contract=PASS');
 } finally {

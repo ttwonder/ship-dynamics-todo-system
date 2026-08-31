@@ -12,6 +12,7 @@ import ItineraryCalendar from './ItineraryCalendar';
 import { OfficeItineraryCloudRepository } from './itineraryCloud';
 import type { ParsedItineraryWorkbook } from './itineraryExcel';
 import { itineraryVesselDisplayName, projectItineraryDocumentsForDisplay, resolveItineraryEditorDocument, withItineraryVesselDisplayName } from './itineraryVesselDisplay';
+import { mergeLatestItineraryDocuments, selectLatestItineraryDocument } from './itineraryFreshness';
 import './itinerary.css';
 import './itineraryCompact.css';
 
@@ -88,7 +89,7 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
         } else if (cloudBackend) loaded = await cloudBackend.loadMany(vessels.map(vessel => vessel.id));
         if (!current) return;
         const materialized = Object.fromEntries(vessels.map(vessel => [vessel.id, loaded[vessel.id] || createEmptyItineraryDocument({ workspaceKey: cloudBackend?.config.workspaceKey || 'local-itinerary-demo', vesselId: vessel.id, vesselName: itineraryVesselDisplayName(vessel) })]));
-        setDocuments(previous => ({ ...previous, ...materialized }));
+        setDocuments(previous => mergeLatestItineraryDocuments(previous, materialized));
       } catch (error) {
         if (current) setNotice(error instanceof Error ? error.message : 'Itinerary 雲端載入失敗。');
       }
@@ -99,7 +100,7 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
       const vessel = vessels.find(item => event.key === localBackend.documentKey(item.id));
       if (!vessel) return;
       const updated = localBackend.loadDocument(vessel.id);
-      if (updated) setDocuments(previous => ({ ...previous, [vessel.id]: updated }));
+      if (updated) setDocuments(previous => mergeLatestItineraryDocuments(previous, { [vessel.id]: updated }));
     };
     if (localBackend) window.addEventListener('storage', onStorage);
     const poll = cloudBackend ? window.setInterval(() => void load(), 15_000) : null;
@@ -123,6 +124,7 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
     if (!backend || !permissions.edit) return;
     const vessel = vessels.find(item => item.id === vesselId);
     if (!vessel) return;
+    if (!window.confirm('請盡量以船端修改為主，確定要修改嗎？')) return;
     setNotice('');
     const claim = await backend.claimLease(vesselId, { holderId, holderLabel: user.name }, 75);
     if (claim.ok === false) {
@@ -151,7 +153,7 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
 
   const closeAfterSave = (saved: ItineraryDocument) => {
     if (editor && backend) void backend.releaseLease(editor.lease);
-    setDocuments(previous => ({ ...previous, [saved.vesselId]: saved }));
+    setDocuments(previous => mergeLatestItineraryDocuments(previous, { [saved.vesselId]: saved }));
     setEditor(null);
     const vessel = vessels.find(item => item.id === saved.vesselId);
     setNotice(`已保存 ${vessel ? itineraryVesselDisplayName(vessel) : saved.vesselName} Itinerary，Revision ${saved.revision}。`);
@@ -199,14 +201,25 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
     const savedDocuments: Record<string, ItineraryDocument> = {};
     if (!backend || !permissions.import) return items.map(item => ({ sheetName: item.sheet.sheetName, vesselName: displayDocuments[item.vesselId]?.vesselName || item.vesselId, ok: false, message: '目前身份沒有匯入權限。' }));
     for (const item of items) {
-      const current = displayDocuments[item.vesselId];
-      if (!current) {
+      const displayedCurrent = displayDocuments[item.vesselId];
+      if (!displayedCurrent) {
         results.push({ sheetName: item.sheet.sheetName, vesselName: item.vesselId, ok: false, message: '找不到目前船舶資料。' });
         continue;
       }
       const claim = await backend.claimLease(item.vesselId, { holderId, holderLabel: user.name }, 75);
       if (claim.ok === false) {
-        results.push({ sheetName: item.sheet.sheetName, vesselName: current.vesselName, ok: false, message: `正由 ${claim.holderLabel} 編輯，未覆蓋。` });
+        results.push({ sheetName: item.sheet.sheetName, vesselName: displayedCurrent.vesselName, ok: false, message: `正由 ${claim.holderLabel} 編輯，未覆蓋。` });
+        continue;
+      }
+      let current: ItineraryDocument;
+      try {
+        const loaded = await backend.loadDocument(item.vesselId);
+        const latest = selectLatestItineraryDocument(displayedCurrent, loaded) || displayedCurrent;
+        const vessel = vessels.find(candidate => candidate.id === item.vesselId);
+        current = vessel ? withItineraryVesselDisplayName(latest, vessel) : latest;
+      } catch (error) {
+        await backend.releaseLease(claim.lease);
+        results.push({ sheetName: item.sheet.sheetName, vesselName: displayedCurrent.vesselName, ok: false, message: error instanceof Error ? `取得雲端最新版失敗：${error.message}` : '取得雲端最新版失敗，未覆蓋。' });
         continue;
       }
       const candidate: ItineraryDocument = { ...current, rows: item.sheet.rows.map(row => ({ ...row })) };
@@ -219,7 +232,7 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
         results.push({ sheetName: item.sheet.sheetName, vesselName: current.vesselName, ok: false, message: result.code === 'revision-conflict' ? `Revision 衝突，目前為 ${result.currentRevision ?? '未知'}` : result.message || '未覆蓋' });
       }
     }
-    if (Object.keys(savedDocuments).length) setDocuments(previous => ({ ...previous, ...savedDocuments }));
+    if (Object.keys(savedDocuments).length) setDocuments(previous => mergeLatestItineraryDocuments(previous, savedDocuments));
     return results;
   };
 

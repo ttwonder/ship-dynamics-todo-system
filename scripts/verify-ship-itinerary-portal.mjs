@@ -37,9 +37,21 @@ try {
 
   const html = fs.readFileSync('ship-itinerary.html', 'utf8');
   const entry = fs.readFileSync('src/ship-itinerary-main.tsx', 'utf8');
+  const portal = fs.readFileSync('src/itinerary/ShipItineraryPortal.tsx', 'utf8');
   assert.ok(html.includes('/src/ship-itinerary-main.tsx'));
   assert.ok(!entry.includes("from './App'"));
   assert.ok(entry.includes('ShipItineraryPortal'));
+  const startEditingBlock = portal.slice(portal.indexOf("const startEditing = async"), portal.indexOf('const closeEditor ='));
+  const startClaimIndex = startEditingBlock.indexOf('claimLease');
+  const startLoadIndex = startEditingBlock.indexOf('backend.loadDocument');
+  const startDraftIndex = startEditingBlock.indexOf('createShipDraft(editingBase, mode)');
+  assert.ok(startClaimIndex >= 0 && startLoadIndex > startClaimIndex && startDraftIndex > startLoadIndex, 'ship editing must claim, reload the authoritative document, then create its draft');
+  const syncLatestBlock = portal.slice(portal.indexOf('const syncLatest = async'), portal.indexOf('const importFile ='));
+  const syncClaimIndex = syncLatestBlock.indexOf('claimLease');
+  const syncLoadIndex = syncLatestBlock.indexOf('backend.loadDocument');
+  const syncEditorIndex = syncLatestBlock.indexOf('setEditor');
+  assert.ok(syncClaimIndex >= 0 && syncLoadIndex > syncClaimIndex && syncEditorIndex > syncLoadIndex, 'sync latest must claim, reload authority, then replace the editor base');
+  assert.ok((portal.match(/setLatest\(previous => selectLatestItineraryDocument\(previous,/g) || []).length >= 4, 'initial load, polling, edit reload and sync reload must all publish monotonically');
   console.log('ship_itinerary_portal_model=PASS');
 } finally {
   await server.close();

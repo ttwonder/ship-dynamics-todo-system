@@ -86,7 +86,7 @@ function copyTemplateLayout(source: ExcelJS.Worksheet, target: ExcelJS.Worksheet
   target.properties = cloneStyle(source.properties);
   target.pageSetup = cloneStyle(source.pageSetup);
   target.headerFooter = cloneStyle(source.headerFooter);
-  target.views = cloneStyle(source.views);
+  target.views = [{ state: 'frozen', ySplit: 3, topLeftCell: 'A4', activeCell: 'A4', showGridLines: false, zoomScale: 90, zoomScaleNormal: 100 }];
   for (let column = 1; column <= 23; column += 1) {
     const from = source.getColumn(column);
     const to = target.getColumn(column);
@@ -208,6 +208,8 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
   worksheet.pageSetup.fitToWidth = 1;
   worksheet.pageSetup.fitToHeight = 0;
   worksheet.pageSetup.orientation = 'landscape';
+  worksheet.pageSetup.printTitlesRow = '1:3';
+  worksheet.pageSetup.horizontalCentered = true;
 }
 
 export async function buildItineraryWorkbook(documents: ItineraryDocument[], template: ArrayBuffer, onStage?: (stage: ItineraryExcelBuildStage) => void): Promise<ArrayBuffer> {

@@ -33,6 +33,9 @@ try {
   beta.revision = 4;
 
   const template = await fs.readFile('public/templates/itinerary-template-v1.xlsx');
+  const templateWorkbook = new ExcelJS.Workbook();
+  await templateWorkbook.xlsx.load(template);
+  const templateSheet = templateWorkbook.worksheets[0];
   const output = await buildItineraryWorkbook([alpha, beta], template.buffer.slice(template.byteOffset, template.byteOffset + template.byteLength));
   assert.ok(output.byteLength > 10_000);
 
@@ -49,6 +52,21 @@ try {
   assert.equal(workbook.worksheets[0].getCell('E6').value.formula.includes('I4'), true);
   assert.ok(workbook.worksheets[0].model.merges.includes('A4:A5'));
   assert.equal(workbook.worksheets[0].pageSetup.printArea, 'A1:M7');
+  for (let column = 1; column <= 23; column += 1) assert.equal(workbook.worksheets[0].getColumn(column).width, templateSheet.getColumn(column).width, `column ${column} width must match the approved template`);
+  for (let row = 1; row <= 7; row += 1) assert.equal(workbook.worksheets[0].getRow(row).height, templateSheet.getRow(row).height, `row ${row} height must match the approved template`);
+  assert.equal(workbook.worksheets[0].getCell('A1').font.bold, true);
+  assert.equal(workbook.worksheets[0].getCell('A1').fill.fgColor.argb, 'FFF2F2F2');
+  assert.equal(workbook.worksheets[0].getCell('B4').fill.fgColor.argb, 'FFFFFF00');
+  assert.equal(workbook.worksheets[0].getCell('B4').alignment.wrapText, true);
+  assert.equal(workbook.worksheets[0].views[0].state, 'frozen');
+  assert.equal(workbook.worksheets[0].views[0].ySplit, 3);
+  assert.equal(workbook.worksheets[0].views[0].topLeftCell, 'A4');
+  assert.equal(workbook.worksheets[0].views[0].showGridLines, false);
+  assert.equal(workbook.worksheets[0].pageSetup.orientation, 'landscape');
+  assert.equal(workbook.worksheets[0].pageSetup.fitToWidth, 1);
+  assert.equal(workbook.worksheets[0].pageSetup.fitToHeight, 0);
+  assert.equal(workbook.worksheets[0].pageSetup.printTitlesRow, '1:3');
+  assert.equal(workbook.worksheets[0].pageSetup.horizontalCentered, true);
 
   const parsed = await parseItineraryWorkbook(output);
   assert.equal(parsed.sheets.length, 2);
