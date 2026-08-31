@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -32,4 +33,12 @@ export default defineConfig({
   plugins: [react(),appVersionPlugin],
   base,
   define:{__SHIP_DYNAMICS_BUILD_VERSION__:JSON.stringify(buildVersion)},
+  build:{
+    rollupOptions:{
+      input:{
+        main:resolve(process.cwd(),'index.html'),
+        shipItinerary:resolve(process.cwd(),'ship-itinerary.html'),
+      },
+    },
+  },
 });

@@ -1,0 +1,77 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import ExcelJS from 'exceljs';
+import { createServer } from 'vite';
+
+const server = await createServer({ root: process.cwd(), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
+try {
+  const { createEmptyItineraryDocument, createBlankItineraryRow } = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
+  const { recalculateItineraryRows } = await server.ssrLoadModule('/src/itinerary/itineraryDomain.ts');
+  const { buildItineraryWorkbook, parseItineraryWorkbook } = await server.ssrLoadModule('/src/itinerary/itineraryExcel.ts');
+
+  const first = createBlankItineraryRow('row-a', 0);
+  Object.assign(first, {
+    voyageNumber: 'V001', portDockName: 'KAOHSIUNG', operation: 'Loading', cargoQuantityText: 'TEST 5000 MT', portTimeZone: 'Asia/Taipei',
+    etaUtc: '2026-08-31T00:00:00Z', etaMode: 'manual', berthWaitHours: 2, operationQuantityMt: 5000, operationRateMtPerHour: 500,
+    departureBufferDays: 0.25, oceanDistanceNm: 120, speedKnots: 12, arrivalDraftText: '10.2', departureDraftText: '11.0',
+  });
+  const second = createBlankItineraryRow('row-b', 1);
+  Object.assign(second, {
+    voyageNumber: 'V002', portDockName: 'ULSAN', operation: 'Unloading', cargoQuantityText: 'TEST 5000 MT', portTimeZone: 'Asia/Seoul',
+    berthWaitHours: 3, operationQuantityMt: 5000, operationRateMtPerHour: 400, departureBufferDays: 0.5,
+  });
+  const calculated = recalculateItineraryRows([first, second]);
+  assert.equal(calculated.issues.length, 0);
+
+  const alpha = createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'v-alpha', vesselName: 'TEST ALPHA', rowId: 'unused' });
+  alpha.rows = calculated.rows;
+  alpha.revision = 7;
+  alpha.updatedAt = '2026-08-31T01:02:03Z';
+  const beta = structuredClone(alpha);
+  beta.vesselId = 'v-beta';
+  beta.vesselName = 'TEST/BETA:*?';
+  beta.revision = 4;
+
+  const template = await fs.readFile('public/templates/itinerary-template-v1.xlsx');
+  const output = await buildItineraryWorkbook([alpha, beta], template.buffer.slice(template.byteOffset, template.byteOffset + template.byteLength));
+  assert.ok(output.byteLength > 10_000);
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(output);
+  assert.equal(workbook.worksheets.length, 3);
+  assert.equal(workbook.worksheets[2].name, '_Itinerary_Meta');
+  assert.equal(workbook.worksheets[2].state, 'veryHidden');
+  assert.equal(workbook.worksheets[0].name, 'TEST ALPHA');
+  assert.equal(workbook.worksheets[1].name, 'TEST BETA');
+  assert.equal(workbook.worksheets[0].getCell('A2').value, 'Vsl name: TEST ALPHA');
+  assert.equal(workbook.worksheets[0].getCell('A4').value, 'V001');
+  assert.equal(workbook.worksheets[0].getCell('N4').value, 'Asia/Taipei');
+  assert.equal(workbook.worksheets[0].getCell('E6').value.formula.includes('I4'), true);
+  assert.ok(workbook.worksheets[0].model.merges.includes('A4:A5'));
+  assert.equal(workbook.worksheets[0].pageSetup.printArea, 'A1:M7');
+
+  const parsed = await parseItineraryWorkbook(output);
+  assert.equal(parsed.sheets.length, 2);
+  assert.equal(parsed.sheets[0].embeddedVesselId, 'v-alpha');
+  assert.equal(parsed.sheets[0].rows.length, 2);
+  assert.equal(parsed.sheets[0].rows[0].voyageNumber, 'V001');
+  assert.equal(parsed.sheets[0].rows[1].portTimeZone, 'Asia/Seoul');
+  if (parsed.sheets[0].issues.length) console.error('unexpected_excel_issues=', parsed.sheets[0].issues);
+  assert.equal(parsed.sheets[0].issues.length, 0);
+
+  workbook.worksheets[0].getCell('B10').value = '* footer instruction is not an itinerary row';
+  const footerBytes = await workbook.xlsx.writeBuffer();
+  const footerParsed = await parseItineraryWorkbook(footerBytes.buffer.slice(footerBytes.byteOffset, footerBytes.byteOffset + footerBytes.byteLength));
+  assert.equal(footerParsed.sheets[0].rows.length, 2);
+
+  workbook.worksheets[0].getCell('C4').value = 'Not An Operation';
+  workbook.worksheets[0].getCell('N4').value = 9;
+  const malformed = await workbook.xlsx.writeBuffer();
+  const parsedMalformed = await parseItineraryWorkbook(malformed);
+  assert.ok(parsedMalformed.sheets[0].issues.some(issue => issue.code === 'invalid-operation'));
+  assert.ok(parsedMalformed.sheets[0].issues.some(issue => issue.code === 'time-zone-required'));
+
+  console.log('itinerary_excel_roundtrip=PASS');
+} finally {
+  await server.close();
+}

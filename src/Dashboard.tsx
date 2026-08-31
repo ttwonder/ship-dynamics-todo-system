@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { InternalControlCase, ScheduleKind, TaskItem, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { daysDiff, todayDate } from './runtimeUtils';
 import { taipeiDateKey } from './taipeiTime';
@@ -17,6 +17,9 @@ import { attentionFilterGroup, effectiveVesselManagerNames, emptyVesselFilterSta
 import { WEEKLY_ATTENTION_OPTIONS } from './weeklyAttention';
 import type { VesselAttentionSaveState } from './vesselAttentionSaveQueue';
 import { dashboardVesselCardId } from './dashboardVesselReturn';
+import { useItineraryRollout } from './itinerary/itineraryRollout';
+
+const ItineraryDashboard = lazy(() => import('./itinerary/ItineraryDashboard'));
 
 const attentionLevelLabel = (level: VesselAttentionLevel) => level === '特別關注' ? level : `${level}關注`;
 const automaticAttentionLevelLabel = (level: VesselAttentionLevel, hasPscWindow: boolean) =>
@@ -55,12 +58,24 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
   const [scheduleNow, setScheduleNow] = useState(() => new Date());
+  const [dashboardMode, setDashboardMode] = useState<'cards' | 'itinerary'>('cards');
+  const [itinerarySelected, setItinerarySelected] = useState<string[]>([]);
+  const itineraryRollout = useItineraryRollout(user.role);
   const scheduleField = { ETA: 'eta', ETB: 'etb', ETD: 'etd' } as const;
 
   useEffect(() => {
     const timer = window.setInterval(() => setScheduleNow(new Date()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!itineraryRollout.permissions.view) setDashboardMode('cards');
+  }, [itineraryRollout.permissions.view]);
+
+  useEffect(() => {
+    const allowed = new Set(vessels.map(vessel => vessel.id));
+    setItinerarySelected(previous => previous.filter(id => allowed.has(id)));
+  }, [vessels]);
 
   const abnormalMeetingsForVessel = (vesselId: string) => meetings.filter(meeting => meetingCreatesVesselAbnormalAlert(meeting, vesselId));
 
@@ -110,7 +125,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
   return <section className="dashboard-view">
     <div className="page-heading">
       <div><h1>船舶看板</h1><p>集中查看上下港、位置、載況、時間、貨物、未來一週關注與重要要事。</p></div>
-      {(canEdit||canUseMeetings||canUseReports)&&<div className="heading-actions no-print">{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新船舶（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>}
+      {(itineraryRollout.permissions.view||canEdit||canUseMeetings||canUseReports)&&<div className="heading-actions no-print">{itineraryRollout.permissions.view&&<button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='itinerary'} onClick={()=>setDashboardMode(mode=>mode==='cards'?'itinerary':'cards')}>{dashboardMode==='itinerary'?'返回船舶卡片':'切換 Itinerary 視圖'}</button>}{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新船舶（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>}
     </div>
     <div className="metric-grid">
       <div className="metric-card blue"><small>今日船舶</small><b>{vessels.length}</b><span>艘</span></div>
@@ -124,7 +139,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       <input className="dashboard-search" value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
       <VesselFilterControls filters={vesselFilters} shipTypes={shipTypes} supervisors={supervisors} onChange={setVesselFilters} showMeeting={canUseMeetings}/>
     </div>
-    <div className="fleet-card-grid">{visible.map(vessel => {
+    {dashboardMode==='itinerary'&&itineraryRollout.permissions.view?<Suspense fallback={<div className="itinerary-empty">正在載入 Itinerary 視圖…</div>}><ItineraryDashboard user={user} vessels={visible} selectedVesselIds={itinerarySelected} setSelectedVesselIds={setItinerarySelected} permissions={itineraryRollout.permissions} demoMode={itineraryRollout.demoMode}/></Suspense>:<div className="fleet-card-grid">{visible.map(vessel => {
       const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
       const attentionTasks = vesselAttentionTasks(vesselTasks);
       const abnormalMeetings = abnormalMeetingsForVessel(vessel.id);
@@ -169,7 +184,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
         <VesselImportantSummary vessel={vessel} tasks={tasks} internalControlCases={internalControlCases} meetings={meetings} canDiscloseMeetingSubjects={canUseMeetings}/>
         <div className="ship-card-foot"><span className="task-mini"><i className="urgent">急 {urgent}</i><i className="high">高 {high}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print">{canEdit&&<button type="button" className={`btn small ${batchSelected.includes(vessel.id)?'green':'ghost'}`} aria-pressed={batchSelected.includes(vessel.id)} onClick={()=>setBatchSelected(batchSelected.includes(vessel.id)?batchSelected.filter(id=>id!==vessel.id):[...batchSelected,vessel.id])}>{batchSelected.includes(vessel.id)?'取消批量選取':'批量選取'}</button>}{canEdit && <button className="btn small" onClick={() => onEdit(vessel.id)}>快速更新</button>}{canCreateTasks && <button className="btn small ghost" onClick={() => onAddTask(vessel.id)}>新增要事</button>}{canUseMeetings&&<button className={`btn small ${selectedForMeeting ? 'pink' : 'ghost'}`} onClick={() => toggleMeeting(vessel.id)}>{selectedForMeeting ? '已選入會議' : '選入會議'}</button>}</div></div>
       </article>;
-    })}</div>
-    {!visible.length && <div className="empty-state">沒有符合條件的船舶</div>}
+    })}</div>}
+    {dashboardMode==='cards'&&!visible.length && <div className="empty-state">沒有符合條件的船舶</div>}
   </section>;
 }
