@@ -23,6 +23,8 @@
 - production entry 保留現行 `App.tsx`；Itinerary 的 Supabase Auth 只在其專用驗證入口建立，不切換整站 `NormalizedApp`，驗證失敗也不得阻止現有網站使用。
 - 主站 Itinerary session 必須由 server rollout 回傳的 department／username label／display name／role 與目前 App 使用者完全相符；網站登出或切換為其他使用者時必須清除 Itinerary local session，任何錯配也必須 fail closed 並清除。
 - Itinerary migration 以前置安裝的 normalized Auth orchestration（含 `sd_login_options`、site-unlock／login-directory）為 prerequisite；`must_change_password=true` 的 session 在 DB 層不得讀寫 office Itinerary。
+- 初次 Owner 試行啟用必須先由 Owner 專用 bootstrap 入口完成雲端身份驗證，再使用 `sd_itinerary_owner_update_rollout` 的 CAS version 與 operation receipt；不得把直接 SQL `UPDATE` 當成正常啟用流程。
+- Owner bootstrap 控制只可開啟／關閉主站試行，必須明確傳送 `ship_portal_enabled=false`，並維持 Admin／Operator／Vessel 權限全關閉；公開船端另行驗收後才可獨立啟用。
 
 ## 3. 主網站視圖
 

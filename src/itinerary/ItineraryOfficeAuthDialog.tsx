@@ -54,7 +54,7 @@ export default function ItineraryOfficeAuthDialog({ user, onAuthenticated, onClo
       {message && <div className="itinerary-auth-message" role="alert">{message}</div>}
       <div className="itinerary-auth-actions">
         <button type="button" className="btn" onClick={onClose} disabled={submitting}>取消</button>
-        <button type="submit" className="btn primary" disabled={submitting || !sitePassword}>{submitting ? '驗證中…' : '驗證並開啟'}</button>
+        <button type="submit" className="btn primary" disabled={submitting || !sitePassword}>{submitting ? '驗證中…' : '驗證身份'}</button>
       </div>
     </form>
   </div>;
