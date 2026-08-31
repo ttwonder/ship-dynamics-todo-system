@@ -1,6 +1,7 @@
 import {
   corsHeadersFor,
   createServiceClient,
+  createSessionClient,
   enforceRateLimit,
   errorResponse,
   HttpError,
@@ -14,6 +15,7 @@ import {
 import {
   deriveLegacyBridgePassword,
   verifyLegacyCredential,
+  verifyLegacyPayloadCredential,
 } from './legacy-login.mjs';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
@@ -32,7 +34,9 @@ Deno.serve(async request => {
 
     const body = await readJsonObject(request, 4096);
     const action = body.action === undefined ? 'directory' : requiredString(body.action, 'action', 32);
-    if (action !== 'directory' && action !== 'legacy-session') {
+    if (action !== 'directory'
+        && action !== 'legacy-session'
+        && action !== 'owner-password-session') {
       throw new HttpError(400, 'invalid-action');
     }
     const workspaceKey = requiredString(body.workspaceKey, 'workspace-key', 128);
@@ -52,7 +56,11 @@ Deno.serve(async request => {
     const rateLimitSecret = requiredEnv('RATE_LIMIT_HMAC_SECRET', RATE_LIMIT_HMAC_SECRET);
     const networkIdentity = requestNetworkIdentity(request);
     await enforceRateLimit(service, {
-      scope: action === 'directory' ? 'directory-network' : 'legacy-login-network',
+      scope: action === 'directory'
+        ? 'directory-network'
+        : action === 'owner-password-session'
+          ? 'owner-password-login-network'
+          : 'legacy-login-network',
       keyMaterial: `${workspaceKey}\u0000${networkIdentity}`,
       limit: action === 'directory' ? 60 : 20,
       windowSeconds: action === 'directory' ? 60 : 300,
@@ -94,7 +102,9 @@ Deno.serve(async request => {
       throw new HttpError(400, 'invalid-login');
     }
     await enforceRateLimit(service, {
-      scope: 'legacy-login-identity',
+      scope: action === 'owner-password-session'
+        ? 'owner-password-login-identity'
+        : 'legacy-login-identity',
       keyMaterial: `${workspace.id}\u0000${authAlias}`,
       limit: 8,
       windowSeconds: 300,
@@ -103,7 +113,7 @@ Deno.serve(async request => {
 
     const { data: loginOption, error: loginError } = await service
       .from('sd_login_options')
-      .select('user_id,auth_alias,login_mode,legacy_password_hash')
+      .select('user_id,auth_alias,login_mode,legacy_password_hash,must_change_password')
       .eq('workspace_id', workspace.id)
       .eq('auth_alias', authAlias)
       .eq('is_active', true)
@@ -112,34 +122,60 @@ Deno.serve(async request => {
 
     const { data: membership, error: membershipError } = await service
       .from('sd_memberships')
-      .select('role')
+      .select('role,legacy_user_id')
       .eq('workspace_id', workspace.id)
       .eq('user_id', loginOption.user_id)
       .eq('is_active', true)
       .maybeSingle();
     if (membershipError || !membership) throw new HttpError(401, 'invalid-login');
     const role = membership.role;
-    if (role === 'owner'
-      || (role === 'admin' && loginOption.login_mode === 'passwordless')) {
-      throw new HttpError(401, 'invalid-login');
+    let authPassword: string;
+    if (action === 'owner-password-session') {
+      if (role !== 'owner'
+          || loginOption.login_mode !== 'supabase'
+          || typeof membership.legacy_user_id !== 'string'
+          || !membership.legacy_user_id) {
+        throw new HttpError(401, 'invalid-login');
+      }
+      const { data: appState, error: appStateError } = await service
+        .from('ship_dynamics_app_state')
+        .select('payload')
+        .eq('workspace_key', workspaceKey)
+        .maybeSingle();
+      if (appStateError || !appState) throw new HttpError(503, 'owner-password-source-unavailable');
+      const accepted = await verifyLegacyPayloadCredential({
+        payload: appState.payload,
+        legacyUserId: membership.legacy_user_id,
+        password: body.password,
+      });
+      if (!accepted) throw new HttpError(401, 'invalid-login');
+      authPassword = body.password;
+    } else {
+      if (role === 'owner'
+          || (role === 'admin' && loginOption.login_mode === 'passwordless')) {
+        throw new HttpError(401, 'invalid-login');
+      }
+      const accepted = await verifyLegacyCredential({
+        loginMode: loginOption.login_mode,
+        legacyPasswordHash: loginOption.legacy_password_hash,
+        password: body.password,
+      });
+      if (!accepted) throw new HttpError(401, 'invalid-login');
+      authPassword = await deriveLegacyBridgePassword(
+        rateLimitSecret,
+        workspace.id,
+        loginOption.user_id,
+      );
     }
-    const accepted = await verifyLegacyCredential({
-      loginMode: loginOption.login_mode,
-      legacyPasswordHash: loginOption.legacy_password_hash,
-      password: body.password,
-    });
-    if (!accepted) throw new HttpError(401, 'invalid-login');
 
-    const bridgePassword = await deriveLegacyBridgePassword(
-      rateLimitSecret,
-      workspace.id,
-      loginOption.user_id,
-    );
+    const unavailableCode = action === 'owner-password-session'
+      ? 'owner-password-session-unavailable'
+      : 'legacy-session-unavailable';
     const { error: updateError } = await service.auth.admin.updateUserById(
       loginOption.user_id,
-      { password: bridgePassword },
+      { password: authPassword },
     );
-    if (updateError) throw new HttpError(503, 'legacy-session-unavailable');
+    if (updateError) throw new HttpError(503, unavailableCode);
 
     const browserAuth = createServiceClient(
       supabaseUrl,
@@ -147,10 +183,22 @@ Deno.serve(async request => {
     );
     const { data: authData, error: authError } = await browserAuth.auth.signInWithPassword({
       email: loginOption.auth_alias,
-      password: bridgePassword,
+      password: authPassword,
     });
     if (authError || !authData.session?.access_token || !authData.session?.refresh_token) {
-      throw new HttpError(503, 'legacy-session-unavailable');
+      throw new HttpError(503, unavailableCode);
+    }
+    if (action === 'owner-password-session' && loginOption.must_change_password === true) {
+      const actorDatabase = createSessionClient(
+        supabaseUrl,
+        requiredEnv('SUPABASE_ANON_KEY', SUPABASE_ANON_KEY),
+        authData.session.access_token,
+      );
+      const { error: activationError } = await actorDatabase.rpc(
+        'complete_my_ship_dynamics_password_activation',
+        { p_workspace_id: workspace.id },
+      );
+      if (activationError) throw new HttpError(503, 'owner-password-activation-unavailable');
     }
     return jsonResponse({
       session: {

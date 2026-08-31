@@ -25,6 +25,7 @@
 - Itinerary migration 以前置安裝的 normalized Auth orchestration（含 `sd_login_options`、site-unlock／login-directory）為 prerequisite；`must_change_password=true` 的 session 在 DB 層不得讀寫 office Itinerary。
 - 初次 Owner 試行啟用必須先由 Owner 專用 bootstrap 入口完成雲端身份驗證，再使用 `sd_itinerary_owner_update_rollout` 的 CAS version 與 operation receipt；不得把直接 SQL `UPDATE` 當成正常啟用流程。
 - Owner bootstrap 控制只可開啟／關閉主站試行，必須明確傳送 `ship_portal_enabled=false`，並維持 Admin／Operator／Vessel 權限全關閉；公開船端另行驗收後才可獨立啟用。
+- Owner 驗證欄位使用目前網站的 Owner 個人登入密碼，不要求使用者記憶第二套密碼；原生 Supabase 登入失敗時，只可由受進站 gate、精確 identity link、Owner membership 與雙層 rate limit 約束的 `owner-password-session` 在伺服器端驗證現行 AppData hash，再更新該 Owner 的 Auth 密碼並建立 session。
 
 ## 3. 主網站視圖
 

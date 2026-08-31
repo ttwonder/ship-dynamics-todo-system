@@ -26,16 +26,30 @@ export async function sha256Hex(value) {
   return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+export async function verifyLegacyPasswordHash({ legacyPasswordHash, password }) {
+  if (typeof password !== 'string' || password.length > 256) return false;
+  const expected = bytesFromHex(legacyPasswordHash);
+  if (!expected) return false;
+  const supplied = bytesFromHex(await sha256Hex(password));
+  return supplied !== null && constantTimeEqual(expected, supplied);
+}
+
+export async function verifyLegacyPayloadCredential({ payload, legacyUserId, password }) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || typeof legacyUserId !== 'string' || !legacyUserId) return false;
+  const users = Array.isArray(payload.users) ? payload.users : [];
+  const matches = users.filter(user => user && typeof user === 'object' && !Array.isArray(user) && user.id === legacyUserId);
+  if (matches.length !== 1) return false;
+  return verifyLegacyPasswordHash({ legacyPasswordHash: matches[0].passwordHash, password });
+}
+
 export async function verifyLegacyCredential({ loginMode, legacyPasswordHash, password }) {
   if (typeof password !== 'string' || password.length > 256) return false;
   if (loginMode === 'passwordless') {
     return legacyPasswordHash == null && password === '';
   }
   if (loginMode !== 'legacy-password') return false;
-  const expected = bytesFromHex(legacyPasswordHash);
-  if (!expected) return false;
-  const supplied = bytesFromHex(await sha256Hex(password));
-  return supplied !== null && constantTimeEqual(expected, supplied);
+  return verifyLegacyPasswordHash({ legacyPasswordHash, password });
 }
 
 export async function deriveLegacyBridgePassword(secret, workspaceId, userId) {

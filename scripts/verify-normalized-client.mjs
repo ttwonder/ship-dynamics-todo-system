@@ -652,7 +652,11 @@ const directoryActionSource = directoryActionStart >= 0 && directoryActionEnd > 
 assert.ok(directoryActionSource, 'the public directory action must be structurally identifiable');
 assert.doesNotMatch(directoryActionSource, /access_token|refresh_token|body\.password|legacy_password_hash/,
   'the public directory action must never receive a password or expose credential/session material');
-assert.match(loginDirectoryEdge, /action !== 'directory' && action !== 'legacy-session'/);
+assert.match(loginDirectoryEdge, /action !== 'directory'[\s\S]*action !== 'legacy-session'[\s\S]*action !== 'owner-password-session'/);
+assert.match(loginDirectoryEdge, /action === 'owner-password-session'[\s\S]*role !== 'owner'/);
+assert.match(loginDirectoryEdge, /verifyLegacyPayloadCredential\(/);
+assert.match(loginDirectoryEdge, /owner-password-login-network/);
+assert.match(loginDirectoryEdge, /owner-password-login-identity/);
 assert.match(loginDirectoryEdge, /verifyLegacyCredential\(/);
 assert.match(loginDirectoryEdge, /access_token/);
 assert.match(loginDirectoryEdge, /refresh_token/);

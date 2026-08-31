@@ -10,6 +10,9 @@ try {
   const shipHtml = fs.readFileSync('ship-itinerary.html', 'utf8');
   const dashboard = fs.readFileSync('src/Dashboard.tsx', 'utf8');
   const cloudAdapter = fs.readFileSync('src/itinerary/itineraryCloud.ts', 'utf8');
+  const authDialog = fs.readFileSync('src/itinerary/ItineraryOfficeAuthDialog.tsx', 'utf8');
+  const compactCss = fs.readFileSync('src/itinerary/itineraryCompact.css', 'utf8');
+  const appCss = fs.readFileSync('src/styles.css', 'utf8');
 
   assert.match(main, /import App from ['"]\.\/App['"]/);
   assert.doesNotMatch(main, /NormalizedApp/);
@@ -19,6 +22,13 @@ try {
   assert.match(dashboard, /ItineraryOfficeAuthDialog/);
   assert.match(cloudAdapter, /storageKey:\s*ITINERARY_OFFICE_SESSION_STORAGE_KEY/);
   assert.match(cloudAdapter, /ship-dynamics\.itinerary\.supabase-session/);
+  assert.match(appCss, /--paper:#fff/);
+  assert.match(compactCss, /\.itinerary-auth-dialog\{[^}]*background:var\(--paper,#fff\)[^}]*color:var\(--ink,#51485d\)/);
+  assert.match(compactCss, /\.itinerary-auth-dialog input\{[^}]*background:var\(--paper,#fff\)[^}]*color:var\(--ink,#51485d\)/);
+  assert.doesNotMatch(compactCss, /\.itinerary-auth-(?:dialog|dialog input)\{[^}]*var\(--panel\)/);
+  assert.match(authDialog, /Owner 個人登入密碼/);
+  assert.match(authDialog, /不是 Supabase 後台密碼/);
+  assert.doesNotMatch(authDialog, /Itinerary 雲端個人密碼/);
 
   const uiUser = { id: 'legacy-owner', department: '管理部', name: 'Owner One', username: 'owner.one', role: 'owner' };
   const officeIdentity = { department: '管理部', displayName: 'Owner One', usernameLabel: 'owner.one', role: 'owner' };
@@ -78,6 +88,84 @@ try {
   const authenticated = await auth.authenticateItineraryOffice(uiUser, { sitePassword: 'site-pass', personalPassword: 'personal-pass' }, config, loginClient);
   assert.equal(authenticated.status, 'verified');
   assert.deepEqual(calls, [['site-unlock', 'unlock'], ['login-directory', 'directory'], ['signIn', 'opaque@example.invalid']]);
+
+  const fallbackCalls = [];
+  const ownerFallbackClient = {
+    auth: {
+      signInWithPassword: async credentials => { fallbackCalls.push(['signIn', credentials.email]); return { data: { session: null }, error: new Error('invalid credentials') }; },
+      setSession: async credentials => { fallbackCalls.push(['setSession', Boolean(credentials.access_token), Boolean(credentials.refresh_token)]); return { data: { session: { user: { id: 'auth-owner' } } }, error: null }; },
+      signOut: async () => ({ error: null }),
+    },
+    functions: {
+      invoke: async (name, options) => {
+        fallbackCalls.push([name, options.body.action || 'unlock']);
+        if (name === 'site-unlock') return { data: { gateToken: 'gate', expiresAt: '2026-08-31T10:00:00Z' }, error: null };
+        if (options.body.action === 'directory') return { data: { people: [{ department: '管理部', displayName: 'Owner One', usernameLabel: 'owner.one', authAlias: 'opaque@example.invalid', loginMode: 'supabase', mustChangePassword: false }] }, error: null };
+        if (options.body.action === 'owner-password-session') return { data: { session: { access_token: 'access', refresh_token: 'refresh' } }, error: null };
+        throw new Error('unexpected fallback action');
+      },
+    },
+    rpc: async () => ({ data: rollout, error: null }),
+  };
+  const fallback = await auth.authenticateItineraryOffice(uiUser, { sitePassword: 'site-pass', personalPassword: 'personal-pass' }, config, ownerFallbackClient);
+  assert.equal(fallback.status, 'verified');
+  assert.deepEqual(fallbackCalls, [
+    ['site-unlock', 'unlock'],
+    ['login-directory', 'directory'],
+    ['signIn', 'opaque@example.invalid'],
+    ['login-directory', 'owner-password-session'],
+    ['setSession', true, true],
+  ]);
+
+  const activationCalls = [];
+  const ownerActivationClient = {
+    auth: {
+      signInWithPassword: async () => { throw new Error('native sign-in must be skipped while activation is required'); },
+      setSession: async credentials => { activationCalls.push(['setSession', Boolean(credentials.access_token), Boolean(credentials.refresh_token)]); return { data: { session: { user: { id: 'auth-owner' } } }, error: null }; },
+      signOut: async () => ({ error: null }),
+    },
+    functions: {
+      invoke: async (name, options) => {
+        activationCalls.push([name, options.body.action || 'unlock']);
+        if (name === 'site-unlock') return { data: { gateToken: 'gate', expiresAt: '2026-08-31T10:00:00Z' }, error: null };
+        if (options.body.action === 'directory') return { data: { people: [{ department: '管理部', displayName: 'Owner One', usernameLabel: 'owner.one', authAlias: 'opaque@example.invalid', loginMode: 'supabase', mustChangePassword: true }] }, error: null };
+        if (options.body.action === 'owner-password-session') return { data: { session: { access_token: 'access', refresh_token: 'refresh' } }, error: null };
+        throw new Error('unexpected activation action');
+      },
+    },
+    rpc: async () => ({ data: rollout, error: null }),
+  };
+  const activated = await auth.authenticateItineraryOffice(uiUser, { sitePassword: 'site-pass', personalPassword: 'personal-pass' }, config, ownerActivationClient);
+  assert.equal(activated.status, 'verified');
+  assert.deepEqual(activationCalls, [
+    ['site-unlock', 'unlock'],
+    ['login-directory', 'directory'],
+    ['login-directory', 'owner-password-session'],
+    ['setSession', true, true],
+  ]);
+
+  const wrongModeCalls = [];
+  const ownerWrongModeClient = {
+    auth: {
+      signInWithPassword: async () => { throw new Error('native sign-in must not run for a non-native Owner mode'); },
+      setSession: async () => { throw new Error('session bridge must not run for a non-native Owner mode'); },
+      signOut: async () => ({ error: null }),
+    },
+    functions: {
+      invoke: async (name, options) => {
+        wrongModeCalls.push([name, options.body.action || 'unlock']);
+        if (name === 'site-unlock') return { data: { gateToken: 'gate', expiresAt: '2026-08-31T10:00:00Z' }, error: null };
+        if (options.body.action === 'directory') return { data: { people: [{ department: '管理部', displayName: 'Owner One', usernameLabel: 'owner.one', authAlias: 'opaque@example.invalid', loginMode: 'legacy-password', mustChangePassword: false }] }, error: null };
+        throw new Error('Owner fallback must not run for a non-native login mode');
+      },
+    },
+    rpc: async () => ({ data: rollout, error: null }),
+  };
+  await assert.rejects(
+    () => auth.authenticateItineraryOffice(uiUser, { sitePassword: 'site-pass', personalPassword: 'personal-pass' }, config, ownerWrongModeClient),
+    /Owner 雲端登入模式不正確/,
+  );
+  assert.deepEqual(wrongModeCalls, [['site-unlock', 'unlock'], ['login-directory', 'directory']]);
 
   let clearScope = null;
   const removedKeys = [];

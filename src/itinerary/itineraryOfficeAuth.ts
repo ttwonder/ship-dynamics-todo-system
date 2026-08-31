@@ -185,13 +185,34 @@ export async function authenticateItineraryOffice(
   const matches = directory.data.people.filter(person => directoryMatchesUser(person, user));
   if (matches.length !== 1) throw new Error('目前網站使用者無法唯一對應 Itinerary 雲端身份。');
   const person = matches[0];
-  if (person.mustChangePassword) throw new Error('此 Itinerary 雲端帳號尚未完成個人密碼啟用。');
+  if (person.mustChangePassword && user.role !== 'owner') throw new Error('此 Itinerary 雲端帳號尚未完成個人密碼啟用。');
+
+  const establishOwnerPasswordSession = async () => {
+    if (!credentials.personalPassword) throw new Error('請輸入 Owner 個人登入密碼。');
+    const unified = await client.functions.invoke<{ session?: { access_token?: string; refresh_token?: string } }>('login-directory', {
+      body: { action: 'owner-password-session', workspaceKey: config.workspaceKey, authAlias: person.authAlias, password: credentials.personalPassword },
+      headers: { 'x-site-gate-token': unlocked.data.gateToken },
+    });
+    const accessToken = unified.data?.session?.access_token;
+    const refreshToken = unified.data?.session?.refresh_token;
+    if (unified.error || !accessToken || !refreshToken) throw new Error('Owner 個人登入密碼錯誤或雲端密碼統一失敗。');
+    const accepted = await client.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+    if (accepted.error || !accepted.data.session) throw new Error('Owner 雲端 session 建立失敗。');
+  };
 
   if (person.loginMode === 'supabase') {
-    if (!credentials.personalPassword) throw new Error('請輸入 Itinerary 雲端個人密碼。');
-    const accepted = await client.auth.signInWithPassword({ email: person.authAlias, password: credentials.personalPassword });
-    if (accepted.error || !accepted.data.session) throw new Error('Itinerary 雲端個人密碼錯誤或登入失敗。');
+    if (!credentials.personalPassword) throw new Error(user.role === 'owner' ? '請輸入 Owner 個人登入密碼。' : '請輸入 Itinerary 雲端個人密碼。');
+    if (user.role === 'owner' && person.mustChangePassword) {
+      await establishOwnerPasswordSession();
+    } else {
+      const accepted = await client.auth.signInWithPassword({ email: person.authAlias, password: credentials.personalPassword });
+      if (accepted.error || !accepted.data.session) {
+        if (user.role !== 'owner') throw new Error('Itinerary 雲端個人密碼錯誤或登入失敗。');
+        await establishOwnerPasswordSession();
+      }
+    }
   } else {
+    if (user.role === 'owner') throw new Error('Owner 雲端登入模式不正確，已停止驗證。');
     const compatibility = await client.functions.invoke<{ session?: { access_token?: string; refresh_token?: string } }>('login-directory', {
       body: { action: 'legacy-session', workspaceKey: config.workspaceKey, authAlias: person.authAlias, password: credentials.personalPassword },
       headers: { 'x-site-gate-token': unlocked.data.gateToken },
