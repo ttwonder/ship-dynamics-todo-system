@@ -16,6 +16,15 @@ export function withItineraryVesselDisplayName(
   return document.vesselName === vesselName ? document : { ...document, vesselName };
 }
 
+export function resolveItineraryEditorDocument(
+  cloudDocument: ItineraryDocument | null,
+  displayedDocument: ItineraryDocument | undefined,
+  vessel: ItineraryVesselNameSource,
+): ItineraryDocument | null {
+  const document = cloudDocument || displayedDocument;
+  return document ? withItineraryVesselDisplayName(document, vessel) : null;
+}
+
 export function projectItineraryDocumentsForDisplay(
   documents: Readonly<Record<string, ItineraryDocument>>,
   vessels: readonly ItineraryVesselNameSource[],

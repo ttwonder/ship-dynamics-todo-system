@@ -11,7 +11,7 @@ import ItineraryImportPreview, { type ItineraryImportApplyItem, type ItineraryIm
 import ItineraryCalendar from './ItineraryCalendar';
 import { OfficeItineraryCloudRepository } from './itineraryCloud';
 import type { ParsedItineraryWorkbook } from './itineraryExcel';
-import { itineraryVesselDisplayName, projectItineraryDocumentsForDisplay, withItineraryVesselDisplayName } from './itineraryVesselDisplay';
+import { itineraryVesselDisplayName, projectItineraryDocumentsForDisplay, resolveItineraryEditorDocument, withItineraryVesselDisplayName } from './itineraryVesselDisplay';
 import './itinerary.css';
 import './itineraryCompact.css';
 
@@ -130,12 +130,12 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
       return;
     }
     const loaded = await backend.loadDocument(vesselId);
-    if (!loaded) {
+    const latest = resolveItineraryEditorDocument(loaded, displayDocuments[vesselId], vessel);
+    if (!latest) {
       void backend.releaseLease(claim.lease);
       setNotice('找不到此船的 Itinerary，未開啟編輯器。');
       return;
     }
-    const latest = withItineraryVesselDisplayName(loaded, vessel);
     const key = itineraryDraftKey(latest.workspaceKey, latest.vesselId, user.id);
     const savedDraft = await readItineraryDraft(key);
     let initialDocument: ItineraryDocument | undefined;

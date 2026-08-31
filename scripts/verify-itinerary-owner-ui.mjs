@@ -13,6 +13,7 @@ try {
   assert.equal(fs.existsSync(vesselDisplayPath), true, 'Itinerary must project the same vessel display name used by vessel cards');
   const vesselDisplay = await server.ssrLoadModule(`/${vesselDisplayPath}`);
   const demoData = await server.ssrLoadModule('/src/itinerary/itineraryDemoData.ts');
+  const itineraryTypes = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
   const amber = {
     id: 'vessel-amber',
     name: '安華',
@@ -26,6 +27,14 @@ try {
   assert.equal(projectedDocuments[amber.id].vesselName, '安華 FPMC S AMBER', 'cloud documents must use the vessel-card display name');
   assert.equal(cloudDocument.vesselName, '安華', 'display projection must not rewrite the authoritative cloud document');
   assert.equal(demoData.createDemoItineraryDocument(amber, 0, Date.parse('2026-08-31T08:00:00Z')).vesselName, '安華 FPMC S AMBER', 'local demo must use the vessel-card display name');
+  assert.equal(typeof vesselDisplay.resolveItineraryEditorDocument, 'function', 'Owner must be able to edit a displayed blank Itinerary before any ship-side save');
+  const blankPreview = itineraryTypes.createEmptyItineraryDocument({ workspaceKey: 'ship-dynamics', vesselId: amber.id, vesselName: '安華' });
+  const blankEditorDocument = vesselDisplay.resolveItineraryEditorDocument(null, blankPreview, amber);
+  assert.equal(blankEditorDocument.revision, 0, 'a missing cloud document must open from the displayed revision-0 placeholder');
+  assert.equal(blankEditorDocument.vesselName, '安華 FPMC S AMBER');
+  const savedCloudDocument = { ...blankPreview, revision: 3 };
+  assert.equal(vesselDisplay.resolveItineraryEditorDocument(savedCloudDocument, blankPreview, amber).revision, 3, 'a real cloud document must win over the placeholder');
+  assert.match(itineraryDashboardSource, /resolveItineraryEditorDocument\(loaded,\s*displayDocuments\[vesselId\],\s*vessel\)/, 'the editor opening path must use the blank-document fallback');
   const itineraryPanel = await server.ssrLoadModule('/src/itinerary/ItineraryPanel.tsx');
   const panelHtml = renderToStaticMarkup(createElement(itineraryPanel.default, {
     document: {
