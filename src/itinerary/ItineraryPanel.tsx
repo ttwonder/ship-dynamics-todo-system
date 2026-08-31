@@ -26,11 +26,12 @@ function text(value: string): string {
 export default function ItineraryPanel({ document, selected, nowMs, canEdit, onToggleSelected, onEdit }: ItineraryPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const visibleRows = expanded ? document.rows : document.rows.slice(0, 7);
+  const relativeUpdatedAt = formatRelativeUpdatedAt(document.updatedAt, nowMs);
   return <article className={`itinerary-panel ${selected ? 'selected' : ''}`} data-itinerary-vessel-id={document.vesselId}>
     <header className="itinerary-panel-head">
       <label className="itinerary-select"><input type="checkbox" checked={selected} onChange={onToggleSelected}/><span>選取</span></label>
-      <div className="itinerary-vessel-heading"><h2>{document.vesselName}</h2><p>{formatRelativeUpdatedAt(document.updatedAt, nowMs)}{document.updatedActorLabel ? `｜${document.updatedActorLabel}` : ''}</p></div>
-      <div className="itinerary-panel-meta"><span>Revision {document.revision}</span>{canEdit&&<button type="button" className="btn small itinerary-edit-button" onClick={onEdit}>手動修改</button>}</div>
+      <div className="itinerary-vessel-heading"><h2>{document.vesselName}</h2>{document.updatedActorLabel&&<p>更新者｜{document.updatedActorLabel}</p>}</div>
+      <div className="itinerary-panel-meta"><span>{relativeUpdatedAt}</span>{canEdit&&<button type="button" className="btn small itinerary-edit-button" onClick={onEdit}>手動修改</button>}</div>
     </header>
     <div className="itinerary-table-scroll" tabIndex={0} aria-label={`${document.vesselName} Itinerary`}>
       <table className="itinerary-table">

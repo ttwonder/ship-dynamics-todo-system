@@ -11,6 +11,7 @@ import ItineraryImportPreview, { type ItineraryImportApplyItem, type ItineraryIm
 import ItineraryCalendar from './ItineraryCalendar';
 import { OfficeItineraryCloudRepository } from './itineraryCloud';
 import type { ParsedItineraryWorkbook } from './itineraryExcel';
+import { itineraryVesselDisplayName, projectItineraryDocumentsForDisplay, withItineraryVesselDisplayName } from './itineraryVesselDisplay';
 import './itinerary.css';
 import './itineraryCompact.css';
 
@@ -64,9 +65,10 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
     try { return new OfficeItineraryCloudRepository(); } catch { return null; }
   }, [demoMode]);
   const backend = localBackend || cloudBackend;
+  const displayDocuments = useMemo(() => projectItineraryDocumentsForDisplay(documents, vessels), [documents, vessels]);
   const visibleIds = vessels.map(vessel => vessel.id);
   const everyVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedVesselIds.includes(id));
-  const selectedDocuments = selectedVesselIds.map(id => documents[id]).filter((document): document is ItineraryDocument => Boolean(document));
+  const selectedDocuments = selectedVesselIds.map(id => displayDocuments[id]).filter((document): document is ItineraryDocument => Boolean(document));
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
@@ -85,7 +87,7 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
           loaded = Object.fromEntries(vessels.map(vessel => [vessel.id, localBackend.loadDocument(vessel.id) || seeds[vessel.id]]));
         } else if (cloudBackend) loaded = await cloudBackend.loadMany(vessels.map(vessel => vessel.id));
         if (!current) return;
-        const materialized = Object.fromEntries(vessels.map(vessel => [vessel.id, loaded[vessel.id] || createEmptyItineraryDocument({ workspaceKey: cloudBackend?.config.workspaceKey || 'local-itinerary-demo', vesselId: vessel.id, vesselName: vessel.name })]));
+        const materialized = Object.fromEntries(vessels.map(vessel => [vessel.id, loaded[vessel.id] || createEmptyItineraryDocument({ workspaceKey: cloudBackend?.config.workspaceKey || 'local-itinerary-demo', vesselId: vessel.id, vesselName: itineraryVesselDisplayName(vessel) })]));
         setDocuments(previous => ({ ...previous, ...materialized }));
       } catch (error) {
         if (current) setNotice(error instanceof Error ? error.message : 'Itinerary 雲端載入失敗。');
@@ -119,24 +121,27 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
 
   const openEditor = async (vesselId: string) => {
     if (!backend || !permissions.edit) return;
+    const vessel = vessels.find(item => item.id === vesselId);
+    if (!vessel) return;
     setNotice('');
     const claim = await backend.claimLease(vesselId, { holderId, holderLabel: user.name }, 75);
     if (claim.ok === false) {
       setNotice(`此船 Itinerary 正由 ${claim.holderLabel} 編輯，將於鎖定到期或對方保存／取消後可再開啟。`);
       return;
     }
-    const latest = await backend.loadDocument(vesselId);
-    if (!latest) {
+    const loaded = await backend.loadDocument(vesselId);
+    if (!loaded) {
       void backend.releaseLease(claim.lease);
       setNotice('找不到此船的 Itinerary，未開啟編輯器。');
       return;
     }
+    const latest = withItineraryVesselDisplayName(loaded, vessel);
     const key = itineraryDraftKey(latest.workspaceKey, latest.vesselId, user.id);
     const savedDraft = await readItineraryDraft(key);
     let initialDocument: ItineraryDocument | undefined;
     let initialPendingOperation: ItineraryPendingOperation | undefined;
     if (savedDraft && savedDraft.baseRevision === latest.revision) {
-      if (window.confirm(`找到 ${savedDraft.savedAt.slice(0,16).replace('T',' ')} 保存的本機草稿，是否恢復？`)) { initialDocument = savedDraft.document; initialPendingOperation = savedDraft.pendingOperation; }
+      if (window.confirm(`找到 ${savedDraft.savedAt.slice(0,16).replace('T',' ')} 保存的本機草稿，是否恢復？`)) { initialDocument = withItineraryVesselDisplayName(savedDraft.document, vessel); initialPendingOperation = savedDraft.pendingOperation; }
       else await deleteItineraryDraft(key);
     } else if (savedDraft) {
       setNotice('此瀏覽器有較舊 revision 的草稿；為避免覆蓋較新內容，本次未自動載入，草稿仍保留。');
@@ -148,11 +153,12 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
     if (editor && backend) void backend.releaseLease(editor.lease);
     setDocuments(previous => ({ ...previous, [saved.vesselId]: saved }));
     setEditor(null);
-    setNotice(`已保存 ${saved.vesselName} Itinerary，Revision ${saved.revision}。`);
+    const vessel = vessels.find(item => item.id === saved.vesselId);
+    setNotice(`已保存 ${vessel ? itineraryVesselDisplayName(vessel) : saved.vesselName} Itinerary，Revision ${saved.revision}。`);
   };
 
   const exportSelected = async () => {
-    const selectedDocuments = selectedVesselIds.map(id => documents[id]).filter((document): document is ItineraryDocument => Boolean(document));
+    const selectedDocuments = selectedVesselIds.map(id => displayDocuments[id]).filter((document): document is ItineraryDocument => Boolean(document));
     if (!selectedDocuments.length || excelBusy) return;
     setExcelBusy('export');
     setNotice('正在產生 Excel…');
@@ -191,9 +197,9 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
   const applyImports = async (items: ItineraryImportApplyItem[]): Promise<ItineraryImportApplyResult[]> => {
     const results: ItineraryImportApplyResult[] = [];
     const savedDocuments: Record<string, ItineraryDocument> = {};
-    if (!backend || !permissions.import) return items.map(item => ({ sheetName: item.sheet.sheetName, vesselName: documents[item.vesselId]?.vesselName || item.vesselId, ok: false, message: '目前身份沒有匯入權限。' }));
+    if (!backend || !permissions.import) return items.map(item => ({ sheetName: item.sheet.sheetName, vesselName: displayDocuments[item.vesselId]?.vesselName || item.vesselId, ok: false, message: '目前身份沒有匯入權限。' }));
     for (const item of items) {
-      const current = documents[item.vesselId];
+      const current = displayDocuments[item.vesselId];
       if (!current) {
         results.push({ sheetName: item.sheet.sheetName, vesselName: item.vesselId, ok: false, message: '找不到目前船舶資料。' });
         continue;
@@ -233,7 +239,7 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
     {!backend&&<div className="itinerary-empty"><b>Itinerary 雲端連線不可用</b><span>為避免讀到不完整資料，目前採 fail-closed。</span></div>}
     {backend&&displayMode==='calendar'&&<ItineraryCalendar documents={selectedDocuments}/>}
     {backend&&displayMode==='table'&&<div className="itinerary-panel-list">{vessels.map(vessel=>{
-      const document=documents[vessel.id];
+      const document=displayDocuments[vessel.id];
       return document?<ItineraryPanel key={vessel.id} document={document} selected={selectedVesselIds.includes(vessel.id)} nowMs={nowMs} canEdit={permissions.edit} onToggleSelected={()=>toggleVessel(vessel.id)} onEdit={()=>void openEditor(vessel.id)}/>:null;
     })}</div>}
     {backend&&!vessels.length&&<div className="empty-state">沒有符合目前篩選條件的船舶 Itinerary</div>}
@@ -248,6 +254,6 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
       onCancel={async lease=>{await backend.releaseLease(lease);setEditor(null);}}
       onSaved={closeAfterSave}
     />}
-    {importPreview&&<ItineraryImportPreview fileName={importPreview.fileName} parsed={importPreview.parsed} documents={Object.values(documents)} selectedVesselIds={selectedVesselIds} onApply={applyImports} onClose={()=>setImportPreview(null)}/>}
+    {importPreview&&<ItineraryImportPreview fileName={importPreview.fileName} parsed={importPreview.parsed} documents={Object.values(displayDocuments)} selectedVesselIds={selectedVesselIds} onApply={applyImports} onClose={()=>setImportPreview(null)}/>}
   </section>;
 }

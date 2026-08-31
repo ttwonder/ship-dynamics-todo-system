@@ -2,13 +2,14 @@ import type { Vessel } from '../types';
 import { recalculateItineraryRows } from './itineraryDomain';
 import { addHoursToInstant, normalizeInstant } from './itineraryTime';
 import { createBlankItineraryRow, createEmptyItineraryDocument, type ItineraryDocument } from './itineraryTypes';
+import { itineraryVesselDisplayName } from './itineraryVesselDisplay';
 
 function safeBaseInstant(nowMs: number): string {
   return normalizeInstant(new Date(nowMs + 6 * 60 * 60 * 1000).toISOString()) || '2026-08-31T08:00:00Z';
 }
 
 export function createDemoItineraryDocument(vessel: Vessel, index: number, nowMs = Date.now()): ItineraryDocument {
-  const document = createEmptyItineraryDocument({ workspaceKey: 'local-itinerary-demo', vesselId: vessel.id, vesselName: vessel.fullName || vessel.name || vessel.shortName, rowId: `demo-${vessel.id}-1` });
+  const document = createEmptyItineraryDocument({ workspaceKey: 'local-itinerary-demo', vesselId: vessel.id, vesselName: itineraryVesselDisplayName(vessel), rowId: `demo-${vessel.id}-1` });
   const first = document.rows[0];
   const baseEta = safeBaseInstant(nowMs + index * 45 * 60 * 1000);
   Object.assign(first, {

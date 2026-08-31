@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 
 const server = await createServer({ root: process.cwd(), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
@@ -7,6 +9,45 @@ try {
   const rollout = await server.ssrLoadModule('/src/itinerary/itineraryRollout.ts');
   const dashboardSource = fs.readFileSync('src/Dashboard.tsx', 'utf8');
   const itineraryDashboardSource = fs.readFileSync('src/itinerary/ItineraryDashboard.tsx', 'utf8');
+  const vesselDisplayPath = 'src/itinerary/itineraryVesselDisplay.ts';
+  assert.equal(fs.existsSync(vesselDisplayPath), true, 'Itinerary must project the same vessel display name used by vessel cards');
+  const vesselDisplay = await server.ssrLoadModule(`/${vesselDisplayPath}`);
+  const demoData = await server.ssrLoadModule('/src/itinerary/itineraryDemoData.ts');
+  const amber = {
+    id: 'vessel-amber',
+    name: '安華',
+    shortName: 'S AMBER',
+    fullName: 'FPMC S AMBER',
+    position: { lastPort: '', location: '', nextPort: '' },
+    cargo: { loadStatus: '空載', items: [] },
+  };
+  const cloudDocument = { vesselId: amber.id, vesselName: '安華' };
+  const projectedDocuments = vesselDisplay.projectItineraryDocumentsForDisplay({ [amber.id]: cloudDocument }, [amber]);
+  assert.equal(projectedDocuments[amber.id].vesselName, '安華 FPMC S AMBER', 'cloud documents must use the vessel-card display name');
+  assert.equal(cloudDocument.vesselName, '安華', 'display projection must not rewrite the authoritative cloud document');
+  assert.equal(demoData.createDemoItineraryDocument(amber, 0, Date.parse('2026-08-31T08:00:00Z')).vesselName, '安華 FPMC S AMBER', 'local demo must use the vessel-card display name');
+  const itineraryPanel = await server.ssrLoadModule('/src/itinerary/ItineraryPanel.tsx');
+  const panelHtml = renderToStaticMarkup(createElement(itineraryPanel.default, {
+    document: {
+      workspaceKey: 'ship-dynamics',
+      vesselId: amber.id,
+      vesselName: '安華 FPMC S AMBER',
+      revision: 7,
+      schemaVersion: 1,
+      rows: [],
+      updatedAt: '2026-08-31T06:00:00Z',
+      updatedActorKind: 'office',
+      updatedActorLabel: 'Owner',
+    },
+    selected: false,
+    nowMs: Date.parse('2026-08-31T08:00:00Z'),
+    canEdit: true,
+    onToggleSelected() {},
+    onEdit() {},
+  }));
+  assert.doesNotMatch(panelHtml, /Revision/i, 'ordinary Itinerary cards must not expose the internal revision');
+  assert.match(panelHtml, /class="itinerary-panel-meta"><span>2 小時前更新<\/span>/, 'the card meta area must show relative update time');
+  assert.equal(panelHtml.match(/2 小時前更新/g)?.length, 1, 'relative update time must be shown exactly once');
 
   assert.equal(rollout.localItineraryDemoRequested({ hostname: '127.0.0.1', search: '?itineraryDemo=1' }), true);
   assert.equal(rollout.localItineraryDemoRequested({ hostname: 'localhost', search: '?x=1&itineraryDemo=1' }), true);
