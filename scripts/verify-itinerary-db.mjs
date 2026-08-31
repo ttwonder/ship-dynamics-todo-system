@@ -57,6 +57,17 @@ try {
   `);
   await db.exec(foundation);
   await db.exec(`
+    create table public.sd_login_options(
+      workspace_id uuid not null references public.sd_workspaces(id) on delete cascade,
+      user_id uuid not null references auth.users(id) on delete cascade,
+      department text not null,
+      username_label text not null,
+      display_name text not null,
+      auth_alias text not null,
+      is_active boolean not null default true,
+      must_change_password boolean not null default true,
+      primary key(workspace_id,user_id)
+    );
     insert into auth.users(id,email) values
       ('${ids.owner}','owner@invalid'),('${ids.admin}','admin@invalid'),('${ids.outsider}','outsider@invalid');
     insert into public.sd_workspaces(id,legacy_key,name) values('${ids.workspace}','default','Ship Dynamics');
@@ -64,6 +75,9 @@ try {
       ('${ids.owner}','Owner','owner'),('${ids.admin}','Admin','admin'),('${ids.outsider}','Outsider','outsider');
     insert into public.sd_memberships(workspace_id,user_id,department,role,is_active) values
       ('${ids.workspace}','${ids.owner}','管理','owner',true),('${ids.workspace}','${ids.admin}','管理','admin',true);
+    insert into public.sd_login_options(workspace_id,user_id,department,username_label,display_name,auth_alias,is_active,must_change_password) values
+      ('${ids.workspace}','${ids.owner}','管理','owner','Owner','owner@invalid',true,false),
+      ('${ids.workspace}','${ids.admin}','管理','admin','Admin','admin@invalid',true,false);
     insert into public.sd_vessels(workspace_id,id,name,short_name,full_name,ship_type,fleet_category) values
       ('${ids.workspace}','v1','Vessel One','V1','Vessel One','bulk','fleet'),
       ('${ids.workspace}','v2','Vessel Two','V2','Vessel Two','tanker','fleet');
@@ -76,7 +90,9 @@ try {
   assert.equal(ownerInitial.main_enabled, false);
   assert.equal(ownerInitial.ship_portal_enabled, false);
   assert.equal(ownerInitial.role_permissions.owner.view, true);
+  assert.deepEqual(ownerInitial.office_identity, { department: '管理', display_name: 'Owner', username_label: 'owner', role: 'owner' });
   assert.equal((await rollout(ids.admin)).role_permissions.admin.view, false);
+  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'owner'])), false);
   assert.deepEqual(await asAnon(() => scalar('select public.sd_itinerary_get_public_rollout($1)', ['default'])), { ship_portal_enabled: false });
   assert.deepEqual(await asAnon(() => scalar('select public.sd_itinerary_public_list_vessels($1)', ['default'])), []);
   await assert.rejects(() => asAnon(() => db.query('select * from public.sd_itinerary_documents')), /permission denied/i);
@@ -85,12 +101,26 @@ try {
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ sailingHours: 19 })])]), false);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify(Array.from({ length: 101 }, (_, index) => row({ rowId: `row-${index}`, sortOrder: index })))]), false);
 
+  await db.query('update public.sd_login_options set must_change_password=true where workspace_id=$1 and user_id=$2', [ids.workspace, ids.owner]);
+  assert.equal((await rollout(ids.owner)).office_identity, null);
+  await assert.rejects(() => updateRollout(1, nextOperation(), true, false, rolePermissions()), /owner-required/i);
+  await assert.rejects(() => asUser(ids.owner, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']])), /not-authorized/i);
+  await assert.rejects(() => asUser(ids.owner, () => scalar('select public.sd_itinerary_operation_status_office($1,$2::uuid)', ['default', '90000000-0000-4000-8000-999999999999'])), /not-authorized/i);
+  await db.query('update public.sd_login_options set must_change_password=false where workspace_id=$1 and user_id=$2', [ids.workspace, ids.owner]);
+
   const rolloutOp = nextOperation();
   const enabled = await updateRollout(1, rolloutOp, true, false, rolePermissions());
   assert.equal(enabled.version, 2);
   assert.equal((await updateRollout(1, rolloutOp, true, false, rolePermissions())).replayed, true);
   await assert.rejects(() => updateRollout(1, rolloutOp, true, true, rolePermissions()), /operation-mismatch/i);
   assert.equal((await rollout(ids.owner)).main_enabled, true);
+  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'owner'])), true);
+  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'admin'])), false);
+  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'vessel'])), false);
+  await assert.rejects(
+    () => updateRollout(2, nextOperation(), true, false, { ...rolePermissions(), vessel: { view: true, edit: false, import: false, export: false, calendar: false } }),
+    /invalid-role-permissions/i,
+  );
   await assert.rejects(() => asUser(ids.admin, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']])), /not-authorized/i);
 
   const ownerLease = await asUser(ids.owner, () => scalar('select public.sd_itinerary_claim_office_lease($1,$2,$3,$4,$5)', ['default', 'v1', 'owner-tab', 'Owner', 75]));
@@ -149,6 +179,7 @@ try {
 
   const adminPermissionsOp = nextOperation();
   await updateRollout(3, adminPermissionsOp, true, true, rolePermissions({ view: true, export: true, calendar: true }));
+  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'admin'])), true);
   const adminLoaded = await asUser(ids.admin, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']]));
   assert.equal(adminLoaded[0].document.revision, 2);
   await assert.rejects(() => asUser(ids.admin, () => scalar('select public.sd_itinerary_claim_office_lease($1,$2,$3,$4,$5)', ['default', 'v1', 'admin-tab', 'Admin', 75])), /not-authorized/i);
@@ -165,17 +196,19 @@ try {
   const privileges = (await db.query(`select
     has_table_privilege('anon','public.sd_itinerary_documents','SELECT') as anon_table,
     has_table_privilege('authenticated','public.sd_itinerary_documents','SELECT') as auth_table,
+    has_function_privilege('anon','public.sd_itinerary_get_office_entry(text,text)','EXECUTE') as anon_office_entry,
     has_function_privilege('anon','public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)','EXECUTE') as anon_public_save,
     has_function_privilege('anon','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE') as anon_office_save,
     has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE') as auth_office_save
   `)).rows[0];
-  assert.deepEqual(privileges, { anon_table: false, auth_table: false, anon_public_save: true, anon_office_save: false, auth_office_save: true });
+  assert.deepEqual(privileges, { anon_table: false, auth_table: false, anon_office_entry: true, anon_public_save: true, anon_office_save: false, auth_office_save: true });
 
   const readback = (await db.query(readbackSql)).rows[0].itinerary_readback;
   assert.ok(Object.values(readback.tables).every(Boolean));
   assert.ok(Object.values(readback.functions).every(Boolean));
   assert.deepEqual(readback.privileges, {
     anonOfficeSaveExecute: false,
+    anonOfficeEntryExecute: true,
     anonPublicSaveExecute: true,
     anonDirectDocumentSelect: false,
     authenticatedOfficeSaveExecute: true,

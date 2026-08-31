@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { UserRole } from '../types';
+import type { UserAccount, UserRole } from '../types';
 import { getSupabaseClient, getSupabaseConfig } from '../cloud';
 import { getItineraryOfficeClient } from './itineraryCloud';
+import { inspectExistingItineraryOfficeSession, type ItineraryOfficeAuthClient } from './itineraryOfficeAuth';
 
 export type ItineraryPermissionAction = 'view' | 'edit' | 'import' | 'export' | 'calendar';
 export type ItineraryPermissions = Record<ItineraryPermissionAction, boolean>;
@@ -13,6 +14,8 @@ export interface ItineraryRollout {
   demoMode: boolean;
   loading: boolean;
   source: 'disabled' | 'local-demo' | 'cloud';
+  authStatus: 'not-required' | 'required' | 'unavailable' | 'verified';
+  authMessage: string;
 }
 
 export interface LocationLike {
@@ -22,8 +25,12 @@ export interface LocationLike {
 
 const noPermissions = (): ItineraryPermissions => ({ view: false, edit: false, import: false, export: false, calendar: false });
 
-export function disabledItineraryRollout(_role: UserRole): ItineraryRollout {
-  return { mainEnabled: false, shipPortalEnabled: false, permissions: noPermissions(), demoMode: false, loading: false, source: 'disabled' };
+export function disabledItineraryRollout(
+  _role: UserRole,
+  authStatus: ItineraryRollout['authStatus'] = 'not-required',
+  authMessage = '',
+): ItineraryRollout {
+  return { mainEnabled: false, shipPortalEnabled: false, permissions: noPermissions(), demoMode: false, loading: false, source: 'disabled', authStatus, authMessage };
 }
 
 export function localItineraryDemoRequested(location: LocationLike): boolean {
@@ -42,6 +49,8 @@ export function localDemoRollout(role: UserRole, location: LocationLike): Itiner
     demoMode: true,
     loading: false,
     source: 'local-demo',
+    authStatus: 'verified',
+    authMessage: '',
   };
 }
 
@@ -53,7 +62,7 @@ export function parseItineraryRollout(value: unknown, role: UserRole): Itinerary
   const payload = Array.isArray(value) ? record(value[0]) : record(value);
   const rolePermissions = record(payload?.role_permissions);
   const permissionRow = record(rolePermissions?.[role]);
-  if (payload?.main_enabled !== true || !permissionRow || permissionRow.view !== true) return disabledItineraryRollout(role);
+  if (payload?.main_enabled !== true || !permissionRow || permissionRow.view !== true) return disabledItineraryRollout(role, 'verified');
   const permissions: ItineraryPermissions = {
     view: permissionRow.view === true,
     edit: permissionRow.edit === true,
@@ -68,27 +77,37 @@ export function parseItineraryRollout(value: unknown, role: UserRole): Itinerary
     demoMode: false,
     loading: false,
     source: 'cloud',
+    authStatus: 'verified',
+    authMessage: '',
   };
 }
 
-export async function fetchItineraryRollout(role: UserRole, location?: LocationLike): Promise<ItineraryRollout> {
+export async function fetchItineraryRollout(user: Pick<UserAccount, 'department' | 'name' | 'username' | 'role'>, location?: LocationLike): Promise<ItineraryRollout> {
+  const role = user.role;
   if (location) {
     const demo = localDemoRollout(role, location);
     if (demo.mainEnabled) return demo;
   }
   const config = getSupabaseConfig();
   const client = getItineraryOfficeClient(config);
-  if (!config || !client) return disabledItineraryRollout(role);
+  const publicClient = getSupabaseClient(config);
+  if (!config || !client || !publicClient) return disabledItineraryRollout(role, 'unavailable', 'Itinerary 雲端尚未設定。');
   try {
-    const { data, error } = await client.rpc('sd_itinerary_get_rollout', { p_workspace_key: config.workspaceKey });
-    if (error) return disabledItineraryRollout(role);
-    return parseItineraryRollout(data, role);
+    const inspected = await inspectExistingItineraryOfficeSession(user, config, client as unknown as ItineraryOfficeAuthClient);
+    if (inspected.status === 'verified') return parseItineraryRollout(inspected.rollout, role);
+    if (inspected.status === 'unavailable') return disabledItineraryRollout(role, 'unavailable', inspected.message);
+    const { data, error } = await publicClient.rpc('sd_itinerary_get_office_entry', { p_workspace_key: config.workspaceKey, p_role: role });
+    if (error) return disabledItineraryRollout(role, 'unavailable', '暫時無法確認 Itinerary 入口。');
+    return data === true
+      ? disabledItineraryRollout(role, 'required', inspected.message)
+      : disabledItineraryRollout(role);
   } catch {
-    return disabledItineraryRollout(role);
+    return disabledItineraryRollout(role, 'unavailable', 'Itinerary 身份驗證暫時無法使用。');
   }
 }
 
-export function useItineraryRollout(role: UserRole): ItineraryRollout {
+export function useItineraryRollout(user: Pick<UserAccount, 'department' | 'name' | 'username' | 'role'>, authGeneration = 0): ItineraryRollout {
+  const role = user.role;
   const location = typeof window === 'undefined' ? undefined : { hostname: window.location.hostname, search: window.location.search };
   const immediate = location ? localDemoRollout(role, location) : disabledItineraryRollout(role);
   const [rollout, setRollout] = useState<ItineraryRollout>(() => immediate.mainEnabled ? immediate : { ...immediate, loading: true });
@@ -101,9 +120,9 @@ export function useItineraryRollout(role: UserRole): ItineraryRollout {
       return () => { current = false; };
     }
     setRollout({ ...disabledItineraryRollout(role), loading: true });
-    void fetchItineraryRollout(role, location).then(result => { if (current) setRollout(result); });
+    void fetchItineraryRollout(user, location).then(result => { if (current) setRollout(result); });
     return () => { current = false; };
-  }, [role, location?.hostname, location?.search]);
+  }, [role, user.department, user.name, user.username, authGeneration, location?.hostname, location?.search]);
 
   return rollout;
 }

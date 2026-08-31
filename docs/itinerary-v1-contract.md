@@ -20,6 +20,9 @@
 - 本機可用明確 demo 模式顯示，畫面必須標示「真實 UI＋測試資料」。demo 模式只能在 loopback host 生效。
 - 船端頁正式驗收前 `ship_portal_enabled=false`：只顯示「Itinerary 尚未開放」，不列船、不讀 document、不 claim lease。
 - 正式啟用後船端頁依已確認決定採公開讀寫；這是產品取捨，不描述成身分驗證。
+- production entry 保留現行 `App.tsx`；Itinerary 的 Supabase Auth 只在其專用驗證入口建立，不切換整站 `NormalizedApp`，驗證失敗也不得阻止現有網站使用。
+- 主站 Itinerary session 必須由 server rollout 回傳的 department／username label／display name／role 與目前 App 使用者完全相符；網站登出或切換為其他使用者時必須清除 Itinerary local session，任何錯配也必須 fail closed 並清除。
+- Itinerary migration 以前置安裝的 normalized Auth orchestration（含 `sd_login_options`、site-unlock／login-directory）為 prerequisite；`must_change_password=true` 的 session 在 DB 層不得讀寫 office Itinerary。
 
 ## 3. 主網站視圖
 

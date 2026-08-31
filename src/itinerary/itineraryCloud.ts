@@ -6,6 +6,8 @@ import { normalizeInstant } from './itineraryTime';
 import type { ItineraryDocument } from './itineraryTypes';
 import { validateItineraryDocument } from './itineraryValidation';
 
+export const ITINERARY_OFFICE_SESSION_STORAGE_KEY = 'ship-dynamics.itinerary.supabase-session';
+
 let officeClient: SupabaseClient | null = null;
 let officeClientKey = '';
 
@@ -17,7 +19,7 @@ export function getItineraryOfficeClient(config: ResolvedSupabaseConfig | null =
       supabaseUrl: config.supabaseUrl,
       supabaseAnonKey: config.supabaseAnonKey,
       workspaceId: config.workspaceKey,
-      storageKey: 'ship-dynamics.normalized.supabase-session',
+      storageKey: ITINERARY_OFFICE_SESSION_STORAGE_KEY,
     });
     officeClientKey = key;
   }

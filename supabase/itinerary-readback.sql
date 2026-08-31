@@ -11,6 +11,7 @@ with expected_tables(name) as (
 expected_functions(signature) as (
   values
     ('sd_itinerary_get_rollout(text)'),
+    ('sd_itinerary_get_office_entry(text,text)'),
     ('sd_itinerary_get_public_rollout(text)'),
     ('sd_itinerary_load_many(text,text[])'),
     ('sd_itinerary_public_list_vessels(text)'),
@@ -51,6 +52,7 @@ privilege_receipt as (
   select jsonb_build_object(
     'anonDirectDocumentSelect', has_table_privilege('anon','public.sd_itinerary_documents','SELECT'),
     'authenticatedDirectDocumentSelect', has_table_privilege('authenticated','public.sd_itinerary_documents','SELECT'),
+    'anonOfficeEntryExecute', has_function_privilege('anon','public.sd_itinerary_get_office_entry(text,text)','EXECUTE'),
     'anonPublicSaveExecute', has_function_privilege('anon','public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)','EXECUTE'),
     'anonOfficeSaveExecute', has_function_privilege('anon','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE'),
     'authenticatedOfficeSaveExecute', has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE')
