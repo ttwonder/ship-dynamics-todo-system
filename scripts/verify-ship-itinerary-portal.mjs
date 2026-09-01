@@ -12,7 +12,7 @@ try {
   const layoutPath = 'src/itinerary/itineraryFieldLayout.ts';
   assert.equal(fs.existsSync(layoutPath), true, 'main and ship editors need one shared field layout authority');
   const layout = await server.ssrLoadModule(`/${layoutPath}`);
-  assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Next Port & Dock Name','UTC Offset','Purpose','B/F or I/F Qty (MT/BBLS)','ETA (LT)','ETB (LT)','預計L/D rate (MT/h)','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','Arr ROB','Dep ROB','備註信息']);
+  assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Next Port & Dock Name','UTC Offset','Purpose','B/F or I/F Qty (MT/BBLS)','ETA (LT)','ETB (LT)','預計L/D rate (MT/h)','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','Arr ROB\n(Cargo/Fuel/FW)','Dep ROB\n(Cargo/Fuel/FW)','備註信息']);
   assert.deepEqual(layout.ITINERARY_PARAMETER_FIELD_LABELS, ['DTG(NM)','預估航速(kn)','剩餘航行時間(h)','預估等待時間(靠泊前)(h)','預計航道航行時間(h)','作業艙號','裝卸貨量(MT)','預計L/D rate (MT/h)','預計作業時間(h)','預估等待/延誤時間(完貨前)(h)','預估等待/延誤時間(完貨後)(h)']);
   assert.deepEqual(layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS, [70,175,96,155,155,246,246,80,246,246,98,98,147,147,175]);
   assert.deepEqual(layout.ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS, [82,82,82,82,82,135,100,82,82,82,82]);
@@ -134,6 +134,7 @@ try {
   const dateInput = fs.readFileSync('src/itinerary/ItineraryDateInput.tsx', 'utf8');
   const purposeInput = fs.readFileSync('src/itinerary/ItineraryOperationOptions.tsx', 'utf8');
   const css = fs.readFileSync('src/itinerary/shipItinerary.css', 'utf8');
+  const officeCompactCss = fs.readFileSync('src/itinerary/itineraryCompact.css', 'utf8');
   const browsePath = 'src/itinerary/ItineraryBrowseTable.tsx';
   const browseCssPath = 'src/itinerary/itineraryBrowseTable.css';
   assert.equal(fs.existsSync(browsePath), true, 'main and ship browse views need one shared table renderer');
@@ -152,6 +153,8 @@ try {
   });
   const collapsedBrowse = renderToStaticMarkup(createElement(browseModule.ItineraryBrowseTable, { rows: [browseRow], showMoreParameters: false, ariaLabel: 'collapsed itinerary' }));
   const expandedBrowse = renderToStaticMarkup(createElement(browseModule.ItineraryBrowseTable, { rows: [browseRow], showMoreParameters: true, ariaLabel: 'expanded itinerary' }));
+  assert.match(collapsedBrowse, /Arr ROB\n\(Cargo\/Fuel\/FW\)/, 'shared Owner and ship browse header must render Arr ROB on two lines');
+  assert.match(collapsedBrowse, /Dep ROB\n\(Cargo\/Fuel\/FW\)/, 'shared Owner and ship browse header must render Dep ROB on two lines');
   assert.match(collapsedBrowse, /備註信息/);
   assert.match(collapsedBrowse, /靠港前請確認拖輪/);
   assert.doesNotMatch(collapsedBrowse, /DTG\(NM\)/, 'estimate parameters must stay hidden by default');
@@ -183,7 +186,8 @@ try {
   assert.match(editor, /ship-editor-parameter-pane/);
   assert.match(css, /\.ship-editor-workspace\{[^}]*grid-template-columns:minmax\(0,var\(--ship-editor-left/);
   assert.match(css, /\.ship-editor-resizer\{/);
-  assert.match(css, /\.ship-editor-grid th\{[^}]*white-space:normal[^}]*overflow-wrap:anywhere/);
+  assert.match(css, /\.ship-editor-grid th\.itinerary-field-heading-multiline\{white-space:pre-line!important\}/, 'ship editor must preserve the explicit ROB heading line break');
+  assert.match(officeCompactCss, /\.itinerary-editor-table th\.itinerary-field-heading-multiline\{white-space:pre-line\}/, 'Owner editor must preserve the explicit ROB heading line break');
   assert.doesNotMatch(css, /prefers-color-scheme:dark/);
   assert.match(css, /--ship-card:#fff/);
   assert.doesNotMatch(editor, /<th>[A-W]\s/);
@@ -224,6 +228,7 @@ try {
   assert.match(css, /\.ship-vessel-picker select\{[^}]*color-scheme:light[^}]*color:#172033/);
   assert.match(css, /\.ship-vessel-picker option\{[^}]*background:#fff[^}]*color:#172033/);
   assert.match(browseCss, /\.itinerary-browse-table\s*\{[^}]*font-size:\s*12px/);
+  assert.match(browseCss, /\.itinerary-browse-table th\.itinerary-field-heading-multiline\s*\{[^}]*white-space:\s*pre-line/, 'shared browse header CSS must preserve the explicit ROB heading line break');
   assert.match(browseCss, /\.itinerary-browse-time\s*\{[^}]*white-space:\s*nowrap/);
   assert.match(css, /\.ship-editor-grid\{[^}]*font-size:12px/);
   assert.match(css, /\.ship-time-input\{[^}]*grid-template-columns:20px 118px 92px/, 'native time inputs need enough width to show all HH:mm digits');

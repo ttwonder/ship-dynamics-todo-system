@@ -43,6 +43,10 @@
   white-space: normal;
 }
 
+.itinerary-browse-table th.itinerary-field-heading-multiline {
+  white-space: pre-line;
+}
+
 .itinerary-browse-table td {
   background: #fff;
   white-space: nowrap;

@@ -11,8 +11,8 @@ export const ITINERARY_MAIN_FIELD_LABELS = [
   'ETD (LT)',
   'Arr Draft',
   'Dep Draft',
-  'Arr ROB',
-  'Dep ROB',
+  'Arr ROB\n(Cargo/Fuel/FW)',
+  'Dep ROB\n(Cargo/Fuel/FW)',
   '備註信息',
 ] as const;
 

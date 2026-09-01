@@ -11,7 +11,7 @@ import {
 export const ITINERARY_EMAIL_COPY_SUCCESS_MESSAGE = '已復製，請去郵箱客戶端粘貼';
 
 const copyStartIndex = ITINERARY_MAIN_FIELD_LABELS.indexOf('Voy No.');
-const copyEndIndex = ITINERARY_MAIN_FIELD_LABELS.indexOf('Dep ROB');
+const copyEndIndex = ITINERARY_MAIN_FIELD_LABELS.findIndex(label => label.startsWith('Dep ROB'));
 
 export const ITINERARY_EMAIL_COPY_FIELD_LABELS = ITINERARY_MAIN_FIELD_LABELS.slice(copyStartIndex, copyEndIndex + 1);
 

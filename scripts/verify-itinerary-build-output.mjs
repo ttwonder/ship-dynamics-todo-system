@@ -23,6 +23,8 @@ assert.ok(builtJs.includes('一鍵複製並發送郵件'), 'production JavaScrip
 assert.ok(builtJs.includes('已復製，請去郵箱客戶端粘貼'), 'production JavaScript must include the exact copy confirmation');
 assert.ok(builtJs.includes('text/html') && builtJs.includes('text/plain'), 'production JavaScript must include rich and plain clipboard MIME types');
 assert.ok(builtJs.includes('mailto:?subject='), 'production JavaScript must request the standard mailto protocol');
+assert.ok(builtJs.includes('Arr ROB\n(Cargo/Fuel/FW)'), 'production JavaScript must include the two-line Arr ROB heading');
+assert.ok(builtJs.includes('Dep ROB\n(Cargo/Fuel/FW)'), 'production JavaScript must include the two-line Dep ROB heading');
 const findCssRule = selector => {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return builtCss.match(new RegExp(`${escaped}\\{[^}]*\\}`))?.[0] || '';
@@ -35,6 +37,9 @@ const assertRuleIncludes = (selector, declarations) => {
 assertRuleIncludes('.itinerary-calendar-controls', ['font-size:12px', 'min-height:42px']);
 assertRuleIncludes('.itinerary-calendar-day-track', ['height:36px', 'background:#243142', 'color:#f8fafc']);
 assertRuleIncludes('.itinerary-calendar-event', ['height:28px', 'background:#176b5b', 'color:#fff', 'font-size:12px']);
+assertRuleIncludes('.itinerary-browse-table th.itinerary-field-heading-multiline', ['white-space:pre-line']);
+assertRuleIncludes('.itinerary-editor-table th.itinerary-field-heading-multiline', ['white-space:pre-line']);
+assertRuleIncludes('.ship-editor-grid th.itinerary-field-heading-multiline', ['white-space:pre-line']);
 assert.doesNotMatch(builtCss, /@media\(prefers-color-scheme:dark\)\{\.itinerary-calendar/, 'production CSS must not restore the partial dark calendar override');
 
 console.log('itinerary_build_output=PASS');

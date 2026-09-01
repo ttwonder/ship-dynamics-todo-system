@@ -184,7 +184,7 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
         <div className="ship-editor-pane-scroll" tabIndex={0}>
           <table className="ship-editor-grid ship-editor-main-table" style={{ width: ITINERARY_EDITOR_MAIN_TABLE_WIDTH }}>
             <colgroup><col style={{ width: ITINERARY_EDITOR_ROW_NUMBER_WIDTH }} />{ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS.map((width, index) => <col key={`main-${index}`} style={{ width }} />)}<col style={{ width: ITINERARY_EDITOR_ACTION_WIDTH }} /></colgroup>
-            <thead><tr><th>#</th>{ITINERARY_MAIN_FIELD_LABELS.map(label => <th key={label}>{label}</th>)}<th>操作</th></tr></thead>
+            <thead><tr><th>#</th>{ITINERARY_MAIN_FIELD_LABELS.map(label => <th className={label.includes('\n') ? 'itinerary-field-heading-multiline' : undefined} key={label}>{label}</th>)}<th>操作</th></tr></thead>
             <tbody>{document.rows.map((row, index) => <tr key={row.rowId}>
               <td className="ship-row-number">{index + 1}</td>
               <td><input value={row.voyageNumber} disabled={readOnly} onChange={event => patchRow(row.rowId, { voyageNumber: event.target.value })} /></td>

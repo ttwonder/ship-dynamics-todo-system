@@ -104,7 +104,7 @@ export function ItineraryBrowseTable({ rows, showMoreParameters, ariaLabel }: It
         {showMoreParameters && ITINERARY_BROWSE_PARAMETER_COLUMN_WIDTHS.map((width, index) => <col key={`parameter-${index}`} style={{ width }} />)}
       </colgroup>
       <thead><tr>
-        {ITINERARY_MAIN_FIELD_LABELS.map((label, index) => <th key={`main-${index}`}>{label}</th>)}
+        {ITINERARY_MAIN_FIELD_LABELS.map((label, index) => <th className={label.includes('\n') ? 'itinerary-field-heading-multiline' : undefined} key={`main-${index}`}>{label}</th>)}
         {showMoreParameters && ITINERARY_PARAMETER_FIELD_LABELS.map((label, index) => <th className="itinerary-browse-parameter-heading" key={`parameter-${index}`}>{label}</th>)}
       </tr></thead>
       <tbody>{rows.map(row => <tr key={row.rowId}>

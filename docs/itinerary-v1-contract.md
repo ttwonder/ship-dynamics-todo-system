@@ -160,7 +160,7 @@ etd_utc = etc_utc + post_completion_delay_hours
 - 選船後可 `從空白開始` 或 `載入最新版本`。
 - 船名清單及標題使用與主站船舶卡片相同的 `中文名 + fullName` 顯示規則；所有 active 船舶皆可選。
 - 桌面與手機都使用緊湊 spreadsheet table；手機將主資料與參數 pane 上下堆疊，各 pane 自己橫向捲動。
-- 非編輯與編輯狀態的主資料區均使用主站 A:N 相同欄名、順序、字體與欄寬 authority，不顯示 Excel A–W 字母前綴；瀏覽狀態可在 `備註信息` 後展開 11 個預估參數欄。
+- 非編輯與編輯狀態的主資料區均使用主站 A:N 相同欄名、順序、字體與欄寬 authority，不顯示 Excel A–W 字母前綴；Web 與郵件表格的 ROB 欄頭固定分兩行顯示 `Arr ROB\n(Cargo/Fuel/FW)`、`Dep ROB\n(Cargo/Fuel/FW)`，Excel 匯入／匯出欄名仍維持 `Arr ROB`、`Dep ROB` 以保留模板相容；瀏覽狀態可在 `備註信息` 後展開 11 個預估參數欄。
 - 編輯器分為 `輸入／計算區` 與 `自動計算用變化參數區`，兩區各自水平捲動；桌面分隔條可用滑鼠／鍵盤調整寬度，手機回到單欄。
 - 可新增、複製、排序、刪除列；至少保留一列。
 - 日期可用文字手動輸入／貼上（`YYYY-MM-DD`、`YYYY/MM/DD`、`YYYYMMDD`）或原生 picker；時間另行輸入。

@@ -209,7 +209,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
       </header>
       {(message||idleWarning)&&<div className={`itinerary-editor-message ${readOnly?'error':idleWarning?'warning':''}`} role="status">{message||'已閒置 8 分鐘；再無操作將於 10 分鐘時退出可寫狀態並保留草稿。'}</div>}
       <div className="itinerary-editor-table-wrap">
-        <table className="itinerary-editor-table" style={{ width: ITINERARY_EDITOR_MAIN_TABLE_WIDTH }}><colgroup><col style={{ width: ITINERARY_EDITOR_ROW_NUMBER_WIDTH }} />{ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS.map((width,index)=><col key={`main-${index}`} style={{ width }} />)}<col style={{ width: ITINERARY_EDITOR_ACTION_WIDTH }} /></colgroup><thead><tr><th>#</th>{ITINERARY_MAIN_FIELD_LABELS.map(label=><th key={label}>{label}</th>)}<th>操作</th></tr></thead>
+        <table className="itinerary-editor-table" style={{ width: ITINERARY_EDITOR_MAIN_TABLE_WIDTH }}><colgroup><col style={{ width: ITINERARY_EDITOR_ROW_NUMBER_WIDTH }} />{ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS.map((width,index)=><col key={`main-${index}`} style={{ width }} />)}<col style={{ width: ITINERARY_EDITOR_ACTION_WIDTH }} /></colgroup><thead><tr><th>#</th>{ITINERARY_MAIN_FIELD_LABELS.map(label=><th className={label.includes('\n')?'itinerary-field-heading-multiline':undefined} key={label}>{label}</th>)}<th>操作</th></tr></thead>
           <tbody>{draft.rows.map((row,index)=><tr key={row.rowId}>
             <td>{index+1}</td>
             <td><input value={row.voyageNumber} disabled={readOnly} onChange={event=>updateRow(row.rowId,{voyageNumber:event.target.value})}/></td>

@@ -40,6 +40,7 @@
 .itinerary-editor-table{width:2200px;font-size:10px;line-height:1.05}
 .itinerary-editor-table th,.itinerary-editor-table td{height:32px;padding:2px 3px;vertical-align:middle}
 .itinerary-editor-table th{height:24px;font-size:8.5px;line-height:1.05;white-space:nowrap}
+.itinerary-editor-table th.itinerary-field-heading-multiline{white-space:pre-line}
 .itinerary-editor-table th:first-child,.itinerary-editor-table td:first-child{width:27px}
 .itinerary-editor-table th:nth-child(2){width:64px}
 .itinerary-editor-table th:nth-child(3){width:260px}

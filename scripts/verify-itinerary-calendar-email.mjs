@@ -60,21 +60,22 @@ try {
     oceanDistanceNm: 999,
   });
   assert.deepEqual(email.ITINERARY_EMAIL_COPY_FIELD_LABELS.slice(0, 1), ['Voy No.']);
-  assert.equal(email.ITINERARY_EMAIL_COPY_FIELD_LABELS.at(-1), 'Dep ROB');
+  assert.equal(email.ITINERARY_EMAIL_COPY_FIELD_LABELS.at(-1), 'Dep ROB\n(Cargo/Fuel/FW)');
   assert.equal(email.ITINERARY_EMAIL_COPY_FIELD_LABELS.length, 14);
   assert.ok(!email.ITINERARY_EMAIL_COPY_FIELD_LABELS.includes('備註信息'));
 
   const payload = email.buildItineraryClipboardPayload(doc);
   assert.match(payload.html, /^<table\b/);
   assert.match(payload.html, /<th[^>]*>Voy No\.<\/th>/);
-  assert.match(payload.html, /<th[^>]*>Dep ROB<\/th>/);
+  assert.match(payload.html, /<th[^>]*>Arr ROB<br>\(Cargo\/Fuel\/FW\)<\/th>/);
+  assert.match(payload.html, /<th[^>]*>Dep ROB<br>\(Cargo\/Fuel\/FW\)<\/th>/);
   assert.match(payload.html, /V&lt;001&gt;/);
   assert.match(payload.html, /ULSAN<br>BERTH 2/);
   assert.ok(!payload.html.includes('DO NOT COPY'));
   assert.ok(!payload.html.includes('DTG(NM)'));
   const plainLines = payload.text.split('\r\n');
   assert.equal(plainLines[0].split('\t')[0], 'Voy No.');
-  assert.equal(plainLines[0].split('\t').at(-1), 'Dep ROB');
+  assert.equal(plainLines[0].split('\t').at(-1), 'Dep ROB / (Cargo/Fuel/FW)');
   assert.equal(plainLines[1].split('\t').length, 14);
   assert.ok(plainLines[1].endsWith('FO: 800 / DO: 60'));
   assert.ok(!payload.text.includes('DO NOT COPY'));
