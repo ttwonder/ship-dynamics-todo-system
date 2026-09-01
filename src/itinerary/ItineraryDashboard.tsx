@@ -253,7 +253,7 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
     {backend&&displayMode==='calendar'&&<ItineraryCalendar documents={selectedDocuments}/>}
     {backend&&displayMode==='table'&&<div className="itinerary-panel-list">{vessels.map(vessel=>{
       const document=displayDocuments[vessel.id];
-      return document?<ItineraryPanel key={vessel.id} document={document} selected={selectedVesselIds.includes(vessel.id)} nowMs={nowMs} canEdit={permissions.edit} onToggleSelected={()=>toggleVessel(vessel.id)} onEdit={()=>void openEditor(vessel.id)}/>:null;
+      return document?<ItineraryPanel key={vessel.id} document={document} selected={selectedVesselIds.includes(vessel.id)} nowMs={nowMs} canEdit={permissions.edit} onToggleSelected={()=>toggleVessel(vessel.id)} onNotice={setNotice} onEdit={()=>void openEditor(vessel.id)}/>:null;
     })}</div>}
     {backend&&!vessels.length&&<div className="empty-state">沒有符合目前篩選條件的船舶 Itinerary</div>}
     {editor&&backend&&<ItineraryEditor

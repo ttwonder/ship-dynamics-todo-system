@@ -16,6 +16,7 @@ import { selectLatestItineraryDocument } from './itineraryFreshness';
 import ShipItineraryEditor from './ShipItineraryEditor';
 import { dashboardVesselDisplayName } from '../vesselDisplay';
 import { ItineraryBrowseTable, ItineraryMoreParametersButton } from './ItineraryBrowseTable';
+import ItineraryCopyEmailButton from './ItineraryCopyEmailButton';
 
 interface EditorState {
   draft: ItineraryDocument;
@@ -308,6 +309,7 @@ export default function ShipItineraryPortal() {
       <div className="ship-latest-head">
         <div><h2>{latest.vesselName}</h2><span>{formatRelativeUpdatedAt(latest.updatedAt)}</span></div>
         <div>
+          <ItineraryCopyEmailButton document={latest} onNotice={setNotice} />
           <ItineraryMoreParametersButton expanded={showMoreParameters} onToggle={() => setShowMoreParameters(value => !value)} />
           <button className="btn ghost small" onClick={() => void exportDocument(latest, 'Itinerary')}>匯出最新 Excel</button>
           <button className="btn ghost small" title="下載 Excel 並開啟郵件；附件需手動加入" onClick={() => void prepareEmailReport(latest)}>準備郵件報告</button>

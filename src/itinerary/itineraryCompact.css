@@ -99,8 +99,8 @@
 
 @media(max-width:720px){
   .itinerary-toolbar,.itinerary-demo-banner{gap:4px}
-  .itinerary-panel-head{grid-template-columns:auto minmax(0,1fr) auto}
-  .itinerary-panel-meta{grid-column:auto;justify-content:flex-end}
+  .itinerary-panel-head{grid-template-columns:auto minmax(0,1fr)}
+  .itinerary-panel-meta{grid-column:1/-1;justify-content:flex-start}
   .itinerary-editor-modal{width:100vw;height:100vh;border-radius:0}
   .itinerary-editor-head{align-items:center;flex-direction:row}
   .itinerary-editor-head p{display:none}

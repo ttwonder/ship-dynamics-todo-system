@@ -14,8 +14,15 @@ assert.ok(fs.statSync('dist/supabase-config.js').size > 0, 'built Supabase confi
 
 const assetDirectory = 'dist/assets';
 const cssAssets = fs.readdirSync(assetDirectory).filter(name => name.endsWith('.css'));
+const jsAssets = fs.readdirSync(assetDirectory).filter(name => name.endsWith('.js'));
 assert.ok(cssAssets.length > 0, 'production build must emit CSS assets');
+assert.ok(jsAssets.length > 0, 'production build must emit JavaScript assets');
 const builtCss = cssAssets.map(name => fs.readFileSync(`${assetDirectory}/${name}`, 'utf8')).join('\n');
+const builtJs = jsAssets.map(name => fs.readFileSync(`${assetDirectory}/${name}`, 'utf8')).join('\n');
+assert.ok(builtJs.includes('一鍵複製並發送郵件'), 'production JavaScript must include the shared copy-and-email action');
+assert.ok(builtJs.includes('已復製，請去郵箱客戶端粘貼'), 'production JavaScript must include the exact copy confirmation');
+assert.ok(builtJs.includes('text/html') && builtJs.includes('text/plain'), 'production JavaScript must include rich and plain clipboard MIME types');
+assert.ok(builtJs.includes('mailto:?subject='), 'production JavaScript must request the standard mailto protocol');
 const findCssRule = selector => {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return builtCss.match(new RegExp(`${escaped}\\{[^}]*\\}`))?.[0] || '';

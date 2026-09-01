@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { formatRelativeUpdatedAt } from './itineraryTime';
 import type { ItineraryDocument } from './itineraryTypes';
 import { ItineraryBrowseTable, ItineraryMoreParametersButton } from './ItineraryBrowseTable';
+import ItineraryCopyEmailButton from './ItineraryCopyEmailButton';
 
 interface ItineraryPanelProps {
   document: ItineraryDocument;
@@ -9,10 +10,11 @@ interface ItineraryPanelProps {
   nowMs: number;
   canEdit: boolean;
   onToggleSelected: () => void;
+  onNotice: (message: string) => void;
   onEdit?: () => void;
 }
 
-export default function ItineraryPanel({ document, selected, nowMs, canEdit, onToggleSelected, onEdit }: ItineraryPanelProps) {
+export default function ItineraryPanel({ document, selected, nowMs, canEdit, onToggleSelected, onNotice, onEdit }: ItineraryPanelProps) {
   const [expandedRows, setExpandedRows] = useState(false);
   const [showMoreParameters, setShowMoreParameters] = useState(false);
   const visibleRows = expandedRows ? document.rows : document.rows.slice(0, 7);
@@ -26,6 +28,7 @@ export default function ItineraryPanel({ document, selected, nowMs, canEdit, onT
         {document.updatedActorLabel && <p>更新者｜{document.updatedActorLabel}</p>}
       </div>
       <div className="itinerary-panel-meta">
+        <ItineraryCopyEmailButton document={document} onNotice={onNotice} />
         <ItineraryMoreParametersButton expanded={showMoreParameters} onToggle={() => setShowMoreParameters(value => !value)} />
         {canEdit && <button type="button" className="btn small itinerary-edit-button" onClick={onEdit}>手動修改</button>}
       </div>
