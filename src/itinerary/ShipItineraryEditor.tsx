@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { recalculateItineraryRows } from './itineraryDomain';
 import { instantToWallTime, wallTimeToInstant } from './itineraryTime';
 import { ITINERARY_MAIN_FIELD_LABELS, ITINERARY_PARAMETER_FIELD_LABELS } from './itineraryFieldLayout';
 import { addShipDraftRow, removeShipDraftRow, setAllShipTimesManual, setShipAutomaticCalculation, updateShipDraftRow } from './shipItineraryModel';
 import type { ItineraryDocument, ItineraryRow, ItineraryTimeMode } from './itineraryTypes';
 import UtcOffsetSelect from './UtcOffsetSelect';
+import ItineraryOperationOptions from './ItineraryOperationOptions';
 
 interface ShipItineraryEditorProps {
   document: ItineraryDocument;
@@ -38,18 +39,30 @@ function TimeInput({ row, field, allowAuto, disabled, onPatch }: { row: Itinerar
   const mode = row[modeField] as ItineraryTimeMode;
   const wallResult = row[field] && row.portTimeZone ? instantToWallTime(row[field], row.portTimeZone) : null;
   const wall = wallResult?.ok ? wallResult : null;
-  const applyWall = (date: string, time: string) => {
-    if (!date) return onPatch({ [field]: null, [modeField]: 'manual' } as Partial<ItineraryRow>);
-    if (!row.portTimeZone) return;
-    const result = wallTimeToInstant(date, time || '00:00', row.portTimeZone);
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const timeInputRef = useRef<HTMLInputElement>(null);
+  const applyCompleteWall = (source: 'date' | 'time') => {
+    const date = dateInputRef.current?.value || '';
+    let time = timeInputRef.current?.value || '';
+    if (source === 'date' && date && !time) {
+      time = '00:00';
+      if (timeInputRef.current) timeInputRef.current.value = time;
+    }
+    if (!date || !time || !row.portTimeZone) return;
+    const result = wallTimeToInstant(date, time, row.portTimeZone);
     if (result.ok) onPatch({ [field]: result.instant, [modeField]: 'manual' } as Partial<ItineraryRow>);
+  };
+  const clearIncomplete = () => {
+    const date = dateInputRef.current?.value || '';
+    const time = timeInputRef.current?.value || '';
+    if ((!date || !time) && row[field]) onPatch({ [field]: null, [modeField]: 'manual' } as Partial<ItineraryRow>);
   };
   const automatic = mode === 'auto';
   const modeLabel = automatic ? '自' : '手';
   return <div className="ship-time-input">
     <button type="button" className={`ship-mode ${automatic ? 'auto' : 'manual'}`} title={allowAuto ? automatic ? '自動計算；點擊改為手動' : '手動輸入；點擊改為自動' : '第一列 ETA 必須手動輸入'} aria-label={allowAuto ? automatic ? '切換為手動輸入' : '切換為自動計算' : '第一列 ETA 手動輸入'} disabled={disabled || !allowAuto} onClick={() => onPatch({ [modeField]: automatic ? 'manual' : 'auto' } as Partial<ItineraryRow>)}>{modeLabel}</button>
-    <input type="date" value={wall?.date || ''} disabled={disabled || automatic} onChange={event => applyWall(event.target.value, wall?.time || '00:00')} />
-    <input type="time" value={wall?.time || ''} disabled={disabled || automatic || !wall?.date} onChange={event => applyWall(wall?.date || '', event.target.value)} />
+    <input key={`${field}-date-${row.portTimeZone}-${row[field] || ''}`} ref={dateInputRef} type="date" defaultValue={wall?.date || ''} disabled={disabled || automatic} onChange={() => applyCompleteWall('date')} onBlur={clearIncomplete} />
+    <input key={`${field}-time-${row.portTimeZone}-${row[field] || ''}`} ref={timeInputRef} type="time" defaultValue={wall?.time || ''} disabled={disabled || automatic} onChange={() => applyCompleteWall('time')} onBlur={clearIncomplete} />
   </div>;
 }
 
@@ -101,7 +114,7 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
               <td className="ship-row-number">{index + 1}</td>
               <td><input value={row.voyageNumber} disabled={readOnly} onChange={event => patchRow(row.rowId, { voyageNumber: event.target.value })} /></td>
               <td><input value={row.portDockName} disabled={readOnly} onChange={event => patchRow(row.rowId, { portDockName: event.target.value })} /></td>
-              <td><select value={row.operation} disabled={readOnly} onChange={event => patchRow(row.rowId, { operation: event.target.value as ItineraryRow['operation'] })}><option value="">—</option><option value="Loading">Loading</option><option value="Unloading">Unloading</option></select></td>
+              <td><ItineraryOperationOptions value={row.operation} disabled={readOnly} onChange={operation => patchRow(row.rowId, { operation })}/></td>
               <td><textarea value={row.cargoQuantityText} disabled={readOnly} onChange={event => patchRow(row.rowId, { cargoQuantityText: event.target.value })} /></td>
               <td><TimeInput row={row} field="etaUtc" allowAuto={index > 0} disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
               <td><TimeInput row={row} field="etbUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>

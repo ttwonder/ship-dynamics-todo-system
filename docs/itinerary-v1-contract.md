@@ -62,7 +62,7 @@ interface ItineraryDocument {
 |---|---|---|---|
 | A Voy No. | `voyageNumber` | string | 可空；trim；最多 80 字 |
 | B Port & Dock Name | `portDockName` | string | 可空；最多 240 字 |
-| C Loading / Unloading | `operation` | `Loading\|Unloading\|''` | 下拉；未知值拒絕匯入 |
+| C To Load / To Unload | `operation` | `To Load\|To Unload\|To Load / To Unload\|''` | Web 為兩個可多選 checkbox；Excel 下拉提供裝、卸、裝＋卸三種 canonical 值；舊 `Loading/Unloading` 匯入時轉換，未知值拒絕 |
 | D B/F or I/F Qty | `cargoQuantityText` | string | 報告文字；最多 1,000 字；不從文字猜數值 |
 | E ETA (LT) | `etaUtc` | ISO instant/null | 依本列 UTC Offset 顯示該港 LT |
 | F ETB (LT) | `etbUtc` | ISO instant/null | 同上 |

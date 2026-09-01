@@ -28,7 +28,8 @@ expected_functions(signature) as (
     ('sd_itinerary_operation_status_public(text,uuid,text)'),
     ('sd_itinerary_history(text,text,integer)'),
     ('sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb)'),
-    ('sd_itinerary_utc_offset_valid(text)')
+    ('sd_itinerary_utc_offset_valid(text)'),
+    ('sd_itinerary_rows_valid(jsonb)')
 ),
 table_receipt as (
   select jsonb_object_agg(name, to_regclass('public.' || name) is not null order by name) value
@@ -58,7 +59,9 @@ privilege_receipt as (
     'anonOfficeSaveExecute', has_function_privilege('anon','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE'),
     'authenticatedOfficeSaveExecute', has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE'),
     'anonOffsetValidatorExecute', has_function_privilege('anon','public.sd_itinerary_utc_offset_valid(text)','EXECUTE'),
-    'authenticatedOffsetValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_utc_offset_valid(text)','EXECUTE')
+    'authenticatedOffsetValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_utc_offset_valid(text)','EXECUTE'),
+    'anonRowsValidatorExecute', has_function_privilege('anon','public.sd_itinerary_rows_valid(jsonb)','EXECUTE'),
+    'authenticatedRowsValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_rows_valid(jsonb)','EXECUTE')
   ) value
 ),
 offset_receipt as (
@@ -70,6 +73,25 @@ offset_receipt as (
     'rejectOutOfRange', not public.sd_itinerary_utc_offset_valid('UTC+14:15'),
     'rejectNonQuarterHour', not public.sd_itinerary_utc_offset_valid('UTC+5:20')
   ) value
+),
+operation_fixture as (
+  select jsonb_build_object(
+    'rowId','readback-row','sortOrder',0,'voyageNumber','','portDockName','','operation','','cargoQuantityText','',
+    'etaUtc',null,'etbUtc',null,'ldRateText','','etcUtc',null,'etdUtc',null,
+    'arrivalDraftText','','departureDraftText','','arrivalRobText','','departureRobText','','portTimeZone','',
+    'oceanDistanceNm',null,'speedKnots',null,'sailingHours',null,'berthWaitHours',null,'tanksText','',
+    'operationQuantityMt',null,'operationRateMtPerHour',null,'operationHours',null,'departureBufferDays',null,
+    'etaMode','manual','etbMode','manual','etcMode','manual','etdMode','manual'
+  ) value
+),
+operation_receipt as (
+  select jsonb_build_object(
+    'toLoad', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','To Load'))),
+    'toUnload', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','To Unload'))),
+    'toLoadAndUnload', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','To Load / To Unload'))),
+    'rejectUnknown', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','Unknown')))
+  ) value
+  from operation_fixture
 ),
 vessel_name_receipt as (
   select jsonb_build_object(
@@ -90,6 +112,7 @@ select jsonb_build_object(
   'rollout', (select value from rollout_receipt),
   'privileges', (select value from privilege_receipt),
   'utcOffsets', (select value from offset_receipt),
+  'operations', (select value from operation_receipt),
   'vesselNames', (select value from vessel_name_receipt),
   'documentCount', (select count(*) from public.sd_itinerary_documents),
   'historyCount', (select count(*) from public.sd_itinerary_history)

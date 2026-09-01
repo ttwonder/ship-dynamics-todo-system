@@ -61,6 +61,7 @@ try {
   const portal = fs.readFileSync('src/itinerary/ShipItineraryPortal.tsx', 'utf8');
   const editor = fs.readFileSync('src/itinerary/ShipItineraryEditor.tsx', 'utf8');
   const panel = fs.readFileSync('src/itinerary/ItineraryPanel.tsx', 'utf8');
+  const officeEditor = fs.readFileSync('src/itinerary/ItineraryEditor.tsx', 'utf8');
   const css = fs.readFileSync('src/itinerary/shipItinerary.css', 'utf8');
   assert.ok(html.includes('/src/ship-itinerary-main.tsx'));
   assert.ok(!entry.includes("from './App'"));
@@ -85,10 +86,27 @@ try {
   assert.doesNotMatch(editor, /<th>[A-W]\s/);
   assert.match(editor, /全部手動輸入/);
   assert.match(editor, /一鍵自動計算/);
+  assert.match(editor, /ItineraryOperationOptions/);
+  assert.match(officeEditor, /ItineraryOperationOptions/);
+  assert.doesNotMatch(editor, /<select value=\{row\.operation\}/);
+  assert.doesNotMatch(officeEditor, /<select value=\{row\.operation\}/);
   assert.match(editor, /ITINERARY_MAIN_FIELD_LABELS/);
   assert.match(panel, /ITINERARY_MAIN_FIELD_LABELS/);
   assert.match(portal, /dashboardVesselDisplayName/, 'ship selector and headings must use the main dashboard vessel naming rule');
   assert.match(portal, /ITINERARY_MAIN_FIELD_LABELS/, 'ship latest view must expose the same A:M columns as the main dashboard');
+  assert.match(panel, /formatItineraryUtcOffset/, 'main browse rows must display canonical UTC offsets');
+  assert.match(portal, /formatItineraryUtcOffset/, 'ship browse rows must display canonical UTC offsets');
+  assert.match(css, /\.ship-vessel-picker select\{[^}]*color-scheme:light[^}]*color:#172033/);
+  assert.match(css, /\.ship-vessel-picker option\{[^}]*background:#fff[^}]*color:#172033/);
+  assert.match(css, /\.ship-latest-scroll table\{[^}]*font-size:12px/);
+  assert.match(css, /\.ship-editor-grid\{[^}]*font-size:12px/);
+  assert.match(editor, /dateInputRef/, 'manual date input must retain native in-progress editing state');
+  assert.match(editor, /timeInputRef/, 'manual time input must retain native in-progress editing state');
+  assert.match(editor, /type="date"[^>]*defaultValue=/, 'date must use an uncontrolled native editing buffer');
+  assert.match(editor, /type="time"[^>]*defaultValue=/, 'time must use an uncontrolled native editing buffer');
+  assert.doesNotMatch(editor, /type="date"[^>]*value=/, 'controlled date values reset partially typed year/month/day');
+  assert.doesNotMatch(editor, /type="time"[^>]*value=/, 'controlled time values reset partially typed hours/minutes');
+  assert.match(editor, /onBlur={clearIncomplete}/, 'incomplete manual wall time must clear only after focus leaves the native control');
   console.log('ship_itinerary_portal_model=PASS');
 } finally {
   await server.close();

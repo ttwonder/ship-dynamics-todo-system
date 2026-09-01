@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { buildItineraryCalendarEntries, calendarRangeFromLocalDate } from './itineraryCalendarModel';
 import { instantToWallTime } from './itineraryTime';
+import { formatItineraryOperation, itineraryOperationSelected } from './itineraryTypes';
 import type { ItineraryDocument } from './itineraryTypes';
 import UtcOffsetSelect from './UtcOffsetSelect';
 
@@ -39,7 +40,7 @@ export default function ItineraryCalendar({ documents }: ItineraryCalendarProps)
       <div className="itinerary-calendar-grid" style={{ width: 164 + trackWidth }}>
         <div className="itinerary-calendar-axis"><div className="itinerary-calendar-vessel-label">船舶／港序</div><div className="itinerary-calendar-day-track" style={{ width: trackWidth }}>{labels.map(label => <span style={{ width: dayWidth }} key={label}>{label}</span>)}</div></div>
         {entries.map((entry) => {
-          const content = [fields.voyage && entry.row.voyageNumber, fields.port && entry.row.portDockName, fields.operation && entry.row.operation].filter(Boolean).join('｜') || 'Itinerary';
+          const content = [fields.voyage && entry.row.voyageNumber, fields.port && entry.row.portDockName, fields.operation && formatItineraryOperation(entry.row.operation)].filter(Boolean).join('｜') || 'Itinerary';
           const localTime = (instant: string | null) => {
             if (!instant) return '—';
             const value = instantToWallTime(instant, timeZone);
@@ -49,7 +50,7 @@ export default function ItineraryCalendar({ documents }: ItineraryCalendarProps)
           return <div className="itinerary-calendar-row" key={`${entry.vesselId}-${entry.row.rowId}`}>
             <div className="itinerary-calendar-vessel-label"><b>{entry.vesselName}</b><span>#{entry.row.sortOrder + 1}</span></div>
             <div className="itinerary-calendar-track" style={{ width: trackWidth, backgroundSize: `${dayWidth}px 100%` }}>
-              <div className={`itinerary-calendar-event ${entry.row.operation === 'Unloading' ? 'unloading' : 'loading'}`} style={{ left: `${entry.leftPercent}%`, width: `${entry.widthPercent}%` }} title={`${entry.vesselName} ${content}`}><b>{content}</b>{timeText && <span>{timeText}</span>}</div>
+              <div className={`itinerary-calendar-event ${itineraryOperationSelected(entry.row.operation, 'unload') && !itineraryOperationSelected(entry.row.operation, 'load') ? 'unloading' : 'loading'}`} style={{ left: `${entry.leftPercent}%`, width: `${entry.widthPercent}%` }} title={`${entry.vesselName} ${content}`}><b>{content}</b>{timeText && <span>{timeText}</span>}</div>
             </div>
           </div>;
         })}

@@ -58,6 +58,19 @@ export function formatUtcOffsetMinutes(minutes: number): string | null {
   return `UTC${sign}${hours}${remainder ? `:${String(remainder).padStart(2, '0')}` : ''}`;
 }
 
+export function formatItineraryUtcOffset(timeZone: string, instant?: string | null): string {
+  const fixedOffset = parseUtcOffsetMinutes(timeZone);
+  if (fixedOffset !== null) return formatUtcOffsetMinutes(fixedOffset) || '';
+  if (!instant || !isValidIanaTimeZone(timeZone)) return '';
+  try {
+    const offset = Temporal.Instant.from(instant).toZonedDateTimeISO(timeZone).offset;
+    const minutes = parseUtcOffsetMinutes(`UTC${offset}`);
+    return minutes === null ? '' : formatUtcOffsetMinutes(minutes) || '';
+  } catch {
+    return '';
+  }
+}
+
 export function isValidItineraryTimeZone(value: string): boolean {
   return isValidUtcOffset(value) || isValidIanaTimeZone(value);
 }

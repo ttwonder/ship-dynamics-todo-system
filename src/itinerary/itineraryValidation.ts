@@ -1,4 +1,4 @@
-import { ITINERARY_MAX_ROWS, ITINERARY_SCHEMA_VERSION, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
+import { ITINERARY_MAX_ROWS, ITINERARY_SCHEMA_VERSION, normalizeItineraryOperation, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
 import { isValidItineraryTimeZone, normalizeInstant } from './itineraryTime';
 
 export interface ItineraryValidationError {
@@ -60,7 +60,7 @@ export function validateItineraryDocument(input: unknown): ItineraryValidationRe
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return { ok: false, errors: [{ path: '$', code: 'invalid-document', message: 'Itinerary 文件格式無效。' }] };
   }
-  const document = input as ItineraryDocument;
+  const document = structuredClone(input) as ItineraryDocument;
   if (document.schemaVersion !== ITINERARY_SCHEMA_VERSION) add(errors, 'schemaVersion', 'unsupported-schema', '不支援此 Itinerary schema 版本。');
   for (const [key, limit] of [['workspaceKey', 160], ['vesselId', 160], ['vesselName', 240], ['updatedActorLabel', 240]] as const) {
     const value = document[key];
@@ -87,7 +87,9 @@ export function validateItineraryDocument(input: unknown): ItineraryValidationRe
       else if (rowIds.has(rowId)) add(errors, `${path}.rowId`, 'duplicate-row-id', 'rowId 不可重複。');
       else rowIds.add(rowId);
       if (!Number.isInteger(row.sortOrder) || row.sortOrder !== index) add(errors, `${path}.sortOrder`, 'invalid-sort-order', 'sortOrder 必須依畫面順序由 0 連續排列。');
-      if (!['', 'Loading', 'Unloading'].includes(String(row.operation))) add(errors, `${path}.operation`, 'invalid-operation', 'Loading / Unloading 值無效。');
+      const operation = normalizeItineraryOperation(row.operation);
+      if (operation === null) add(errors, `${path}.operation`, 'invalid-operation', 'To Load / To Unload 值無效。');
+      else typedRow.operation = operation;
       for (const key of ['etaMode', 'etbMode', 'etcMode', 'etdMode'] as const) {
         if (row[key] !== 'auto' && row[key] !== 'manual') add(errors, `${path}.${key}`, 'invalid-time-mode', '時間模式必須是 auto 或 manual。');
       }

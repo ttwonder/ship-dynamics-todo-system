@@ -7,7 +7,7 @@ try {
   const email = await server.ssrLoadModule('/src/itinerary/itineraryEmail.ts');
   const types = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
   const doc = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'v1', vesselName: 'TEST VESSEL', rowId: 'r1' });
-  Object.assign(doc.rows[0], { voyageNumber: 'V001', portDockName: 'ULSAN', operation: 'Loading', etaUtc: '2026-09-01T00:00:00Z', etdUtc: '2026-09-03T00:00:00Z', portTimeZone: 'UTC+9' });
+  Object.assign(doc.rows[0], { voyageNumber: 'V001', portDockName: 'ULSAN', operation: 'To Load', etaUtc: '2026-09-01T00:00:00Z', etdUtc: '2026-09-03T00:00:00Z', portTimeZone: 'UTC+9' });
   const range = calendar.calendarRangeFromLocalDate('2026-09-01', 7, 'UTC+8');
   assert.equal(range.ok, true);
   const entries = calendar.buildItineraryCalendarEntries([doc], range.startInstant, range.endInstant);

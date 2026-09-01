@@ -15,7 +15,7 @@ export function createDemoItineraryDocument(vessel: Vessel, index: number, nowMs
   Object.assign(first, {
     voyageNumber: `V${String(index + 1).padStart(2, '0')}`,
     portDockName: vessel.position.lastPort || vessel.position.location || 'CURRENT PORT',
-    operation: vessel.cargo.loadStatus === '非空載' || vessel.cargo.loadStatus === '滿載' ? 'Unloading' : 'Loading',
+    operation: vessel.cargo.loadStatus === '非空載' || vessel.cargo.loadStatus === '滿載' ? 'To Unload' : 'To Load',
     cargoQuantityText: vessel.cargo.items.map(item => [item.name, item.quantity].filter(Boolean).join(' ')).join('\n') || 'TBA',
     etaUtc: baseEta,
     etaMode: 'manual',
@@ -36,7 +36,7 @@ export function createDemoItineraryDocument(vessel: Vessel, index: number, nowMs
   Object.assign(second, {
     voyageNumber: `V${String(index + 2).padStart(2, '0')}`,
     portDockName: vessel.position.nextPort || 'NEXT PORT',
-    operation: first.operation === 'Loading' ? 'Unloading' : 'Loading',
+    operation: first.operation === 'To Load' ? 'To Unload' : 'To Load',
     cargoQuantityText: first.cargoQuantityText,
     portTimeZone: index % 2 === 0 ? 'UTC+9' : 'UTC+5:30',
     berthWaitHours: 3,
@@ -51,7 +51,7 @@ export function createDemoItineraryDocument(vessel: Vessel, index: number, nowMs
   Object.assign(third, {
     voyageNumber: `V${String(index + 3).padStart(2, '0')}`,
     portDockName: 'TBA',
-    operation: 'Loading',
+    operation: 'To Load / To Unload',
     portTimeZone: 'UTC-6',
     berthWaitHours: 2,
     operationQuantityMt: 6000,

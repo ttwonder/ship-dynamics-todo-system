@@ -9,6 +9,15 @@ try {
   const validation = await server.ssrLoadModule('/src/itinerary/itineraryValidation.ts');
   const operations = await server.ssrLoadModule('/src/itinerary/itineraryOperation.ts');
 
+  assert.equal(types.normalizeItineraryOperation('Loading'), 'To Load');
+  assert.equal(types.normalizeItineraryOperation('Unloading'), 'To Unload');
+  assert.equal(types.normalizeItineraryOperation('Loading / Unloading'), 'To Load / To Unload');
+  assert.equal(types.setItineraryOperationSelected('', 'load', true), 'To Load');
+  assert.equal(types.setItineraryOperationSelected('To Load', 'unload', true), 'To Load / To Unload');
+  assert.equal(types.setItineraryOperationSelected('To Load / To Unload', 'load', false), 'To Unload');
+  assert.equal(types.itineraryOperationSelected('To Load / To Unload', 'load'), true);
+  assert.equal(types.itineraryOperationSelected('To Load / To Unload', 'unload'), true);
+
   const first = types.createBlankItineraryRow('row-1', 0);
   Object.assign(first, {
     portDockName: 'KAOHSIUNG',
@@ -68,6 +77,9 @@ try {
   assert.equal(time.formatUtcOffsetMinutes(-360), 'UTC-6');
   assert.equal(time.formatUtcOffsetMinutes(345), 'UTC+5:45');
   assert.equal(time.formatUtcOffsetMinutes(20), null);
+  assert.equal(time.formatItineraryUtcOffset('UTC+5:30', '2026-09-01T00:00:00Z'), 'UTC+5:30');
+  assert.equal(time.formatItineraryUtcOffset('Asia/Seoul', '2026-09-01T00:00:00Z'), 'UTC+9');
+  assert.equal(time.formatItineraryUtcOffset('GMT+8', '2026-09-01T00:00:00Z'), '');
   assert.equal(time.isValidUtcOffset('UTC+8'), true);
   assert.equal(time.isValidUtcOffset('Asia/Seoul'), false);
   assert.equal(time.isValidItineraryTimeZone('UTC+5:45'), true);
@@ -91,6 +103,15 @@ try {
   document.rows[0].portDockName = 'PORT';
   document.rows[0].portTimeZone = 'UTC+8';
   assert.deepEqual(validation.validateItineraryDocument(document), { ok: true, value: document });
+
+  const legacyOperation = structuredClone(document);
+  legacyOperation.rows[0].operation = 'Loading';
+  const normalizedLegacyOperation = validation.validateItineraryDocument(legacyOperation);
+  assert.equal(normalizedLegacyOperation.ok, true);
+  assert.equal(normalizedLegacyOperation.value.rows[0].operation, 'To Load');
+  const combinedOperation = structuredClone(document);
+  combinedOperation.rows[0].operation = 'To Load / To Unload';
+  assert.equal(validation.validateItineraryDocument(combinedOperation).ok, true);
 
   const duplicate = structuredClone(document);
   duplicate.rows.push({ ...duplicate.rows[0] });

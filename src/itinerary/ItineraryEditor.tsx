@@ -7,6 +7,7 @@ import { deleteItineraryDraft, itineraryDraftKey, saveItineraryDraft, type Itine
 import { validateItineraryDocument } from './itineraryValidation';
 import type { ItineraryLease, ItineraryLeaseRenewResult, ItinerarySaveResult } from './itineraryCollaboration';
 import UtcOffsetSelect from './UtcOffsetSelect';
+import ItineraryOperationOptions from './ItineraryOperationOptions';
 
 interface ItineraryEditorProps {
   document: ItineraryDocument;
@@ -199,12 +200,12 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
       </header>
       {(message||idleWarning)&&<div className={`itinerary-editor-message ${readOnly?'error':idleWarning?'warning':''}`} role="status">{message||'已閒置 8 分鐘；再無操作將於 10 分鐘時退出可寫狀態並保留草稿。'}</div>}
       <div className="itinerary-editor-table-wrap">
-        <table className="itinerary-editor-table"><thead><tr><th>#</th><th>Voy No.</th><th>Port &amp; Dock Name／時區</th><th>Loading / Unloading</th><th>B/F or I/F Qty (MT)</th><th>ETA (LT)</th><th>ETB (LT)</th><th>L/D rate</th><th>ETC (LT)</th><th>ETD (LT)</th><th>Arr Draft</th><th>Dep Draft</th><th>arr ROB</th><th>dep ROB</th><th>操作</th></tr></thead>
+        <table className="itinerary-editor-table"><thead><tr><th>#</th><th>Voy No.</th><th>Port &amp; Dock Name／時區</th><th>To Load / To Unload</th><th>B/F or I/F Qty (MT)</th><th>ETA (LT)</th><th>ETB (LT)</th><th>L/D rate</th><th>ETC (LT)</th><th>ETD (LT)</th><th>Arr Draft</th><th>Dep Draft</th><th>arr ROB</th><th>dep ROB</th><th>操作</th></tr></thead>
           <tbody>{draft.rows.map((row,index)=><tr key={row.rowId}>
             <td>{index+1}</td>
             <td><input value={row.voyageNumber} disabled={readOnly} onChange={event=>updateRow(row.rowId,{voyageNumber:event.target.value})}/></td>
             <td><div className="itinerary-port-zone-inline"><input title={row.portDockName} value={row.portDockName} disabled={readOnly} placeholder="Port / Dock" onChange={event=>updateRow(row.rowId,{portDockName:event.target.value})}/><UtcOffsetSelect className="itinerary-zone-input" value={row.portTimeZone} disabled={readOnly} onChange={value=>updateRow(row.rowId,{portTimeZone:value})}/></div></td>
-            <td><select value={row.operation} disabled={readOnly} onChange={event=>updateRow(row.rowId,{operation:event.target.value as ItineraryRow['operation']})}><option value="">—</option><option value="Loading">Loading</option><option value="Unloading">Unloading</option></select></td>
+            <td><ItineraryOperationOptions value={row.operation} disabled={readOnly} onChange={operation=>updateRow(row.rowId,{operation})}/></td>
             <td><input title={row.cargoQuantityText} value={row.cargoQuantityText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{cargoQuantityText:event.target.value})}/></td>
             <td><TimeCell row={row} field="etaUtc" disabled={readOnly} onError={setMessage} onChange={value=>updateRow(row.rowId,{etaUtc:value,etaMode:'manual'})}/></td>
             <td><TimeCell row={row} field="etbUtc" disabled={readOnly} onError={setMessage} onChange={value=>updateRow(row.rowId,{etbUtc:value,etbMode:'manual'})}/></td>

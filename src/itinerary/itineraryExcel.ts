@@ -1,7 +1,7 @@
 import type ExcelJS from 'exceljs';
 import { recalculateItineraryRows } from './itineraryDomain';
 import { addHoursToInstant, formatUtcOffsetMinutes, instantToWallTime, isValidItineraryTimeZone, parseUtcOffsetMinutes, wallTimeToInstant } from './itineraryTime';
-import { createBlankItineraryRow, createItineraryId, ITINERARY_SCHEMA_VERSION, type ItineraryDocument, type ItineraryOperation, type ItineraryRow } from './itineraryTypes';
+import { createBlankItineraryRow, createItineraryId, formatItineraryOperation, ITINERARY_SCHEMA_VERSION, normalizeItineraryOperation, type ItineraryDocument, type ItineraryOperation, type ItineraryRow } from './itineraryTypes';
 
 const META_SHEET = '_Itinerary_Meta';
 const MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -169,8 +169,8 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
 
     worksheet.getCell(primary, 1).value = row.voyageNumber;
     worksheet.getCell(primary, 2).value = row.portDockName;
-    worksheet.getCell(primary, 3).value = row.operation;
-    worksheet.getCell(primary, 3).dataValidation = { type: 'list', allowBlank: true, formulae: ['"Loading,Unloading"'] };
+    worksheet.getCell(primary, 3).value = formatItineraryOperation(row.operation);
+    worksheet.getCell(primary, 3).dataValidation = { type: 'list', allowBlank: true, formulae: ['"To Load,To Unload,To Load / To Unload"'] };
     worksheet.getCell(primary, 4).value = row.cargoQuantityText;
     worksheet.getCell(primary, 7).value = row.ldRateText;
     worksheet.getCell(primary, 10).value = row.arrivalDraftText;
@@ -210,6 +210,7 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
   worksheet.pageSetup.orientation = 'landscape';
   worksheet.pageSetup.printTitlesRow = '1:3';
   worksheet.pageSetup.horizontalCentered = true;
+  worksheet.getCell(3, 3).value = 'To Load / To Unload';
 }
 
 export async function buildItineraryWorkbook(documents: ItineraryDocument[], template: ArrayBuffer, onStage?: (stage: ItineraryExcelBuildStage) => void): Promise<ArrayBuffer> {
@@ -298,10 +299,9 @@ function numberCell(cell: ExcelJS.Cell): number | null {
 function operationCell(cell: ExcelJS.Cell): { value: ItineraryOperation; issue?: ItineraryExcelIssue } {
   const raw = textCell(cell);
   if (!raw) return { value: '' };
-  const normalized = raw.toLocaleLowerCase().replace(/\s+/g, '');
-  if (['loading', 'load', 'l'].includes(normalized)) return { value: 'Loading' };
-  if (['unloading', 'unload', 'discharging', 'discharge', 'u'].includes(normalized)) return { value: 'Unloading' };
-  return { value: '', issue: { code: 'invalid-operation', message: `無法識別 Loading / Unloading：${raw}`, field: 'operation' } };
+  const normalized = normalizeItineraryOperation(raw);
+  if (normalized !== null) return { value: normalized };
+  return { value: '', issue: { code: 'invalid-operation', message: `無法識別 To Load / To Unload：${raw}`, field: 'operation' } };
 }
 
 function pad(value: number): string { return String(value).padStart(2, '0'); }

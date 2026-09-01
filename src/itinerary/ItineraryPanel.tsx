@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { formatRelativeUpdatedAt, instantToWallTime } from './itineraryTime';
-import type { ItineraryDocument, ItineraryRow } from './itineraryTypes';
+import { formatItineraryUtcOffset, formatRelativeUpdatedAt, instantToWallTime } from './itineraryTime';
+import { formatItineraryOperation, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
 import { ITINERARY_MAIN_FIELD_LABELS } from './itineraryFieldLayout';
 
 interface ItineraryPanelProps {
@@ -24,6 +24,10 @@ function text(value: string): string {
   return value.trim() || dash;
 }
 
+function rowUtcOffset(row: ItineraryRow): string {
+  return formatItineraryUtcOffset(row.portTimeZone, row.etaUtc || row.etbUtc || row.etcUtc || row.etdUtc);
+}
+
 export default function ItineraryPanel({ document, selected, nowMs, canEdit, onToggleSelected, onEdit }: ItineraryPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const visibleRows = expanded ? document.rows : document.rows.slice(0, 7);
@@ -38,7 +42,7 @@ export default function ItineraryPanel({ document, selected, nowMs, canEdit, onT
       <table className="itinerary-table">
         <thead><tr>{ITINERARY_MAIN_FIELD_LABELS.map((label,index)=><th className={index===1?'itinerary-port-column':undefined} key={label}>{label}</th>)}</tr></thead>
         <tbody>{visibleRows.map(row=><tr key={row.rowId}>
-          <td title={row.voyageNumber}>{text(row.voyageNumber)}</td><td className="itinerary-port-column" title={row.portDockName}>{text(row.portDockName)}</td><td>{row.operation || dash}</td><td className="itinerary-multiline" title={row.cargoQuantityText}>{text(row.cargoQuantityText)}</td><td>{localDateTime(row.etaUtc,row)}</td><td>{localDateTime(row.etbUtc,row)}</td><td title={row.ldRateText}>{text(row.ldRateText)}</td><td>{localDateTime(row.etcUtc,row)}</td><td>{localDateTime(row.etdUtc,row)}</td><td title={row.arrivalDraftText}>{text(row.arrivalDraftText)}</td><td title={row.departureDraftText}>{text(row.departureDraftText)}</td><td title={row.arrivalRobText}>{text(row.arrivalRobText)}</td><td title={row.departureRobText}>{text(row.departureRobText)}</td>
+          <td title={row.voyageNumber}>{text(row.voyageNumber)}</td><td className="itinerary-port-column" title={row.portDockName}><div className="itinerary-port-cell"><span>{text(row.portDockName)}</span>{rowUtcOffset(row)&&<small className="itinerary-offset-label">{rowUtcOffset(row)}</small>}</div></td><td>{formatItineraryOperation(row.operation) || dash}</td><td className="itinerary-multiline" title={row.cargoQuantityText}>{text(row.cargoQuantityText)}</td><td>{localDateTime(row.etaUtc,row)}</td><td>{localDateTime(row.etbUtc,row)}</td><td title={row.ldRateText}>{text(row.ldRateText)}</td><td>{localDateTime(row.etcUtc,row)}</td><td>{localDateTime(row.etdUtc,row)}</td><td title={row.arrivalDraftText}>{text(row.arrivalDraftText)}</td><td title={row.departureDraftText}>{text(row.departureDraftText)}</td><td title={row.arrivalRobText}>{text(row.arrivalRobText)}</td><td title={row.departureRobText}>{text(row.departureRobText)}</td>
         </tr>)}</tbody>
       </table>
     </div>

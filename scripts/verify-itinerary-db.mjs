@@ -8,6 +8,7 @@ const migration = await readFile('supabase/migrations/20260831090000_itinerary_s
 const rolloutBootstrapMigration = await readFile('supabase/migrations/20260831110000_itinerary_rollout_bootstrap.sql', 'utf8');
 const utcOffsetMigration = await readFile('supabase/migrations/20260901073500_itinerary_utc_offsets.sql', 'utf8');
 const publicVesselNamesMigration = await readFile('supabase/migrations/20260901122500_itinerary_public_vessel_full_names.sql', 'utf8');
+const operationMultiSelectMigration = await readFile('supabase/migrations/20260901125500_itinerary_operation_multi_select.sql', 'utf8');
 const readbackSql = await readFile('supabase/itinerary-readback.sql', 'utf8');
 const rolloutBootstrapReadbackSql = await readFile('supabase/itinerary-rollout-bootstrap-readback.sql', 'utf8');
 const ids = {
@@ -24,7 +25,7 @@ const rolePermissions = (admin = {}) => ({
   vessel: { view: false, edit: false, import: false, export: false, calendar: false },
 });
 const row = (overrides = {}) => ({
-  rowId: 'row-1', sortOrder: 0, voyageNumber: 'V001', portDockName: 'ULSAN', operation: 'Loading', cargoQuantityText: '5000 MT',
+  rowId: 'row-1', sortOrder: 0, voyageNumber: 'V001', portDockName: 'ULSAN', operation: 'To Load / To Unload', cargoQuantityText: '5000 MT',
   etaUtc: '2026-09-01T00:00:00Z', etbUtc: '2026-09-01T02:00:00Z', ldRateText: '400 MT/H', etcUtc: '2026-09-01T14:30:00Z', etdUtc: '2026-09-01T20:30:00Z',
   arrivalDraftText: '10.0', departureDraftText: '9.8', arrivalRobText: 'ROB', departureRobText: 'ROB', portTimeZone: 'UTC+9',
   oceanDistanceNm: 240, speedKnots: 12, sailingHours: 20, berthWaitHours: 2, tanksText: '1P/1S', operationQuantityMt: 5000,
@@ -93,6 +94,7 @@ try {
   await db.exec(rolloutBootstrapMigration);
   await db.exec(utcOffsetMigration);
   await db.exec(publicVesselNamesMigration);
+  await db.exec(operationMultiSelectMigration);
 
   const ownerInitial = await rollout(ids.owner);
   assert.equal(ownerInitial.version, 1);
@@ -213,6 +215,7 @@ try {
   await db.exec(rolloutBootstrapMigration);
   await db.exec(utcOffsetMigration);
   await db.exec(publicVesselNamesMigration);
+  await db.exec(operationMultiSelectMigration);
   assert.equal(Number(await scalar('select version from public.sd_itinerary_rollout where workspace_id=$1::uuid', [ids.workspace])), 4);
   assert.equal(Number(await scalar("select revision from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
   assert.equal(Number(await scalar("select count(*)::int from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
@@ -226,9 +229,11 @@ try {
     has_function_privilege('anon','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE') as anon_office_save,
     has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE') as auth_office_save,
     has_function_privilege('anon','public.sd_itinerary_utc_offset_valid(text)','EXECUTE') as anon_offset_validator,
-    has_function_privilege('authenticated','public.sd_itinerary_utc_offset_valid(text)','EXECUTE') as auth_offset_validator
+    has_function_privilege('authenticated','public.sd_itinerary_utc_offset_valid(text)','EXECUTE') as auth_offset_validator,
+    has_function_privilege('anon','public.sd_itinerary_rows_valid(jsonb)','EXECUTE') as anon_rows_validator,
+    has_function_privilege('authenticated','public.sd_itinerary_rows_valid(jsonb)','EXECUTE') as auth_rows_validator
   `)).rows[0];
-  assert.deepEqual(privileges, { anon_table: false, auth_table: false, anon_office_entry: true, anon_public_save: true, anon_office_save: false, auth_office_save: true, anon_offset_validator: false, auth_offset_validator: false });
+  assert.deepEqual(privileges, { anon_table: false, auth_table: false, anon_office_entry: true, anon_public_save: true, anon_office_save: false, auth_office_save: true, anon_offset_validator: false, auth_offset_validator: false, anon_rows_validator: false, auth_rows_validator: false });
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC+5:45' })])]), true);
 
   const readback = (await db.query(readbackSql)).rows[0].itinerary_readback;
@@ -240,11 +245,14 @@ try {
     anonPublicSaveExecute: true,
     anonDirectDocumentSelect: false,
     anonOffsetValidatorExecute: false,
+    anonRowsValidatorExecute: false,
     authenticatedOfficeSaveExecute: true,
     authenticatedDirectDocumentSelect: false,
     authenticatedOffsetValidatorExecute: false,
+    authenticatedRowsValidatorExecute: false,
   });
   assert.ok(Object.values(readback.utcOffsets).every(Boolean));
+  assert.ok(Object.values(readback.operations).every(Boolean));
   assert.deepEqual(readback.vesselNames, { activeVesselCount: 2, activeMissingFullNameCount: 0, publicListFullNameComplete: true });
   const bootstrapReadback = (await db.query(rolloutBootstrapReadbackSql)).rows[0];
   assert.ok(Object.values(bootstrapReadback).every(Boolean));
