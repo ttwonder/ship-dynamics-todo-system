@@ -230,7 +230,13 @@ try {
   assert.match(purposeInput, /<details/);
   assert.match(purposeInput, /<summary/);
   assert.match(purposeInput, /ITINERARY_PURPOSE_OPTIONS\.map/);
-  for (const label of ['To Load','To Unload','docking','waiting order','repair','inspection']) assert.ok(purposeInput.includes(label) || purposeInput.includes('ITINERARY_PURPOSE_OPTIONS'));
+  const purposeModule = await server.ssrLoadModule('/src/itinerary/ItineraryOperationOptions.tsx');
+  const purposeHtml = renderToStaticMarkup(createElement(purposeModule.default, { value: 'To Load / To Unload', onChange() {} }));
+  for (const label of ['to load','to unload','docking','waiting order','repair','inspection']) assert.ok(purposeHtml.includes(`>${label}</span>`), `Purpose option must display ${label} in lowercase`);
+  assert.match(purposeHtml, /<summary[^>]*title="to load \/ to unload"[^>]*>to load \/ to unload<\/summary>/, 'selected Purpose summary must display lowercase labels');
+  assert.doesNotMatch(purposeHtml, />To Load</, 'canonical stored values must not leak capitalized labels into the editor UI');
+  assert.doesNotMatch(purposeHtml, />To Unload</, 'canonical stored values must not leak capitalized labels into the editor UI');
+  assert.equal(types.setItineraryOperationSelected('', 'load', true), 'To Load', 'lowercase display must not change the cloud/Excel canonical value');
   assert.match(dateInput, /type="text"/);
   assert.match(dateInput, /type="date"/);
   assert.match(dateInput, /showPicker/);
