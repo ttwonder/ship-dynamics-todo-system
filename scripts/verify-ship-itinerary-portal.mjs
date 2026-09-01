@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 
 const server = await createServer({ root: process.cwd(), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
@@ -10,8 +12,21 @@ try {
   const layoutPath = 'src/itinerary/itineraryFieldLayout.ts';
   assert.equal(fs.existsSync(layoutPath), true, 'main and ship editors need one shared field layout authority');
   const layout = await server.ssrLoadModule(`/${layoutPath}`);
-  assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Next Port & Dock Name','UTC Offset','Purpose','B/F or I/F Qty (MT/BBLS)','ETA (LT)','ETB (LT)','預計L/D rate (MT/h)','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','Arr ROB','Dep ROB']);
+  assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Next Port & Dock Name','UTC Offset','Purpose','B/F or I/F Qty (MT/BBLS)','ETA (LT)','ETB (LT)','預計L/D rate (MT/h)','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','Arr ROB','Dep ROB','備註信息']);
   assert.deepEqual(layout.ITINERARY_PARAMETER_FIELD_LABELS, ['DTG(NM)','預估航速(kn)','剩餘航行時間(h)','預估等待時間(靠泊前)(h)','預計航道航行時間(h)','作業艙號','裝卸貨量(MT)','預計L/D rate (MT/h)','預計作業時間(h)','預估等待/延誤時間(完貨前)(h)','預估等待/延誤時間(完貨後)(h)']);
+  assert.deepEqual(layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS, [70,175,96,155,155,246,246,40,246,246,98,98,147,147,175]);
+  assert.deepEqual(layout.ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS, [82,82,82,82,82,135,100,82,82,82,82]);
+  assert.equal(layout.ITINERARY_EDITOR_MAIN_TABLE_WIDTH, 2410);
+  assert.equal(layout.ITINERARY_EDITOR_PARAMETER_TABLE_WIDTH, 1007);
+  assert.equal(layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS[7], 40, 'main L/D rate must be about one third of its previous 112px width');
+  assert.deepEqual([5,6,8,9].map(index => layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS[index]), [246,246,246,246], 'all four LT editor columns must be equally wide');
+  assert.deepEqual([0,1,2,3,4,7,8,9,10].map(index => layout.ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS[index]), Array(9).fill(82), 'DTG and all eight requested estimate columns must match');
+  assert.deepEqual(layout.ITINERARY_BROWSE_MAIN_COLUMN_WIDTHS, [74,170,92,150,175,142,142,105,142,142,105,105,145,145,170]);
+  assert.deepEqual(layout.ITINERARY_BROWSE_PARAMETER_COLUMN_WIDTHS, Array(11).fill(100));
+  assert.equal(layout.ITINERARY_BROWSE_MAIN_TABLE_WIDTH, 2004);
+  assert.equal(layout.ITINERARY_BROWSE_EXPANDED_TABLE_WIDTH, 3104);
+  assert.deepEqual([5,6,8,9].map(index => layout.ITINERARY_BROWSE_MAIN_COLUMN_WIDTHS[index]), [142,142,142,142], 'browse ETA/ETB/ETC/ETD columns must be equal and wide enough for complete local time');
+  assert.equal(layout.ITINERARY_BROWSE_MAIN_COLUMN_WIDTHS[14], layout.ITINERARY_BROWSE_MAIN_COLUMN_WIDTHS[1], 'Notes and Next Port columns must have the same browse width');
 
   assert.equal(rollout.localShipPortalDemoRequested({ hostname: '127.0.0.1', search: '?itineraryDemo=1' }), true);
   assert.equal(rollout.localShipPortalDemoRequested({ hostname: 'example.com', search: '?itineraryDemo=1' }), false);
@@ -23,9 +38,17 @@ try {
   assert.equal(blank.revision, 9);
   assert.equal(blank.rows.length, 1);
   assert.equal(blank.rows[0].voyageNumber, '');
+  assert.equal(blank.rows[0].arrivalDraftText, 'A:\nF:', 'new rows must prefill Arr Draft as two editable A/F lines');
+  assert.equal(blank.rows[0].departureDraftText, 'A:\nF:', 'new rows must prefill Dep Draft as two editable A/F lines');
+  assert.equal(blank.rows[0].notesText, '');
   assert.equal(blank.rows[0].etaMode, 'manual');
   assert.equal(blank.rows[0].etbMode, 'auto');
   assert.equal(model.hasShipDraftBusinessContent(blank), false);
+  const legacyDraftWithoutNotes = structuredClone(blank);
+  delete legacyDraftWithoutNotes.rows[0].notesText;
+  assert.equal(model.hasShipDraftBusinessContent(legacyDraftWithoutNotes), false, 'a pre-notes local draft must remain openable');
+  const noteOnly = model.updateShipDraftRow(blank, blank.rows[0].rowId, { notesText: '靠港前請再次確認' });
+  assert.equal(model.hasShipDraftBusinessContent(noteOnly), true, 'a note-only row is meaningful itinerary content');
   const fromLatest = model.createShipDraft(latest, 'latest');
   assert.equal(fromLatest.rows[0].voyageNumber, 'OLD');
   assert.notEqual(fromLatest, latest);
@@ -111,6 +134,31 @@ try {
   const dateInput = fs.readFileSync('src/itinerary/ItineraryDateInput.tsx', 'utf8');
   const purposeInput = fs.readFileSync('src/itinerary/ItineraryOperationOptions.tsx', 'utf8');
   const css = fs.readFileSync('src/itinerary/shipItinerary.css', 'utf8');
+  const browsePath = 'src/itinerary/ItineraryBrowseTable.tsx';
+  const browseCssPath = 'src/itinerary/itineraryBrowseTable.css';
+  assert.equal(fs.existsSync(browsePath), true, 'main and ship browse views need one shared table renderer');
+  assert.equal(fs.existsSync(browseCssPath), true, 'shared browse geometry must come from one stylesheet');
+  const browseSource = fs.readFileSync(browsePath, 'utf8');
+  const browseCss = fs.readFileSync(browseCssPath, 'utf8');
+  const browseModule = await server.ssrLoadModule(`/${browsePath}`);
+  const browseRow = types.createBlankItineraryRow('browse-row', 0);
+  Object.assign(browseRow, {
+    voyageNumber: 'V-120', portDockName: 'KAOHSIUNG NO. 72', portTimeZone: 'UTC+8', operation: 'To Load',
+    cargoQuantityText: '10,000 MT', etaUtc: '2026-09-01T00:00:00Z', etbUtc: '2026-09-01T02:00:00Z',
+    etcUtc: '2026-09-01T08:00:00Z', etdUtc: '2026-09-01T10:00:00Z', ldRateText: '500',
+    notesText: '靠港前請確認拖輪', oceanDistanceNm: 120, speedKnots: 12, berthWaitHours: 2,
+    channelSailingHours: 1, tanksText: '1P / 1S', operationQuantityMt: 1000,
+    operationRateMtPerHour: 250, preCompletionDelayHours: 1, postCompletionDelayHours: 6,
+  });
+  const collapsedBrowse = renderToStaticMarkup(createElement(browseModule.ItineraryBrowseTable, { rows: [browseRow], showMoreParameters: false, ariaLabel: 'collapsed itinerary' }));
+  const expandedBrowse = renderToStaticMarkup(createElement(browseModule.ItineraryBrowseTable, { rows: [browseRow], showMoreParameters: true, ariaLabel: 'expanded itinerary' }));
+  assert.match(collapsedBrowse, /備註信息/);
+  assert.match(collapsedBrowse, /靠港前請確認拖輪/);
+  assert.doesNotMatch(collapsedBrowse, /DTG\(NM\)/, 'estimate parameters must stay hidden by default');
+  for (const label of layout.ITINERARY_PARAMETER_FIELD_LABELS) assert.ok(expandedBrowse.includes(label), `expanded browse table must include ${label}`);
+  const moreButton = renderToStaticMarkup(createElement(browseModule.ItineraryMoreParametersButton, { expanded: false, onToggle() {} }));
+  assert.match(moreButton, /aria-expanded="false"/);
+  assert.match(moreButton, /顯示更多預估參數/);
   assert.ok(html.includes('/src/ship-itinerary-main.tsx'));
   assert.ok(!entry.includes("from './App'"));
   assert.ok(entry.includes('ShipItineraryPortal'));
@@ -148,24 +196,32 @@ try {
   assert.match(editor, /preCompletionDelayHours/);
   assert.match(editor, /postCompletionDelayHours/);
   assert.match(editor, /operationRateMtPerHour === null/);
+  assert.match(editor, /notesText/, 'ship editor must provide the notes input after Dep ROB');
   assert.match(editor, /ItineraryOperationOptions/);
   assert.match(officeEditor, /ItineraryOperationOptions/);
+  assert.match(officeEditor, /notesText/, 'owner editor must preserve the shared notes field');
+  assert.match(editor, /<colgroup>/, 'ship editor widths must use explicit column geometry rather than brittle nth-child drift');
+  assert.match(officeEditor, /<colgroup>/, 'owner editor widths must use the same explicit column geometry');
   assert.doesNotMatch(editor, /<select value=\{row\.operation\}/);
   assert.doesNotMatch(officeEditor, /<select value=\{row\.operation\}/);
   assert.match(editor, /ITINERARY_MAIN_FIELD_LABELS/);
-  assert.match(panel, /ITINERARY_MAIN_FIELD_LABELS/);
+  assert.match(panel, /ItineraryBrowseTable/);
   assert.match(portal, /dashboardVesselDisplayName/, 'ship selector and headings must use the main dashboard vessel naming rule');
-  assert.match(portal, /ITINERARY_MAIN_FIELD_LABELS/, 'ship latest view must expose the same A:M columns as the main dashboard');
-  assert.match(panel, /formatItineraryUtcOffset/, 'main browse rows must display canonical UTC offsets');
-  assert.match(portal, /formatItineraryUtcOffset/, 'ship browse rows must display canonical UTC offsets');
-  assert.match(panel, /resolveItineraryTimeZone\(row,\s*field\)/, 'main browse must resolve each LT field offset independently');
-  assert.match(portal, /resolveItineraryTimeZone\(row,\s*field\)/, 'ship browse must resolve each LT field offset independently');
-  assert.match(panel, /itinerary-time-offset-label/, 'main browse must show the resolved offset inside each LT cell');
-  assert.match(portal, /ship-time-offset-label/, 'ship browse must show the resolved offset inside each LT cell');
+  assert.match(portal, /ItineraryBrowseTable/, 'ship latest view must mount the same browse table as the main dashboard');
+  assert.match(panel, /ItineraryMoreParametersButton/, 'main browse must expose the shared more-parameters action');
+  assert.match(portal, /ItineraryMoreParametersButton/, 'ship browse must expose the shared more-parameters action');
+  assert.match(browseSource, /formatItineraryUtcOffset/, 'shared browse rows must display canonical UTC offsets');
+  assert.match(browseSource, /resolveItineraryTimeZone\(row,\s*field\)/, 'shared browse must resolve each LT field offset independently');
+  assert.match(browseSource, /itinerary-browse-time-offset/, 'shared browse must show the resolved offset inside each LT cell');
+  assert.match(browseSource, /notesText/, 'shared browse must render notes after Dep ROB');
+  assert.match(browseSource, /row\.sailingHours/);
+  assert.match(browseSource, /row\.operationHours/);
   assert.match(css, /\.ship-vessel-picker select\{[^}]*color-scheme:light[^}]*color:#172033/);
   assert.match(css, /\.ship-vessel-picker option\{[^}]*background:#fff[^}]*color:#172033/);
-  assert.match(css, /\.ship-latest-scroll table\{[^}]*font-size:12px/);
+  assert.match(browseCss, /\.itinerary-browse-table\s*\{[^}]*font-size:\s*12px/);
+  assert.match(browseCss, /\.itinerary-browse-time\s*\{[^}]*white-space:\s*nowrap/);
   assert.match(css, /\.ship-editor-grid\{[^}]*font-size:12px/);
+  assert.match(css, /\.ship-time-input\{[^}]*grid-template-columns:20px 118px 92px/, 'native time inputs need enough width to show all HH:mm digits');
   assert.match(purposeInput, /<details/);
   assert.match(purposeInput, /<summary/);
   assert.match(purposeInput, /ITINERARY_PURPOSE_OPTIONS\.map/);

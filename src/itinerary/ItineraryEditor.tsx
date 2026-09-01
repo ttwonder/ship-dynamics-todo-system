@@ -10,7 +10,10 @@ import UtcOffsetSelect from './UtcOffsetSelect';
 import ItineraryOperationOptions from './ItineraryOperationOptions';
 import ItineraryDateInput from './ItineraryDateInput';
 import { parseItineraryRateText, removeShipDraftRow, shipPortTimeZonePatch, shipTimeZonePatch } from './shipItineraryModel';
-import { ITINERARY_MAIN_FIELD_LABELS } from './itineraryFieldLayout';
+import {
+  ITINERARY_EDITOR_ACTION_WIDTH, ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS, ITINERARY_EDITOR_MAIN_TABLE_WIDTH,
+  ITINERARY_EDITOR_ROW_NUMBER_WIDTH, ITINERARY_MAIN_FIELD_LABELS,
+} from './itineraryFieldLayout';
 
 interface ItineraryEditorProps {
   document: ItineraryDocument;
@@ -201,12 +204,12 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   return <div className="modal-backdrop itinerary-editor-backdrop" role="presentation">
     <section className="modal itinerary-editor-modal" role="dialog" aria-modal="true" aria-labelledby="itinerary-editor-title" onPointerDown={touch} onKeyDown={touch}>
       <header className="itinerary-editor-head">
-        <div><h2 id="itinerary-editor-title">手動修改｜{document.vesselName}</h2><p>Revision {document.revision}｜辦公室只修改 A:M；日期及時間以各港 UTC Offset 輸入。</p></div>
+        <div><h2 id="itinerary-editor-title">手動修改｜{document.vesselName}</h2><p>Revision {document.revision}｜辦公室只修改主要資料欄；日期及時間以各港 UTC Offset 輸入。</p></div>
         <div className="itinerary-editor-head-actions">{readOnly&&dirty&&<button type="button" className="btn small red" onClick={cancel}>丟棄草稿</button>}<button type="button" className="btn ghost" onClick={readOnly&&dirty?closePreservingDraft:cancel}>{readOnly&&dirty?'關閉（保留草稿）':'取消編輯'}</button><button type="button" className="btn primary" disabled={readOnly||saving} onClick={submit}>{saving?'保存中…':'保存並同步'}</button></div>
       </header>
       {(message||idleWarning)&&<div className={`itinerary-editor-message ${readOnly?'error':idleWarning?'warning':''}`} role="status">{message||'已閒置 8 分鐘；再無操作將於 10 分鐘時退出可寫狀態並保留草稿。'}</div>}
       <div className="itinerary-editor-table-wrap">
-        <table className="itinerary-editor-table"><thead><tr><th>#</th>{ITINERARY_MAIN_FIELD_LABELS.map(label=><th key={label}>{label}</th>)}<th>操作</th></tr></thead>
+        <table className="itinerary-editor-table" style={{ width: ITINERARY_EDITOR_MAIN_TABLE_WIDTH }}><colgroup><col style={{ width: ITINERARY_EDITOR_ROW_NUMBER_WIDTH }} />{ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS.map((width,index)=><col key={`main-${index}`} style={{ width }} />)}<col style={{ width: ITINERARY_EDITOR_ACTION_WIDTH }} /></colgroup><thead><tr><th>#</th>{ITINERARY_MAIN_FIELD_LABELS.map(label=><th key={label}>{label}</th>)}<th>操作</th></tr></thead>
           <tbody>{draft.rows.map((row,index)=><tr key={row.rowId}>
             <td>{index+1}</td>
             <td><input value={row.voyageNumber} disabled={readOnly} onChange={event=>updateRow(row.rowId,{voyageNumber:event.target.value})}/></td>
@@ -219,10 +222,11 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
             <td><input title={row.ldRateText} value={row.ldRateText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{ldRateText:event.target.value,operationRateMtPerHour:parseItineraryRateText(event.target.value)})}/></td>
             <td><TimeCell row={row} field="etcUtc" disabled={readOnly} onError={setMessage} onPatch={patch=>updateRow(row.rowId,patch)}/></td>
             <td><TimeCell row={row} field="etdUtc" disabled={readOnly} onError={setMessage} onPatch={patch=>updateRow(row.rowId,patch)}/></td>
-            <td><input title={row.arrivalDraftText} value={row.arrivalDraftText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{arrivalDraftText:event.target.value})}/></td>
-            <td><input title={row.departureDraftText} value={row.departureDraftText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{departureDraftText:event.target.value})}/></td>
+            <td><textarea title={row.arrivalDraftText} value={row.arrivalDraftText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{arrivalDraftText:event.target.value})}/></td>
+            <td><textarea title={row.departureDraftText} value={row.departureDraftText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{departureDraftText:event.target.value})}/></td>
             <td><input title={row.arrivalRobText} value={row.arrivalRobText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{arrivalRobText:event.target.value})}/></td>
             <td><input title={row.departureRobText} value={row.departureRobText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{departureRobText:event.target.value})}/></td>
+            <td><textarea title={row.notesText || ''} value={row.notesText || ''} disabled={readOnly} onChange={event=>updateRow(row.rowId,{notesText:event.target.value})}/></td>
             <td><button type="button" className="btn small red" disabled={readOnly} onClick={()=>removeRow(row.rowId)}>刪列</button></td>
           </tr>)}</tbody>
         </table>

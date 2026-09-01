@@ -153,11 +153,17 @@ export function hasRemoteItineraryUpdate(baseRevision: number, latestRevision: n
   return Number.isInteger(latestRevision) && latestRevision > baseRevision;
 }
 
+function draftHasBusinessContent(value: string | undefined): boolean {
+  const normalized = String(value ?? '').split(/\r?\n/).map(line => line.trim()).join('\n').trim();
+  return normalized !== '' && normalized !== 'A:\nF:';
+}
+
 function rowHasBusinessContent(row: ItineraryRow): boolean {
   return Boolean(
     row.voyageNumber.trim() || row.portDockName.trim() || row.operation || row.cargoQuantityText.trim()
     || row.etaUtc || row.etbUtc || row.ldRateText.trim() || row.etcUtc || row.etdUtc
-    || row.arrivalDraftText.trim() || row.departureDraftText.trim() || row.arrivalRobText.trim() || row.departureRobText.trim()
+    || draftHasBusinessContent(row.arrivalDraftText) || draftHasBusinessContent(row.departureDraftText)
+    || row.arrivalRobText.trim() || row.departureRobText.trim() || (row.notesText || '').trim()
     || row.oceanDistanceNm !== null || row.speedKnots !== null || row.berthWaitHours !== null || row.channelSailingHours !== null || row.tanksText.trim()
     || row.operationQuantityMt !== null || row.operationRateMtPerHour !== null || row.preCompletionDelayHours !== null
     || row.postCompletionDelayHours !== null || row.departureBufferDays !== null

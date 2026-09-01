@@ -76,6 +76,7 @@ export interface ItineraryRow {
   departureDraftText: string;
   arrivalRobText: string;
   departureRobText: string;
+  notesText: string;
   portTimeZone: string;
   etaTimeZone: string;
   etbTimeZone: string;
@@ -162,10 +163,11 @@ export function createBlankItineraryRow(rowId = createItineraryId('row'), sortOr
     ldRateText: '',
     etcUtc: null,
     etdUtc: null,
-    arrivalDraftText: '',
-    departureDraftText: '',
+    arrivalDraftText: 'A:\nF:',
+    departureDraftText: 'A:\nF:',
     arrivalRobText: '',
     departureRobText: '',
+    notesText: '',
     portTimeZone: '',
     etaTimeZone: '',
     etbTimeZone: '',

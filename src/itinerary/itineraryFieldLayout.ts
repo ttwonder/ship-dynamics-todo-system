@@ -13,6 +13,7 @@ export const ITINERARY_MAIN_FIELD_LABELS = [
   'Dep Draft',
   'Arr ROB',
   'Dep ROB',
+  '備註信息',
 ] as const;
 
 export const ITINERARY_PARAMETER_FIELD_LABELS = [
@@ -28,3 +29,35 @@ export const ITINERARY_PARAMETER_FIELD_LABELS = [
   '預估等待/延誤時間(完貨前)(h)',
   '預估等待/延誤時間(完貨後)(h)',
 ] as const;
+
+export const ITINERARY_EDITOR_ROW_NUMBER_WIDTH = 34;
+export const ITINERARY_EDITOR_ACTION_WIDTH = 36;
+
+export const ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS = [
+  70, 175, 96, 155, 155, 246, 246, 40, 246, 246, 98, 98, 147, 147, 175,
+] as const;
+
+export const ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS = [
+  82, 82, 82, 82, 82, 135, 100, 82, 82, 82, 82,
+] as const;
+
+export const ITINERARY_EDITOR_MAIN_TABLE_WIDTH = ITINERARY_EDITOR_ROW_NUMBER_WIDTH
+  + ITINERARY_EDITOR_ACTION_WIDTH
+  + ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS.reduce((total, width) => total + width, 0);
+
+export const ITINERARY_EDITOR_PARAMETER_TABLE_WIDTH = ITINERARY_EDITOR_ROW_NUMBER_WIDTH
+  + ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS.reduce((total, width) => total + width, 0);
+
+export const ITINERARY_BROWSE_MAIN_COLUMN_WIDTHS = [
+  74, 170, 92, 150, 175, 142, 142, 105, 142, 142, 105, 105, 145, 145, 170,
+] as const;
+
+export const ITINERARY_BROWSE_PARAMETER_COLUMN_WIDTHS = [
+  100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+] as const;
+
+export const ITINERARY_BROWSE_MAIN_TABLE_WIDTH = ITINERARY_BROWSE_MAIN_COLUMN_WIDTHS
+  .reduce((total, width) => total + width, 0);
+
+export const ITINERARY_BROWSE_EXPANDED_TABLE_WIDTH = ITINERARY_BROWSE_MAIN_TABLE_WIDTH
+  + ITINERARY_BROWSE_PARAMETER_COLUMN_WIDTHS.reduce((total, width) => total + width, 0);

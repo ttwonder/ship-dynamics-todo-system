@@ -4,8 +4,8 @@ import { createDemoItineraryDocuments } from './itineraryDemoData';
 import { ITINERARY_DEMO_VESSELS } from './itineraryDemoVessels';
 import { deleteItineraryDraft, itineraryDraftKey, readItineraryDraft, saveItineraryDraft, type ItineraryPendingOperation } from './itineraryDraftStore';
 import { downloadItineraryWorkbook, parseItineraryWorkbook } from './itineraryExcel';
-import { formatItineraryUtcOffset, formatRelativeUpdatedAt, instantToWallTime } from './itineraryTime';
-import { createEmptyItineraryDocument, createItineraryId, formatItineraryOperation, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryRow, type ItineraryTimeField } from './itineraryTypes';
+import { formatRelativeUpdatedAt } from './itineraryTime';
+import { createEmptyItineraryDocument, createItineraryId, type ItineraryDocument } from './itineraryTypes';
 import { validateItineraryDocument } from './itineraryValidation';
 import { useShipPortalRollout } from './itineraryRollout';
 import { createShipDraft, hasShipDraftBusinessContent, trimTrailingBlankShipRows } from './shipItineraryModel';
@@ -15,7 +15,7 @@ import { pendingOperationForDocument } from './itineraryOperation';
 import { selectLatestItineraryDocument } from './itineraryFreshness';
 import ShipItineraryEditor from './ShipItineraryEditor';
 import { dashboardVesselDisplayName } from '../vesselDisplay';
-import { ITINERARY_MAIN_FIELD_LABELS } from './itineraryFieldLayout';
+import { ItineraryBrowseTable, ItineraryMoreParametersButton } from './ItineraryBrowseTable';
 
 interface EditorState {
   draft: ItineraryDocument;
@@ -33,19 +33,6 @@ function browserId(storage: Storage, key: string, prefix: string): string {
   const created = createItineraryId(prefix);
   storage.setItem(key, created);
   return created;
-}
-
-function LatestTimeCell({ row, field }: { row: ItineraryRow; field: ItineraryTimeField }) {
-  const value = row[field];
-  const zone = resolveItineraryTimeZone(row,field);
-  const wall = value && zone ? instantToWallTime(value, zone) : null;
-  const label = wall?.ok ? `${wall.date.slice(5)} ${wall.time}` : '—';
-  const offset = formatItineraryUtcOffset(zone, value);
-  return <div className="ship-latest-time-cell"><span>{label}</span>{offset&&<small className="ship-time-offset-label">{offset}</small>}</div>;
-}
-
-function LatestPortCell({ row }: { row: ItineraryRow }) {
-  return <div className="ship-latest-port-cell"><span>{row.portDockName || '—'}</span></div>;
 }
 
 function saveError(code: string): string {
@@ -82,6 +69,7 @@ export default function ShipItineraryPortal() {
   const editorRef = useRef<EditorState | null>(null);
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
+  const [showMoreParameters, setShowMoreParameters] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { editorRef.current = editor; }, [editor]);
@@ -303,7 +291,19 @@ export default function ShipItineraryPortal() {
     <header className="ship-portal-header"><div>{rollout.demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{rollout.demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div><div className="ship-vessel-picker"><label>船名</label><select value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vessels.map(vessel => <option value={vessel.id} key={vessel.id}>{dashboardVesselDisplayName(vessel)}</option>)}</select></div></header>
     {notice && <div className="ship-notice">{notice}</div>}
     {!selectedVesselId && <div className="ship-state-card compact"><b>先選擇船名</b><span>再選擇從空白或最新狀態開始。</span></div>}
-    {selectedVesselId && latest && !editor && <section className="ship-latest-card"><div className="ship-latest-head"><div><h2>{latest.vesselName}</h2><span>{formatRelativeUpdatedAt(latest.updatedAt)}｜Revision {latest.revision}</span></div><div><button className="btn ghost small" onClick={() => void exportDocument(latest, 'Itinerary')}>匯出最新 Excel</button><button className="btn ghost small" title="下載 Excel 並開啟郵件；附件需手動加入" onClick={() => void prepareEmailReport(latest)}>準備郵件報告</button><button className="btn ghost small" onClick={() => void startEditing('blank')}>從空白開始</button><button className="btn primary small" onClick={() => void startEditing('latest')}>從最新狀態修改</button></div></div><div className="ship-latest-scroll"><table><thead><tr>{ITINERARY_MAIN_FIELD_LABELS.map(label=><th key={label}>{label}</th>)}</tr></thead><tbody>{latest.rows.map(row => <tr key={row.rowId}><td>{row.voyageNumber || '—'}</td><td><LatestPortCell row={row}/></td><td>{formatItineraryUtcOffset(row.portTimeZone,row.etaUtc||row.etbUtc||row.etcUtc||row.etdUtc)||'—'}</td><td>{formatItineraryOperation(row.operation) || '—'}</td><td className="ship-latest-multiline">{row.cargoQuantityText || '—'}</td><td><LatestTimeCell row={row} field="etaUtc"/></td><td><LatestTimeCell row={row} field="etbUtc"/></td><td>{row.ldRateText || '—'}</td><td><LatestTimeCell row={row} field="etcUtc"/></td><td><LatestTimeCell row={row} field="etdUtc"/></td><td className="ship-latest-multiline">{row.arrivalDraftText || '—'}</td><td className="ship-latest-multiline">{row.departureDraftText || '—'}</td><td className="ship-latest-multiline">{row.arrivalRobText || '—'}</td><td className="ship-latest-multiline">{row.departureRobText || '—'}</td></tr>)}</tbody></table></div></section>}
+    {selectedVesselId && latest && !editor && <section className="ship-latest-card">
+      <div className="ship-latest-head">
+        <div><h2>{latest.vesselName}</h2><span>{formatRelativeUpdatedAt(latest.updatedAt)}</span></div>
+        <div>
+          <ItineraryMoreParametersButton expanded={showMoreParameters} onToggle={() => setShowMoreParameters(value => !value)} />
+          <button className="btn ghost small" onClick={() => void exportDocument(latest, 'Itinerary')}>匯出最新 Excel</button>
+          <button className="btn ghost small" title="下載 Excel 並開啟郵件；附件需手動加入" onClick={() => void prepareEmailReport(latest)}>準備郵件報告</button>
+          <button className="btn ghost small" onClick={() => void startEditing('blank')}>從空白開始</button>
+          <button className="btn primary small" onClick={() => void startEditing('latest')}>從最新狀態修改</button>
+        </div>
+      </div>
+      <ItineraryBrowseTable rows={latest.rows} showMoreParameters={showMoreParameters} ariaLabel={`${latest.vesselName} Itinerary`} />
+    </section>}
     {editor && <><div className="ship-edit-toolbar"><b>{editor.draft.vesselName}</b><span>基準 Revision {editor.baseRevision}</span><button className="btn ghost small" disabled={editor.readOnly} onClick={() => fileInputRef.current?.click()}>匯入單船 Excel</button><button className="btn ghost small" onClick={() => void exportDocument(editor.draft, 'Itinerary_Draft')}>匯出草稿</button><input ref={fileInputRef} className="itinerary-file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => { const file = event.target.files?.[0]; if (file) void importFile(file); }} /></div><ShipItineraryEditor document={editor.draft} readOnly={editor.readOnly} canSave={hasShipDraftBusinessContent(editor.draft)} remoteUpdated={editor.remoteUpdated} saving={saving} onChange={draft => setEditor(previous => previous ? { ...previous, draft, dirty: true, pendingOperation: undefined } : previous)} onSave={() => void saveEditor()} onCancel={() => void discardEditor()} onClosePreservingDraft={closeEditor} onDiscardDraft={() => void discardEditor()} onSyncLatest={syncLatest} onExportDraft={() => void exportDocument(editor.draft, 'Itinerary_Conflict_Draft')} /></>}
   </main>;
 }

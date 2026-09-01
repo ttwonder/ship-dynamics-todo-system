@@ -17,7 +17,7 @@ try {
     etaUtc: '2026-08-31T08:00:00Z', etaMode: 'auto', etaTimeZone: '', etbTimeZone: 'UTC+9', etcTimeZone: 'UTC+8:45', etdTimeZone: 'UTC-6',
     calculationStartUtc: '2026-08-30T22:00:00Z', calculationStartTimeZone: 'UTC+8', berthWaitHours: 2, channelSailingHours: 1,
     preCompletionDelayHours: 2, postCompletionDelayHours: 6, operationQuantityMt: 5000, operationRateMtPerHour: 500, ldRateText: '500',
-    departureBufferDays: null, oceanDistanceNm: 120, speedKnots: 12, arrivalDraftText: '10.2', departureDraftText: '11.0',
+    departureBufferDays: null, oceanDistanceNm: 120, speedKnots: 12, arrivalDraftText: '10.2', departureDraftText: '11.0', notesText: '靠港前請再次確認',
   });
   const second = createBlankItineraryRow('row-b', 1);
   Object.assign(second, {
@@ -59,29 +59,32 @@ try {
   assert.equal(workbook.worksheets[0].getCell('G3').value, '預計L/D rate (MT/h)');
   assert.equal(workbook.worksheets[0].getCell('L3').value, 'Arr ROB');
   assert.equal(workbook.worksheets[0].getCell('M3').value, 'Dep ROB');
+  assert.equal(workbook.worksheets[0].getCell('N3').value, '備註信息');
+  assert.equal(workbook.worksheets[0].getCell('N4').value, '靠港前請再次確認');
   assert.equal(workbook.worksheets[0].getCell('C4').value, 'To Load / To Unload / docking / inspection');
   assert.match(String(workbook.worksheets[0].getCell('C4').dataValidation.formulae?.[0]), /To Load \/ To Unload/);
-  assert.equal(workbook.worksheets[0].getCell('N3').value, 'UTC Offset');
-  assert.equal(workbook.worksheets[0].getCell('O3').value, 'DTG(NM)');
-  assert.equal(workbook.worksheets[0].getCell('Q3').value, '剩餘航行時間(h)');
-  assert.equal(workbook.worksheets[0].getCell('S3').value, '預計航道航行時間(h)');
-  assert.equal(workbook.worksheets[0].getCell('X3').value, '預估等待/延誤時間(完貨前)(h)');
-  assert.equal(workbook.worksheets[0].getCell('Y3').value, '預估等待/延誤時間(完貨後)(h)');
-  assert.equal(workbook.worksheets[0].getCell('Z3').value, 'ETA UTC Offset');
-  assert.equal(workbook.worksheets[0].getCell('AE3').value, '首列 ETA 起算 UTC Offset');
-  assert.equal(workbook.worksheets[0].getCell('N4').value, 'UTC+8');
-  assert.equal(workbook.worksheets[0].getCell('N6').value, 'UTC+5:45');
-  assert.equal(workbook.worksheets[0].getCell('Z4').value, '');
-  assert.equal(workbook.worksheets[0].getCell('AA4').value, 'UTC+9');
-  assert.equal(workbook.worksheets[0].getCell('AB4').value, 'UTC+8:45');
-  assert.equal(workbook.worksheets[0].getCell('AC4').value, 'UTC-6');
-  assert.equal(workbook.worksheets[0].getCell('AE4').value, 'UTC+8');
+  assert.equal(workbook.worksheets[0].getCell('O3').value, 'UTC Offset');
+  assert.equal(workbook.worksheets[0].getCell('P3').value, 'DTG(NM)');
+  assert.equal(workbook.worksheets[0].getCell('R3').value, '剩餘航行時間(h)');
+  assert.equal(workbook.worksheets[0].getCell('T3').value, '預計航道航行時間(h)');
+  assert.equal(workbook.worksheets[0].getCell('Y3').value, '預估等待/延誤時間(完貨前)(h)');
+  assert.equal(workbook.worksheets[0].getCell('Z3').value, '預估等待/延誤時間(完貨後)(h)');
+  assert.equal(workbook.worksheets[0].getCell('AA3').value, 'ETA UTC Offset');
+  assert.equal(workbook.worksheets[0].getCell('AF3').value, '首列 ETA 起算 UTC Offset');
+  assert.equal(workbook.worksheets[0].getCell('O4').value, 'UTC+8');
+  assert.equal(workbook.worksheets[0].getCell('O6').value, 'UTC+5:45');
+  assert.equal(workbook.worksheets[0].getCell('AA4').value, '');
+  assert.equal(workbook.worksheets[0].getCell('AB4').value, 'UTC+9');
+  assert.equal(workbook.worksheets[0].getCell('AC4').value, 'UTC+8:45');
+  assert.equal(workbook.worksheets[0].getCell('AD4').value, 'UTC-6');
+  assert.equal(workbook.worksheets[0].getCell('AF4').value, 'UTC+8');
+  assert.equal(workbook.worksheets[2].getCell('G2').value, 3, 'metadata must identify the notes-aware Excel layout');
   const helperExpectations = [
-    ['AF4', 'AE4', 8],
-    ['AG4', 'IF(Z4="",N4,Z4)', 8],
-    ['AH4', 'IF(AA4="",N4,AA4)', 9],
-    ['AI4', 'IF(AB4="",N4,AB4)', 8.75],
-    ['AJ4', 'IF(AC4="",N4,AC4)', -6],
+    ['AG4', 'AF4', 8],
+    ['AH4', 'IF(AA4="",O4,AA4)', 8],
+    ['AI4', 'IF(AB4="",O4,AB4)', 9],
+    ['AJ4', 'IF(AC4="",O4,AC4)', 8.75],
+    ['AK4', 'IF(AD4="",O4,AD4)', -6],
   ];
   for (const [address, source, result] of helperExpectations) {
     const helper = workbook.worksheets[0].getCell(address).value;
@@ -90,7 +93,7 @@ try {
     assert.ok(helper.formula.includes(source), `${address} must derive from ${source}`);
     assert.equal(helper.result, result);
   }
-  for (const address of ['N4','Z4','AA4','AB4','AC4','AE4']) {
+  for (const address of ['O4','AA4','AB4','AC4','AD4','AF4']) {
     assert.equal(workbook.worksheets[0].getCell(address).dataValidation.formulae?.[0], 'ItineraryUtcOffsetLabels');
   }
   const offsetLabelRange = workbook.definedNames.getRanges('ItineraryUtcOffsetLabels').ranges.join(',');
@@ -101,18 +104,19 @@ try {
   assert.equal(workbook.worksheets[2].getCell(1 + UTC_OFFSET_OPTIONS.length, 8).value, UTC_OFFSET_OPTIONS.at(-1));
   const workbookXml = await (await JSZip.loadAsync(output)).file('xl/workbook.xml').async('string');
   assert.match(workbookXml, /<calcPr[^>]*fullCalcOnLoad="1"/, 'Excel must fully recalculate live offset helpers on open');
-  assert.equal(workbook.worksheets[0].getCell('Q4').value.formula.includes('O4/P4'), true);
-  assert.equal(workbook.worksheets[0].getCell('Q4').value.formula.includes('ROUNDUP'), false);
-  assert.equal(workbook.worksheets[0].getCell('E4').value.formula.includes('AD4'), true);
+  assert.equal(workbook.worksheets[0].getCell('R4').value.formula.includes('P4/Q4'), true);
+  assert.equal(workbook.worksheets[0].getCell('R4').value.formula.includes('ROUNDUP'), false);
+  assert.equal(workbook.worksheets[0].getCell('E4').value.formula.includes('AE4'), true);
   assert.equal(workbook.worksheets[0].getCell('E6').value.formula.includes('I4'), true);
-  assert.equal(workbook.worksheets[0].getCell('E6').value.formula.includes('Q6'), true);
-  assert.equal(workbook.worksheets[0].getCell('F4').value.formula.includes('S4'), true);
-  assert.equal(workbook.worksheets[0].getCell('H4').value.formula.includes('X4'), true);
-  assert.equal(workbook.worksheets[0].getCell('I4').value.formula.includes('Y4'), true);
-  for (let column = 32; column <= 36; column += 1) assert.equal(workbook.worksheets[0].getColumn(column).hidden, true, `helper column ${column} must stay hidden`);
+  assert.equal(workbook.worksheets[0].getCell('E6').value.formula.includes('R6'), true);
+  assert.equal(workbook.worksheets[0].getCell('F4').value.formula.includes('T4'), true);
+  assert.equal(workbook.worksheets[0].getCell('H4').value.formula.includes('Y4'), true);
+  assert.equal(workbook.worksheets[0].getCell('I4').value.formula.includes('Z4'), true);
+  for (let column = 33; column <= 37; column += 1) assert.equal(workbook.worksheets[0].getColumn(column).hidden, true, `helper column ${column} must stay hidden`);
   assert.ok(workbook.worksheets[0].model.merges.includes('A4:A5'));
-  assert.equal(workbook.worksheets[0].pageSetup.printArea, 'A1:M7');
-  for (let column = 1; column <= 23; column += 1) assert.equal(workbook.worksheets[0].getColumn(column).width, templateSheet.getColumn(column).width, `column ${column} width must match the approved template`);
+  assert.equal(workbook.worksheets[0].pageSetup.printArea, 'A1:N7');
+  for (let column = 1; column <= 13; column += 1) assert.equal(workbook.worksheets[0].getColumn(column).width, templateSheet.getColumn(column).width, `column ${column} width must match the approved template`);
+  assert.ok(workbook.worksheets[0].getColumn(14).width >= 26, 'notes must have a readable visible Excel width');
   for (let row = 1; row <= 7; row += 1) assert.equal(workbook.worksheets[0].getRow(row).height, templateSheet.getRow(row).height, `row ${row} height must match the approved template`);
   assert.equal(workbook.worksheets[0].getCell('A1').font.bold, true);
   assert.equal(workbook.worksheets[0].getCell('A1').fill.fgColor.argb, 'FFF2F2F2');
@@ -130,19 +134,19 @@ try {
 
   const editableOffsetWorkbook = new ExcelJS.Workbook();
   await editableOffsetWorkbook.xlsx.load(output);
-  editableOffsetWorkbook.worksheets[0].getCell('Z4').value = 'UTC+9';
+  editableOffsetWorkbook.worksheets[0].getCell('AA4').value = 'UTC+9';
   const editableOffsetBytes = await editableOffsetWorkbook.xlsx.writeBuffer();
   const editableOffsetReloaded = new ExcelJS.Workbook();
   await editableOffsetReloaded.xlsx.load(editableOffsetBytes);
-  assert.equal(editableOffsetReloaded.worksheets[0].getCell('Z4').value, 'UTC+9');
-  assert.match(editableOffsetReloaded.worksheets[0].getCell('AG4').value.formula, /IF\(Z4="",N4,Z4\)/);
+  assert.equal(editableOffsetReloaded.worksheets[0].getCell('AA4').value, 'UTC+9');
+  assert.match(editableOffsetReloaded.worksheets[0].getCell('AH4').value.formula, /IF\(AA4="",O4,AA4\)/);
   assert.ok(editableOffsetReloaded.definedNames.getRanges('ItineraryUtcOffsetLookup').ranges.length > 0);
-  assert.equal(editableOffsetReloaded.worksheets[0].getCell('Z4').dataValidation.formulae?.[0], 'ItineraryUtcOffsetLabels');
+  assert.equal(editableOffsetReloaded.worksheets[0].getCell('AA4').dataValidation.formulae?.[0], 'ItineraryUtcOffsetLabels');
 
   const laterAnchorWorkbook = new ExcelJS.Workbook();
   await laterAnchorWorkbook.xlsx.load(output);
-  laterAnchorWorkbook.worksheets[0].getCell('AD6').value = new Date('2026-09-01T00:00:00Z');
-  laterAnchorWorkbook.worksheets[0].getCell('AE6').value = 'UTC+8';
+  laterAnchorWorkbook.worksheets[0].getCell('AE6').value = new Date('2026-09-01T00:00:00Z');
+  laterAnchorWorkbook.worksheets[0].getCell('AF6').value = 'UTC+8';
   const laterAnchorBytes = await laterAnchorWorkbook.xlsx.writeBuffer();
   const parsedLaterAnchor = await parseItineraryWorkbook(laterAnchorBytes.buffer.slice(laterAnchorBytes.byteOffset, laterAnchorBytes.byteOffset + laterAnchorBytes.byteLength));
   assert.ok(parsedLaterAnchor.sheets[0].issues.some(issue => issue.code === 'first-row-only' && issue.rowNumber === 6), 'Excel must reject an ETA calculation anchor outside its first itinerary row');
@@ -153,6 +157,7 @@ try {
   assert.equal(parsed.sheets[0].rows.length, 2);
   assert.equal(parsed.sheets[0].rows[0].voyageNumber, 'V001');
   assert.equal(parsed.sheets[0].rows[0].operation, 'To Load / To Unload / docking / inspection');
+  assert.equal(parsed.sheets[0].rows[0].notesText, '靠港前請再次確認');
   assert.equal(parsed.sheets[0].rows[1].portTimeZone, 'UTC+5:45');
   assert.equal(parsed.sheets[0].rows[0].etaTimeZone, '');
   assert.equal(parsed.sheets[0].rows[0].etbTimeZone, 'UTC+9');
@@ -172,7 +177,7 @@ try {
   assert.equal(footerParsed.sheets[0].rows.length, 2);
 
   workbook.worksheets[0].getCell('C4').value = 'Not An Operation';
-  workbook.worksheets[0].getCell('N4').value = 5.5;
+  workbook.worksheets[0].getCell('O4').value = 5.5;
   const malformed = await workbook.xlsx.writeBuffer();
   const parsedMalformed = await parseItineraryWorkbook(malformed);
   assert.ok(parsedMalformed.sheets[0].issues.some(issue => issue.code === 'invalid-operation'));
@@ -180,7 +185,7 @@ try {
   assert.equal(parsedMalformed.sheets[0].issues.some(issue => issue.code === 'time-zone-required'), false);
 
   workbook.worksheets[0].getCell('C4').value = 'Loading / Unloading';
-  workbook.worksheets[0].getCell('N4').value = 'GMT+8';
+  workbook.worksheets[0].getCell('O4').value = 'GMT+8';
   const invalidOffset = await workbook.xlsx.writeBuffer();
   const parsedInvalidOffset = await parseItineraryWorkbook(invalidOffset);
   assert.equal(parsedInvalidOffset.sheets[0].rows[0].operation, 'To Load / To Unload', 'legacy combined text must import to the canonical multi-select value');

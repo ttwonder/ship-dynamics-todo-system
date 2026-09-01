@@ -1,7 +1,11 @@
 import { useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { recalculateItineraryRows } from './itineraryDomain';
 import { instantToWallTime, wallTimeToInstant } from './itineraryTime';
-import { ITINERARY_MAIN_FIELD_LABELS, ITINERARY_PARAMETER_FIELD_LABELS } from './itineraryFieldLayout';
+import {
+  ITINERARY_EDITOR_ACTION_WIDTH, ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS, ITINERARY_EDITOR_MAIN_TABLE_WIDTH,
+  ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS, ITINERARY_EDITOR_PARAMETER_TABLE_WIDTH, ITINERARY_EDITOR_ROW_NUMBER_WIDTH,
+  ITINERARY_MAIN_FIELD_LABELS, ITINERARY_PARAMETER_FIELD_LABELS,
+} from './itineraryFieldLayout';
 import {
   addShipDraftRow, removeShipDraftRow, setAllShipTimesManual, setShipAutomaticCalculation,
   shipCalculationStartTimeZonePatch, shipPortTimeZonePatch, shipTimeZonePatch, updateShipDraftRow,
@@ -178,7 +182,8 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
       <section className="ship-editor-pane ship-editor-main-pane" aria-label="輸入與計算區">
         <header><b>輸入／計算區</b><span>时间均为各欄指定 Offset 的 LT</span></header>
         <div className="ship-editor-pane-scroll" tabIndex={0}>
-          <table className="ship-editor-grid ship-editor-main-table">
+          <table className="ship-editor-grid ship-editor-main-table" style={{ width: ITINERARY_EDITOR_MAIN_TABLE_WIDTH }}>
+            <colgroup><col style={{ width: ITINERARY_EDITOR_ROW_NUMBER_WIDTH }} />{ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS.map((width, index) => <col key={`main-${index}`} style={{ width }} />)}<col style={{ width: ITINERARY_EDITOR_ACTION_WIDTH }} /></colgroup>
             <thead><tr><th>#</th>{ITINERARY_MAIN_FIELD_LABELS.map(label => <th key={label}>{label}</th>)}<th>操作</th></tr></thead>
             <tbody>{document.rows.map((row, index) => <tr key={row.rowId}>
               <td className="ship-row-number">{index + 1}</td>
@@ -196,6 +201,7 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
               <td><textarea value={row.departureDraftText} disabled={readOnly} onChange={event => patchRow(row.rowId, { departureDraftText: event.target.value })} /></td>
               <td><textarea value={row.arrivalRobText} disabled={readOnly} onChange={event => patchRow(row.rowId, { arrivalRobText: event.target.value })} /></td>
               <td><textarea value={row.departureRobText} disabled={readOnly} onChange={event => patchRow(row.rowId, { departureRobText: event.target.value })} /></td>
+              <td><textarea value={row.notesText || ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { notesText: event.target.value })} /></td>
               <td><button type="button" className="ship-row-delete" disabled={readOnly || document.rows.length <= 1} onClick={() => onChange(removeShipDraftRow(document, row.rowId))}>×</button></td>
             </tr>)}</tbody>
           </table>
@@ -205,7 +211,8 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
       <section className="ship-editor-pane ship-editor-parameter-pane" aria-label="自動計算參數區">
         <header><b>自動計算用變化參數區</b><span>空白时数按 0；修改后即時更新「自」欄位</span></header>
         <div className="ship-editor-pane-scroll" tabIndex={0}>
-          <table className="ship-editor-grid ship-editor-parameter-table">
+          <table className="ship-editor-grid ship-editor-parameter-table" style={{ width: ITINERARY_EDITOR_PARAMETER_TABLE_WIDTH }}>
+            <colgroup><col style={{ width: ITINERARY_EDITOR_ROW_NUMBER_WIDTH }} />{ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS.map((width, index) => <col key={`parameter-${index}`} style={{ width }} />)}</colgroup>
             <thead><tr><th>#</th>{ITINERARY_PARAMETER_FIELD_LABELS.map(label => <th key={label}>{label}</th>)}</tr></thead>
             <tbody>{document.rows.map((row, index) => <tr key={row.rowId}>
               <td className="ship-row-number">{index + 1}</td>

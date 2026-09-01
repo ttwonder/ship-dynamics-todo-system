@@ -34,9 +34,9 @@
 - 卡片與 Itinerary 使用同一個 `visible` 船舶集合。
 - Itinerary 有獨立 `itinerarySelection`：船被篩掉時保留選取，並顯示 `已選 N／目前可見 M`。
 - 一船一個緊湊 panel；預設最多顯示 7 列，超過時 panel 內捲動並可展開。
-- 13 欄只允許 panel 內橫向捲動，整頁不得橫溢；港口欄 sticky。
-- 相對更新時間只根據 server `updated_at` 顯示，不根據瀏覽器保存時間猜測。
-- 辦公室只手動編輯 A:M；不在主網站自動重算公式。
+- 15 個固定報告欄只允許 panel 內橫向捲動，整頁不得橫溢；點擊 `顯示更多預估參數` 後，11 個計算參數欄接在 `備註信息` 後方。
+- 相對更新時間只根據 server `updated_at` 顯示、不根據瀏覽器保存時間猜測，並直接放在船名下方。
+- 辦公室手動編輯 A:N；不在主網站自行產生另一套公式結果。
 
 ## 4. Canonical document
 
@@ -56,7 +56,7 @@ interface ItineraryDocument {
 
 每個 row 有不可變 `rowId`、整數 `sortOrder`，以及下列欄位。
 
-### 4.1 A:M 報告欄
+### 4.1 A:N 報告欄
 
 | Excel | canonical 欄位 | 型別 | v2 規則 |
 |---|---|---|---|
@@ -73,26 +73,27 @@ interface ItineraryDocument {
 | K Dep Draft | `departureDraftText` | string | 同上 |
 | L Arr ROB | `arrivalRobText` | string | 人工輸入，不推測公式 |
 | M Dep ROB | `departureRobText` | string | 人工輸入，不推測公式 |
+| N 備註信息 | `notesText` | string | 可空；最多 1000 字；舊文件缺欄時按空字串相容 |
 
-### 4.2 N:AE 計算與 Offset 欄
+### 4.2 O:AF 計算與 Offset 欄
 
 | Excel | canonical 欄位 | 型別／單位 |
 |---|---|---|
-| N UTC Offset | `portTimeZone` | 港口預設固定 UTC Offset（UTC-12 至 UTC+14，含半／45 分鐘）；舊 IANA 僅讀取相容 |
-| O DTG(NM) | `oceanDistanceNm` | number/null，NM，>= 0 |
-| P 預估航速(kn) | `speedKnots` | number/null，knots，> 0 才可計算 |
-| Q 剩餘航行時間(h) | `sailingHours` | `DTG / speed`，保留小數 |
-| R 預估等待時間(靠泊前)(h) | `berthWaitHours` | number/null，hours，>= 0 |
-| S 預計航道航行時間(h) | `channelSailingHours` | number/null，hours，>= 0 |
-| T 作業艙號 | `tanksText` | string |
-| U 裝卸貨量(MT) | `operationQuantityMt` | number/null，MT，>= 0 |
-| V 預計 L/D rate (MT/h) | `operationRateMtPerHour` | number/null，MT/h，取自左側 G 欄 |
-| W 預計作業時間(h) | `operationHours` | `quantity / rate`，derived number/null |
-| X 預估等待/延誤時間(完貨前)(h) | `preCompletionDelayHours` | number/null，hours，>= 0 |
-| Y 預估等待/延誤時間(完貨後)(h) | `postCompletionDelayHours` | number/null，hours，>= 0 |
-| Z:AC 各 LT UTC Offset | `etaTimeZone/etbTimeZone/etcTimeZone/etdTimeZone` | 空字串代表跟隨 N；非空代表個別覆蓋 |
-| AD 首列 ETA 起算時間(LT) | `calculationStartUtc` | Excel 顯示 LT，canonical 保存 UTC instant |
-| AE 首列 ETA 起算 UTC Offset | `calculationStartTimeZone` | 固定 UTC Offset；起算時間存在時不可空 |
+| O UTC Offset | `portTimeZone` | 港口預設固定 UTC Offset（UTC-12 至 UTC+14，含半／45 分鐘）；舊 IANA 僅讀取相容 |
+| P DTG(NM) | `oceanDistanceNm` | number/null，NM，>= 0 |
+| Q 預估航速(kn) | `speedKnots` | number/null，knots，> 0 才可計算 |
+| R 剩餘航行時間(h) | `sailingHours` | `DTG / speed`，保留小數 |
+| S 預估等待時間(靠泊前)(h) | `berthWaitHours` | number/null，hours，>= 0 |
+| T 預計航道航行時間(h) | `channelSailingHours` | number/null，hours，>= 0 |
+| U 作業艙號 | `tanksText` | string |
+| V 裝卸貨量(MT) | `operationQuantityMt` | number/null，MT，>= 0 |
+| W 預計 L/D rate (MT/h) | `operationRateMtPerHour` | number/null，MT/h，取自左側 G 欄 |
+| X 預計作業時間(h) | `operationHours` | `quantity / rate`，derived number/null |
+| Y 預估等待/延誤時間(完貨前)(h) | `preCompletionDelayHours` | number/null，hours，>= 0 |
+| Z 預估等待/延誤時間(完貨後)(h) | `postCompletionDelayHours` | number/null，hours，>= 0 |
+| AA:AD 各 LT UTC Offset | `etaTimeZone/etbTimeZone/etcTimeZone/etdTimeZone` | 空字串代表跟隨 O；非空代表個別覆蓋 |
+| AE 首列 ETA 起算時間(LT) | `calculationStartUtc` | Excel 顯示 LT，canonical 保存 UTC instant |
+| AF 首列 ETA 起算 UTC Offset | `calculationStartTimeZone` | 固定 UTC Offset；起算時間存在時不可空 |
 
 `departureBufferDays` 僅保留舊 v1 row／Excel 匯入相容；只有 v2 欄位不存在時才換算為 `postCompletionDelayHours = days * 24`。v2 明確空白代表 0，不可重新套回舊天數；新 UI 不再顯示或寫入天數。
 
@@ -131,24 +132,24 @@ etd_utc = etc_utc + post_completion_delay_hours
 
 ### 7.1 已驗證模板
 
-- 原始模板仍為 A:W；v2 匯出延伸至 AJ，其中 AF:AJ 為隱藏 Offset helper，print area 仍只含 A:M。Offset 下拉使用 very-hidden 命名範圍；helper 以可見 Offset 儲存格的 `VLOOKUP` 公式即時重算，而非匯出時常數。
+- 原始模板仍為 A:W；notes layout 匯出延伸至 AK，其中 AG:AK 為隱藏 Offset helper，print area 含 A:N。Offset 下拉使用 very-hidden 命名範圍；helper 以可見 Offset 儲存格的 `VLOOKUP` 公式即時重算，而非匯出時常數。
 - 主時間公式、Offset helper 公式與下拉驗證均納入 round-trip contract。
-- ExcelJS 4.4.0 critical round-trip PASS：公式與 cached result、驗證、merge、列高、A:M 欄寬及列印範圍均保留。
-- 已知非關鍵序列化預設：W 欄顯式寬 9 會省略為預設；未設定首頁碼時 `useFirstPageNumber` 布林預設改變。兩者不影響 A:M 報告，但測試中保留紀錄。
+- ExcelJS 4.4.0 critical round-trip PASS：公式與 cached result、驗證、merge、列高、A:N 欄寬及列印範圍均保留。
+- 已知非關鍵序列化預設：W 欄顯式寬 9 會省略為預設；未設定首頁碼時 `useFirstPageNumber` 布林預設改變。兩者不影響 A:N 報告，但測試中保留紀錄。
 
 ### 7.2 Export
 
 - 一船一 worksheet；多選時一個 workbook 多分頁。
 - worksheet 名稱依船名清理非法字元、限制 31 字並做碰撞尾碼。
-- very-hidden `_Itinerary_Meta` 保存 sheet、vessel ID／名稱、schema、revision、updatedAt、`excelLayoutVersion=2` 及固定 UTC Offset lookup；不得只靠 sheet 名映射。
-- A:M 對標報告模板；N:AE 保存 v2 計算、Offset 與起算欄，預設不進列印區。
+- very-hidden `_Itinerary_Meta` 保存 sheet、vessel ID／名稱、schema、revision、updatedAt、`excelLayoutVersion=3` 及固定 UTC Offset lookup；不得只靠 sheet 名映射。
+- A:N 對標報告模板；O:AF 保存 v2 計算、Offset 與起算欄，預設不進列印區。
 - 文字以 `= + - @` 起首時強制文字輸出，避免 formula injection。
 
 ### 7.3 Import
 
 - 只接受 `.xlsx`；拒絕 `.xls/.xlsm`、未知 schema、缺 header、超限檔案／sheet／row、重複 vessel ID。
 - 有 `_Itinerary_Meta` 依不可變 vessel ID；舊模板依 Vsl name 產生人工 mapping，禁止默猜。
-- v2 依 `excelLayoutVersion=2` 解讀 S:AE；舊 layout 繼續按原 S:W 解讀，`departureBufferDays` 乘 24 轉為完貨後小時；非首列的起算時間／Offset 以 `first-row-only` 拒絕。
+- notes layout 依 `excelLayoutVersion=3` 讀取 N 欄備註與 O:AF 計算欄；`excelLayoutVersion=2` 的 N:AE 及更早 layout 繼續相容，`departureBufferDays` 乘 24 轉為完貨後小時；非首列的起算時間／Offset 以 `first-row-only` 拒絕。
 - 寫入前顯示目標船、目前／檔案 revision、列數及新增／刪除／變更摘要。
 - 多船 workbook 採 all-or-none；任一船被鎖、stale 或 mapping 不唯一時 0 writes。
 - 匯入公式本身不是 authority；讀 cached result或由 canonical domain 重算。無 cached value 時要求補值／確認。
@@ -158,8 +159,8 @@ etd_utc = etc_utc + post_completion_delay_hours
 - 獨立 HTML entry，不 import `App.tsx`、AppData、會議、任務或管理模組。
 - 選船後可 `從空白開始` 或 `載入最新版本`。
 - 船名清單及標題使用與主站船舶卡片相同的 `中文名 + fullName` 顯示規則；所有 active 船舶皆可選。
-- 桌面使用緊湊 spreadsheet table；手機每個港口一張表單卡。
-- 非編輯與編輯狀態的主資料區均使用主站 A:M 相同欄名、順序與內容，不顯示 Excel A–W 字母前綴。
+- 桌面與手機都使用緊湊 spreadsheet table；手機將主資料與參數 pane 上下堆疊，各 pane 自己橫向捲動。
+- 非編輯與編輯狀態的主資料區均使用主站 A:N 相同欄名、順序、字體與欄寬 authority，不顯示 Excel A–W 字母前綴；瀏覽狀態可在 `備註信息` 後展開 11 個預估參數欄。
 - 編輯器分為 `輸入／計算區` 與 `自動計算用變化參數區`，兩區各自水平捲動；桌面分隔條可用滑鼠／鍵盤調整寬度，手機回到單欄。
 - 可新增、複製、排序、刪除列；至少保留一列。
 - 日期可用文字手動輸入／貼上（`YYYY-MM-DD`、`YYYY/MM/DD`、`YYYYMMDD`）或原生 picker；時間另行輸入。

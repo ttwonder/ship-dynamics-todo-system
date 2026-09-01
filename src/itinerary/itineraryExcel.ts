@@ -5,11 +5,11 @@ import { createBlankItineraryRow, createItineraryId, formatItineraryOperation, I
 
 const META_SHEET = '_Itinerary_Meta';
 const MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-const EXCEL_LAYOUT_VERSION = 2;
-const EXCEL_MAX_COLUMN = 36;
+const EXCEL_LAYOUT_VERSION = 3;
+const EXCEL_MAX_COLUMN = 37;
 const OFFSET_LABEL_RANGE_NAME = 'ItineraryUtcOffsetLabels';
 const OFFSET_LOOKUP_RANGE_NAME = 'ItineraryUtcOffsetLookup';
-const MERGED_COLUMNS = [1, 2, 3, 4, 7, ...Array.from({ length: 27 }, (_, index) => index + 10)];
+const MERGED_COLUMNS = [1, 2, 3, 4, 7, ...Array.from({ length: 28 }, (_, index) => index + 10)];
 const TIME_FIELDS = ['etaUtc', 'etbUtc', 'etcUtc', 'etdUtc'] as const;
 
 type TimeField = typeof TIME_FIELDS[number];
@@ -123,7 +123,7 @@ function copyTemplateLayout(source: ExcelJS.Worksheet, target: ExcelJS.Worksheet
       if (rowNumber <= 3) to.value = from.value;
     }
   }
-  for (const range of ['A1:M1', 'A2:B2', 'C2:D2', 'L2:M2']) target.mergeCells(range);
+  for (const range of ['A1:N1', 'A2:B2', 'C2:D2', 'L2:M2']) target.mergeCells(range);
 }
 
 function wallDate(instant: string | null, timeZone: string): Date | null {
@@ -182,18 +182,19 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
 
   const headers = [
     'Voy No.', 'Next Port & Dock Name', 'Purpose', 'B/F or I/F Qty (MT/BBLS)', 'ETA (LT)', 'ETB (LT)', '預計L/D rate (MT/h)',
-    'ETC (LT)', 'ETD (LT)', 'Arr Draft', 'Dep Draft', 'Arr ROB', 'Dep ROB', 'UTC Offset', 'DTG(NM)', '預估航速(kn)',
+    'ETC (LT)', 'ETD (LT)', 'Arr Draft', 'Dep Draft', 'Arr ROB', 'Dep ROB', '備註信息', 'UTC Offset', 'DTG(NM)', '預估航速(kn)',
     '剩餘航行時間(h)', '預估等待時間(靠泊前)(h)', '預計航道航行時間(h)', '作業艙號', '裝卸貨量(MT)', '預計L/D rate (MT/h)',
     '預計作業時間(h)', '預估等待/延誤時間(完貨前)(h)', '預估等待/延誤時間(完貨後)(h)', 'ETA UTC Offset', 'ETB UTC Offset',
     'ETC UTC Offset', 'ETD UTC Offset', '首列 ETA 起算時間(LT)', '首列 ETA 起算 UTC Offset', 'Start Offset (h)', 'ETA Offset (h)',
     'ETB Offset (h)', 'ETC Offset (h)', 'ETD Offset (h)',
   ];
   headers.forEach((header, index) => { worksheet.getCell(3, index + 1).value = header; });
-  for (let column = 32; column <= 36; column += 1) {
+  worksheet.getColumn(14).width = 28;
+  for (let column = 33; column <= 37; column += 1) {
     worksheet.getColumn(column).hidden = true;
     worksheet.getColumn(column).width = 12;
   }
-  for (let column = 24; column <= 31; column += 1) worksheet.getColumn(column).width = column === 30 ? 22 : 18;
+  for (let column = 25; column <= 32; column += 1) worksheet.getColumn(column).width = column === 31 ? 22 : 18;
 
   document.rows.forEach((row, index) => {
     const primary = 4 + index * 2;
@@ -213,47 +214,48 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
     worksheet.getCell(primary, 11).value = row.departureDraftText;
     worksheet.getCell(primary, 12).value = row.arrivalRobText;
     worksheet.getCell(primary, 13).value = row.departureRobText;
-    worksheet.getCell(primary, 14).value = row.portTimeZone;
-    setOffsetValidation(worksheet.getCell(primary, 14));
-    worksheet.getCell(primary, 15).value = row.oceanDistanceNm;
-    worksheet.getCell(primary, 16).value = row.speedKnots;
-    worksheet.getCell(primary, 17).value = row.sailingHours !== null
-      ? formulaValue(`IF(OR(O${primary}="",P${primary}=""),"",O${primary}/P${primary})`, row.sailingHours) : null;
-    worksheet.getCell(primary, 18).value = row.berthWaitHours;
-    worksheet.getCell(primary, 19).value = row.channelSailingHours;
-    worksheet.getCell(primary, 20).value = row.tanksText;
-    worksheet.getCell(primary, 21).value = row.operationQuantityMt;
-    worksheet.getCell(primary, 22).value = row.operationRateMtPerHour;
-    worksheet.getCell(primary, 23).value = row.operationHours !== null
-      ? formulaValue(`IF(OR(U${primary}="",V${primary}=""),"",U${primary}/V${primary})`, row.operationHours) : null;
-    worksheet.getCell(primary, 24).value = row.preCompletionDelayHours;
-    worksheet.getCell(primary, 25).value = row.postCompletionDelayHours;
-    worksheet.getCell(primary, 26).value = row.etaTimeZone;
-    worksheet.getCell(primary, 27).value = row.etbTimeZone;
-    worksheet.getCell(primary, 28).value = row.etcTimeZone;
-    worksheet.getCell(primary, 29).value = row.etdTimeZone;
-    worksheet.getCell(primary, 30).value = wallDate(row.calculationStartUtc, row.calculationStartTimeZone);
-    worksheet.getCell(primary, 30).numFmt = 'yyyy-mm-dd hh:mm';
-    worksheet.getCell(primary, 31).value = row.calculationStartTimeZone;
-    for (const column of [26, 27, 28, 29, 31]) setOffsetValidation(worksheet.getCell(primary, column));
+    worksheet.getCell(primary, 14).value = row.notesText;
+    worksheet.getCell(primary, 15).value = row.portTimeZone;
+    setOffsetValidation(worksheet.getCell(primary, 15));
+    worksheet.getCell(primary, 16).value = row.oceanDistanceNm;
+    worksheet.getCell(primary, 17).value = row.speedKnots;
+    worksheet.getCell(primary, 18).value = row.sailingHours !== null
+      ? formulaValue(`IF(OR(P${primary}="",Q${primary}=""),"",P${primary}/Q${primary})`, row.sailingHours) : null;
+    worksheet.getCell(primary, 19).value = row.berthWaitHours;
+    worksheet.getCell(primary, 20).value = row.channelSailingHours;
+    worksheet.getCell(primary, 21).value = row.tanksText;
+    worksheet.getCell(primary, 22).value = row.operationQuantityMt;
+    worksheet.getCell(primary, 23).value = row.operationRateMtPerHour;
+    worksheet.getCell(primary, 24).value = row.operationHours !== null
+      ? formulaValue(`IF(OR(V${primary}="",W${primary}=""),"",V${primary}/W${primary})`, row.operationHours) : null;
+    worksheet.getCell(primary, 25).value = row.preCompletionDelayHours;
+    worksheet.getCell(primary, 26).value = row.postCompletionDelayHours;
+    worksheet.getCell(primary, 27).value = row.etaTimeZone;
+    worksheet.getCell(primary, 28).value = row.etbTimeZone;
+    worksheet.getCell(primary, 29).value = row.etcTimeZone;
+    worksheet.getCell(primary, 30).value = row.etdTimeZone;
+    worksheet.getCell(primary, 31).value = wallDate(row.calculationStartUtc, row.calculationStartTimeZone);
+    worksheet.getCell(primary, 31).numFmt = 'yyyy-mm-dd hh:mm';
+    worksheet.getCell(primary, 32).value = row.calculationStartTimeZone;
+    for (const column of [27, 28, 29, 30, 32]) setOffsetValidation(worksheet.getCell(primary, column));
 
     const etaZone = resolveItineraryTimeZone(row, 'etaUtc');
     const etbZone = resolveItineraryTimeZone(row, 'etbUtc');
     const etcZone = resolveItineraryTimeZone(row, 'etcUtc');
     const etdZone = resolveItineraryTimeZone(row, 'etdUtc');
-    worksheet.getCell(primary, 32).value = offsetLookupFormula(`AE${primary}`, offsetHours(row.calculationStartUtc, row.calculationStartTimeZone));
-    worksheet.getCell(primary, 33).value = offsetLookupFormula(`IF(Z${primary}="",N${primary},Z${primary})`, offsetHours(row.etaUtc, etaZone));
-    worksheet.getCell(primary, 34).value = offsetLookupFormula(`IF(AA${primary}="",N${primary},AA${primary})`, offsetHours(row.etbUtc, etbZone));
-    worksheet.getCell(primary, 35).value = offsetLookupFormula(`IF(AB${primary}="",N${primary},AB${primary})`, offsetHours(row.etcUtc, etcZone));
-    worksheet.getCell(primary, 36).value = offsetLookupFormula(`IF(AC${primary}="",N${primary},AC${primary})`, offsetHours(row.etdUtc, etdZone));
+    worksheet.getCell(primary, 33).value = offsetLookupFormula(`AF${primary}`, offsetHours(row.calculationStartUtc, row.calculationStartTimeZone));
+    worksheet.getCell(primary, 34).value = offsetLookupFormula(`IF(AA${primary}="",O${primary},AA${primary})`, offsetHours(row.etaUtc, etaZone));
+    worksheet.getCell(primary, 35).value = offsetLookupFormula(`IF(AB${primary}="",O${primary},AB${primary})`, offsetHours(row.etbUtc, etbZone));
+    worksheet.getCell(primary, 36).value = offsetLookupFormula(`IF(AC${primary}="",O${primary},AC${primary})`, offsetHours(row.etcUtc, etcZone));
+    worksheet.getCell(primary, 37).value = offsetLookupFormula(`IF(AD${primary}="",O${primary},AD${primary})`, offsetHours(row.etdUtc, etdZone));
 
     const previousPrimary = primary - 2;
     const etaFormula = index === 0
-      ? `IF(AD${primary}="","",AD${primary}+IF(Q${primary}="",0,Q${primary})/24-AF${primary}/24+AG${primary}/24)`
-      : `IF(I${previousPrimary}="","",I${previousPrimary}+IF(Q${primary}="",0,Q${primary})/24-AJ${previousPrimary}/24+AG${primary}/24)`;
-    const etbFormula = `IF(E${primary}="","",E${primary}+(IF(R${primary}="",0,R${primary})+IF(S${primary}="",0,S${primary}))/24-AG${primary}/24+AH${primary}/24)`;
-    const etcFormula = `IF(F${primary}="","",F${primary}+(IF(X${primary}="",0,X${primary})+IF(W${primary}="",0,W${primary}))/24-AH${primary}/24+AI${primary}/24)`;
-    const etdFormula = `IF(H${primary}="","",H${primary}+IF(Y${primary}="",0,Y${primary})/24-AI${primary}/24+AJ${primary}/24)`;
+      ? `IF(AE${primary}="","",AE${primary}+IF(R${primary}="",0,R${primary})/24-AG${primary}/24+AH${primary}/24)`
+      : `IF(I${previousPrimary}="","",I${previousPrimary}+IF(R${primary}="",0,R${primary})/24-AK${previousPrimary}/24+AH${primary}/24)`;
+    const etbFormula = `IF(E${primary}="","",E${primary}+(IF(S${primary}="",0,S${primary})+IF(T${primary}="",0,T${primary}))/24-AH${primary}/24+AI${primary}/24)`;
+    const etcFormula = `IF(F${primary}="","",F${primary}+(IF(Y${primary}="",0,Y${primary})+IF(X${primary}="",0,X${primary}))/24-AI${primary}/24+AJ${primary}/24)`;
+    const etdFormula = `IF(H${primary}="","",H${primary}+IF(Z${primary}="",0,Z${primary})/24-AJ${primary}/24+AK${primary}/24)`;
     setTimePair(worksheet, primary, 5, row.etaUtc, row.etaMode, etaFormula, etaZone);
     setTimePair(worksheet, primary, 6, row.etbUtc, row.etbMode, etbFormula, etbZone);
     setTimePair(worksheet, primary, 8, row.etcUtc, row.etcMode, etcFormula, etcZone);
@@ -261,7 +263,7 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
   });
 
   const lastRow = Math.max(5, 3 + document.rows.length * 2);
-  worksheet.pageSetup.printArea = `A1:M${lastRow}`;
+  worksheet.pageSetup.printArea = `A1:N${lastRow}`;
   worksheet.pageSetup.fitToPage = true;
   worksheet.pageSetup.fitToWidth = 1;
   worksheet.pageSetup.fitToHeight = 0;
@@ -396,7 +398,7 @@ function timeCell(primary: ExcelJS.Cell, secondary: ExcelJS.Cell, date1904: bool
 }
 
 function hasBusinessValue(worksheet: ExcelJS.Worksheet, rowNumber: number): boolean {
-  for (let column = 1; column <= 31; column += 1) {
+  for (let column = 1; column <= 32; column += 1) {
     const value = rawCellValue(worksheet.getCell(rowNumber, column));
     if (value !== null && value !== undefined && String(value).trim() !== '') return true;
   }
@@ -407,7 +409,7 @@ function isInstructionFooterRow(worksheet: ExcelJS.Worksheet, rowNumber: number)
   if (textCell(worksheet.getCell(rowNumber, 1))) return false;
   const note = textCell(worksheet.getCell(rowNumber, 2));
   if (!note.startsWith('*')) return false;
-  for (let column = 3; column <= 31; column += 1) {
+  for (let column = 3; column <= 32; column += 1) {
     const value = rawCellValue(worksheet.getCell(rowNumber, column));
     if (value !== null && value !== undefined && String(value).trim() !== '') return false;
   }
@@ -504,7 +506,12 @@ export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<Parsed
   for (const worksheet of workbook.worksheets) {
     if (worksheet.name === META_SHEET) continue;
     const meta = metadata.get(worksheet.name);
-    const excelLayoutVersion = meta?.excelLayoutVersion === EXCEL_LAYOUT_VERSION || textCell(worksheet.getCell('S3')).includes('航道') ? EXCEL_LAYOUT_VERSION : 1;
+    const hasNotesLayout = meta?.excelLayoutVersion === EXCEL_LAYOUT_VERSION || textCell(worksheet.getCell('N3')) === '備註信息';
+    const hasCalculationV2Layout = hasNotesLayout || meta?.excelLayoutVersion === 2 || textCell(worksheet.getCell('S3')).includes('航道');
+    const excelLayoutVersion = hasNotesLayout ? EXCEL_LAYOUT_VERSION : hasCalculationV2Layout ? 2 : 1;
+    const isCalculationV2 = excelLayoutVersion >= 2;
+    const isNotesLayout = excelLayoutVersion >= 3;
+    const v2Column = (column: number) => column + (isNotesLayout ? 1 : 0);
     const sourceRows: ImportedRowSource[] = [];
     const templateIssue = textCell(worksheet.getCell('A3')) !== 'Voy No.' || !textCell(worksheet.getCell('B3')).includes('Port')
       ? [{ code: 'invalid-template' as const, message: `${worksheet.name} 不是可識別的 Itinerary A:W 模板。` }] : [];
@@ -513,29 +520,30 @@ export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<Parsed
       if (!hasBusinessValue(worksheet, primary)) continue;
       const row = createBlankItineraryRow(createItineraryId('import-row'), sourceRows.length);
       const operation = operationCell(worksheet.getCell(primary, 3));
-      const legacyDepartureDays = excelLayoutVersion === 1 ? numberCell(worksheet.getCell(primary, 23)) : null;
+      const legacyDepartureDays = isCalculationV2 ? null : numberCell(worksheet.getCell(primary, 23));
       Object.assign(row, {
         voyageNumber: textCell(worksheet.getCell(primary, 1)), portDockName: textCell(worksheet.getCell(primary, 2)), operation: operation.value,
         cargoQuantityText: textCell(worksheet.getCell(primary, 4)), ldRateText: textCell(worksheet.getCell(primary, 7)),
         arrivalDraftText: textCell(worksheet.getCell(primary, 10)), departureDraftText: textCell(worksheet.getCell(primary, 11)),
         arrivalRobText: textCell(worksheet.getCell(primary, 12)), departureRobText: textCell(worksheet.getCell(primary, 13)),
-        oceanDistanceNm: numberCell(worksheet.getCell(primary, 15)), speedKnots: numberCell(worksheet.getCell(primary, 16)),
-        berthWaitHours: numberCell(worksheet.getCell(primary, 18)),
-        channelSailingHours: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? numberCell(worksheet.getCell(primary, 19)) : null,
-        tanksText: textCell(worksheet.getCell(primary, excelLayoutVersion === EXCEL_LAYOUT_VERSION ? 20 : 19)),
-        operationQuantityMt: numberCell(worksheet.getCell(primary, excelLayoutVersion === EXCEL_LAYOUT_VERSION ? 21 : 20)),
-        operationRateMtPerHour: numberCell(worksheet.getCell(primary, excelLayoutVersion === EXCEL_LAYOUT_VERSION ? 22 : 21)),
-        preCompletionDelayHours: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? numberCell(worksheet.getCell(primary, 24)) : null,
-        postCompletionDelayHours: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? numberCell(worksheet.getCell(primary, 25)) : (legacyDepartureDays === null ? null : legacyDepartureDays * 24),
+        notesText: isNotesLayout ? textCell(worksheet.getCell(primary, 14)) : '',
+        oceanDistanceNm: numberCell(worksheet.getCell(primary, v2Column(15))), speedKnots: numberCell(worksheet.getCell(primary, v2Column(16))),
+        berthWaitHours: numberCell(worksheet.getCell(primary, v2Column(18))),
+        channelSailingHours: isCalculationV2 ? numberCell(worksheet.getCell(primary, v2Column(19))) : null,
+        tanksText: textCell(worksheet.getCell(primary, isCalculationV2 ? v2Column(20) : 19)),
+        operationQuantityMt: numberCell(worksheet.getCell(primary, isCalculationV2 ? v2Column(21) : 20)),
+        operationRateMtPerHour: numberCell(worksheet.getCell(primary, isCalculationV2 ? v2Column(22) : 21)),
+        preCompletionDelayHours: isCalculationV2 ? numberCell(worksheet.getCell(primary, v2Column(24))) : null,
+        postCompletionDelayHours: isCalculationV2 ? numberCell(worksheet.getCell(primary, v2Column(25))) : (legacyDepartureDays === null ? null : legacyDepartureDays * 24),
         departureBufferDays: legacyDepartureDays,
         etaMode: isFormula(worksheet.getCell(primary, 5)) ? 'auto' : 'manual', etbMode: isFormula(worksheet.getCell(primary, 6)) ? 'auto' : 'manual',
         etcMode: isFormula(worksheet.getCell(primary, 8)) ? 'auto' : 'manual', etdMode: isFormula(worksheet.getCell(primary, 9)) ? 'auto' : 'manual',
       });
       sourceRows.push({
-        row, excelRow: primary, rawTimeZone: rawCellValue(worksheet.getCell(primary, 14)),
-        rawTimeZones: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? {
-          etaUtc: rawCellValue(worksheet.getCell(primary, 26)), etbUtc: rawCellValue(worksheet.getCell(primary, 27)),
-          etcUtc: rawCellValue(worksheet.getCell(primary, 28)), etdUtc: rawCellValue(worksheet.getCell(primary, 29)),
+        row, excelRow: primary, rawTimeZone: rawCellValue(worksheet.getCell(primary, v2Column(14))),
+        rawTimeZones: isCalculationV2 ? {
+          etaUtc: rawCellValue(worksheet.getCell(primary, v2Column(26))), etbUtc: rawCellValue(worksheet.getCell(primary, v2Column(27))),
+          etcUtc: rawCellValue(worksheet.getCell(primary, v2Column(28))), etdUtc: rawCellValue(worksheet.getCell(primary, v2Column(29))),
         } : {},
         wallTimes: {
           etaUtc: timeCell(worksheet.getCell(primary, 5), worksheet.getCell(primary + 1, 5), date1904) || undefined,
@@ -543,8 +551,8 @@ export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<Parsed
           etcUtc: timeCell(worksheet.getCell(primary, 8), worksheet.getCell(primary + 1, 8), date1904) || undefined,
           etdUtc: timeCell(worksheet.getCell(primary, 9), worksheet.getCell(primary + 1, 9), date1904) || undefined,
         },
-        calculationStartWall: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? wallPartsFromCell(worksheet.getCell(primary, 30), date1904) : null,
-        rawCalculationStartTimeZone: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? rawCellValue(worksheet.getCell(primary, 31)) : '',
+        calculationStartWall: isCalculationV2 ? wallPartsFromCell(worksheet.getCell(primary, v2Column(30)), date1904) : null,
+        rawCalculationStartTimeZone: isCalculationV2 ? rawCellValue(worksheet.getCell(primary, v2Column(31))) : '',
         excelLayoutVersion,
         sourceIssues: operation.issue ? [operation.issue] : [],
       });

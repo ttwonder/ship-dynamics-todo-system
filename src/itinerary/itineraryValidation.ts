@@ -21,6 +21,7 @@ const stringLimits: Partial<Record<keyof ItineraryRow, number>> = {
   departureDraftText: 240,
   arrivalRobText: 500,
   departureRobText: 500,
+  notesText: 1000,
   portTimeZone: 100,
   etaTimeZone: 100,
   etbTimeZone: 100,
@@ -93,6 +94,7 @@ export function validateItineraryDocument(input: unknown): ItineraryValidationRe
         etaTimeZone: '', etbTimeZone: '', etcTimeZone: '', etdTimeZone: '',
         calculationStartUtc: null, calculationStartTimeZone: '',
         channelSailingHours: null, preCompletionDelayHours: null,
+        notesText: '',
         postCompletionDelayHours: typeof row.departureBufferDays === 'number' && Number.isFinite(row.departureBufferDays)
           ? row.departureBufferDays * 24 : null,
       };

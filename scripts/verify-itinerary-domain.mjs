@@ -134,6 +134,9 @@ try {
   assert.equal(time.formatRelativeUpdatedAt(null, now), '尚未同步');
 
   const document = types.createEmptyItineraryDocument({ workspaceKey: 'demo', vesselId: 'v-1', vesselName: 'TEST', rowId: 'row-1' });
+  assert.equal(document.rows[0].arrivalDraftText, 'A:\nF:');
+  assert.equal(document.rows[0].departureDraftText, 'A:\nF:');
+  assert.equal(document.rows[0].notesText, '');
   document.rows[0].portDockName = 'PORT';
   document.rows[0].portTimeZone = 'UTC+8';
   assert.deepEqual(validation.validateItineraryDocument(document), { ok: true, value: document });
@@ -152,9 +155,16 @@ try {
   legacyV1.rows[0].departureBufferDays = 0.25;
   const normalizedLegacyV1 = validation.validateItineraryDocument(legacyV1);
   assert.equal(normalizedLegacyV1.ok, true);
+  assert.equal(normalizedLegacyV1.value.rows[0].notesText, '', 'legacy rows without notes must gain a safe empty default');
   assert.equal(normalizedLegacyV1.value.rows[0].etaTimeZone, '');
   assert.equal(normalizedLegacyV1.value.rows[0].calculationStartUtc, null);
   assert.equal(normalizedLegacyV1.value.rows[0].postCompletionDelayHours, 6, 'legacy days must migrate to post-completion hours');
+
+  const notesTooLong = structuredClone(document);
+  notesTooLong.rows[0].notesText = 'N'.repeat(1001);
+  const notesTooLongResult = validation.validateItineraryDocument(notesTooLong);
+  assert.equal(notesTooLongResult.ok, false);
+  assert.ok(notesTooLongResult.errors.some(error => error.path.endsWith('.notesText') && error.code === 'string-too-long'));
 
   const invalidTimeOffset = structuredClone(document);
   invalidTimeOffset.rows[0].etaTimeZone = 'UTC+14:15';

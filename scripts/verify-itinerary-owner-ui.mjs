@@ -76,7 +76,8 @@ try {
     onEdit() {},
   }));
   assert.doesNotMatch(panelHtml, /Revision/i, 'ordinary Itinerary cards must not expose the internal revision');
-  assert.match(panelHtml, /class="itinerary-panel-meta"><span>2 小時前更新<\/span>/, 'the card meta area must show relative update time');
+  assert.match(panelHtml, /class="itinerary-vessel-heading"><h2>安華 FPMC S AMBER<\/h2><p class="itinerary-relative-updated-at">2 小時前更新<\/p>/, 'the relative update time must sit directly below the vessel name');
+  assert.match(panelHtml, /顯示更多預估參數/, 'main Itinerary cards must expose the same estimate-parameter toggle as the ship browse page');
   assert.equal(panelHtml.match(/2 小時前更新/g)?.length, 1, 'relative update time must be shown exactly once');
 
   assert.equal(rollout.localItineraryDemoRequested({ hostname: '127.0.0.1', search: '?itineraryDemo=1' }), true);

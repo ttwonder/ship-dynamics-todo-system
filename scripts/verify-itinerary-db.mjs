@@ -10,9 +10,11 @@ const utcOffsetMigration = await readFile('supabase/migrations/20260901073500_it
 const publicVesselNamesMigration = await readFile('supabase/migrations/20260901122500_itinerary_public_vessel_full_names.sql', 'utf8');
 const operationMultiSelectMigration = await readFile('supabase/migrations/20260901125500_itinerary_operation_multi_select.sql', 'utf8');
 const calculationV2Migration = await readFile('supabase/migrations/20260901143000_itinerary_calculation_v2.sql', 'utf8');
+const itineraryNotesMigration = await readFile('supabase/migrations/20260902100000_itinerary_notes.sql', 'utf8');
 const readbackSql = await readFile('supabase/itinerary-readback.sql', 'utf8');
 assert.equal(readbackSql.includes("'workspaceKey'"), false, 'production readback must not expose the full legacy workspace key');
 assert.equal(readbackSql.includes("'workspaceRef'"), true, 'production readback must expose only a masked workspace reference');
+assert.equal(readbackSql.includes("'notes'"), true, 'production readback must prove the optional notes field contract');
 const rolloutBootstrapReadbackSql = await readFile('supabase/itinerary-rollout-bootstrap-readback.sql', 'utf8');
 const ids = {
   workspace: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -108,6 +110,8 @@ try {
   await db.exec(operationMultiSelectMigration);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row()])]), false, 'pre-v2 validator must reject additive fields');
   await db.exec(calculationV2Migration);
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ notesText: '靠港前請再次確認' })])]), false, 'pre-notes validator must reject the additive field');
+  await db.exec(itineraryNotesMigration);
 
   const ownerInitial = await rollout(ids.owner);
   assert.equal(ownerInitial.version, 1);
@@ -127,6 +131,9 @@ try {
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC-6' })])]), true);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'Asia/Seoul' })])]), true, 'legacy IANA rows must stay writable during compatibility');
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row()])]), true);
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ notesText: '靠港前請再次確認' })])]), true, 'notes migration must accept bounded text');
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ notesText: 7 })])]), false, 'notes must remain textual');
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ notesText: 'N'.repeat(1001) })])]), false, 'notes must remain bounded');
   const validTwoRowV2 = [
     v2Row({ rowId: 'v2-row-1', sortOrder: 0 }),
     v2Row({ rowId: 'v2-row-2', sortOrder: 1, calculationStartUtc: null, calculationStartTimeZone: '' }),
@@ -248,6 +255,7 @@ try {
   await db.exec(publicVesselNamesMigration);
   await db.exec(operationMultiSelectMigration);
   await db.exec(calculationV2Migration);
+  await db.exec(itineraryNotesMigration);
   assert.equal(Number(await scalar('select version from public.sd_itinerary_rollout where workspace_id=$1::uuid', [ids.workspace])), 4);
   assert.equal(Number(await scalar("select revision from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
   assert.equal(Number(await scalar("select count(*)::int from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
@@ -290,6 +298,12 @@ try {
   assert.ok(Object.values(readback.utcOffsets).every(Boolean));
   assert.ok(Object.values(readback.purposes).every(Boolean));
   assert.ok(Object.values(readback.calculationV2).every(Boolean));
+  assert.deepEqual(readback.notes, {
+    acceptsMissingNotes: true,
+    acceptsTextNotes: true,
+    rejectsNonTextNotes: true,
+    rejectsOversizedNotes: true,
+  });
   assert.deepEqual(readback.vesselNames, { activeVesselCount: 2, activeMissingFullNameCount: 0, publicListFullNameComplete: true });
   const bootstrapReadback = (await db.query(rolloutBootstrapReadbackSql)).rows[0];
   assert.ok(Object.values(bootstrapReadback).every(Boolean));
@@ -308,6 +322,7 @@ try {
     await withoutOperationMigration.exec(migration);
     await withoutOperationMigration.exec(utcOffsetMigration);
     await withoutOperationMigration.exec(calculationV2Migration);
+    await withoutOperationMigration.exec(itineraryNotesMigration);
     const directV2 = await withoutOperationMigration.query('select public.sd_itinerary_rows_valid($1::jsonb) as valid', [JSON.stringify([v2Row()])]);
     assert.equal(directV2.rows[0].valid, true, 'v2 migration must work even when the earlier operation migration was not run');
   } finally {

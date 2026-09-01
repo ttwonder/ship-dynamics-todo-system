@@ -129,6 +129,15 @@ calculation_v2_receipt as (
   ) value
   from calculation_v2_fixture
 ),
+notes_receipt as (
+  select jsonb_build_object(
+    'acceptsMissingNotes', public.sd_itinerary_rows_valid(jsonb_build_array(value)),
+    'acceptsTextNotes', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('notesText','靠港前請再次確認'))),
+    'rejectsNonTextNotes', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('notesText',42))),
+    'rejectsOversizedNotes', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('notesText',repeat('N',1001))))
+  ) value
+  from calculation_v2_fixture
+),
 vessel_name_receipt as (
   select jsonb_build_object(
     'activeVesselCount', (select count(*) from public.sd_vessels where is_active),
@@ -150,6 +159,7 @@ select jsonb_build_object(
   'utcOffsets', (select value from offset_receipt),
   'purposes', (select value from purpose_receipt),
   'calculationV2', (select value from calculation_v2_receipt),
+  'notes', (select value from notes_receipt),
   'vesselNames', (select value from vessel_name_receipt),
   'documentCount', (select count(*) from public.sd_itinerary_documents),
   'historyCount', (select count(*) from public.sd_itinerary_history)
