@@ -14,11 +14,11 @@ try {
   const layout = await server.ssrLoadModule(`/${layoutPath}`);
   assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Next Port & Dock Name','UTC Offset','Purpose','B/F or I/F Qty (MT/BBLS)','ETA (LT)','ETB (LT)','預計L/D rate (MT/h)','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','Arr ROB','Dep ROB','備註信息']);
   assert.deepEqual(layout.ITINERARY_PARAMETER_FIELD_LABELS, ['DTG(NM)','預估航速(kn)','剩餘航行時間(h)','預估等待時間(靠泊前)(h)','預計航道航行時間(h)','作業艙號','裝卸貨量(MT)','預計L/D rate (MT/h)','預計作業時間(h)','預估等待/延誤時間(完貨前)(h)','預估等待/延誤時間(完貨後)(h)']);
-  assert.deepEqual(layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS, [70,175,96,155,155,246,246,40,246,246,98,98,147,147,175]);
+  assert.deepEqual(layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS, [70,175,96,155,155,246,246,80,246,246,98,98,147,147,175]);
   assert.deepEqual(layout.ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS, [82,82,82,82,82,135,100,82,82,82,82]);
-  assert.equal(layout.ITINERARY_EDITOR_MAIN_TABLE_WIDTH, 2410);
+  assert.equal(layout.ITINERARY_EDITOR_MAIN_TABLE_WIDTH, 2450);
   assert.equal(layout.ITINERARY_EDITOR_PARAMETER_TABLE_WIDTH, 1007);
-  assert.equal(layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS[7], 40, 'main L/D rate must be about one third of its previous 112px width');
+  assert.equal(layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS[7], 80, 'main L/D rate must be twice its former 40px width');
   assert.deepEqual([5,6,8,9].map(index => layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS[index]), [246,246,246,246], 'all four LT editor columns must be equally wide');
   assert.deepEqual([0,1,2,3,4,7,8,9,10].map(index => layout.ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS[index]), Array(9).fill(82), 'DTG and all eight requested estimate columns must match');
   assert.deepEqual(layout.ITINERARY_BROWSE_MAIN_COLUMN_WIDTHS, [74,170,92,150,175,142,142,105,142,142,105,105,145,145,170]);
