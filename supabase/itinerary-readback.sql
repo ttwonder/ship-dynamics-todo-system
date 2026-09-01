@@ -27,7 +27,8 @@ expected_functions(signature) as (
     ('sd_itinerary_operation_status_office(text,uuid)'),
     ('sd_itinerary_operation_status_public(text,uuid,text)'),
     ('sd_itinerary_history(text,text,integer)'),
-    ('sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb)')
+    ('sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb)'),
+    ('sd_itinerary_utc_offset_valid(text)')
 ),
 table_receipt as (
   select jsonb_object_agg(name, to_regclass('public.' || name) is not null order by name) value
@@ -55,7 +56,19 @@ privilege_receipt as (
     'anonOfficeEntryExecute', has_function_privilege('anon','public.sd_itinerary_get_office_entry(text,text)','EXECUTE'),
     'anonPublicSaveExecute', has_function_privilege('anon','public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)','EXECUTE'),
     'anonOfficeSaveExecute', has_function_privilege('anon','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE'),
-    'authenticatedOfficeSaveExecute', has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE')
+    'authenticatedOfficeSaveExecute', has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE'),
+    'anonOffsetValidatorExecute', has_function_privilege('anon','public.sd_itinerary_utc_offset_valid(text)','EXECUTE'),
+    'authenticatedOffsetValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_utc_offset_valid(text)','EXECUTE')
+  ) value
+),
+offset_receipt as (
+  select jsonb_build_object(
+    'utcPlus8', public.sd_itinerary_utc_offset_valid('UTC+8'),
+    'utcPlus5_30', public.sd_itinerary_utc_offset_valid('UTC+5:30'),
+    'utcPlus5_45', public.sd_itinerary_utc_offset_valid('UTC+5:45'),
+    'utcMinus6', public.sd_itinerary_utc_offset_valid('UTC-6'),
+    'rejectOutOfRange', not public.sd_itinerary_utc_offset_valid('UTC+14:15'),
+    'rejectNonQuarterHour', not public.sd_itinerary_utc_offset_valid('UTC+5:20')
   ) value
 )
 select jsonb_build_object(
@@ -63,6 +76,7 @@ select jsonb_build_object(
   'functions', (select value from function_receipt),
   'rollout', (select value from rollout_receipt),
   'privileges', (select value from privilege_receipt),
+  'utcOffsets', (select value from offset_receipt),
   'documentCount', (select count(*) from public.sd_itinerary_documents),
   'historyCount', (select count(*) from public.sd_itinerary_history)
 ) as itinerary_readback;

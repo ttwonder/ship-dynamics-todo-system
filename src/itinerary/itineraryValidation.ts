@@ -1,5 +1,5 @@
 import { ITINERARY_MAX_ROWS, ITINERARY_SCHEMA_VERSION, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
-import { isValidIanaTimeZone, normalizeInstant } from './itineraryTime';
+import { isValidItineraryTimeZone, normalizeInstant } from './itineraryTime';
 
 export interface ItineraryValidationError {
   path: string;
@@ -96,7 +96,7 @@ export function validateItineraryDocument(input: unknown): ItineraryValidationRe
         if (value !== null && (typeof value !== 'string' || !normalizeInstant(value))) add(errors, `${path}.${key}`, 'invalid-instant', '時間必須是 UTC instant 或空白。');
       }
       for (const key of Object.keys(numericLimits) as (keyof ItineraryRow)[]) validateNullableNumber(errors, row, key, path);
-      if (typeof row.portTimeZone === 'string' && row.portTimeZone && !isValidIanaTimeZone(row.portTimeZone)) add(errors, `${path}.portTimeZone`, 'invalid-time-zone', '請選擇有效的 IANA 港口時區。');
+      if (typeof row.portTimeZone === 'string' && row.portTimeZone && !isValidItineraryTimeZone(row.portTimeZone)) add(errors, `${path}.portTimeZone`, 'invalid-time-zone', '請選擇有效的 UTC Offset。');
     });
   }
   return errors.length ? { ok: false, errors } : { ok: true, value: document };

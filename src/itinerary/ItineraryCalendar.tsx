@@ -1,17 +1,19 @@
 import { useMemo, useState } from 'react';
 import { buildItineraryCalendarEntries, calendarRangeFromLocalDate } from './itineraryCalendarModel';
-import { COMMON_IANA_TIME_ZONES, instantToWallTime } from './itineraryTime';
+import { instantToWallTime } from './itineraryTime';
 import type { ItineraryDocument } from './itineraryTypes';
+import UtcOffsetSelect from './UtcOffsetSelect';
 
 interface ItineraryCalendarProps { documents: ItineraryDocument[] }
 
 function todayInZone(zone: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const local = instantToWallTime(new Date().toISOString(), zone);
+  return local.ok ? local.date : new Date().toISOString().slice(0, 10);
 }
 
 export default function ItineraryCalendar({ documents }: ItineraryCalendarProps) {
-  const [timeZone, setTimeZone] = useState('Asia/Taipei');
-  const [startDate, setStartDate] = useState(() => todayInZone('Asia/Taipei'));
+  const [timeZone, setTimeZone] = useState('UTC+8');
+  const [startDate, setStartDate] = useState(() => todayInZone('UTC+8'));
   const [days, setDays] = useState(14);
   const [dayWidth, setDayWidth] = useState(72);
   const [fields, setFields] = useState({ voyage: true, port: true, operation: true, times: false });
@@ -30,11 +32,10 @@ export default function ItineraryCalendar({ documents }: ItineraryCalendarProps)
       <label>開始<input type="date" value={startDate} onChange={event => setStartDate(event.target.value)} /></label>
       <label>期間<select value={days} onChange={event => setDays(Number(event.target.value))}><option value={7}>7 天</option><option value={14}>14 天</option><option value={30}>30 天</option></select></label>
       <label>日欄寬<input type="range" min="48" max="150" step="6" value={dayWidth} onChange={event => setDayWidth(Number(event.target.value))} /><span>{dayWidth}px</span></label>
-      <label>顯示時區<input list="itinerary-calendar-zones" value={timeZone} onChange={event => setTimeZone(event.target.value)} /></label>
+      <label>顯示時區<UtcOffsetSelect value={timeZone} onChange={setTimeZone} /></label>
       <div className="itinerary-calendar-fields">內容：{(Object.keys(fields) as Array<keyof typeof fields>).map(field => <label key={field}><input type="checkbox" checked={fields[field]} onChange={() => toggle(field)} />{{ voyage: '航次', port: '港口', operation: '裝卸', times: 'ETA–ETD' }[field]}</label>)}</div>
-      <datalist id="itinerary-calendar-zones">{COMMON_IANA_TIME_ZONES.map(zone => <option value={zone} key={zone} />)}</datalist>
     </div>
-    {!range.ok ? <div className="itinerary-notice">日期、期間或 IANA 時區無效，已停止繪製。</div> : <div className="itinerary-calendar-scroll">
+    {!range.ok ? <div className="itinerary-notice">日期、期間或 UTC Offset 無效，已停止繪製。</div> : <div className="itinerary-calendar-scroll">
       <div className="itinerary-calendar-grid" style={{ width: 164 + trackWidth }}>
         <div className="itinerary-calendar-axis"><div className="itinerary-calendar-vessel-label">船舶／港序</div><div className="itinerary-calendar-day-track" style={{ width: trackWidth }}>{labels.map(label => <span style={{ width: dayWidth }} key={label}>{label}</span>)}</div></div>
         {entries.map((entry) => {

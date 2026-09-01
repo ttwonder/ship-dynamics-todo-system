@@ -1,6 +1,11 @@
 import { Temporal } from '@js-temporal/polyfill';
 
-export const COMMON_IANA_TIME_ZONES = ['UTC','Asia/Taipei','Asia/Shanghai','Asia/Hong_Kong','Asia/Seoul','Asia/Tokyo','Asia/Singapore','Asia/Jakarta','Asia/Dubai','Europe/Rotterdam','Europe/London','America/Los_Angeles','America/New_York'] as const;
+export const UTC_OFFSET_OPTIONS = [
+  'UTC-12','UTC-11','UTC-10','UTC-9:30','UTC-9','UTC-8','UTC-7','UTC-6','UTC-5','UTC-4','UTC-3:30','UTC-3','UTC-2:30','UTC-2','UTC-1',
+  'UTC',
+  'UTC+1','UTC+2','UTC+3','UTC+3:30','UTC+4','UTC+4:30','UTC+5','UTC+5:30','UTC+5:45','UTC+6','UTC+6:30','UTC+7','UTC+8','UTC+8:45',
+  'UTC+9','UTC+9:30','UTC+10','UTC+10:30','UTC+11','UTC+12','UTC+12:45','UTC+13','UTC+13:45','UTC+14',
+] as const;
 
 export type WallTimeResult = { ok: true; instant: string } | { ok: false; reason: 'invalid-time-zone' | 'invalid-wall-time' };
 export type LocalWallTimeResult = { ok: true; date: string; time: string } | { ok: false; reason: 'invalid-time-zone' | 'invalid-instant' };
@@ -29,6 +34,40 @@ export function isValidIanaTimeZone(value: string): boolean {
   }
 }
 
+export function parseUtcOffsetMinutes(value: string): number | null {
+  const normalized = value.trim();
+  if (normalized === 'UTC') return 0;
+  const match = /^UTC([+-])(\d{1,2})(?::(00|15|30|45))?$/.exec(normalized);
+  if (!match) return null;
+  const magnitude = Number(match[2]) * 60 + Number(match[3] || 0);
+  const minutes = match[1] === '-' ? -magnitude : magnitude;
+  return minutes >= -12 * 60 && minutes <= 14 * 60 ? minutes : null;
+}
+
+export function isValidUtcOffset(value: string): boolean {
+  return parseUtcOffsetMinutes(value) !== null;
+}
+
+export function formatUtcOffsetMinutes(minutes: number): string | null {
+  if (!Number.isInteger(minutes) || minutes < -12 * 60 || minutes > 14 * 60 || Math.abs(minutes) % 15 !== 0) return null;
+  if (minutes === 0) return 'UTC';
+  const sign = minutes < 0 ? '-' : '+';
+  const magnitude = Math.abs(minutes);
+  const hours = Math.floor(magnitude / 60);
+  const remainder = magnitude % 60;
+  return `UTC${sign}${hours}${remainder ? `:${String(remainder).padStart(2, '0')}` : ''}`;
+}
+
+export function isValidItineraryTimeZone(value: string): boolean {
+  return isValidUtcOffset(value) || isValidIanaTimeZone(value);
+}
+
+function isoOffset(minutes: number): string {
+  const sign = minutes < 0 ? '-' : '+';
+  const magnitude = Math.abs(minutes);
+  return `${sign}${String(Math.floor(magnitude / 60)).padStart(2, '0')}:${String(magnitude % 60).padStart(2, '0')}`;
+}
+
 export function normalizeInstant(value: string): string | null {
   try {
     return Temporal.Instant.from(value).toString({ smallestUnit: 'second' });
@@ -38,9 +77,14 @@ export function normalizeInstant(value: string): string | null {
 }
 
 export function wallTimeToInstant(date: string, time: string, timeZone: string): WallTimeResult {
-  if (!isValidIanaTimeZone(timeZone)) return { ok: false, reason: 'invalid-time-zone' };
+  if (!isValidItineraryTimeZone(timeZone)) return { ok: false, reason: 'invalid-time-zone' };
   try {
     const plain = Temporal.PlainDateTime.from(`${date}T${time.length === 5 ? `${time}:00` : time}`);
+    const offsetMinutes = parseUtcOffsetMinutes(timeZone);
+    if (offsetMinutes !== null) {
+      const instant = Temporal.Instant.from(`${plain.toString({ smallestUnit: 'second' })}${isoOffset(offsetMinutes)}`);
+      return { ok: true, instant: instant.toString({ smallestUnit: 'second' }) };
+    }
     const zoned = plain.toZonedDateTime(timeZone, { disambiguation: 'reject' });
     return { ok: true, instant: zoned.toInstant().toString({ smallestUnit: 'second' }) };
   } catch {
@@ -49,9 +93,10 @@ export function wallTimeToInstant(date: string, time: string, timeZone: string):
 }
 
 export function instantToWallTime(instant: string, timeZone: string): LocalWallTimeResult {
-  if (!isValidIanaTimeZone(timeZone)) return { ok: false, reason: 'invalid-time-zone' };
+  if (!isValidItineraryTimeZone(timeZone)) return { ok: false, reason: 'invalid-time-zone' };
   try {
-    const local = Temporal.Instant.from(instant).toZonedDateTimeISO(timeZone);
+    const offsetMinutes = parseUtcOffsetMinutes(timeZone);
+    const local = Temporal.Instant.from(instant).toZonedDateTimeISO(offsetMinutes === null ? timeZone : isoOffset(offsetMinutes));
     return {
       ok: true,
       date: local.toPlainDate().toString(),

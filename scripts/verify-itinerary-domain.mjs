@@ -12,7 +12,7 @@ try {
   const first = types.createBlankItineraryRow('row-1', 0);
   Object.assign(first, {
     portDockName: 'KAOHSIUNG',
-    portTimeZone: 'Asia/Taipei',
+    portTimeZone: 'UTC+8',
     etdUtc: '2026-08-31T00:00:00Z',
     etdMode: 'manual',
     oceanDistanceNm: 120,
@@ -21,7 +21,7 @@ try {
   const second = types.createBlankItineraryRow('row-2', 1);
   Object.assign(second, {
     portDockName: 'YOKOHAMA',
-    portTimeZone: 'Asia/Tokyo',
+    portTimeZone: 'UTC+9',
     berthWaitHours: 2,
     operationQuantityMt: 1000,
     operationRateMtPerHour: 250,
@@ -49,17 +49,37 @@ try {
   assert.ok(invalidResult.issues.some(issue => issue.code === 'missing-previous-sailing-time'));
 
   assert.deepEqual(
-    time.wallTimeToInstant('2026-08-31', '16:00', 'Asia/Taipei'),
+    time.wallTimeToInstant('2026-08-31', '16:00', 'UTC+8'),
     { ok: true, instant: '2026-08-31T08:00:00Z' },
   );
   assert.deepEqual(
-    time.instantToWallTime('2026-08-31T08:00:00Z', 'Asia/Taipei'),
+    time.instantToWallTime('2026-08-31T08:00:00Z', 'UTC+8'),
     { ok: true, date: '2026-08-31', time: '16:00' },
   );
+  assert.deepEqual(time.wallTimeToInstant('2026-08-31', '13:45', 'UTC+5:45'), { ok: true, instant: '2026-08-31T08:00:00Z' });
+  assert.deepEqual(time.instantToWallTime('2026-08-31T08:00:00Z', 'UTC-6'), { ok: true, date: '2026-08-31', time: '02:00' });
+  assert.equal(time.parseUtcOffsetMinutes('UTC+5:30'), 330);
+  assert.equal(time.parseUtcOffsetMinutes('UTC-9:30'), -570);
+  assert.equal(time.parseUtcOffsetMinutes('UTC'), 0);
+  assert.equal(time.parseUtcOffsetMinutes('UTC+14:15'), null);
+  assert.equal(time.parseUtcOffsetMinutes('UTC-12:15'), null);
+  assert.equal(time.parseUtcOffsetMinutes('UTC+5:20'), null);
+  assert.equal(time.formatUtcOffsetMinutes(330), 'UTC+5:30');
+  assert.equal(time.formatUtcOffsetMinutes(-360), 'UTC-6');
+  assert.equal(time.formatUtcOffsetMinutes(345), 'UTC+5:45');
+  assert.equal(time.formatUtcOffsetMinutes(20), null);
+  assert.equal(time.isValidUtcOffset('UTC+8'), true);
+  assert.equal(time.isValidUtcOffset('Asia/Seoul'), false);
+  assert.equal(time.isValidItineraryTimeZone('UTC+5:45'), true);
+  assert.equal(time.isValidItineraryTimeZone('Asia/Seoul'), true, 'legacy IANA rows must remain readable');
+  assert.ok(time.UTC_OFFSET_OPTIONS.includes('UTC-12'));
+  assert.ok(time.UTC_OFFSET_OPTIONS.includes('UTC+5:30'));
+  assert.ok(time.UTC_OFFSET_OPTIONS.includes('UTC+5:45'));
+  assert.ok(time.UTC_OFFSET_OPTIONS.includes('UTC+12:45'));
+  assert.ok(time.UTC_OFFSET_OPTIONS.includes('UTC+14'));
+  assert.ok(time.UTC_OFFSET_OPTIONS.every(value => !value.includes('/')), 'new selector options must contain offsets only');
   assert.equal(time.wallTimeToInstant('2026-03-08', '02:30', 'America/Los_Angeles').ok, false);
   assert.equal(time.wallTimeToInstant('2026-11-01', '01:30', 'America/Los_Angeles').ok, false);
-  assert.equal(time.isValidIanaTimeZone('UTC+8'), false);
-  assert.equal(time.isValidIanaTimeZone('Asia/Seoul'), true);
 
   const now = Date.parse('2026-08-31T08:00:00Z');
   assert.equal(time.formatRelativeUpdatedAt('2026-08-31T07:49:00Z', now), '11 分鐘前更新');
@@ -69,7 +89,7 @@ try {
 
   const document = types.createEmptyItineraryDocument({ workspaceKey: 'demo', vesselId: 'v-1', vesselName: 'TEST', rowId: 'row-1' });
   document.rows[0].portDockName = 'PORT';
-  document.rows[0].portTimeZone = 'Asia/Taipei';
+  document.rows[0].portTimeZone = 'UTC+8';
   assert.deepEqual(validation.validateItineraryDocument(document), { ok: true, value: document });
 
   const duplicate = structuredClone(document);

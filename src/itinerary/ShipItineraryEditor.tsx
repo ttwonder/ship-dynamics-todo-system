@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { recalculateItineraryRows } from './itineraryDomain';
-import { instantToWallTime, wallTimeToInstant, COMMON_IANA_TIME_ZONES } from './itineraryTime';
+import { instantToWallTime, wallTimeToInstant } from './itineraryTime';
 import { addShipDraftRow, removeShipDraftRow, updateShipDraftRow } from './shipItineraryModel';
 import type { ItineraryDocument, ItineraryRow, ItineraryTimeMode } from './itineraryTypes';
+import UtcOffsetSelect from './UtcOffsetSelect';
 
 interface ShipItineraryEditorProps {
   document: ItineraryDocument;
@@ -59,7 +60,7 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
     {readOnly && !remoteUpdated && <div className="ship-conflict-banner"><b>編輯鎖已失效，畫面已凍結。</b><span>草稿仍保留，不會自動覆蓋雲端。</span></div>}
     <div className="ship-editor-scroll">
       <table className="ship-editor-table">
-        <thead><tr><th>#</th><th>A Voy</th><th>B Port & Dock</th><th>C L/U</th><th>D Qty</th><th>E ETA</th><th>F ETB</th><th>G L/D rate</th><th>H ETC</th><th>I ETD</th><th>J Arr Draft</th><th>K Dep Draft</th><th>L arr ROB</th><th>M dep ROB</th><th>N IANA Zone</th><th>O Dist nm</th><th>P Speed kt</th><th>Q Sail h</th><th>R Wait h</th><th>S Tanks</th><th>T Qty MT</th><th>U Rate</th><th>V Op h</th><th>W Buffer d</th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>A Voy</th><th>B Port & Dock</th><th>C L/U</th><th>D Qty</th><th>E ETA</th><th>F ETB</th><th>G L/D rate</th><th>H ETC</th><th>I ETD</th><th>J Arr Draft</th><th>K Dep Draft</th><th>L arr ROB</th><th>M dep ROB</th><th>N UTC Offset</th><th>O Dist nm</th><th>P Speed kt</th><th>Q Sail h</th><th>R Wait h</th><th>S Tanks</th><th>T Qty MT</th><th>U Rate</th><th>V Op h</th><th>W Buffer d</th><th></th></tr></thead>
         <tbody>{document.rows.map((row, index) => <tr key={row.rowId}>
           <td className="ship-row-number">{index + 1}</td>
           <td><input value={row.voyageNumber} disabled={readOnly} onChange={event => patchRow(row.rowId, { voyageNumber: event.target.value })} /></td>
@@ -75,7 +76,7 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
           <td><input value={row.departureDraftText} disabled={readOnly} onChange={event => patchRow(row.rowId, { departureDraftText: event.target.value })} /></td>
           <td><input value={row.arrivalRobText} disabled={readOnly} onChange={event => patchRow(row.rowId, { arrivalRobText: event.target.value })} /></td>
           <td><input value={row.departureRobText} disabled={readOnly} onChange={event => patchRow(row.rowId, { departureRobText: event.target.value })} /></td>
-          <td><input list="ship-time-zones" value={row.portTimeZone} disabled={readOnly} onChange={event => patchRow(row.rowId, { portTimeZone: event.target.value })} /></td>
+          <td><UtcOffsetSelect value={row.portTimeZone} disabled={readOnly} onChange={value => patchRow(row.rowId, { portTimeZone: value })} /></td>
           <td><input type="number" min="0" value={row.oceanDistanceNm ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { oceanDistanceNm: numeric(event.target.value) })} /></td>
           <td><input type="number" min="0" step="0.1" value={row.speedKnots ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { speedKnots: numeric(event.target.value) })} /></td>
           <td className="ship-derived">{row.sailingHours ?? '—'}</td>
@@ -88,7 +89,6 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
           <td><button type="button" className="ship-row-delete" disabled={readOnly || document.rows.length <= 1} onClick={() => onChange(removeShipDraftRow(document, row.rowId))}>×</button></td>
         </tr>)}</tbody>
       </table>
-      <datalist id="ship-time-zones">{COMMON_IANA_TIME_ZONES.map(zone => <option value={zone} key={zone} />)}</datalist>
     </div>
     <div className="ship-editor-footer">
       <button type="button" className="btn ghost small" disabled={readOnly} onClick={() => onChange(addShipDraftRow(document))}>＋ 下一行</button>

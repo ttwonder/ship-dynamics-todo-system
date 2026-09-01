@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ItineraryDocument } from './itineraryTypes';
-import { COMMON_IANA_TIME_ZONES } from './itineraryTime';
 import { resolveParsedItinerarySheet, type ParsedItinerarySheet, type ParsedItineraryWorkbook } from './itineraryExcel';
+import UtcOffsetSelect from './UtcOffsetSelect';
 
 export interface ItineraryImportApplyItem {
   sheet: ParsedItinerarySheet;
@@ -86,11 +86,10 @@ export default function ItineraryImportPreview({ fileName, parsed, documents, se
             const isReady = Boolean(item.document && item.sheet.rows.length && !item.sheet.issues.length && !duplicate);
             return <tbody className="itinerary-import-sheet-group" key={item.sheet.sheetName}>
               <tr><td><input type="checkbox" checked={enabled.has(item.sheet.sheetName)} disabled={applying} onChange={()=>toggle(item.sheet.sheetName)}/></td><td title={item.sheet.sheetName}>{item.sheet.sheetName}</td><td><select value={item.vesselId} disabled={applying} onChange={event=>setMappings(current=>({...current,[item.sheet.sheetName]:event.target.value}))}><option value="">請選擇船舶</option>{documents.map(document=><option key={document.vesselId} value={document.vesselId}>{document.vesselName}</option>)}</select></td><td>{item.sheet.rows.length}</td><td>{item.document?`R${item.document.revision}`:'—'}</td><td><span className={`itinerary-import-status ${isReady?'ready':'blocked'}`} title={issueText}>{isReady?'可覆蓋':issueText||'請選擇船舶'}</span></td></tr>
-              {item.sheet.timeZoneNeeds.map(need=><tr className="itinerary-zone-repair" key={need.rowId}><td></td><td colSpan={2}>Excel 第 {need.rowNumber} 列｜{need.portDockName||'未命名港口'}{need.legacyOffsetHours!==null?`｜原時差 ${need.legacyOffsetHours>=0?'+':''}${need.legacyOffsetHours}`:''}</td><td colSpan={3}><input list="itinerary-import-time-zones" value={overrides[item.sheet.sheetName]?.[need.rowId]||''} placeholder="選擇 IANA 時區，例如 Asia/Seoul" onChange={event=>updateZone(item.sheet.sheetName,need.rowId,event.target.value)}/></td></tr>)}
+              {item.sheet.timeZoneNeeds.map(need=><tr className="itinerary-zone-repair" key={need.rowId}><td></td><td colSpan={2}>Excel 第 {need.rowNumber} 列｜{need.portDockName||'未命名港口'}{need.legacyOffsetHours!==null?`｜原時差 ${need.legacyOffsetHours>=0?'+':''}${need.legacyOffsetHours}`:''}</td><td colSpan={3}><UtcOffsetSelect value={overrides[item.sheet.sheetName]?.[need.rowId]||''} disabled={applying} onChange={value=>updateZone(item.sheet.sheetName,need.rowId,value)}/></td></tr>)}
             </tbody>;
           })}
         </table>
-        <datalist id="itinerary-import-time-zones">{COMMON_IANA_TIME_ZONES.map(zone=><option key={zone} value={zone}/>)}</datalist>
       </div>:<div className="itinerary-import-results"><table className="itinerary-import-table"><thead><tr><th>分頁</th><th>船舶</th><th>結果</th></tr></thead><tbody>{results.map(result=><tr key={`${result.sheetName}-${result.vesselName}`}><td>{result.sheetName}</td><td>{result.vesselName}</td><td><span className={`itinerary-import-status ${result.ok?'ready':'blocked'}`}>{result.message}</span></td></tr>)}</tbody></table></div>}
       {!results&&<footer className="itinerary-import-foot"><span>準備覆蓋 {ready.length} 艘；有錯誤、重複對應或未選船舶的分頁不會送出。</span><button type="button" className="btn primary" disabled={!ready.length||applying} onClick={apply}>{applying?'覆蓋中…':`確認覆蓋 ${ready.length} 艘`}</button></footer>}
     </section>

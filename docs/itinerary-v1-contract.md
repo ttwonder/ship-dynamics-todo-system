@@ -64,7 +64,7 @@ interface ItineraryDocument {
 | B Port & Dock Name | `portDockName` | string | 可空；最多 240 字 |
 | C Loading / Unloading | `operation` | `Loading\|Unloading\|''` | 下拉；未知值拒絕匯入 |
 | D B/F or I/F Qty | `cargoQuantityText` | string | 報告文字；最多 1,000 字；不從文字猜數值 |
-| E ETA (LT) | `etaUtc` | ISO instant/null | 依本列 IANA zone 顯示 LT |
+| E ETA (LT) | `etaUtc` | ISO instant/null | 依本列 UTC Offset 顯示該港 LT |
 | F ETB (LT) | `etbUtc` | ISO instant/null | 同上 |
 | G L/D rate | `ldRateText` | string | 報告文字；計算另用 U 欄數值 |
 | H ETC (LT) | `etcUtc` | ISO instant/null | 同上 |
@@ -78,7 +78,7 @@ interface ItineraryDocument {
 
 | Excel | canonical 欄位 | 型別／單位 |
 |---|---|---|
-| N 時區 | `portTimeZone` | IANA zone；固定 offset 只作舊檔匯入提示，不作 authority |
+| N 時區 | `portTimeZone` | 固定 UTC Offset（UTC-12 至 UTC+14，含半／45 分鐘）；舊 IANA 僅讀取相容 |
 | O 大洋距離 | `oceanDistanceNm` | number/null，NM，>= 0 |
 | P 速度 | `speedKnots` | number/null，knots，> 0 才可計算 |
 | Q 航行時間 | `sailingHours` | derived number/null |
@@ -105,9 +105,9 @@ etd_utc = etc_utc + departure_buffer_days
 ```
 
 - 航行時間採模板的向上取整到整小時。
-- UTC instant 是 authority；IANA zone 只用於 LT 輸入／顯示及 Excel 轉換，不再做 Excel 的 `-前港 offset +本港 offset` 牆鐘算法。
+- UTC instant 是 authority；每列 UTC Offset 只用於該港 LT 輸入／顯示及 Excel 轉換，不直接拿不同港口牆鐘時間相加。
 - 本列 ETA 通常由前列 ETD 推導；第一列 ETA 必須人工輸入。
-- 缺少必要上游值、speed/rate <= 0、IANA zone 無效或 DST wall time 不存在／有歧義時停止該欄及下游自動計算，顯示原因，不生成猜測時間。
+- 缺少必要上游值、speed/rate <= 0 或 UTC Offset 無效時停止該欄及下游自動計算，顯示原因，不生成猜測時間。
 - ROB v1 維持人工輸入。
 - 港口距離 v1 由船端輸入 NM；可建議已確認航線值，但不以一般地圖直線距離代替海上里程。
 
@@ -154,7 +154,7 @@ etd_utc = etc_utc + departure_buffer_days
 - 選船後可 `從空白開始` 或 `載入最新版本`。
 - 桌面使用緊湊 spreadsheet table；手機每個港口一張表單卡。
 - 可新增、複製、排序、刪除列；至少保留一列。
-- 日期與時間分開選；以 IANA zone 轉為 UTC，DST 不合法時拒絕。
+- 日期與時間分開選；以每列固定 UTC Offset 轉為 UTC，不自動套用地區或夏令時間。
 - IndexedDB／namespaced storage 保存草稿；`保存並同步` 與 `取消編輯` 語意分離。
 - 報告動作：產生並下載 Excel，再開啟預填 mailto；瀏覽器無法可靠自動附檔，UI 必須提示手動附上剛下載的檔案。
 

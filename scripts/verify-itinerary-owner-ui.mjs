@@ -9,11 +9,20 @@ try {
   const rollout = await server.ssrLoadModule('/src/itinerary/itineraryRollout.ts');
   const dashboardSource = fs.readFileSync('src/Dashboard.tsx', 'utf8');
   const itineraryDashboardSource = fs.readFileSync('src/itinerary/ItineraryDashboard.tsx', 'utf8');
+  const itineraryCssSource = fs.readFileSync('src/itinerary/itinerary.css', 'utf8');
   const vesselDisplayPath = 'src/itinerary/itineraryVesselDisplay.ts';
   assert.equal(fs.existsSync(vesselDisplayPath), true, 'Itinerary must project the same vessel display name used by vessel cards');
   const vesselDisplay = await server.ssrLoadModule(`/${vesselDisplayPath}`);
   const demoData = await server.ssrLoadModule('/src/itinerary/itineraryDemoData.ts');
   const itineraryTypes = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
+  const utcOffsetSelectPath = 'src/itinerary/UtcOffsetSelect.tsx';
+  assert.equal(fs.existsSync(utcOffsetSelectPath), true, 'ship, office and calendar must share one UTC Offset selector');
+  const utcOffsetSelect = await server.ssrLoadModule(`/${utcOffsetSelectPath}`);
+  const utcOffsetHtml = renderToStaticMarkup(createElement(utcOffsetSelect.default, { value: 'UTC+5:45', onChange() {} }));
+  assert.match(utcOffsetHtml, /UTC-12/);
+  assert.match(utcOffsetHtml, /UTC\+5:45/);
+  assert.match(utcOffsetHtml, /UTC\+14/);
+  assert.doesNotMatch(utcOffsetHtml, /Asia\//, 'new offset choices must not expose region names');
   const amber = {
     id: 'vessel-amber',
     name: '安華',
@@ -113,6 +122,9 @@ try {
   assert.match(dashboardSource, /itineraryRollout\.permissions\.view/);
   assert.match(dashboardSource, /切換 Itinerary 視圖/);
   assert.match(dashboardSource, /返回船舶卡片/);
+  assert.match(itineraryDashboardSource, /displayMode==='table'\?'切換行事曆':'返回 Itinerary'/, 'calendar toggle labels must describe both destinations');
+  assert.match(itineraryDashboardSource, /className="btn small itinerary-view-toggle"/, 'calendar toggle must use its prominent semantic class');
+  assert.match(itineraryCssSource, /\.itinerary-view-toggle\{[^}]*background:[^}]*color:#fff/i, 'calendar toggle must have a colored high-contrast treatment');
   assert.match(dashboardSource, /ItineraryOwnerRolloutDialog/);
   assert.match(dashboardSource, /驗證 Itinerary Owner/);
   assert.match(dashboardSource, /Itinerary 試行設定/);
@@ -129,6 +141,14 @@ try {
   const importLoadIndex = importApplyBlock.indexOf('backend.loadDocument');
   const importSaveIndex = importApplyBlock.indexOf('backend.save');
   assert.ok(importClaimIndex >= 0 && importLoadIndex > importClaimIndex && importSaveIndex > importLoadIndex, 'office Excel overwrite must claim, reload authority, then CAS-save over the latest revision');
+  const officeEditorSource = fs.readFileSync('src/itinerary/ItineraryEditor.tsx', 'utf8');
+  const shipEditorSource = fs.readFileSync('src/itinerary/ShipItineraryEditor.tsx', 'utf8');
+  const calendarSource = fs.readFileSync('src/itinerary/ItineraryCalendar.tsx', 'utf8');
+  const importPreviewSource = fs.readFileSync('src/itinerary/ItineraryImportPreview.tsx', 'utf8');
+  for (const [name, source] of [['office', officeEditorSource], ['ship', shipEditorSource], ['calendar', calendarSource], ['Excel import repair', importPreviewSource]]) {
+    assert.match(source, /UtcOffsetSelect/, `${name} must mount the shared UTC Offset selector`);
+    assert.doesNotMatch(source, /COMMON_IANA_TIME_ZONES/, `${name} must not offer region-based timezone choices`);
+  }
 
   console.log('itinerary_owner_rollout_and_dashboard_contract=PASS');
 } finally {

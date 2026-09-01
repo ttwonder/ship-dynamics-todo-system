@@ -1,5 +1,5 @@
 import type { ItineraryRow } from './itineraryTypes';
-import { addHoursToInstant, isValidIanaTimeZone } from './itineraryTime';
+import { addHoursToInstant, isValidItineraryTimeZone } from './itineraryTime';
 
 export type ItineraryCalculationIssueCode =
   | 'invalid-distance'
@@ -75,13 +75,13 @@ export function recalculateItineraryRows(inputRows: readonly ItineraryRow[]): It
       }
     }
 
-    if (row.portTimeZone && !isValidIanaTimeZone(row.portTimeZone)) {
-      issues.push({ rowId: row.rowId, field: 'portTimeZone', code: 'invalid-time-zone', message: '請選擇有效的 IANA 港口時區。' });
+    if (row.portTimeZone && !isValidItineraryTimeZone(row.portTimeZone)) {
+      issues.push({ rowId: row.rowId, field: 'portTimeZone', code: 'invalid-time-zone', message: '請選擇有效的 UTC Offset。' });
     }
   }
 
   rows.forEach((row, index) => {
-    const validZone = isValidIanaTimeZone(row.portTimeZone);
+    const validZone = isValidItineraryTimeZone(row.portTimeZone);
     const previous = index > 0 ? rows[index - 1] : null;
 
     if (row.etaMode === 'auto' && previous) {

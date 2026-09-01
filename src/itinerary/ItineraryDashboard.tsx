@@ -242,7 +242,7 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
       <div className="itinerary-toolbar-actions">
         <button type="button" className="btn small ghost" onClick={toggleVisible} disabled={!visibleIds.length}>{everyVisibleSelected?'取消選取目前可見':'選取目前可見'}</button>
         <button type="button" className="btn small ghost" onClick={()=>setSelectedVesselIds([])} disabled={!selectedVesselIds.length}>清除選取</button>
-        <button type="button" className="btn small ghost" onClick={()=>setDisplayMode(mode=>mode==='table'?'calendar':'table')}>{displayMode==='table'?'切換行事曆':'返回表格'}</button>
+        <button type="button" className="btn small itinerary-view-toggle" onClick={()=>setDisplayMode(mode=>mode==='table'?'calendar':'table')}>{displayMode==='table'?'切換行事曆':'返回 Itinerary'}</button>
         {permissions.export&&<button type="button" className="btn small ghost" onClick={()=>void exportSelected()} disabled={!selectedVesselIds.some(id=>documents[id])||Boolean(excelBusy)}>{excelBusy==='export'?'產生中…':`匯出 Excel（${selectedVesselIds.filter(id=>documents[id]).length}）`}</button>}
         {permissions.import&&<><button type="button" className="btn small ghost" onClick={()=>fileInputRef.current?.click()} disabled={Boolean(excelBusy)}>{excelBusy==='import'?'檢查中…':'匯入 Excel'}</button><input ref={fileInputRef} className="itinerary-file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event=>{const file=event.target.files?.[0];if(file)void readImportFile(file);}}/></>}
       </div>

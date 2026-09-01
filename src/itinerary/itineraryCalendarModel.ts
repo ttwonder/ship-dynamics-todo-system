@@ -1,5 +1,5 @@
 import { Temporal } from '@js-temporal/polyfill';
-import { isValidIanaTimeZone } from './itineraryTime';
+import { isValidItineraryTimeZone, wallTimeToInstant } from './itineraryTime';
 import type { ItineraryDocument, ItineraryRow } from './itineraryTypes';
 
 export interface ItineraryCalendarRange {
@@ -22,12 +22,16 @@ export interface ItineraryCalendarEntry {
 }
 
 export function calendarRangeFromLocalDate(localDate: string, days: number, timeZone: string): ItineraryCalendarRangeResult {
-  if (!isValidIanaTimeZone(timeZone)) return { ok: false, reason: 'invalid-time-zone' };
+  if (!isValidItineraryTimeZone(timeZone)) return { ok: false, reason: 'invalid-time-zone' };
   if (!Number.isInteger(days) || days < 1 || days > 60) return { ok: false, reason: 'invalid-days' };
   try {
     const date = Temporal.PlainDate.from(localDate);
-    const start = date.toZonedDateTime({ timeZone, plainTime: Temporal.PlainTime.from('00:00') });
-    const dayStarts = Array.from({ length: days + 1 }, (_, index) => start.add({ days: index }).toInstant().toString());
+    const dayStarts: string[] = [];
+    for (let index = 0; index <= days; index += 1) {
+      const boundary = wallTimeToInstant(date.add({ days: index }).toString(), '00:00', timeZone);
+      if (!boundary.ok) return { ok: false, reason: 'invalid-date' };
+      dayStarts.push(boundary.instant);
+    }
     return { ok: true, startInstant: dayStarts[0], endInstant: dayStarts[dayStarts.length - 1], dayStarts };
   } catch {
     return { ok: false, reason: 'invalid-date' };

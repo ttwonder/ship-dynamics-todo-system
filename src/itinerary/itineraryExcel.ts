@@ -1,6 +1,6 @@
 import type ExcelJS from 'exceljs';
 import { recalculateItineraryRows } from './itineraryDomain';
-import { addHoursToInstant, isValidIanaTimeZone, wallTimeToInstant } from './itineraryTime';
+import { addHoursToInstant, formatUtcOffsetMinutes, instantToWallTime, isValidItineraryTimeZone, parseUtcOffsetMinutes, wallTimeToInstant } from './itineraryTime';
 import { createBlankItineraryRow, createItineraryId, ITINERARY_SCHEMA_VERSION, type ItineraryDocument, type ItineraryOperation, type ItineraryRow } from './itineraryTypes';
 
 const META_SHEET = '_Itinerary_Meta';
@@ -119,22 +119,22 @@ function copyTemplateLayout(source: ExcelJS.Worksheet, target: ExcelJS.Worksheet
 }
 
 function wallDate(instant: string | null, timeZone: string): Date | null {
-  if (!instant || !isValidIanaTimeZone(timeZone)) return null;
+  if (!instant || !isValidItineraryTimeZone(timeZone)) return null;
   try {
-    const formatter = new Intl.DateTimeFormat('en-CA', {
-      timeZone,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
-    });
-    const parts = Object.fromEntries(formatter.formatToParts(new Date(instant)).map(part => [part.type, part.value]));
-    return new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second || 0)));
+    const wall = instantToWallTime(instant, timeZone);
+    if (!wall.ok) return null;
+    const [year, month, day] = wall.date.split('-').map(Number);
+    const [hour, minute] = wall.time.split(':').map(Number);
+    return new Date(Date.UTC(year, month - 1, day, hour, minute));
   } catch {
     return null;
   }
 }
 
 function offsetHours(instant: string | null, timeZone: string): number | null {
-  if (!instant || !isValidIanaTimeZone(timeZone)) return null;
+  if (!instant || !isValidItineraryTimeZone(timeZone)) return null;
+  const fixedOffset = parseUtcOffsetMinutes(timeZone);
+  if (fixedOffset !== null) return fixedOffset / 60;
   const local = wallDate(instant, timeZone);
   if (!local) return null;
   return (local.getTime() - new Date(instant).getTime()) / 3_600_000;
@@ -355,13 +355,14 @@ function resolveSources(sourceRows: ImportedRowSource[], overrides: Record<strin
     const row = structuredClone(source.row);
     issues.push(...source.sourceIssues.map(issue => ({ ...issue, rowNumber: source.excelRow })));
     const rawZone = source.rawTimeZone;
-    const candidateZone = overrides[row.rowId] || (typeof rawZone === 'string' ? rawZone.trim() : '');
+    const numericZone = typeof rawZone === 'number' && Number.isFinite(rawZone) ? formatUtcOffsetMinutes(Math.round(rawZone * 60)) : null;
+    const candidateZone = overrides[row.rowId] || (typeof rawZone === 'string' ? rawZone.trim() : numericZone || '');
     const hasTimes = Object.keys(source.wallTimes).length > 0;
-    if (candidateZone && isValidIanaTimeZone(candidateZone)) row.portTimeZone = candidateZone;
+    if (candidateZone && isValidItineraryTimeZone(candidateZone)) row.portTimeZone = candidateZone;
     else if (hasTimes) {
       row.portTimeZone = '';
       needs.push({ rowId: row.rowId, rowNumber: source.excelRow, portDockName: row.portDockName, legacyOffsetHours: typeof rawZone === 'number' ? rawZone : null });
-      issues.push({ code: 'time-zone-required', rowNumber: source.excelRow, field: 'portTimeZone', message: `Excel 第 ${source.excelRow} 列只有空白／數字時差，請為 ${row.portDockName || '該港口'} 選擇 IANA 時區。` });
+      issues.push({ code: 'time-zone-required', rowNumber: source.excelRow, field: 'portTimeZone', message: `Excel 第 ${source.excelRow} 列時差無效，請為 ${row.portDockName || '該港口'} 選擇 UTC Offset。` });
     }
     if (row.portTimeZone) {
       for (const field of TIME_FIELDS) {
@@ -369,7 +370,7 @@ function resolveSources(sourceRows: ImportedRowSource[], overrides: Record<strin
         if (!wall) continue;
         const converted = wallTimeToInstant(wall.date, wall.time, row.portTimeZone);
         if (converted.ok) row[field] = converted.instant;
-        else issues.push({ code: 'invalid-time', rowNumber: source.excelRow, field, message: `Excel 第 ${source.excelRow} 列 ${field} 在 ${row.portTimeZone} 不存在或有 DST 歧義。` });
+        else issues.push({ code: 'invalid-time', rowNumber: source.excelRow, field, message: `Excel 第 ${source.excelRow} 列 ${field} 在 ${row.portTimeZone} 無效。` });
       }
     }
     return row;

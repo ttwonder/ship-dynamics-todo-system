@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createBlankItineraryRow, createItineraryId, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
 import { pendingOperationForDocument } from './itineraryOperation';
 import { resequenceItineraryRows } from './itineraryDomain';
-import { COMMON_IANA_TIME_ZONES, instantToWallTime, wallTimeToInstant } from './itineraryTime';
+import { instantToWallTime, wallTimeToInstant } from './itineraryTime';
 import { deleteItineraryDraft, itineraryDraftKey, saveItineraryDraft, type ItineraryPendingOperation } from './itineraryDraftStore';
 import { validateItineraryDocument } from './itineraryValidation';
 import type { ItineraryLease, ItineraryLeaseRenewResult, ItinerarySaveResult } from './itineraryCollaboration';
+import UtcOffsetSelect from './UtcOffsetSelect';
 
 interface ItineraryEditorProps {
   document: ItineraryDocument;
@@ -34,9 +35,9 @@ function TimeCell({ row, field, disabled, onChange, onError }: TimeCellProps) {
   const time = local?.ok ? local.time : '';
   const commit = (nextDate: string, nextTime: string) => {
     if (!nextDate) return onChange(null);
-    if (!row.portTimeZone) return onError('請先為此列選擇港口 IANA 時區。');
+    if (!row.portTimeZone) return onError('請先為此列選擇 UTC Offset。');
     const result = wallTimeToInstant(nextDate, nextTime || '00:00', row.portTimeZone);
-    if (!result.ok) return onError('此日期時間在所選時區不存在或有夏令時間歧義，請改選其他時間。');
+    if (!result.ok) return onError('日期、時間或 UTC Offset 無效，請重新選擇。');
     onChange(result.instant);
   };
   return <div className="itinerary-time-inputs">
@@ -137,7 +138,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
 
   const addRow = () => updateDraft(current => {
     const row = createBlankItineraryRow(createItineraryId('row'), current.rows.length);
-    row.portTimeZone = current.rows[current.rows.length - 1]?.portTimeZone || 'Asia/Taipei';
+    row.portTimeZone = current.rows[current.rows.length - 1]?.portTimeZone || 'UTC+8';
     return { ...current, rows: [...current.rows, row] };
   });
   const removeRow = (rowId: string) => updateDraft(current => {
@@ -193,7 +194,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   return <div className="modal-backdrop itinerary-editor-backdrop" role="presentation">
     <section className="modal itinerary-editor-modal" role="dialog" aria-modal="true" aria-labelledby="itinerary-editor-title" onPointerDown={touch} onKeyDown={touch}>
       <header className="itinerary-editor-head">
-        <div><h2 id="itinerary-editor-title">手動修改｜{document.vesselName}</h2><p>Revision {document.revision}｜辦公室只修改 A:M；日期及時間以各港 IANA 時區輸入。</p></div>
+        <div><h2 id="itinerary-editor-title">手動修改｜{document.vesselName}</h2><p>Revision {document.revision}｜辦公室只修改 A:M；日期及時間以各港 UTC Offset 輸入。</p></div>
         <div className="itinerary-editor-head-actions">{readOnly&&dirty&&<button type="button" className="btn small red" onClick={cancel}>丟棄草稿</button>}<button type="button" className="btn ghost" onClick={readOnly&&dirty?closePreservingDraft:cancel}>{readOnly&&dirty?'關閉（保留草稿）':'取消編輯'}</button><button type="button" className="btn primary" disabled={readOnly||saving} onClick={submit}>{saving?'保存中…':'保存並同步'}</button></div>
       </header>
       {(message||idleWarning)&&<div className={`itinerary-editor-message ${readOnly?'error':idleWarning?'warning':''}`} role="status">{message||'已閒置 8 分鐘；再無操作將於 10 分鐘時退出可寫狀態並保留草稿。'}</div>}
@@ -202,7 +203,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
           <tbody>{draft.rows.map((row,index)=><tr key={row.rowId}>
             <td>{index+1}</td>
             <td><input value={row.voyageNumber} disabled={readOnly} onChange={event=>updateRow(row.rowId,{voyageNumber:event.target.value})}/></td>
-            <td><div className="itinerary-port-zone-inline"><input title={row.portDockName} value={row.portDockName} disabled={readOnly} placeholder="Port / Dock" onChange={event=>updateRow(row.rowId,{portDockName:event.target.value})}/><input className="itinerary-zone-input" list="itinerary-time-zones" value={row.portTimeZone} disabled={readOnly} placeholder="IANA 時區" onChange={event=>updateRow(row.rowId,{portTimeZone:event.target.value})}/></div></td>
+            <td><div className="itinerary-port-zone-inline"><input title={row.portDockName} value={row.portDockName} disabled={readOnly} placeholder="Port / Dock" onChange={event=>updateRow(row.rowId,{portDockName:event.target.value})}/><UtcOffsetSelect className="itinerary-zone-input" value={row.portTimeZone} disabled={readOnly} onChange={value=>updateRow(row.rowId,{portTimeZone:value})}/></div></td>
             <td><select value={row.operation} disabled={readOnly} onChange={event=>updateRow(row.rowId,{operation:event.target.value as ItineraryRow['operation']})}><option value="">—</option><option value="Loading">Loading</option><option value="Unloading">Unloading</option></select></td>
             <td><input title={row.cargoQuantityText} value={row.cargoQuantityText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{cargoQuantityText:event.target.value})}/></td>
             <td><TimeCell row={row} field="etaUtc" disabled={readOnly} onError={setMessage} onChange={value=>updateRow(row.rowId,{etaUtc:value,etaMode:'manual'})}/></td>
@@ -218,7 +219,6 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
           </tr>)}</tbody>
         </table>
       </div>
-      <datalist id="itinerary-time-zones">{COMMON_IANA_TIME_ZONES.map(zone=><option key={zone} value={zone}/>)}</datalist>
       <footer className="itinerary-editor-foot"><button type="button" className="btn ghost" disabled={readOnly} onClick={addRow}>＋ 增加下一行</button><span>{dirty?'草稿會保存在此瀏覽器':'尚未修改'}</span></footer>
     </section>
   </div>;
