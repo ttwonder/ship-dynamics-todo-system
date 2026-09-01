@@ -1,5 +1,9 @@
 import { recalculateItineraryRows } from './itineraryDomain';
-import { createBlankItineraryRow, createEmptyItineraryDocument, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
+import { instantToWallTime, isValidItineraryTimeZone, wallTimeToInstant } from './itineraryTime';
+import {
+  createBlankItineraryRow, createEmptyItineraryDocument, ITINERARY_TIME_ZONE_FIELDS, resolveItineraryTimeZone,
+  type ItineraryDocument, type ItineraryRow, type ItineraryTimeField,
+} from './itineraryTypes';
 
 export type ShipDraftStartMode = 'blank' | 'latest';
 
@@ -53,8 +57,49 @@ export function removeShipDraftRow(document: ItineraryDocument, rowId: string): 
 
 export function updateShipDraftRow(document: ItineraryDocument, rowId: string, patch: Partial<ItineraryRow>): ItineraryDocument {
   const next = cloneDocument(document);
-  next.rows = recalculateItineraryRows(next.rows.map(row => row.rowId === rowId ? { ...row, ...patch } : row)).rows;
+  const normalizedPatch = { ...patch };
+  if (Object.prototype.hasOwnProperty.call(patch, 'ldRateText')) normalizedPatch.operationRateMtPerHour = parseItineraryRateText(patch.ldRateText || '');
+  next.rows = recalculateItineraryRows(next.rows.map(row => row.rowId === rowId ? { ...row, ...normalizedPatch } : row)).rows;
   return next;
+}
+
+export function parseItineraryRateText(value: string): number | null {
+  const match = value.replace(/,/g, '').match(/(?:^|\s)(\d+(?:\.\d+)?)(?=\s|$|[A-Za-z/])/);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function reinterpretedInstant(instant: string | null, oldZone: string, newZone: string): string | undefined {
+  if (!instant || !isValidItineraryTimeZone(oldZone) || !isValidItineraryTimeZone(newZone)) return undefined;
+  const wall = instantToWallTime(instant, oldZone);
+  if (!wall.ok) return undefined;
+  const converted = wallTimeToInstant(wall.date, wall.time, newZone);
+  return converted.ok ? converted.instant : undefined;
+}
+
+export function shipTimeZonePatch(row: ItineraryRow, field: ItineraryTimeField, value: string): Partial<ItineraryRow> {
+  const zoneField = ITINERARY_TIME_ZONE_FIELDS[field];
+  const oldZone = resolveItineraryTimeZone(row, field);
+  const newZone = value || row.portTimeZone;
+  const instant = reinterpretedInstant(row[field], oldZone, newZone);
+  return { [zoneField]: value, ...(instant ? { [field]: instant } : {}) } as Partial<ItineraryRow>;
+}
+
+export function shipCalculationStartTimeZonePatch(row: ItineraryRow, value: string): Partial<ItineraryRow> {
+  const instant = reinterpretedInstant(row.calculationStartUtc, row.calculationStartTimeZone, value);
+  return { calculationStartTimeZone: value, ...(instant ? { calculationStartUtc: instant } : {}) };
+}
+
+export function shipPortTimeZonePatch(row: ItineraryRow, value: string): Partial<ItineraryRow> {
+  const patch: Partial<ItineraryRow> = { portTimeZone: value };
+  for (const field of Object.keys(ITINERARY_TIME_ZONE_FIELDS) as ItineraryTimeField[]) {
+    const zoneField = ITINERARY_TIME_ZONE_FIELDS[field];
+    if (row[zoneField]) continue;
+    const instant = reinterpretedInstant(row[field], row.portTimeZone, value);
+    if (instant) Object.assign(patch, { [field]: instant });
+  }
+  return patch;
 }
 
 export function shipAutomaticInputGaps(rows: readonly ItineraryRow[]): ShipAutomaticInputGap[] {
@@ -65,14 +110,9 @@ export function shipAutomaticInputGaps(rows: readonly ItineraryRow[]): ShipAutom
   rows.forEach((row, index) => {
     const rowNumber = index + 1;
     require(row, rowNumber, 'portTimeZone', 'UTC Offset', !row.portTimeZone);
-    if (index === 0) require(row, rowNumber, 'etaUtc', 'ETA', !row.etaUtc);
-    require(row, rowNumber, 'berthWaitHours', '預估等待時間', row.berthWaitHours === null);
-    require(row, rowNumber, 'operationQuantityMt', '裝卸貨量', row.operationQuantityMt === null);
-    require(row, rowNumber, 'operationRateMtPerHour', '裝卸貨速度', row.operationRateMtPerHour === null);
-    require(row, rowNumber, 'departureBufferDays', '預加時間', row.departureBufferDays === null);
-    if (index < rows.length - 1) {
-      require(row, rowNumber, 'oceanDistanceNm', '航程距離', row.oceanDistanceNm === null);
-      require(row, rowNumber, 'speedKnots', '速度', row.speedKnots === null);
+    if (index === 0) {
+      require(row, rowNumber, 'calculationStartUtc', '首列 ETA 起算時間', !row.calculationStartUtc);
+      require(row, rowNumber, 'calculationStartTimeZone', '首列 ETA 起算 UTC Offset', !row.calculationStartTimeZone);
     }
   });
   return missing;
@@ -82,7 +122,7 @@ export function setShipAutomaticCalculation(document: ItineraryDocument): ShipAu
   const next = cloneDocument(document);
   const rows = next.rows.map((row, index) => ({
     ...row,
-    etaMode: index === 0 ? 'manual' as const : 'auto' as const,
+    etaMode: 'auto' as const,
     etbMode: 'auto' as const,
     etcMode: 'auto' as const,
     etdMode: 'auto' as const,
@@ -110,8 +150,9 @@ function rowHasBusinessContent(row: ItineraryRow): boolean {
     row.voyageNumber.trim() || row.portDockName.trim() || row.operation || row.cargoQuantityText.trim()
     || row.etaUtc || row.etbUtc || row.ldRateText.trim() || row.etcUtc || row.etdUtc
     || row.arrivalDraftText.trim() || row.departureDraftText.trim() || row.arrivalRobText.trim() || row.departureRobText.trim()
-    || row.oceanDistanceNm !== null || row.speedKnots !== null || row.berthWaitHours !== null || row.tanksText.trim()
-    || row.operationQuantityMt !== null || row.operationRateMtPerHour !== null || row.departureBufferDays !== null
+    || row.oceanDistanceNm !== null || row.speedKnots !== null || row.berthWaitHours !== null || row.channelSailingHours !== null || row.tanksText.trim()
+    || row.operationQuantityMt !== null || row.operationRateMtPerHour !== null || row.preCompletionDelayHours !== null
+    || row.postCompletionDelayHours !== null || row.departureBufferDays !== null
   );
 }
 

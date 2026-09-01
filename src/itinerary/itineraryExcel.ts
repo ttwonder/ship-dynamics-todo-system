@@ -1,11 +1,13 @@
 import type ExcelJS from 'exceljs';
 import { recalculateItineraryRows } from './itineraryDomain';
 import { addHoursToInstant, formatUtcOffsetMinutes, instantToWallTime, isValidItineraryTimeZone, parseUtcOffsetMinutes, wallTimeToInstant } from './itineraryTime';
-import { createBlankItineraryRow, createItineraryId, formatItineraryOperation, ITINERARY_SCHEMA_VERSION, normalizeItineraryOperation, type ItineraryDocument, type ItineraryOperation, type ItineraryRow } from './itineraryTypes';
+import { createBlankItineraryRow, createItineraryId, formatItineraryOperation, ITINERARY_SCHEMA_VERSION, ITINERARY_TIME_ZONE_FIELDS, normalizeItineraryOperation, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryOperation, type ItineraryRow } from './itineraryTypes';
 
 const META_SHEET = '_Itinerary_Meta';
 const MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-const MERGED_COLUMNS = [1, 2, 3, 4, 7, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
+const EXCEL_LAYOUT_VERSION = 2;
+const EXCEL_MAX_COLUMN = 36;
+const MERGED_COLUMNS = [1, 2, 3, 4, 7, ...Array.from({ length: 27 }, (_, index) => index + 10)];
 const TIME_FIELDS = ['etaUtc', 'etbUtc', 'etcUtc', 'etdUtc'] as const;
 
 type TimeField = typeof TIME_FIELDS[number];
@@ -23,7 +25,11 @@ interface ImportedRowSource {
   row: ItineraryRow;
   excelRow: number;
   rawTimeZone: unknown;
+  rawTimeZones: Partial<Record<TimeField, unknown>>;
   wallTimes: Partial<Record<TimeField, WallParts>>;
+  calculationStartWall: WallParts | null;
+  rawCalculationStartTimeZone: unknown;
+  excelLayoutVersion: number;
   sourceIssues: ItineraryExcelIssue[];
 }
 
@@ -87,8 +93,8 @@ function copyTemplateLayout(source: ExcelJS.Worksheet, target: ExcelJS.Worksheet
   target.pageSetup = cloneStyle(source.pageSetup);
   target.headerFooter = cloneStyle(source.headerFooter);
   target.views = [{ state: 'frozen', ySplit: 3, topLeftCell: 'A4', activeCell: 'A4', showGridLines: false, zoomScale: 90, zoomScaleNormal: 100 }];
-  for (let column = 1; column <= 23; column += 1) {
-    const from = source.getColumn(column);
+  for (let column = 1; column <= EXCEL_MAX_COLUMN; column += 1) {
+    const from = source.getColumn(Math.min(column, 23));
     const to = target.getColumn(column);
     to.width = from.width;
     to.hidden = from.hidden;
@@ -102,8 +108,8 @@ function copyTemplateLayout(source: ExcelJS.Worksheet, target: ExcelJS.Worksheet
     targetRow.height = sourceRow.height;
     targetRow.hidden = sourceRow.hidden;
     targetRow.outlineLevel = sourceRow.outlineLevel;
-    for (let column = 1; column <= 23; column += 1) {
-      const from = sourceRow.getCell(column);
+    for (let column = 1; column <= EXCEL_MAX_COLUMN; column += 1) {
+      const from = sourceRow.getCell(Math.min(column, 23));
       const to = targetRow.getCell(column);
       to.style = cloneStyle(from.style);
       to.numFmt = from.numFmt;
@@ -132,9 +138,10 @@ function wallDate(instant: string | null, timeZone: string): Date | null {
 }
 
 function offsetHours(instant: string | null, timeZone: string): number | null {
-  if (!instant || !isValidItineraryTimeZone(timeZone)) return null;
+  if (!isValidItineraryTimeZone(timeZone)) return null;
   const fixedOffset = parseUtcOffsetMinutes(timeZone);
   if (fixedOffset !== null) return fixedOffset / 60;
+  if (!instant) return null;
   const local = wallDate(instant, timeZone);
   if (!local) return null;
   return (local.getTime() - new Date(instant).getTime()) / 3_600_000;
@@ -158,9 +165,21 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
   worksheet.getCell('K2').value = 'Update Date:';
   worksheet.getCell('L2').value = document.updatedAt ? new Date(document.updatedAt) : new Date();
   worksheet.getCell('L2').numFmt = 'yyyy-mm-dd hh:mm';
-  worksheet.getCell('X3').value = 'UTC Offset (h)';
-  worksheet.getColumn(24).hidden = true;
-  worksheet.getColumn(24).width = 14;
+
+  const headers = [
+    'Voy No.', 'Next Port & Dock Name', 'Purpose', 'B/F or I/F Qty (MT/BBLS)', 'ETA (LT)', 'ETB (LT)', '預計L/D rate (MT/h)',
+    'ETC (LT)', 'ETD (LT)', 'Arr Draft', 'Dep Draft', 'Arr ROB', 'Dep ROB', 'UTC Offset', 'DTG(NM)', '預估航速(kn)',
+    '剩餘航行時間(h)', '預估等待時間(靠泊前)(h)', '預計航道航行時間(h)', '作業艙號', '裝卸貨量(MT)', '預計L/D rate (MT/h)',
+    '預計作業時間(h)', '預估等待/延誤時間(完貨前)(h)', '預估等待/延誤時間(完貨後)(h)', 'ETA UTC Offset', 'ETB UTC Offset',
+    'ETC UTC Offset', 'ETD UTC Offset', '首列 ETA 起算時間(LT)', '首列 ETA 起算 UTC Offset', 'Start Offset (h)', 'ETA Offset (h)',
+    'ETB Offset (h)', 'ETC Offset (h)', 'ETD Offset (h)',
+  ];
+  headers.forEach((header, index) => { worksheet.getCell(3, index + 1).value = header; });
+  for (let column = 32; column <= 36; column += 1) {
+    worksheet.getColumn(column).hidden = true;
+    worksheet.getColumn(column).width = 12;
+  }
+  for (let column = 24; column <= 31; column += 1) worksheet.getColumn(column).width = column === 30 ? 22 : 18;
 
   document.rows.forEach((row, index) => {
     const primary = 4 + index * 2;
@@ -170,7 +189,10 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
     worksheet.getCell(primary, 1).value = row.voyageNumber;
     worksheet.getCell(primary, 2).value = row.portDockName;
     worksheet.getCell(primary, 3).value = formatItineraryOperation(row.operation);
-    worksheet.getCell(primary, 3).dataValidation = { type: 'list', allowBlank: true, formulae: ['"To Load,To Unload,To Load / To Unload"'] };
+    worksheet.getCell(primary, 3).dataValidation = {
+      type: 'list', allowBlank: true, showErrorMessage: false,
+      formulae: ['"To Load,To Unload,docking,waiting order,repair,inspection,To Load / To Unload"'],
+    };
     worksheet.getCell(primary, 4).value = row.cargoQuantityText;
     worksheet.getCell(primary, 7).value = row.ldRateText;
     worksheet.getCell(primary, 10).value = row.arrivalDraftText;
@@ -180,26 +202,46 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
     worksheet.getCell(primary, 14).value = row.portTimeZone;
     worksheet.getCell(primary, 15).value = row.oceanDistanceNm;
     worksheet.getCell(primary, 16).value = row.speedKnots;
-    worksheet.getCell(primary, 17).value = row.oceanDistanceNm !== null && row.speedKnots !== null && row.speedKnots > 0
-      ? formulaValue(`ROUNDUP(O${primary}/P${primary},0)`, Math.ceil(row.oceanDistanceNm / row.speedKnots)) : null;
+    worksheet.getCell(primary, 17).value = row.sailingHours !== null
+      ? formulaValue(`IF(OR(O${primary}="",P${primary}=""),"",O${primary}/P${primary})`, row.sailingHours) : null;
     worksheet.getCell(primary, 18).value = row.berthWaitHours;
-    worksheet.getCell(primary, 19).value = row.tanksText;
-    worksheet.getCell(primary, 20).value = row.operationQuantityMt;
-    worksheet.getCell(primary, 21).value = row.operationRateMtPerHour;
-    worksheet.getCell(primary, 22).value = row.operationQuantityMt !== null && row.operationRateMtPerHour !== null && row.operationRateMtPerHour > 0
-      ? formulaValue(`T${primary}/U${primary}`, row.operationQuantityMt / row.operationRateMtPerHour) : null;
-    worksheet.getCell(primary, 23).value = row.departureBufferDays;
-    worksheet.getCell(primary, 24).value = offsetHours(row.etaUtc || row.etdUtc, row.portTimeZone);
+    worksheet.getCell(primary, 19).value = row.channelSailingHours;
+    worksheet.getCell(primary, 20).value = row.tanksText;
+    worksheet.getCell(primary, 21).value = row.operationQuantityMt;
+    worksheet.getCell(primary, 22).value = row.operationRateMtPerHour;
+    worksheet.getCell(primary, 23).value = row.operationHours !== null
+      ? formulaValue(`IF(OR(U${primary}="",V${primary}=""),"",U${primary}/V${primary})`, row.operationHours) : null;
+    worksheet.getCell(primary, 24).value = row.preCompletionDelayHours;
+    worksheet.getCell(primary, 25).value = row.postCompletionDelayHours;
+    worksheet.getCell(primary, 26).value = row.etaTimeZone;
+    worksheet.getCell(primary, 27).value = row.etbTimeZone;
+    worksheet.getCell(primary, 28).value = row.etcTimeZone;
+    worksheet.getCell(primary, 29).value = row.etdTimeZone;
+    worksheet.getCell(primary, 30).value = wallDate(row.calculationStartUtc, row.calculationStartTimeZone);
+    worksheet.getCell(primary, 30).numFmt = 'yyyy-mm-dd hh:mm';
+    worksheet.getCell(primary, 31).value = row.calculationStartTimeZone;
+
+    const etaZone = resolveItineraryTimeZone(row, 'etaUtc');
+    const etbZone = resolveItineraryTimeZone(row, 'etbUtc');
+    const etcZone = resolveItineraryTimeZone(row, 'etcUtc');
+    const etdZone = resolveItineraryTimeZone(row, 'etdUtc');
+    worksheet.getCell(primary, 32).value = offsetHours(row.calculationStartUtc, row.calculationStartTimeZone);
+    worksheet.getCell(primary, 33).value = offsetHours(row.etaUtc, etaZone);
+    worksheet.getCell(primary, 34).value = offsetHours(row.etbUtc, etbZone);
+    worksheet.getCell(primary, 35).value = offsetHours(row.etcUtc, etcZone);
+    worksheet.getCell(primary, 36).value = offsetHours(row.etdUtc, etdZone);
 
     const previousPrimary = primary - 2;
-    const etaFormula = index > 0 ? `IF(D${primary}="","",I${previousPrimary}+ROUNDUP(O${previousPrimary}/P${previousPrimary},0)/24-X${previousPrimary}/24+X${primary}/24)` : null;
-    const etbFormula = `IF(E${primary}="","",E${primary}+R${primary}/24)`;
-    const etcFormula = `IF(F${primary}="","",F${primary}+V${primary}/24)`;
-    const etdFormula = `IF(H${primary}="","",H${primary}+W${primary})`;
-    setTimePair(worksheet, primary, 5, row.etaUtc, row.etaMode, etaFormula, row.portTimeZone);
-    setTimePair(worksheet, primary, 6, row.etbUtc, row.etbMode, etbFormula, row.portTimeZone);
-    setTimePair(worksheet, primary, 8, row.etcUtc, row.etcMode, etcFormula, row.portTimeZone);
-    setTimePair(worksheet, primary, 9, row.etdUtc, row.etdMode, etdFormula, row.portTimeZone);
+    const etaFormula = index === 0
+      ? `IF(AD${primary}="","",AD${primary}+IF(Q${primary}="",0,Q${primary})/24-AF${primary}/24+AG${primary}/24)`
+      : `IF(I${previousPrimary}="","",I${previousPrimary}+IF(Q${primary}="",0,Q${primary})/24-AJ${previousPrimary}/24+AG${primary}/24)`;
+    const etbFormula = `IF(E${primary}="","",E${primary}+(IF(R${primary}="",0,R${primary})+IF(S${primary}="",0,S${primary}))/24-AG${primary}/24+AH${primary}/24)`;
+    const etcFormula = `IF(F${primary}="","",F${primary}+(IF(X${primary}="",0,X${primary})+IF(W${primary}="",0,W${primary}))/24-AH${primary}/24+AI${primary}/24)`;
+    const etdFormula = `IF(H${primary}="","",H${primary}+IF(Y${primary}="",0,Y${primary})/24-AI${primary}/24+AJ${primary}/24)`;
+    setTimePair(worksheet, primary, 5, row.etaUtc, row.etaMode, etaFormula, etaZone);
+    setTimePair(worksheet, primary, 6, row.etbUtc, row.etbMode, etbFormula, etbZone);
+    setTimePair(worksheet, primary, 8, row.etcUtc, row.etcMode, etcFormula, etcZone);
+    setTimePair(worksheet, primary, 9, row.etdUtc, row.etdMode, etdFormula, etdZone);
   });
 
   const lastRow = Math.max(5, 3 + document.rows.length * 2);
@@ -210,7 +252,6 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
   worksheet.pageSetup.orientation = 'landscape';
   worksheet.pageSetup.printTitlesRow = '1:3';
   worksheet.pageSetup.horizontalCentered = true;
-  worksheet.getCell(3, 3).value = 'To Load / To Unload';
 }
 
 export async function buildItineraryWorkbook(documents: ItineraryDocument[], template: ArrayBuffer, onStage?: (stage: ItineraryExcelBuildStage) => void): Promise<ArrayBuffer> {
@@ -241,8 +282,8 @@ export async function buildItineraryWorkbook(documents: ItineraryDocument[], tem
   }
 
   const meta = workbook.addWorksheet(META_SHEET, { state: 'veryHidden' });
-  meta.addRow(['sheetName', 'vesselId', 'vesselName', 'schemaVersion', 'revision', 'updatedAt']);
-  for (const entry of metadata) meta.addRow([entry.sheetName, entry.document.vesselId, entry.document.vesselName, ITINERARY_SCHEMA_VERSION, entry.document.revision, entry.document.updatedAt]);
+  meta.addRow(['sheetName', 'vesselId', 'vesselName', 'schemaVersion', 'revision', 'updatedAt', 'excelLayoutVersion']);
+  for (const entry of metadata) meta.addRow([entry.sheetName, entry.document.vesselId, entry.document.vesselName, ITINERARY_SCHEMA_VERSION, entry.document.revision, entry.document.updatedAt, EXCEL_LAYOUT_VERSION]);
   meta.state = 'veryHidden';
 
   onStage?.('write');
@@ -301,7 +342,7 @@ function operationCell(cell: ExcelJS.Cell): { value: ItineraryOperation; issue?:
   if (!raw) return { value: '' };
   const normalized = normalizeItineraryOperation(raw);
   if (normalized !== null) return { value: normalized };
-  return { value: '', issue: { code: 'invalid-operation', message: `無法識別 To Load / To Unload：${raw}`, field: 'operation' } };
+  return { value: '', issue: { code: 'invalid-operation', message: `無法識別 Purpose：${raw}`, field: 'operation' } };
 }
 
 function pad(value: number): string { return String(value).padStart(2, '0'); }
@@ -330,7 +371,7 @@ function timeCell(primary: ExcelJS.Cell, secondary: ExcelJS.Cell, date1904: bool
 }
 
 function hasBusinessValue(worksheet: ExcelJS.Worksheet, rowNumber: number): boolean {
-  for (let column = 1; column <= 23; column += 1) {
+  for (let column = 1; column <= 31; column += 1) {
     const value = rawCellValue(worksheet.getCell(rowNumber, column));
     if (value !== null && value !== undefined && String(value).trim() !== '') return true;
   }
@@ -341,11 +382,16 @@ function isInstructionFooterRow(worksheet: ExcelJS.Worksheet, rowNumber: number)
   if (textCell(worksheet.getCell(rowNumber, 1))) return false;
   const note = textCell(worksheet.getCell(rowNumber, 2));
   if (!note.startsWith('*')) return false;
-  for (let column = 3; column <= 23; column += 1) {
+  for (let column = 3; column <= 31; column += 1) {
     const value = rawCellValue(worksheet.getCell(rowNumber, column));
     if (value !== null && value !== undefined && String(value).trim() !== '') return false;
   }
   return true;
+}
+
+function timeZoneFromRaw(rawZone: unknown): string {
+  if (typeof rawZone === 'number' && Number.isFinite(rawZone)) return formatUtcOffsetMinutes(Math.round(rawZone * 60));
+  return typeof rawZone === 'string' ? rawZone.trim() : '';
 }
 
 function resolveSources(sourceRows: ImportedRowSource[], overrides: Record<string, string>): { rows: ItineraryRow[]; issues: ItineraryExcelIssue[]; needs: ParsedItinerarySheet['timeZoneNeeds'] } {
@@ -355,23 +401,43 @@ function resolveSources(sourceRows: ImportedRowSource[], overrides: Record<strin
     const row = structuredClone(source.row);
     issues.push(...source.sourceIssues.map(issue => ({ ...issue, rowNumber: source.excelRow })));
     const rawZone = source.rawTimeZone;
-    const numericZone = typeof rawZone === 'number' && Number.isFinite(rawZone) ? formatUtcOffsetMinutes(Math.round(rawZone * 60)) : null;
-    const candidateZone = overrides[row.rowId] || (typeof rawZone === 'string' ? rawZone.trim() : numericZone || '');
-    const hasTimes = Object.keys(source.wallTimes).length > 0;
+    const candidateZone = overrides[row.rowId] || timeZoneFromRaw(rawZone);
+    const needsDefaultZone = TIME_FIELDS.some(field => Boolean(source.wallTimes[field]) && !timeZoneFromRaw(source.rawTimeZones[field]));
     if (candidateZone && isValidItineraryTimeZone(candidateZone)) row.portTimeZone = candidateZone;
-    else if (hasTimes) {
+    else if (needsDefaultZone) {
       row.portTimeZone = '';
       needs.push({ rowId: row.rowId, rowNumber: source.excelRow, portDockName: row.portDockName, legacyOffsetHours: typeof rawZone === 'number' ? rawZone : null });
       issues.push({ code: 'time-zone-required', rowNumber: source.excelRow, field: 'portTimeZone', message: `Excel 第 ${source.excelRow} 列時差無效，請為 ${row.portDockName || '該港口'} 選擇 UTC Offset。` });
     }
-    if (row.portTimeZone) {
-      for (const field of TIME_FIELDS) {
-        const wall = source.wallTimes[field];
-        if (!wall) continue;
-        const converted = wallTimeToInstant(wall.date, wall.time, row.portTimeZone);
-        if (converted.ok) row[field] = converted.instant;
-        else issues.push({ code: 'invalid-time', rowNumber: source.excelRow, field, message: `Excel 第 ${source.excelRow} 列 ${field} 在 ${row.portTimeZone} 無效。` });
+
+    for (const field of TIME_FIELDS) {
+      const zoneField = ITINERARY_TIME_ZONE_FIELDS[field];
+      const explicitZone = timeZoneFromRaw(source.rawTimeZones[field]);
+      if (explicitZone) {
+        if (isValidItineraryTimeZone(explicitZone)) row[zoneField] = explicitZone;
+        else {
+          row[zoneField] = '';
+          issues.push({ code: 'time-zone-required', rowNumber: source.excelRow, field: zoneField, message: `Excel 第 ${source.excelRow} 列 ${field} UTC Offset 無效。` });
+        }
       }
+      const wall = source.wallTimes[field];
+      if (!wall) continue;
+      const resolvedZone = resolveItineraryTimeZone(row, field);
+      if (!resolvedZone) continue;
+      const converted = wallTimeToInstant(wall.date, wall.time, resolvedZone);
+      if (converted.ok) row[field] = converted.instant;
+      else issues.push({ code: 'invalid-time', rowNumber: source.excelRow, field, message: `Excel 第 ${source.excelRow} 列 ${field} 在 ${resolvedZone} 無效。` });
+    }
+
+    const startZone = timeZoneFromRaw(source.rawCalculationStartTimeZone);
+    if (startZone) {
+      if (isValidItineraryTimeZone(startZone)) row.calculationStartTimeZone = startZone;
+      else issues.push({ code: 'time-zone-required', rowNumber: source.excelRow, field: 'calculationStartTimeZone', message: `Excel 第 ${source.excelRow} 列首列 ETA 起算 UTC Offset 無效。` });
+    }
+    if (source.calculationStartWall && row.calculationStartTimeZone) {
+      const converted = wallTimeToInstant(source.calculationStartWall.date, source.calculationStartWall.time, row.calculationStartTimeZone);
+      if (converted.ok) row.calculationStartUtc = converted.instant;
+      else issues.push({ code: 'invalid-time', rowNumber: source.excelRow, field: 'calculationStartUtc', message: `Excel 第 ${source.excelRow} 列首列 ETA 起算時間無效。` });
     }
     return row;
   });
@@ -390,7 +456,7 @@ export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<Parsed
   await workbook.xlsx.load(input as unknown as ExcelJS.Buffer);
   const date1904 = Boolean(workbook.properties.date1904);
   const metaSheet = workbook.getWorksheet(META_SHEET);
-  const metadata = new Map<string, { vesselId: string; vesselName: string; revision: number | null; schemaVersion: number | null }>();
+  const metadata = new Map<string, { vesselId: string; vesselName: string; revision: number | null; schemaVersion: number | null; excelLayoutVersion: number }>();
   let schemaVersion: number | null = null;
   if (metaSheet) {
     for (let rowNumber = 2; rowNumber <= metaSheet.rowCount; rowNumber += 1) {
@@ -398,7 +464,7 @@ export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<Parsed
       const name = String(row.getCell(1).value || '');
       const item = {
         vesselId: String(row.getCell(2).value || ''), vesselName: String(row.getCell(3).value || ''),
-        schemaVersion: numberCell(row.getCell(4)), revision: numberCell(row.getCell(5)),
+        schemaVersion: numberCell(row.getCell(4)), revision: numberCell(row.getCell(5)), excelLayoutVersion: numberCell(row.getCell(7)) || 1,
       };
       if (name) metadata.set(name, item);
       if (item.schemaVersion !== null) schemaVersion = item.schemaVersion;
@@ -408,6 +474,8 @@ export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<Parsed
   const sheets: ParsedItinerarySheet[] = [];
   for (const worksheet of workbook.worksheets) {
     if (worksheet.name === META_SHEET) continue;
+    const meta = metadata.get(worksheet.name);
+    const excelLayoutVersion = meta?.excelLayoutVersion === EXCEL_LAYOUT_VERSION || textCell(worksheet.getCell('S3')).includes('航道') ? EXCEL_LAYOUT_VERSION : 1;
     const sourceRows: ImportedRowSource[] = [];
     const templateIssue = textCell(worksheet.getCell('A3')) !== 'Voy No.' || !textCell(worksheet.getCell('B3')).includes('Port')
       ? [{ code: 'invalid-template' as const, message: `${worksheet.name} 不是可識別的 Itinerary A:W 模板。` }] : [];
@@ -416,31 +484,43 @@ export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<Parsed
       if (!hasBusinessValue(worksheet, primary)) continue;
       const row = createBlankItineraryRow(createItineraryId('import-row'), sourceRows.length);
       const operation = operationCell(worksheet.getCell(primary, 3));
+      const legacyDepartureDays = excelLayoutVersion === 1 ? numberCell(worksheet.getCell(primary, 23)) : null;
       Object.assign(row, {
         voyageNumber: textCell(worksheet.getCell(primary, 1)), portDockName: textCell(worksheet.getCell(primary, 2)), operation: operation.value,
         cargoQuantityText: textCell(worksheet.getCell(primary, 4)), ldRateText: textCell(worksheet.getCell(primary, 7)),
         arrivalDraftText: textCell(worksheet.getCell(primary, 10)), departureDraftText: textCell(worksheet.getCell(primary, 11)),
         arrivalRobText: textCell(worksheet.getCell(primary, 12)), departureRobText: textCell(worksheet.getCell(primary, 13)),
         oceanDistanceNm: numberCell(worksheet.getCell(primary, 15)), speedKnots: numberCell(worksheet.getCell(primary, 16)),
-        berthWaitHours: numberCell(worksheet.getCell(primary, 18)), tanksText: textCell(worksheet.getCell(primary, 19)),
-        operationQuantityMt: numberCell(worksheet.getCell(primary, 20)), operationRateMtPerHour: numberCell(worksheet.getCell(primary, 21)),
-        departureBufferDays: numberCell(worksheet.getCell(primary, 23)),
+        berthWaitHours: numberCell(worksheet.getCell(primary, 18)),
+        channelSailingHours: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? numberCell(worksheet.getCell(primary, 19)) : null,
+        tanksText: textCell(worksheet.getCell(primary, excelLayoutVersion === EXCEL_LAYOUT_VERSION ? 20 : 19)),
+        operationQuantityMt: numberCell(worksheet.getCell(primary, excelLayoutVersion === EXCEL_LAYOUT_VERSION ? 21 : 20)),
+        operationRateMtPerHour: numberCell(worksheet.getCell(primary, excelLayoutVersion === EXCEL_LAYOUT_VERSION ? 22 : 21)),
+        preCompletionDelayHours: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? numberCell(worksheet.getCell(primary, 24)) : null,
+        postCompletionDelayHours: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? numberCell(worksheet.getCell(primary, 25)) : (legacyDepartureDays === null ? null : legacyDepartureDays * 24),
+        departureBufferDays: legacyDepartureDays,
         etaMode: isFormula(worksheet.getCell(primary, 5)) ? 'auto' : 'manual', etbMode: isFormula(worksheet.getCell(primary, 6)) ? 'auto' : 'manual',
         etcMode: isFormula(worksheet.getCell(primary, 8)) ? 'auto' : 'manual', etdMode: isFormula(worksheet.getCell(primary, 9)) ? 'auto' : 'manual',
       });
       sourceRows.push({
         row, excelRow: primary, rawTimeZone: rawCellValue(worksheet.getCell(primary, 14)),
+        rawTimeZones: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? {
+          etaUtc: rawCellValue(worksheet.getCell(primary, 26)), etbUtc: rawCellValue(worksheet.getCell(primary, 27)),
+          etcUtc: rawCellValue(worksheet.getCell(primary, 28)), etdUtc: rawCellValue(worksheet.getCell(primary, 29)),
+        } : {},
         wallTimes: {
           etaUtc: timeCell(worksheet.getCell(primary, 5), worksheet.getCell(primary + 1, 5), date1904) || undefined,
           etbUtc: timeCell(worksheet.getCell(primary, 6), worksheet.getCell(primary + 1, 6), date1904) || undefined,
           etcUtc: timeCell(worksheet.getCell(primary, 8), worksheet.getCell(primary + 1, 8), date1904) || undefined,
           etdUtc: timeCell(worksheet.getCell(primary, 9), worksheet.getCell(primary + 1, 9), date1904) || undefined,
         },
+        calculationStartWall: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? wallPartsFromCell(worksheet.getCell(primary, 30), date1904) : null,
+        rawCalculationStartTimeZone: excelLayoutVersion === EXCEL_LAYOUT_VERSION ? rawCellValue(worksheet.getCell(primary, 31)) : '',
+        excelLayoutVersion,
         sourceIssues: operation.issue ? [operation.issue] : [],
       });
     }
     const resolved = resolveSources(sourceRows, {});
-    const meta = metadata.get(worksheet.name);
     sheets.push({
       sheetName: worksheet.name, embeddedVesselId: meta?.vesselId || null, embeddedVesselName: meta?.vesselName || null,
       embeddedRevision: meta?.revision ?? null, sourceRows, rows: resolved.rows,

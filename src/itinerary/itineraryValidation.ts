@@ -1,4 +1,4 @@
-import { ITINERARY_MAX_ROWS, ITINERARY_SCHEMA_VERSION, normalizeItineraryOperation, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
+import { ITINERARY_MAX_ROWS, ITINERARY_SCHEMA_VERSION, normalizeItineraryOperation, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
 import { isValidItineraryTimeZone, normalizeInstant } from './itineraryTime';
 
 export interface ItineraryValidationError {
@@ -22,6 +22,11 @@ const stringLimits: Partial<Record<keyof ItineraryRow, number>> = {
   arrivalRobText: 500,
   departureRobText: 500,
   portTimeZone: 100,
+  etaTimeZone: 100,
+  etbTimeZone: 100,
+  etcTimeZone: 100,
+  etdTimeZone: 100,
+  calculationStartTimeZone: 100,
   tanksText: 500,
 };
 
@@ -30,6 +35,9 @@ const numericLimits: Partial<Record<keyof ItineraryRow, [number, number]>> = {
   speedKnots: [0.01, 100],
   sailingHours: [0, 100_000],
   berthWaitHours: [0, 720],
+  channelSailingHours: [0, 720],
+  preCompletionDelayHours: [0, 8760],
+  postCompletionDelayHours: [0, 8760],
   operationQuantityMt: [0, 1_000_000_000],
   operationRateMtPerHour: [0.01, 10_000_000],
   operationHours: [0, 100_000],
@@ -81,6 +89,16 @@ export function validateItineraryDocument(input: unknown): ItineraryValidationRe
         return;
       }
       const row = typedRow as unknown as Record<string, unknown>;
+      const compatibilityDefaults: Partial<ItineraryRow> = {
+        etaTimeZone: '', etbTimeZone: '', etcTimeZone: '', etdTimeZone: '',
+        calculationStartUtc: null, calculationStartTimeZone: '',
+        channelSailingHours: null, preCompletionDelayHours: null,
+        postCompletionDelayHours: typeof row.departureBufferDays === 'number' && Number.isFinite(row.departureBufferDays)
+          ? row.departureBufferDays * 24 : null,
+      };
+      for (const [key, value] of Object.entries(compatibilityDefaults)) {
+        if (row[key] === undefined) row[key] = value;
+      }
       for (const key of Object.keys(stringLimits) as (keyof ItineraryRow)[]) validateString(errors, row, key, path);
       const rowId = typeof row.rowId === 'string' ? row.rowId : '';
       if (!rowId.trim()) add(errors, `${path}.rowId`, 'missing-row-id', 'rowId 不可空白。');
@@ -88,7 +106,7 @@ export function validateItineraryDocument(input: unknown): ItineraryValidationRe
       else rowIds.add(rowId);
       if (!Number.isInteger(row.sortOrder) || row.sortOrder !== index) add(errors, `${path}.sortOrder`, 'invalid-sort-order', 'sortOrder 必須依畫面順序由 0 連續排列。');
       const operation = normalizeItineraryOperation(row.operation);
-      if (operation === null) add(errors, `${path}.operation`, 'invalid-operation', 'To Load / To Unload 值無效。');
+      if (operation === null) add(errors, `${path}.operation`, 'invalid-operation', 'Purpose 值無效。');
       else typedRow.operation = operation;
       for (const key of ['etaMode', 'etbMode', 'etcMode', 'etdMode'] as const) {
         if (row[key] !== 'auto' && row[key] !== 'manual') add(errors, `${path}.${key}`, 'invalid-time-mode', '時間模式必須是 auto 或 manual。');
@@ -97,8 +115,17 @@ export function validateItineraryDocument(input: unknown): ItineraryValidationRe
         const value = row[key];
         if (value !== null && (typeof value !== 'string' || !normalizeInstant(value))) add(errors, `${path}.${key}`, 'invalid-instant', '時間必須是 UTC instant 或空白。');
       }
+      if (row.calculationStartUtc !== null && (typeof row.calculationStartUtc !== 'string' || !normalizeInstant(row.calculationStartUtc))) add(errors, `${path}.calculationStartUtc`, 'invalid-instant', '首列 ETA 起算時間必須是 UTC instant 或空白。');
       for (const key of Object.keys(numericLimits) as (keyof ItineraryRow)[]) validateNullableNumber(errors, row, key, path);
       if (typeof row.portTimeZone === 'string' && row.portTimeZone && !isValidItineraryTimeZone(row.portTimeZone)) add(errors, `${path}.portTimeZone`, 'invalid-time-zone', '請選擇有效的 UTC Offset。');
+      for (const field of ['etaUtc', 'etbUtc', 'etcUtc', 'etdUtc'] as const) {
+        const zoneField = field === 'etaUtc' ? 'etaTimeZone' : field === 'etbUtc' ? 'etbTimeZone' : field === 'etcUtc' ? 'etcTimeZone' : 'etdTimeZone';
+        const explicitZone = row[zoneField];
+        if (typeof explicitZone === 'string' && explicitZone && !isValidItineraryTimeZone(explicitZone)) add(errors, `${path}.${zoneField}`, 'invalid-time-zone', '請選擇有效的 UTC Offset。');
+        if (row[field] !== null && !resolveItineraryTimeZone(typedRow, field)) add(errors, `${path}.${zoneField}`, 'time-zone-required', `${field.slice(0, 3).toUpperCase()} 必須有 UTC Offset。`);
+      }
+      if (typeof row.calculationStartTimeZone === 'string' && row.calculationStartTimeZone && !isValidItineraryTimeZone(row.calculationStartTimeZone)) add(errors, `${path}.calculationStartTimeZone`, 'invalid-time-zone', '請選擇有效的起算 UTC Offset。');
+      if (row.calculationStartUtc !== null && !row.calculationStartTimeZone) add(errors, `${path}.calculationStartTimeZone`, 'time-zone-required', '首列 ETA 起算時間必須有 UTC Offset。');
     });
   }
   return errors.length ? { ok: false, errors } : { ok: true, value: document };

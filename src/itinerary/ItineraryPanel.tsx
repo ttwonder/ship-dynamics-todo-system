@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import { formatItineraryUtcOffset, formatRelativeUpdatedAt, instantToWallTime } from './itineraryTime';
-import { formatItineraryOperation, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
+import {
+  formatItineraryOperation,
+  resolveItineraryTimeZone,
+  type ItineraryDocument,
+  type ItineraryRow,
+  type ItineraryTimeField,
+} from './itineraryTypes';
 import { ITINERARY_MAIN_FIELD_LABELS } from './itineraryFieldLayout';
 
 interface ItineraryPanelProps {
@@ -14,18 +20,21 @@ interface ItineraryPanelProps {
 
 const dash = '—';
 
-function localDateTime(value: string | null, row: ItineraryRow): string {
-  if (!value) return dash;
-  const local = instantToWallTime(value, row.portTimeZone);
-  return local.ok ? `${local.date.slice(5)} ${local.time}` : '時區待確認';
-}
-
 function text(value: string): string {
   return value.trim() || dash;
 }
 
 function rowUtcOffset(row: ItineraryRow): string {
   return formatItineraryUtcOffset(row.portTimeZone, row.etaUtc || row.etbUtc || row.etcUtc || row.etdUtc);
+}
+
+function ItineraryBrowseTime({ row, field }: { row: ItineraryRow; field: ItineraryTimeField }) {
+  const value = row[field];
+  const zone = resolveItineraryTimeZone(row, field);
+  const local = value && zone ? instantToWallTime(value, zone) : null;
+  const localLabel = local?.ok ? `${local.date.slice(5)} ${local.time}` : value ? '時區待確認' : dash;
+  const offset = formatItineraryUtcOffset(zone, value);
+  return <div className="itinerary-time-display"><span>{localLabel}</span>{offset&&<small className="itinerary-time-offset-label">{offset}</small>}</div>;
 }
 
 export default function ItineraryPanel({ document, selected, nowMs, canEdit, onToggleSelected, onEdit }: ItineraryPanelProps) {
@@ -42,7 +51,20 @@ export default function ItineraryPanel({ document, selected, nowMs, canEdit, onT
       <table className="itinerary-table">
         <thead><tr>{ITINERARY_MAIN_FIELD_LABELS.map((label,index)=><th className={index===1?'itinerary-port-column':undefined} key={label}>{label}</th>)}</tr></thead>
         <tbody>{visibleRows.map(row=><tr key={row.rowId}>
-          <td title={row.voyageNumber}>{text(row.voyageNumber)}</td><td className="itinerary-port-column" title={row.portDockName}><div className="itinerary-port-cell"><span>{text(row.portDockName)}</span>{rowUtcOffset(row)&&<small className="itinerary-offset-label">{rowUtcOffset(row)}</small>}</div></td><td>{formatItineraryOperation(row.operation) || dash}</td><td className="itinerary-multiline" title={row.cargoQuantityText}>{text(row.cargoQuantityText)}</td><td>{localDateTime(row.etaUtc,row)}</td><td>{localDateTime(row.etbUtc,row)}</td><td title={row.ldRateText}>{text(row.ldRateText)}</td><td>{localDateTime(row.etcUtc,row)}</td><td>{localDateTime(row.etdUtc,row)}</td><td title={row.arrivalDraftText}>{text(row.arrivalDraftText)}</td><td title={row.departureDraftText}>{text(row.departureDraftText)}</td><td title={row.arrivalRobText}>{text(row.arrivalRobText)}</td><td title={row.departureRobText}>{text(row.departureRobText)}</td>
+          <td title={row.voyageNumber}>{text(row.voyageNumber)}</td>
+          <td className="itinerary-port-column" title={row.portDockName}>{text(row.portDockName)}</td>
+          <td>{rowUtcOffset(row)||dash}</td>
+          <td>{formatItineraryOperation(row.operation)||dash}</td>
+          <td className="itinerary-multiline" title={row.cargoQuantityText}>{text(row.cargoQuantityText)}</td>
+          <td><ItineraryBrowseTime row={row} field="etaUtc"/></td>
+          <td><ItineraryBrowseTime row={row} field="etbUtc"/></td>
+          <td title={row.ldRateText}>{text(row.ldRateText)}</td>
+          <td><ItineraryBrowseTime row={row} field="etcUtc"/></td>
+          <td><ItineraryBrowseTime row={row} field="etdUtc"/></td>
+          <td title={row.arrivalDraftText}>{text(row.arrivalDraftText)}</td>
+          <td title={row.departureDraftText}>{text(row.departureDraftText)}</td>
+          <td title={row.arrivalRobText}>{text(row.arrivalRobText)}</td>
+          <td title={row.departureRobText}>{text(row.departureRobText)}</td>
         </tr>)}</tbody>
       </table>
     </div>

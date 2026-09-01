@@ -1,45 +1,58 @@
 export const ITINERARY_SCHEMA_VERSION = 1 as const;
 export const ITINERARY_MAX_ROWS = 100;
 
-export type ItineraryOperation = '' | 'To Load' | 'To Unload' | 'To Load / To Unload';
-export type ItineraryOperationChoice = 'load' | 'unload';
+export type ItineraryOperation = string;
+export type ItineraryOperationChoice = 'load' | 'unload' | 'docking' | 'waiting-order' | 'repair' | 'inspection';
 export type ItineraryTimeMode = 'auto' | 'manual';
 
-export function normalizeItineraryOperation(value: unknown): ItineraryOperation | null {
+export const ITINERARY_PURPOSE_OPTIONS: ReadonlyArray<{ choice: ItineraryOperationChoice; label: string }> = [
+  { choice: 'load', label: 'To Load' },
+  { choice: 'unload', label: 'To Unload' },
+  { choice: 'docking', label: 'docking' },
+  { choice: 'waiting-order', label: 'waiting order' },
+  { choice: 'repair', label: 'repair' },
+  { choice: 'inspection', label: 'inspection' },
+];
+
+const purposeAliases: Record<string, ItineraryOperationChoice> = {
+  'to load': 'load', loading: 'load', load: 'load', l: 'load',
+  'to unload': 'unload', unloading: 'unload', unload: 'unload', discharging: 'unload', discharge: 'unload', u: 'unload',
+  docking: 'docking', dock: 'docking',
+  'waiting order': 'waiting-order', 'waiting orders': 'waiting-order', 'waiting for order': 'waiting-order', 'waiting for orders': 'waiting-order',
+  repair: 'repair', repairs: 'repair',
+  inspection: 'inspection', inspections: 'inspection',
+};
+
+function itineraryOperationChoices(value: unknown): Set<ItineraryOperationChoice> | null {
   if (typeof value !== 'string') return null;
   const raw = value.trim();
-  if (!raw) return '';
-  const aliases: Record<string, ItineraryOperationChoice> = {
-    'to load': 'load', loading: 'load', load: 'load', l: 'load',
-    'to unload': 'unload', unloading: 'unload', unload: 'unload', discharging: 'unload', discharge: 'unload', u: 'unload',
-  };
+  if (!raw) return new Set();
   const parts = raw.toLowerCase().split(/\s*(?:\/|,|&|\+|\band\b)\s*/).filter(Boolean);
   if (!parts.length) return null;
   const choices = new Set<ItineraryOperationChoice>();
   for (const part of parts) {
-    const choice = aliases[part.trim().replace(/\s+/g, ' ')];
+    const choice = purposeAliases[part.trim().replace(/\s+/g, ' ')];
     if (!choice) return null;
     choices.add(choice);
   }
-  if (choices.has('load') && choices.has('unload')) return 'To Load / To Unload';
-  if (choices.has('load')) return 'To Load';
-  if (choices.has('unload')) return 'To Unload';
-  return '';
+  return choices;
+}
+
+export function normalizeItineraryOperation(value: unknown): ItineraryOperation | null {
+  const choices = itineraryOperationChoices(value);
+  if (!choices) return null;
+  return ITINERARY_PURPOSE_OPTIONS.filter(option => choices.has(option.choice)).map(option => option.label).join(' / ');
 }
 
 export function itineraryOperationSelected(value: unknown, choice: ItineraryOperationChoice): boolean {
-  const normalized = normalizeItineraryOperation(value);
-  return choice === 'load'
-    ? normalized === 'To Load' || normalized === 'To Load / To Unload'
-    : normalized === 'To Unload' || normalized === 'To Load / To Unload';
+  return itineraryOperationChoices(value)?.has(choice) || false;
 }
 
 export function setItineraryOperationSelected(value: unknown, choice: ItineraryOperationChoice, selected: boolean): ItineraryOperation {
-  let load = itineraryOperationSelected(value, 'load');
-  let unload = itineraryOperationSelected(value, 'unload');
-  if (choice === 'load') load = selected;
-  else unload = selected;
-  return load && unload ? 'To Load / To Unload' : load ? 'To Load' : unload ? 'To Unload' : '';
+  const choices = itineraryOperationChoices(value) || new Set<ItineraryOperationChoice>();
+  if (selected) choices.add(choice);
+  else choices.delete(choice);
+  return ITINERARY_PURPOSE_OPTIONS.filter(option => choices.has(option.choice)).map(option => option.label).join(' / ');
 }
 
 export function formatItineraryOperation(value: unknown): string {
@@ -64,10 +77,19 @@ export interface ItineraryRow {
   arrivalRobText: string;
   departureRobText: string;
   portTimeZone: string;
+  etaTimeZone: string;
+  etbTimeZone: string;
+  etcTimeZone: string;
+  etdTimeZone: string;
+  calculationStartUtc: string | null;
+  calculationStartTimeZone: string;
   oceanDistanceNm: number | null;
   speedKnots: number | null;
   sailingHours: number | null;
   berthWaitHours: number | null;
+  channelSailingHours: number | null;
+  preCompletionDelayHours: number | null;
+  postCompletionDelayHours: number | null;
   tanksText: string;
   operationQuantityMt: number | null;
   operationRateMtPerHour: number | null;
@@ -77,6 +99,17 @@ export interface ItineraryRow {
   etbMode: ItineraryTimeMode;
   etcMode: ItineraryTimeMode;
   etdMode: ItineraryTimeMode;
+}
+
+export type ItineraryTimeField = 'etaUtc' | 'etbUtc' | 'etcUtc' | 'etdUtc';
+export type ItineraryTimeZoneField = 'etaTimeZone' | 'etbTimeZone' | 'etcTimeZone' | 'etdTimeZone';
+
+export const ITINERARY_TIME_ZONE_FIELDS: Record<ItineraryTimeField, ItineraryTimeZoneField> = {
+  etaUtc: 'etaTimeZone', etbUtc: 'etbTimeZone', etcUtc: 'etcTimeZone', etdUtc: 'etdTimeZone',
+};
+
+export function resolveItineraryTimeZone(row: ItineraryRow, field: ItineraryTimeField): string {
+  return row[ITINERARY_TIME_ZONE_FIELDS[field]] || row.portTimeZone;
 }
 
 export interface ItineraryDocument {
@@ -134,10 +167,19 @@ export function createBlankItineraryRow(rowId = createItineraryId('row'), sortOr
     arrivalRobText: '',
     departureRobText: '',
     portTimeZone: '',
+    etaTimeZone: '',
+    etbTimeZone: '',
+    etcTimeZone: '',
+    etdTimeZone: '',
+    calculationStartUtc: null,
+    calculationStartTimeZone: '',
     oceanDistanceNm: null,
     speedKnots: null,
     sailingHours: null,
     berthWaitHours: null,
+    channelSailingHours: null,
+    preCompletionDelayHours: null,
+    postCompletionDelayHours: null,
     tanksText: '',
     operationQuantityMt: null,
     operationRateMtPerHour: null,

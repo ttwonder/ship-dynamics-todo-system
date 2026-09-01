@@ -9,6 +9,7 @@ const rolloutBootstrapMigration = await readFile('supabase/migrations/2026083111
 const utcOffsetMigration = await readFile('supabase/migrations/20260901073500_itinerary_utc_offsets.sql', 'utf8');
 const publicVesselNamesMigration = await readFile('supabase/migrations/20260901122500_itinerary_public_vessel_full_names.sql', 'utf8');
 const operationMultiSelectMigration = await readFile('supabase/migrations/20260901125500_itinerary_operation_multi_select.sql', 'utf8');
+const calculationV2Migration = await readFile('supabase/migrations/20260901143000_itinerary_calculation_v2.sql', 'utf8');
 const readbackSql = await readFile('supabase/itinerary-readback.sql', 'utf8');
 const rolloutBootstrapReadbackSql = await readFile('supabase/itinerary-rollout-bootstrap-readback.sql', 'utf8');
 const ids = {
@@ -31,6 +32,14 @@ const row = (overrides = {}) => ({
   oceanDistanceNm: 240, speedKnots: 12, sailingHours: 20, berthWaitHours: 2, tanksText: '1P/1S', operationQuantityMt: 5000,
   operationRateMtPerHour: 400, operationHours: 12.5, departureBufferDays: 0.25,
   etaMode: 'manual', etbMode: 'auto', etcMode: 'auto', etdMode: 'auto', ...overrides,
+});
+const v2Row = (overrides = {}) => ({
+  ...row({ departureBufferDays: null }),
+  operation: 'To Load / docking / inspection',
+  etaTimeZone: '', etbTimeZone: 'UTC+9', etcTimeZone: 'UTC+8:45', etdTimeZone: 'UTC-6',
+  channelSailingHours: 1, preCompletionDelayHours: 2, postCompletionDelayHours: 3,
+  calculationStartUtc: '2026-08-31T00:00:00Z', calculationStartTimeZone: 'UTC+8',
+  ...overrides,
 });
 
 async function scalar(sql, params = []) {
@@ -95,6 +104,8 @@ try {
   await db.exec(utcOffsetMigration);
   await db.exec(publicVesselNamesMigration);
   await db.exec(operationMultiSelectMigration);
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row()])]), false, 'pre-v2 validator must reject additive fields');
+  await db.exec(calculationV2Migration);
 
   const ownerInitial = await rollout(ids.owner);
   assert.equal(ownerInitial.version, 1);
@@ -113,6 +124,15 @@ try {
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC+5:45' })])]), true);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC-6' })])]), true);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'Asia/Seoul' })])]), true, 'legacy IANA rows must stay writable during compatibility');
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row()])]), true);
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ operation: 'To Unload / waiting order / repair' })])]), true);
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ operation: 'inspection / To Load' })])]), false, 'Purpose order must be canonical');
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ operation: 'docking / docking' })])]), false, 'Purpose choices must not repeat');
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ etaTimeZone: 'UTC+14:15' })])]), false);
+  const partialV2 = v2Row();
+  delete partialV2.etdTimeZone;
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([partialV2])]), false, 'partial v2 shape must fail closed');
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ oceanDistanceNm: 100, speedKnots: 12, sailingHours: 100 / 12 })])]), true, 'DTG divided by speed must retain fractional hours');
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC+14:15' })])]), false);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC-12:15' })])]), false);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC+5:20' })])]), false);
@@ -183,7 +203,7 @@ try {
   assert.equal(locked.ok, false);
   assert.equal(locked.holderLabel, '另一個使用者');
   const publicOp = nextOperation();
-  const publicRows = [row({ voyageNumber: 'PUBLIC-R2' })];
+  const publicRows = [v2Row({ voyageNumber: 'PUBLIC-R2' })];
   const publicParams = ['default', 'v1', 1, publicOp, JSON.stringify(publicRows), publicLease.leaseId, 'public-browser-a', 'public-tab-a', publicLease.fencingToken];
   const publicSaved = await asAnon(() => scalar('select public.sd_itinerary_save_public($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8,$9::bigint)', publicParams));
   assert.equal(Number(publicSaved.revision), 2);
@@ -216,6 +236,7 @@ try {
   await db.exec(utcOffsetMigration);
   await db.exec(publicVesselNamesMigration);
   await db.exec(operationMultiSelectMigration);
+  await db.exec(calculationV2Migration);
   assert.equal(Number(await scalar('select version from public.sd_itinerary_rollout where workspace_id=$1::uuid', [ids.workspace])), 4);
   assert.equal(Number(await scalar("select revision from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
   assert.equal(Number(await scalar("select count(*)::int from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
@@ -230,10 +251,12 @@ try {
     has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE') as auth_office_save,
     has_function_privilege('anon','public.sd_itinerary_utc_offset_valid(text)','EXECUTE') as anon_offset_validator,
     has_function_privilege('authenticated','public.sd_itinerary_utc_offset_valid(text)','EXECUTE') as auth_offset_validator,
+    has_function_privilege('anon','public.sd_itinerary_purpose_valid(text)','EXECUTE') as anon_purpose_validator,
+    has_function_privilege('authenticated','public.sd_itinerary_purpose_valid(text)','EXECUTE') as auth_purpose_validator,
     has_function_privilege('anon','public.sd_itinerary_rows_valid(jsonb)','EXECUTE') as anon_rows_validator,
     has_function_privilege('authenticated','public.sd_itinerary_rows_valid(jsonb)','EXECUTE') as auth_rows_validator
   `)).rows[0];
-  assert.deepEqual(privileges, { anon_table: false, auth_table: false, anon_office_entry: true, anon_public_save: true, anon_office_save: false, auth_office_save: true, anon_offset_validator: false, auth_offset_validator: false, anon_rows_validator: false, auth_rows_validator: false });
+  assert.deepEqual(privileges, { anon_table: false, auth_table: false, anon_office_entry: true, anon_public_save: true, anon_office_save: false, auth_office_save: true, anon_offset_validator: false, auth_offset_validator: false, anon_purpose_validator: false, auth_purpose_validator: false, anon_rows_validator: false, auth_rows_validator: false });
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC+5:45' })])]), true);
 
   const readback = (await db.query(readbackSql)).rows[0].itinerary_readback;
@@ -245,14 +268,17 @@ try {
     anonPublicSaveExecute: true,
     anonDirectDocumentSelect: false,
     anonOffsetValidatorExecute: false,
+    anonPurposeValidatorExecute: false,
     anonRowsValidatorExecute: false,
     authenticatedOfficeSaveExecute: true,
     authenticatedDirectDocumentSelect: false,
     authenticatedOffsetValidatorExecute: false,
+    authenticatedPurposeValidatorExecute: false,
     authenticatedRowsValidatorExecute: false,
   });
   assert.ok(Object.values(readback.utcOffsets).every(Boolean));
-  assert.ok(Object.values(readback.operations).every(Boolean));
+  assert.ok(Object.values(readback.purposes).every(Boolean));
+  assert.ok(Object.values(readback.calculationV2).every(Boolean));
   assert.deepEqual(readback.vesselNames, { activeVesselCount: 2, activeMissingFullNameCount: 0, publicListFullNameComplete: true });
   const bootstrapReadback = (await db.query(rolloutBootstrapReadbackSql)).rows[0];
   assert.ok(Object.values(bootstrapReadback).every(Boolean));

@@ -81,6 +81,20 @@ function isoOffset(minutes: number): string {
   return `${sign}${String(Math.floor(magnitude / 60)).padStart(2, '0')}:${String(magnitude % 60).padStart(2, '0')}`;
 }
 
+export function normalizeItineraryDateInput(value: string): string | null {
+  const normalized = value.trim();
+  const compact = /^(\d{4})(\d{2})(\d{2})$/.exec(normalized);
+  const separated = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(normalized);
+  const parts = compact || separated;
+  if (!parts) return null;
+  const candidate = `${parts[1]}-${String(Number(parts[2])).padStart(2, '0')}-${String(Number(parts[3])).padStart(2, '0')}`;
+  try {
+    return Temporal.PlainDate.from(candidate).toString();
+  } catch {
+    return null;
+  }
+}
+
 export function normalizeInstant(value: string): string | null {
   try {
     return Temporal.Instant.from(value).toString({ smallestUnit: 'second' });

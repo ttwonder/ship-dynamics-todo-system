@@ -1,4 +1,7 @@
-import { itineraryOperationSelected, setItineraryOperationSelected, type ItineraryOperation } from './itineraryTypes';
+import {
+  formatItineraryOperation, itineraryOperationSelected, ITINERARY_PURPOSE_OPTIONS,
+  setItineraryOperationSelected, type ItineraryOperation,
+} from './itineraryTypes';
 
 interface ItineraryOperationOptionsProps {
   value: ItineraryOperation;
@@ -7,8 +10,20 @@ interface ItineraryOperationOptionsProps {
 }
 
 export default function ItineraryOperationOptions({ value, disabled = false, onChange }: ItineraryOperationOptionsProps) {
-  return <div className="itinerary-operation-options" role="group" aria-label="裝卸貨安排（可多選）">
-    <label><input type="checkbox" checked={itineraryOperationSelected(value, 'load')} disabled={disabled} onChange={event => onChange(setItineraryOperationSelected(value, 'load', event.target.checked))}/><span>To Load</span></label>
-    <label><input type="checkbox" checked={itineraryOperationSelected(value, 'unload')} disabled={disabled} onChange={event => onChange(setItineraryOperationSelected(value, 'unload', event.target.checked))}/><span>To Unload</span></label>
-  </div>;
+  const summary = formatItineraryOperation(value) || '選擇 Purpose';
+  return <details className="itinerary-purpose-select">
+    <summary aria-label="Purpose（可多選）" title={summary}>{summary}</summary>
+    <div className="itinerary-purpose-menu" role="group" aria-label="Purpose（可多選）">
+      {ITINERARY_PURPOSE_OPTIONS.map(option => <label key={option.choice}>
+        <input
+          type="checkbox"
+          checked={itineraryOperationSelected(value, option.choice)}
+          disabled={disabled}
+          onChange={event => onChange(setItineraryOperationSelected(value, option.choice, event.target.checked))}
+        />
+        <span>{option.label}</span>
+      </label>)}
+      <button type="button" disabled={disabled || !value} onClick={() => onChange('')}>清除</button>
+    </div>
+  </details>;
 }

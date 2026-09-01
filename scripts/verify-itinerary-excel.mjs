@@ -11,14 +11,17 @@ try {
 
   const first = createBlankItineraryRow('row-a', 0);
   Object.assign(first, {
-    voyageNumber: 'V001', portDockName: 'KAOHSIUNG', operation: 'To Load / To Unload', cargoQuantityText: 'TEST 5000 MT', portTimeZone: 'UTC+8',
-    etaUtc: '2026-08-31T00:00:00Z', etaMode: 'manual', berthWaitHours: 2, operationQuantityMt: 5000, operationRateMtPerHour: 500,
-    departureBufferDays: 0.25, oceanDistanceNm: 120, speedKnots: 12, arrivalDraftText: '10.2', departureDraftText: '11.0',
+    voyageNumber: 'V001', portDockName: 'KAOHSIUNG', operation: 'To Load / To Unload / docking / inspection', cargoQuantityText: 'TEST 5000 MT', portTimeZone: 'UTC+8',
+    etaUtc: '2026-08-31T08:00:00Z', etaMode: 'auto', etaTimeZone: '', etbTimeZone: 'UTC+9', etcTimeZone: 'UTC+8:45', etdTimeZone: 'UTC-6',
+    calculationStartUtc: '2026-08-30T22:00:00Z', calculationStartTimeZone: 'UTC+8', berthWaitHours: 2, channelSailingHours: 1,
+    preCompletionDelayHours: 2, postCompletionDelayHours: 6, operationQuantityMt: 5000, operationRateMtPerHour: 500, ldRateText: '500',
+    departureBufferDays: null, oceanDistanceNm: 120, speedKnots: 12, arrivalDraftText: '10.2', departureDraftText: '11.0',
   });
   const second = createBlankItineraryRow('row-b', 1);
   Object.assign(second, {
-    voyageNumber: 'V002', portDockName: 'ULSAN', operation: 'To Unload', cargoQuantityText: 'TEST 5000 MT', portTimeZone: 'UTC+5:45',
-    berthWaitHours: 3, operationQuantityMt: 5000, operationRateMtPerHour: 400, departureBufferDays: 0.5,
+    voyageNumber: 'V002', portDockName: 'ULSAN', operation: 'waiting order / repair', cargoQuantityText: 'TEST 5000 MT', portTimeZone: 'UTC+5:45',
+    berthWaitHours: null, channelSailingHours: null, preCompletionDelayHours: null, postCompletionDelayHours: null,
+    operationQuantityMt: null, operationRateMtPerHour: null, departureBufferDays: null, oceanDistanceNm: 60, speedKnots: 12,
   });
   const calculated = recalculateItineraryRows([first, second]);
   assert.equal(calculated.issues.length, 0);
@@ -48,14 +51,43 @@ try {
   assert.equal(workbook.worksheets[1].name, 'TEST BETA');
   assert.equal(workbook.worksheets[0].getCell('A2').value, 'Vsl name: TEST ALPHA');
   assert.equal(workbook.worksheets[0].getCell('A4').value, 'V001');
-  assert.equal(workbook.worksheets[0].getCell('C3').value, 'To Load / To Unload');
-  assert.equal(workbook.worksheets[0].getCell('C4').value, 'To Load / To Unload');
+  assert.equal(workbook.worksheets[0].getCell('B3').value, 'Next Port & Dock Name');
+  assert.equal(workbook.worksheets[0].getCell('C3').value, 'Purpose');
+  assert.equal(workbook.worksheets[0].getCell('D3').value, 'B/F or I/F Qty (MT/BBLS)');
+  assert.equal(workbook.worksheets[0].getCell('G3').value, '預計L/D rate (MT/h)');
+  assert.equal(workbook.worksheets[0].getCell('L3').value, 'Arr ROB');
+  assert.equal(workbook.worksheets[0].getCell('M3').value, 'Dep ROB');
+  assert.equal(workbook.worksheets[0].getCell('C4').value, 'To Load / To Unload / docking / inspection');
   assert.match(String(workbook.worksheets[0].getCell('C4').dataValidation.formulae?.[0]), /To Load \/ To Unload/);
+  assert.equal(workbook.worksheets[0].getCell('N3').value, 'UTC Offset');
+  assert.equal(workbook.worksheets[0].getCell('O3').value, 'DTG(NM)');
+  assert.equal(workbook.worksheets[0].getCell('Q3').value, '剩餘航行時間(h)');
+  assert.equal(workbook.worksheets[0].getCell('S3').value, '預計航道航行時間(h)');
+  assert.equal(workbook.worksheets[0].getCell('X3').value, '預估等待/延誤時間(完貨前)(h)');
+  assert.equal(workbook.worksheets[0].getCell('Y3').value, '預估等待/延誤時間(完貨後)(h)');
+  assert.equal(workbook.worksheets[0].getCell('Z3').value, 'ETA UTC Offset');
+  assert.equal(workbook.worksheets[0].getCell('AE3').value, '首列 ETA 起算 UTC Offset');
   assert.equal(workbook.worksheets[0].getCell('N4').value, 'UTC+8');
   assert.equal(workbook.worksheets[0].getCell('N6').value, 'UTC+5:45');
-  assert.equal(workbook.worksheets[0].getCell('X4').value, 8);
-  assert.equal(workbook.worksheets[0].getCell('X6').value, 5.75);
+  assert.equal(workbook.worksheets[0].getCell('Z4').value, '');
+  assert.equal(workbook.worksheets[0].getCell('AA4').value, 'UTC+9');
+  assert.equal(workbook.worksheets[0].getCell('AB4').value, 'UTC+8:45');
+  assert.equal(workbook.worksheets[0].getCell('AC4').value, 'UTC-6');
+  assert.equal(workbook.worksheets[0].getCell('AE4').value, 'UTC+8');
+  assert.equal(workbook.worksheets[0].getCell('AF4').value, 8);
+  assert.equal(workbook.worksheets[0].getCell('AG4').value, 8);
+  assert.equal(workbook.worksheets[0].getCell('AH4').value, 9);
+  assert.equal(workbook.worksheets[0].getCell('AI4').value, 8.75);
+  assert.equal(workbook.worksheets[0].getCell('AJ4').value, -6);
+  assert.equal(workbook.worksheets[0].getCell('Q4').value.formula.includes('O4/P4'), true);
+  assert.equal(workbook.worksheets[0].getCell('Q4').value.formula.includes('ROUNDUP'), false);
+  assert.equal(workbook.worksheets[0].getCell('E4').value.formula.includes('AD4'), true);
   assert.equal(workbook.worksheets[0].getCell('E6').value.formula.includes('I4'), true);
+  assert.equal(workbook.worksheets[0].getCell('E6').value.formula.includes('Q6'), true);
+  assert.equal(workbook.worksheets[0].getCell('F4').value.formula.includes('S4'), true);
+  assert.equal(workbook.worksheets[0].getCell('H4').value.formula.includes('X4'), true);
+  assert.equal(workbook.worksheets[0].getCell('I4').value.formula.includes('Y4'), true);
+  for (let column = 32; column <= 36; column += 1) assert.equal(workbook.worksheets[0].getColumn(column).hidden, true, `helper column ${column} must stay hidden`);
   assert.ok(workbook.worksheets[0].model.merges.includes('A4:A5'));
   assert.equal(workbook.worksheets[0].pageSetup.printArea, 'A1:M7');
   for (let column = 1; column <= 23; column += 1) assert.equal(workbook.worksheets[0].getColumn(column).width, templateSheet.getColumn(column).width, `column ${column} width must match the approved template`);
@@ -79,8 +111,17 @@ try {
   assert.equal(parsed.sheets[0].embeddedVesselId, 'v-alpha');
   assert.equal(parsed.sheets[0].rows.length, 2);
   assert.equal(parsed.sheets[0].rows[0].voyageNumber, 'V001');
-  assert.equal(parsed.sheets[0].rows[0].operation, 'To Load / To Unload');
+  assert.equal(parsed.sheets[0].rows[0].operation, 'To Load / To Unload / docking / inspection');
   assert.equal(parsed.sheets[0].rows[1].portTimeZone, 'UTC+5:45');
+  assert.equal(parsed.sheets[0].rows[0].etaTimeZone, '');
+  assert.equal(parsed.sheets[0].rows[0].etbTimeZone, 'UTC+9');
+  assert.equal(parsed.sheets[0].rows[0].etcTimeZone, 'UTC+8:45');
+  assert.equal(parsed.sheets[0].rows[0].etdTimeZone, 'UTC-6');
+  assert.equal(parsed.sheets[0].rows[0].calculationStartUtc, '2026-08-30T22:00:00Z');
+  assert.equal(parsed.sheets[0].rows[0].calculationStartTimeZone, 'UTC+8');
+  assert.equal(parsed.sheets[0].rows[0].channelSailingHours, 1);
+  assert.equal(parsed.sheets[0].rows[0].preCompletionDelayHours, 2);
+  assert.equal(parsed.sheets[0].rows[0].postCompletionDelayHours, 6);
   if (parsed.sheets[0].issues.length) console.error('unexpected_excel_issues=', parsed.sheets[0].issues);
   assert.equal(parsed.sheets[0].issues.length, 0);
 

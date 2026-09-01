@@ -10,7 +10,8 @@ try {
   const layoutPath = 'src/itinerary/itineraryFieldLayout.ts';
   assert.equal(fs.existsSync(layoutPath), true, 'main and ship editors need one shared field layout authority');
   const layout = await server.ssrLoadModule(`/${layoutPath}`);
-  assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Port & Dock Name','L / U','B/F or I/F Qty (MT)','ETA (LT)','ETB (LT)','L/D rate','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','arr ROB','dep ROB']);
+  assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Next Port & Dock Name','UTC Offset','Purpose','B/F or I/F Qty (MT/BBLS)','ETA (LT)','ETB (LT)','預計L/D rate (MT/h)','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','Arr ROB','Dep ROB']);
+  assert.deepEqual(layout.ITINERARY_PARAMETER_FIELD_LABELS, ['DTG(NM)','預估航速(kn)','剩餘航行時間(h)','預估等待時間(靠泊前)(h)','預計航道航行時間(h)','作業艙號','裝卸貨量(MT)','預計L/D rate (MT/h)','預計作業時間(h)','預估等待/延誤時間(完貨前)(h)','預估等待/延誤時間(完貨後)(h)']);
 
   assert.equal(rollout.localShipPortalDemoRequested({ hostname: '127.0.0.1', search: '?itineraryDemo=1' }), true);
   assert.equal(rollout.localShipPortalDemoRequested({ hostname: 'example.com', search: '?itineraryDemo=1' }), false);
@@ -40,21 +41,57 @@ try {
   assert.equal(model.hasRemoteItineraryUpdate(9, 9), false);
 
   const automaticSource = model.addShipDraftRow(blank, 'auto-row-2');
-  Object.assign(automaticSource.rows[0], { portTimeZone: 'UTC+8', etaUtc: '2026-09-01T00:00:00Z', etaMode: 'manual', berthWaitHours: 2, operationQuantityMt: 1000, operationRateMtPerHour: 250, departureBufferDays: 0.25, oceanDistanceNm: 120, speedKnots: 12 });
-  Object.assign(automaticSource.rows[1], { portTimeZone: 'UTC+9', berthWaitHours: 1, operationQuantityMt: 500, operationRateMtPerHour: 100, departureBufferDays: 0.25 });
+  Object.assign(automaticSource.rows[0], { portTimeZone: 'UTC+8', calculationStartUtc: '2026-09-01T00:00:00Z', calculationStartTimeZone: 'UTC+8', berthWaitHours: 2, operationQuantityMt: 1000, operationRateMtPerHour: 250, postCompletionDelayHours: 6, oceanDistanceNm: 120, speedKnots: 12 });
+  Object.assign(automaticSource.rows[1], { portTimeZone: 'UTC+9', berthWaitHours: 1, operationQuantityMt: 500, operationRateMtPerHour: 100, postCompletionDelayHours: 6, oceanDistanceNm: 60, speedKnots: 12 });
   const automatic = model.setShipAutomaticCalculation(automaticSource);
   assert.equal(automatic.missing.length, 0);
-  assert.deepEqual(automatic.document.rows.map(row => [row.etaMode,row.etbMode,row.etcMode,row.etdMode]), [['manual','auto','auto','auto'],['auto','auto','auto','auto']]);
-  assert.equal(automatic.document.rows[1].etaUtc, '2026-09-01T22:00:00Z');
-  const recalculated = model.updateShipDraftRow(automatic.document, automatic.document.rows[0].rowId, { speedKnots: 10 });
-  assert.equal(recalculated.rows[1].etaUtc, '2026-09-02T00:00:00Z', 'parameter edits must immediately recalculate downstream auto fields');
+  assert.deepEqual(automatic.document.rows.map(row => [row.etaMode,row.etbMode,row.etcMode,row.etdMode]), [['auto','auto','auto','auto'],['auto','auto','auto','auto']]);
+  assert.equal(automatic.document.rows[0].etaUtc, '2026-09-01T10:00:00Z');
+  assert.equal(automatic.document.rows[1].etaUtc, '2026-09-02T03:00:00Z');
+  const recalculated = model.updateShipDraftRow(automatic.document, automatic.document.rows[1].rowId, { speedKnots: 10 });
+  assert.equal(recalculated.rows[1].etaUtc, '2026-09-02T04:00:00Z', 'the current row DTG/speed must immediately recalculate its own ETA');
+  const rateSynced = model.updateShipDraftRow(recalculated, recalculated.rows[0].rowId, { ldRateText: '450 MT/h' });
+  assert.equal(rateSynced.rows[0].operationRateMtPerHour, 450, 'parameter L/D rate must come from the left input');
+  const rateCleared = model.updateShipDraftRow(rateSynced, rateSynced.rows[0].rowId, { ldRateText: '' });
+  assert.equal(rateCleared.rows[0].operationRateMtPerHour, null);
+
+  const demoData = await server.ssrLoadModule('/src/itinerary/itineraryDemoData.ts');
+  const demo = demoData.createDemoItineraryDocument({
+    id: 'demo-vessel', name: 'DEMO VESSEL', shortName: 'DEMO', fullName: 'DEMO VESSEL',
+    position: { lastPort: 'KAOHSIUNG', nextPort: 'ULSAN', location: 'AT SEA' },
+    cargo: { loadStatus: '空載', items: [] },
+  }, 0, Date.parse('2026-09-01T00:00:00Z'));
+  assert.equal(demo.rows[0].calculationStartUtc, '2026-09-01T00:00:00Z');
+  assert.equal(demo.rows[0].calculationStartTimeZone, 'UTC+8');
+  assert.equal(demo.rows[0].etaMode, 'auto');
+  assert.equal(demo.rows[0].channelSailingHours, 1);
+  assert.equal(demo.rows[0].preCompletionDelayHours, 1);
+  assert.equal(demo.rows[0].postCompletionDelayHours, 6);
+  assert.equal(demo.rows[0].departureBufferDays, null);
+  assert.equal(demo.rows[1].etbTimeZone, 'UTC+8:45');
   const manual = model.setAllShipTimesManual(recalculated);
   assert.ok(manual.rows.every(row => [row.etaMode,row.etbMode,row.etcMode,row.etdMode].every(mode => mode === 'manual')));
   assert.equal(manual.rows[1].etaUtc, recalculated.rows[1].etaUtc, 'manual switch must preserve the latest calculated values');
   const incompleteAutomatic = model.setShipAutomaticCalculation(withSecond);
-  assert.ok(incompleteAutomatic.missing.some(item => item.rowNumber === 1 && item.field === 'etaUtc'));
+  assert.ok(incompleteAutomatic.missing.some(item => item.rowNumber === 1 && item.field === 'calculationStartUtc'));
+  assert.ok(incompleteAutomatic.missing.some(item => item.rowNumber === 1 && item.field === 'calculationStartTimeZone'));
   assert.ok(incompleteAutomatic.missing.some(item => item.field === 'portTimeZone'));
-  assert.ok(incompleteAutomatic.missing.some(item => item.field === 'operationRateMtPerHour'));
+  assert.equal(incompleteAutomatic.missing.some(item => item.field === 'operationRateMtPerHour'), false, 'optional calculation inputs must not block automatic calculation');
+  assert.equal(incompleteAutomatic.missing.some(item => item.field === 'berthWaitHours'), false);
+
+  const zoneRow = types.createBlankItineraryRow('zone-row', 0);
+  Object.assign(zoneRow, { portTimeZone: 'UTC+8', etaUtc: '2026-09-01T00:00:00Z', etbUtc: '2026-09-01T02:00:00Z', etbTimeZone: 'UTC+7' });
+  const etaZonePatch = model.shipTimeZonePatch(zoneRow, 'etaUtc', 'UTC+9');
+  assert.equal(etaZonePatch.etaTimeZone, 'UTC+9');
+  assert.equal(etaZonePatch.etaUtc, '2026-08-31T23:00:00Z', 'changing an LT offset must preserve the visible local clock value');
+  const portZonePatch = model.shipPortTimeZonePatch(zoneRow, 'UTC+9');
+  assert.equal(portZonePatch.portTimeZone, 'UTC+9');
+  assert.equal(portZonePatch.etaUtc, '2026-08-31T23:00:00Z', 'port offset changes reinterpret only fields still following the port');
+  assert.equal(portZonePatch.etbUtc, undefined, 'an explicitly overridden LT offset must remain untouched');
+  Object.assign(zoneRow, { calculationStartUtc: '2026-09-01T00:00:00Z', calculationStartTimeZone: 'UTC+8' });
+  const startZonePatch = model.shipCalculationStartTimeZonePatch(zoneRow, 'UTC+9');
+  assert.equal(startZonePatch.calculationStartTimeZone, 'UTC+9');
+  assert.equal(startZonePatch.calculationStartUtc, '2026-08-31T23:00:00Z');
 
   const html = fs.readFileSync('ship-itinerary.html', 'utf8');
   const entry = fs.readFileSync('src/ship-itinerary-main.tsx', 'utf8');
@@ -62,6 +99,8 @@ try {
   const editor = fs.readFileSync('src/itinerary/ShipItineraryEditor.tsx', 'utf8');
   const panel = fs.readFileSync('src/itinerary/ItineraryPanel.tsx', 'utf8');
   const officeEditor = fs.readFileSync('src/itinerary/ItineraryEditor.tsx', 'utf8');
+  const dateInput = fs.readFileSync('src/itinerary/ItineraryDateInput.tsx', 'utf8');
+  const purposeInput = fs.readFileSync('src/itinerary/ItineraryOperationOptions.tsx', 'utf8');
   const css = fs.readFileSync('src/itinerary/shipItinerary.css', 'utf8');
   assert.ok(html.includes('/src/ship-itinerary-main.tsx'));
   assert.ok(!entry.includes("from './App'"));
@@ -80,12 +119,26 @@ try {
   assert.match(editor, /ship-editor-workspace/);
   assert.match(editor, /ship-editor-main-pane/);
   assert.match(editor, /ship-editor-parameter-pane/);
-  assert.match(css, /\.ship-editor-workspace\{[^}]*grid-template-columns:minmax\(0,2fr\) minmax\(0,1fr\)/);
+  assert.match(css, /\.ship-editor-workspace\{[^}]*grid-template-columns:minmax\(0,var\(--ship-editor-left/);
+  assert.match(css, /\.ship-editor-resizer\{/);
+  assert.match(css, /\.ship-editor-grid th\{[^}]*white-space:normal[^}]*overflow-wrap:anywhere/);
   assert.doesNotMatch(css, /prefers-color-scheme:dark/);
   assert.match(css, /--ship-card:#fff/);
   assert.doesNotMatch(editor, /<th>[A-W]\s/);
   assert.match(editor, /全部手動輸入/);
   assert.match(editor, /一鍵自動計算/);
+  assert.match(editor, /首列 ETA 起算/);
+  assert.match(editor, /calculationStartUtc/);
+  assert.match(editor, /calculationStartTimeZone/);
+  assert.match(editor, /使用現在/);
+  assert.match(editor, /role="separator"/);
+  assert.match(editor, /onPointerMove=/);
+  assert.match(editor, /shipTimeZonePatch/);
+  assert.match(editor, /shipPortTimeZonePatch/);
+  assert.match(editor, /channelSailingHours/);
+  assert.match(editor, /preCompletionDelayHours/);
+  assert.match(editor, /postCompletionDelayHours/);
+  assert.match(editor, /operationRateMtPerHour === null/);
   assert.match(editor, /ItineraryOperationOptions/);
   assert.match(officeEditor, /ItineraryOperationOptions/);
   assert.doesNotMatch(editor, /<select value=\{row\.operation\}/);
@@ -96,17 +149,30 @@ try {
   assert.match(portal, /ITINERARY_MAIN_FIELD_LABELS/, 'ship latest view must expose the same A:M columns as the main dashboard');
   assert.match(panel, /formatItineraryUtcOffset/, 'main browse rows must display canonical UTC offsets');
   assert.match(portal, /formatItineraryUtcOffset/, 'ship browse rows must display canonical UTC offsets');
+  assert.match(panel, /resolveItineraryTimeZone\(row,\s*field\)/, 'main browse must resolve each LT field offset independently');
+  assert.match(portal, /resolveItineraryTimeZone\(row,\s*field\)/, 'ship browse must resolve each LT field offset independently');
+  assert.match(panel, /itinerary-time-offset-label/, 'main browse must show the resolved offset inside each LT cell');
+  assert.match(portal, /ship-time-offset-label/, 'ship browse must show the resolved offset inside each LT cell');
   assert.match(css, /\.ship-vessel-picker select\{[^}]*color-scheme:light[^}]*color:#172033/);
   assert.match(css, /\.ship-vessel-picker option\{[^}]*background:#fff[^}]*color:#172033/);
   assert.match(css, /\.ship-latest-scroll table\{[^}]*font-size:12px/);
   assert.match(css, /\.ship-editor-grid\{[^}]*font-size:12px/);
-  assert.match(editor, /dateInputRef/, 'manual date input must retain native in-progress editing state');
+  assert.match(purposeInput, /<details/);
+  assert.match(purposeInput, /<summary/);
+  assert.match(purposeInput, /ITINERARY_PURPOSE_OPTIONS\.map/);
+  for (const label of ['To Load','To Unload','docking','waiting order','repair','inspection']) assert.ok(purposeInput.includes(label) || purposeInput.includes('ITINERARY_PURPOSE_OPTIONS'));
+  assert.match(dateInput, /type="text"/);
+  assert.match(dateInput, /type="date"/);
+  assert.match(dateInput, /showPicker/);
+  assert.match(dateInput, /placeholder="YYYY-MM-DD"/);
+  assert.match(editor, /ItineraryDateInput/);
+  assert.match(officeEditor, /ItineraryDateInput/);
+  assert.match(dateInput, /dateInputRef/, 'manual date input must retain an in-progress text editing state');
   assert.match(editor, /timeInputRef/, 'manual time input must retain native in-progress editing state');
-  assert.match(editor, /type="date"[^>]*defaultValue=/, 'date must use an uncontrolled native editing buffer');
   assert.match(editor, /type="time"[^>]*defaultValue=/, 'time must use an uncontrolled native editing buffer');
-  assert.doesNotMatch(editor, /type="date"[^>]*value=/, 'controlled date values reset partially typed year/month/day');
   assert.doesNotMatch(editor, /type="time"[^>]*value=/, 'controlled time values reset partially typed hours/minutes');
-  assert.match(editor, /onBlur={clearIncomplete}/, 'incomplete manual wall time must clear only after focus leaves the native control');
+  assert.match(dateInput, /className="itinerary-date-text"/, 'manual date text input must expose a stable semantic class');
+  assert.match(dateInput, /onPaste=/, 'date text input must explicitly support pasted ISO dates');
   console.log('ship_itinerary_portal_model=PASS');
 } finally {
   await server.close();

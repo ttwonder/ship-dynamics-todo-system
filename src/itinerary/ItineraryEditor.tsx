@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createBlankItineraryRow, createItineraryId, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
+import { createBlankItineraryRow, createItineraryId, ITINERARY_TIME_ZONE_FIELDS, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryRow, type ItineraryTimeField } from './itineraryTypes';
 import { pendingOperationForDocument } from './itineraryOperation';
 import { resequenceItineraryRows } from './itineraryDomain';
 import { instantToWallTime, wallTimeToInstant } from './itineraryTime';
@@ -8,6 +8,9 @@ import { validateItineraryDocument } from './itineraryValidation';
 import type { ItineraryLease, ItineraryLeaseRenewResult, ItinerarySaveResult } from './itineraryCollaboration';
 import UtcOffsetSelect from './UtcOffsetSelect';
 import ItineraryOperationOptions from './ItineraryOperationOptions';
+import ItineraryDateInput from './ItineraryDateInput';
+import { parseItineraryRateText, shipPortTimeZonePatch, shipTimeZonePatch } from './shipItineraryModel';
+import { ITINERARY_MAIN_FIELD_LABELS } from './itineraryFieldLayout';
 
 interface ItineraryEditorProps {
   document: ItineraryDocument;
@@ -23,28 +26,31 @@ interface ItineraryEditorProps {
 
 interface TimeCellProps {
   row: ItineraryRow;
-  field: 'etaUtc' | 'etbUtc' | 'etcUtc' | 'etdUtc';
+  field: ItineraryTimeField;
   disabled: boolean;
-  onChange: (value: string | null) => void;
+  onPatch: (patch: Partial<ItineraryRow>) => void;
   onError: (message: string) => void;
 }
 
 
-function TimeCell({ row, field, disabled, onChange, onError }: TimeCellProps) {
-  const local = row[field] && row.portTimeZone ? instantToWallTime(row[field] as string, row.portTimeZone) : null;
+function TimeCell({ row, field, disabled, onPatch, onError }: TimeCellProps) {
+  const timeInputRef = useRef<HTMLInputElement>(null);
+  const zone = resolveItineraryTimeZone(row, field);
+  const local = row[field] && zone ? instantToWallTime(row[field] as string, zone) : null;
   const date = local?.ok ? local.date : '';
   const time = local?.ok ? local.time : '';
   const commit = (nextDate: string, nextTime: string) => {
-    if (!nextDate) return onChange(null);
-    if (!row.portTimeZone) return onError('請先為此列選擇 UTC Offset。');
-    const result = wallTimeToInstant(nextDate, nextTime || '00:00', row.portTimeZone);
+    if (!nextDate) return onPatch({ [field]: null });
+    if (!zone) return onError('請先為此時間選擇 UTC Offset。');
+    const result = wallTimeToInstant(nextDate, nextTime || '00:00', zone);
     if (!result.ok) return onError('日期、時間或 UTC Offset 無效，請重新選擇。');
-    onChange(result.instant);
+    onPatch({ [field]: result.instant, [`${field.slice(0, 3)}Mode`]: 'manual' });
   };
   return <div className="itinerary-time-inputs">
-    <input type="date" value={date} disabled={disabled} onChange={event=>commit(event.target.value,time||'00:00')}/>
-    <input type="time" value={time} disabled={disabled||!date} onChange={event=>commit(date,event.target.value)}/>
-    <button type="button" disabled={disabled||!row[field]} onClick={()=>onChange(null)} aria-label="清除時間">×</button>
+    <ItineraryDateInput value={date} disabled={disabled} ariaLabel={`${field} 日期`} onChange={value=>commit(value,timeInputRef.current?.value||time||'00:00')}/>
+    <input ref={timeInputRef} key={`${field}-office-time-${time}`} type="time" defaultValue={time} disabled={disabled||!date} onChange={event=>commit(date,event.target.value)}/>
+    <UtcOffsetSelect className="itinerary-time-zone-select" value={row[ITINERARY_TIME_ZONE_FIELDS[field]]||''} emptyLabel={`跟隨港口（${row.portTimeZone||'未選'}）`} ariaLabel={`${field} UTC Offset`} disabled={disabled} onChange={value=>onPatch(shipTimeZonePatch(row,field,value))}/>
+    <button type="button" disabled={disabled||!row[field]} onClick={()=>onPatch({[field]:null})} aria-label="清除時間">×</button>
   </div>;
 }
 
@@ -200,18 +206,19 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
       </header>
       {(message||idleWarning)&&<div className={`itinerary-editor-message ${readOnly?'error':idleWarning?'warning':''}`} role="status">{message||'已閒置 8 分鐘；再無操作將於 10 分鐘時退出可寫狀態並保留草稿。'}</div>}
       <div className="itinerary-editor-table-wrap">
-        <table className="itinerary-editor-table"><thead><tr><th>#</th><th>Voy No.</th><th>Port &amp; Dock Name／時區</th><th>To Load / To Unload</th><th>B/F or I/F Qty (MT)</th><th>ETA (LT)</th><th>ETB (LT)</th><th>L/D rate</th><th>ETC (LT)</th><th>ETD (LT)</th><th>Arr Draft</th><th>Dep Draft</th><th>arr ROB</th><th>dep ROB</th><th>操作</th></tr></thead>
+        <table className="itinerary-editor-table"><thead><tr><th>#</th>{ITINERARY_MAIN_FIELD_LABELS.map(label=><th key={label}>{label}</th>)}<th>操作</th></tr></thead>
           <tbody>{draft.rows.map((row,index)=><tr key={row.rowId}>
             <td>{index+1}</td>
             <td><input value={row.voyageNumber} disabled={readOnly} onChange={event=>updateRow(row.rowId,{voyageNumber:event.target.value})}/></td>
-            <td><div className="itinerary-port-zone-inline"><input title={row.portDockName} value={row.portDockName} disabled={readOnly} placeholder="Port / Dock" onChange={event=>updateRow(row.rowId,{portDockName:event.target.value})}/><UtcOffsetSelect className="itinerary-zone-input" value={row.portTimeZone} disabled={readOnly} onChange={value=>updateRow(row.rowId,{portTimeZone:value})}/></div></td>
+            <td><input title={row.portDockName} value={row.portDockName} disabled={readOnly} placeholder="Next Port / Dock" onChange={event=>updateRow(row.rowId,{portDockName:event.target.value})}/></td>
+            <td><UtcOffsetSelect className="itinerary-zone-input" value={row.portTimeZone} disabled={readOnly} onChange={value=>updateRow(row.rowId,shipPortTimeZonePatch(row,value))}/></td>
             <td><ItineraryOperationOptions value={row.operation} disabled={readOnly} onChange={operation=>updateRow(row.rowId,{operation})}/></td>
             <td><input title={row.cargoQuantityText} value={row.cargoQuantityText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{cargoQuantityText:event.target.value})}/></td>
-            <td><TimeCell row={row} field="etaUtc" disabled={readOnly} onError={setMessage} onChange={value=>updateRow(row.rowId,{etaUtc:value,etaMode:'manual'})}/></td>
-            <td><TimeCell row={row} field="etbUtc" disabled={readOnly} onError={setMessage} onChange={value=>updateRow(row.rowId,{etbUtc:value,etbMode:'manual'})}/></td>
-            <td><input title={row.ldRateText} value={row.ldRateText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{ldRateText:event.target.value})}/></td>
-            <td><TimeCell row={row} field="etcUtc" disabled={readOnly} onError={setMessage} onChange={value=>updateRow(row.rowId,{etcUtc:value,etcMode:'manual'})}/></td>
-            <td><TimeCell row={row} field="etdUtc" disabled={readOnly} onError={setMessage} onChange={value=>updateRow(row.rowId,{etdUtc:value,etdMode:'manual'})}/></td>
+            <td><TimeCell row={row} field="etaUtc" disabled={readOnly} onError={setMessage} onPatch={patch=>updateRow(row.rowId,patch)}/></td>
+            <td><TimeCell row={row} field="etbUtc" disabled={readOnly} onError={setMessage} onPatch={patch=>updateRow(row.rowId,patch)}/></td>
+            <td><input title={row.ldRateText} value={row.ldRateText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{ldRateText:event.target.value,operationRateMtPerHour:parseItineraryRateText(event.target.value)})}/></td>
+            <td><TimeCell row={row} field="etcUtc" disabled={readOnly} onError={setMessage} onPatch={patch=>updateRow(row.rowId,patch)}/></td>
+            <td><TimeCell row={row} field="etdUtc" disabled={readOnly} onError={setMessage} onPatch={patch=>updateRow(row.rowId,patch)}/></td>
             <td><input title={row.arrivalDraftText} value={row.arrivalDraftText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{arrivalDraftText:event.target.value})}/></td>
             <td><input title={row.departureDraftText} value={row.departureDraftText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{departureDraftText:event.target.value})}/></td>
             <td><input title={row.arrivalRobText} value={row.arrivalRobText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{arrivalRobText:event.target.value})}/></td>

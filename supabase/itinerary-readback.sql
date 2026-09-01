@@ -29,6 +29,7 @@ expected_functions(signature) as (
     ('sd_itinerary_history(text,text,integer)'),
     ('sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb)'),
     ('sd_itinerary_utc_offset_valid(text)'),
+    ('sd_itinerary_purpose_valid(text)'),
     ('sd_itinerary_rows_valid(jsonb)')
 ),
 table_receipt as (
@@ -60,6 +61,8 @@ privilege_receipt as (
     'authenticatedOfficeSaveExecute', has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE'),
     'anonOffsetValidatorExecute', has_function_privilege('anon','public.sd_itinerary_utc_offset_valid(text)','EXECUTE'),
     'authenticatedOffsetValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_utc_offset_valid(text)','EXECUTE'),
+    'anonPurposeValidatorExecute', has_function_privilege('anon','public.sd_itinerary_purpose_valid(text)','EXECUTE'),
+    'authenticatedPurposeValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_purpose_valid(text)','EXECUTE'),
     'anonRowsValidatorExecute', has_function_privilege('anon','public.sd_itinerary_rows_valid(jsonb)','EXECUTE'),
     'authenticatedRowsValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_rows_valid(jsonb)','EXECUTE')
   ) value
@@ -74,7 +77,7 @@ offset_receipt as (
     'rejectNonQuarterHour', not public.sd_itinerary_utc_offset_valid('UTC+5:20')
   ) value
 ),
-operation_fixture as (
+purpose_fixture as (
   select jsonb_build_object(
     'rowId','readback-row','sortOrder',0,'voyageNumber','','portDockName','','operation','','cargoQuantityText','',
     'etaUtc',null,'etbUtc',null,'ldRateText','','etcUtc',null,'etdUtc',null,
@@ -84,14 +87,40 @@ operation_fixture as (
     'etaMode','manual','etbMode','manual','etcMode','manual','etdMode','manual'
   ) value
 ),
-operation_receipt as (
+purpose_receipt as (
   select jsonb_build_object(
     'toLoad', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','To Load'))),
     'toUnload', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','To Unload'))),
-    'toLoadAndUnload', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','To Load / To Unload'))),
-    'rejectUnknown', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','Unknown')))
+    'docking', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','docking'))),
+    'waitingOrder', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','waiting order'))),
+    'repair', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','repair'))),
+    'inspection', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','inspection'))),
+    'combined', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','To Load / To Unload / docking / inspection'))),
+    'rejectUnknown', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','Unknown'))),
+    'rejectOutOfOrder', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','inspection / To Load'))),
+    'rejectDuplicate', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('operation','repair / repair')))
   ) value
-  from operation_fixture
+  from purpose_fixture
+),
+calculation_v2_fixture as (
+  select value || jsonb_build_object(
+    'operation','To Load / docking / inspection',
+    'etaTimeZone','','etbTimeZone','UTC+9','etcTimeZone','UTC+8:45','etdTimeZone','UTC-6',
+    'channelSailingHours',1,'preCompletionDelayHours',2,'postCompletionDelayHours',3,
+    'calculationStartUtc','2026-08-31T00:00:00Z','calculationStartTimeZone','UTC+8',
+    'portTimeZone','UTC+8','oceanDistanceNm',100,'speedKnots',12,'sailingHours',100::numeric / 12
+  ) value
+  from purpose_fixture
+),
+calculation_v2_receipt as (
+  select jsonb_build_object(
+    'acceptsCompleteV2', public.sd_itinerary_rows_valid(jsonb_build_array(value)),
+    'acceptsLegacyV1', public.sd_itinerary_rows_valid(jsonb_build_array((select value from purpose_fixture))),
+    'rejectsPartialV2', not public.sd_itinerary_rows_valid(jsonb_build_array(value - 'etdTimeZone')),
+    'rejectsInvalidLtOffset', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('etbTimeZone','UTC+14:15'))),
+    'rejectsRoundedSailingHours', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('sailingHours',9)))
+  ) value
+  from calculation_v2_fixture
 ),
 vessel_name_receipt as (
   select jsonb_build_object(
@@ -112,7 +141,8 @@ select jsonb_build_object(
   'rollout', (select value from rollout_receipt),
   'privileges', (select value from privilege_receipt),
   'utcOffsets', (select value from offset_receipt),
-  'operations', (select value from operation_receipt),
+  'purposes', (select value from purpose_receipt),
+  'calculationV2', (select value from calculation_v2_receipt),
   'vesselNames', (select value from vessel_name_receipt),
   'documentCount', (select count(*) from public.sd_itinerary_documents),
   'historyCount', (select count(*) from public.sd_itinerary_history)

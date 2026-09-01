@@ -4,25 +4,26 @@ import { addHoursToInstant, normalizeInstant } from './itineraryTime';
 import { createBlankItineraryRow, createEmptyItineraryDocument, type ItineraryDocument } from './itineraryTypes';
 import { itineraryVesselDisplayName } from './itineraryVesselDisplay';
 
-function safeBaseInstant(nowMs: number): string {
-  return normalizeInstant(new Date(nowMs + 6 * 60 * 60 * 1000).toISOString()) || '2026-08-31T08:00:00Z';
-}
-
 export function createDemoItineraryDocument(vessel: Vessel, index: number, nowMs = Date.now()): ItineraryDocument {
   const document = createEmptyItineraryDocument({ workspaceKey: 'local-itinerary-demo', vesselId: vessel.id, vesselName: itineraryVesselDisplayName(vessel), rowId: `demo-${vessel.id}-1` });
   const first = document.rows[0];
-  const baseEta = safeBaseInstant(nowMs + index * 45 * 60 * 1000);
+  const calculationStartUtc = normalizeInstant(new Date(nowMs + index * 45 * 60 * 1000).toISOString()) || '2026-09-01T00:00:00Z';
   Object.assign(first, {
     voyageNumber: `V${String(index + 1).padStart(2, '0')}`,
     portDockName: vessel.position.lastPort || vessel.position.location || 'CURRENT PORT',
     operation: vessel.cargo.loadStatus === '非空載' || vessel.cargo.loadStatus === '滿載' ? 'To Unload' : 'To Load',
     cargoQuantityText: vessel.cargo.items.map(item => [item.name, item.quantity].filter(Boolean).join(' ')).join('\n') || 'TBA',
-    etaUtc: baseEta,
-    etaMode: 'manual',
+    calculationStartUtc,
+    calculationStartTimeZone: 'UTC+8',
+    etaMode: 'auto',
     berthWaitHours: 2,
+    channelSailingHours: 1,
+    preCompletionDelayHours: 1,
+    postCompletionDelayHours: 6,
     operationQuantityMt: 5000 + index * 250,
     operationRateMtPerHour: 400,
-    departureBufferDays: 0.25,
+    ldRateText: '400',
+    departureBufferDays: null,
     arrivalDraftText: 'TBA',
     departureDraftText: 'TBA',
     arrivalRobText: 'TBA',
@@ -36,13 +37,18 @@ export function createDemoItineraryDocument(vessel: Vessel, index: number, nowMs
   Object.assign(second, {
     voyageNumber: `V${String(index + 2).padStart(2, '0')}`,
     portDockName: vessel.position.nextPort || 'NEXT PORT',
-    operation: first.operation === 'To Load' ? 'To Unload' : 'To Load',
+    operation: 'waiting order / repair',
     cargoQuantityText: first.cargoQuantityText,
     portTimeZone: index % 2 === 0 ? 'UTC+9' : 'UTC+5:30',
     berthWaitHours: 3,
+    channelSailingHours: 0.75,
+    preCompletionDelayHours: 0.5,
+    postCompletionDelayHours: 4,
+    etbTimeZone: 'UTC+8:45',
     operationQuantityMt: 4500 + index * 200,
     operationRateMtPerHour: 380,
-    departureBufferDays: 0.2,
+    ldRateText: '380',
+    departureBufferDays: null,
     oceanDistanceNm: 420 + index * 11,
     speedKnots: 12.5,
   });
@@ -51,12 +57,16 @@ export function createDemoItineraryDocument(vessel: Vessel, index: number, nowMs
   Object.assign(third, {
     voyageNumber: `V${String(index + 3).padStart(2, '0')}`,
     portDockName: 'TBA',
-    operation: 'To Load / To Unload',
+    operation: 'To Load / To Unload / docking / inspection',
     portTimeZone: 'UTC-6',
     berthWaitHours: 2,
+    channelSailingHours: 1.5,
+    preCompletionDelayHours: 2,
+    postCompletionDelayHours: 6,
     operationQuantityMt: 6000,
     operationRateMtPerHour: 420,
-    departureBufferDays: 0.25,
+    ldRateText: '420',
+    departureBufferDays: null,
   });
 
   const result = recalculateItineraryRows([first, second, third]);

@@ -58,58 +58,63 @@ interface ItineraryDocument {
 
 ### 4.1 A:M 報告欄
 
-| Excel | canonical 欄位 | 型別 | v1 規則 |
+| Excel | canonical 欄位 | 型別 | v2 規則 |
 |---|---|---|---|
-| A Voy No. | `voyageNumber` | string | 可空；trim；最多 80 字 |
-| B Port & Dock Name | `portDockName` | string | 可空；最多 240 字 |
-| C To Load / To Unload | `operation` | `To Load\|To Unload\|To Load / To Unload\|''` | Web 為兩個可多選 checkbox；Excel 下拉提供裝、卸、裝＋卸三種 canonical 值；舊 `Loading/Unloading` 匯入時轉換，未知值拒絕 |
-| D B/F or I/F Qty | `cargoQuantityText` | string | 報告文字；最多 1,000 字；不從文字猜數值 |
-| E ETA (LT) | `etaUtc` | ISO instant/null | 依本列 UTC Offset 顯示該港 LT |
-| F ETB (LT) | `etbUtc` | ISO instant/null | 同上 |
-| G L/D rate | `ldRateText` | string | 報告文字；計算另用 U 欄數值 |
-| H ETC (LT) | `etcUtc` | ISO instant/null | 同上 |
-| I ETD (LT) | `etdUtc` | ISO instant/null | 同上 |
+| A Voy No. | `voyageNumber` | string | 可空；trim；最多 120 字 |
+| B Next Port & Dock Name | `portDockName` | string | 可空；最多 300 字 |
+| C Purpose | `operation` | canonical ordered string | Web 多選：`To Load`、`To Unload`、`docking`、`waiting order`、`repair`、`inspection`；固定依此順序以 ` / ` 串接；舊 `Loading/Unloading` 匯入時轉換，未知／重複值拒絕 |
+| D B/F or I/F Qty (MT/BBLS) | `cargoQuantityText` | string | 報告文字；最多 500 字 |
+| E ETA (LT) | `etaUtc` | ISO instant/null | 使用 `etaTimeZone || portTimeZone` 顯示 LT |
+| F ETB (LT) | `etbUtc` | ISO instant/null | 使用 `etbTimeZone || portTimeZone` 顯示 LT |
+| G 預計 L/D rate (MT/h) | `ldRateText` | string | 船端修改時同步解析至 `operationRateMtPerHour`；無法解析則為 null |
+| H ETC (LT) | `etcUtc` | ISO instant/null | 使用 `etcTimeZone || portTimeZone` 顯示 LT |
+| I ETD (LT) | `etdUtc` | ISO instant/null | 使用 `etdTimeZone || portTimeZone` 顯示 LT |
 | J Arr Draft | `arrivalDraftText` | string | 保留樣式文字／密度註記 |
 | K Dep Draft | `departureDraftText` | string | 同上 |
-| L arr ROB | `arrivalRobText` | string | v1 人工輸入，不推測公式 |
-| M dep ROB | `departureRobText` | string | v1 人工輸入，不推測公式 |
+| L Arr ROB | `arrivalRobText` | string | 人工輸入，不推測公式 |
+| M Dep ROB | `departureRobText` | string | 人工輸入，不推測公式 |
 
-### 4.2 N:W 計算輔助欄
+### 4.2 N:AE 計算與 Offset 欄
 
 | Excel | canonical 欄位 | 型別／單位 |
 |---|---|---|
-| N 時區 | `portTimeZone` | 固定 UTC Offset（UTC-12 至 UTC+14，含半／45 分鐘）；舊 IANA 僅讀取相容 |
-| O 大洋距離 | `oceanDistanceNm` | number/null，NM，>= 0 |
-| P 速度 | `speedKnots` | number/null，knots，> 0 才可計算 |
-| Q 航行時間 | `sailingHours` | derived number/null |
-| R 到碼頭時間 | `berthWaitHours` | number/null，hours，>= 0 |
-| S TANKS | `tanksText` | string |
-| T QUANTITY | `operationQuantityMt` | number/null，MT，>= 0 |
-| U 預計裝卸速度 | `operationRateMtPerHour` | number/null，MT/hr，> 0 才可計算 |
-| V 裝卸時間 | `operationHours` | derived number/null |
-| W 預加時間 | `departureBufferDays` | number/null，days，>= 0；沿用模板單位 |
+| N UTC Offset | `portTimeZone` | 港口預設固定 UTC Offset（UTC-12 至 UTC+14，含半／45 分鐘）；舊 IANA 僅讀取相容 |
+| O DTG(NM) | `oceanDistanceNm` | number/null，NM，>= 0 |
+| P 預估航速(kn) | `speedKnots` | number/null，knots，> 0 才可計算 |
+| Q 剩餘航行時間(h) | `sailingHours` | `DTG / speed`，保留小數 |
+| R 預估等待時間(靠泊前)(h) | `berthWaitHours` | number/null，hours，>= 0 |
+| S 預計航道航行時間(h) | `channelSailingHours` | number/null，hours，>= 0 |
+| T 作業艙號 | `tanksText` | string |
+| U 裝卸貨量(MT) | `operationQuantityMt` | number/null，MT，>= 0 |
+| V 預計 L/D rate (MT/h) | `operationRateMtPerHour` | number/null，MT/h，取自左側 G 欄 |
+| W 預計作業時間(h) | `operationHours` | `quantity / rate`，derived number/null |
+| X 預估等待/延誤時間(完貨前)(h) | `preCompletionDelayHours` | number/null，hours，>= 0 |
+| Y 預估等待/延誤時間(完貨後)(h) | `postCompletionDelayHours` | number/null，hours，>= 0 |
+| Z:AC 各 LT UTC Offset | `etaTimeZone/etbTimeZone/etcTimeZone/etdTimeZone` | 空字串代表跟隨 N；非空代表個別覆蓋 |
+| AD 首列 ETA 起算時間(LT) | `calculationStartUtc` | Excel 顯示 LT，canonical 保存 UTC instant |
+| AE 首列 ETA 起算 UTC Offset | `calculationStartTimeZone` | 固定 UTC Offset；起算時間存在時不可空 |
 
-時間欄另有 `etaMode/etbMode/etcMode/etdMode: 'auto' | 'manual'`。人工覆寫後上游變更不得覆蓋；只有按 `恢復自動計算` 才重新加入計算鏈。
+`departureBufferDays` 僅保留舊 v1 row／Excel 匯入相容；載入時換算為 `postCompletionDelayHours = days * 24`，新 UI 不再顯示或寫入天數。
 
-## 5. v1 計算決定
+時間欄另有 `etaMode/etbMode/etcMode/etdMode: 'auto' | 'manual'`。人工覆寫後上游變更不得覆蓋；切回 auto 才重新加入計算鏈。
 
-本輪開始實作時採以下可驗證預設；它們不改變 A:M 儲存格式，日後可調整 domain 規則而不遷移文件。
+## 5. v2 計算決定
 
 ```text
-sailing_hours = ceil(ocean_distance_nm / speed_knots)
-next_eta_utc = previous_etd_utc + sailing_hours
-etb_utc = eta_utc + berth_wait_hours
-operation_hours = operation_quantity_mt / operation_rate_mt_per_hour
-etc_utc = etb_utc + operation_hours
-etd_utc = etc_utc + departure_buffer_days
+remaining_sailing_hours = DTG_nm / estimated_speed_kn
+first_eta_utc = calculation_start_utc + remaining_sailing_hours
+later_eta_utc = previous_etd_utc + current_row_remaining_sailing_hours
+etb_utc = eta_utc + pre_berth_wait_hours + channel_sailing_hours
+operation_hours = operation_quantity_mt / expected_ld_rate_mt_per_hour
+etc_utc = etb_utc + pre_completion_delay_hours + operation_hours
+etd_utc = etc_utc + post_completion_delay_hours
 ```
 
-- 航行時間採模板的向上取整到整小時。
-- UTC instant 是 authority；每列 UTC Offset 只用於該港 LT 輸入／顯示及 Excel 轉換，不直接拿不同港口牆鐘時間相加。
-- 本列 ETA 通常由前列 ETD 推導；第一列 ETA 必須人工輸入。
-- 缺少必要上游值、speed/rate <= 0 或 UTC Offset 無效時停止該欄及下游自動計算，顯示原因，不生成猜測時間。
-- ROB v1 維持人工輸入。
-- 港口距離 v1 由船端輸入 NM；可建議已確認航線值，但不以一般地圖直線距離代替海上里程。
+- 未填的時長參數按 `0` 參與可用的自動計算；DTG／航速或數量／rate 任一不全時，對應 derived duration 為 null、在公式中按 0，不阻止其他已有參數計算。
+- UTC instant 是 authority；四個 LT 各自使用顯式 Offset，空值則跟隨港口 Offset。修改 Offset 時保留使用者看到的 LT 鐘面時間，再重算 UTC instant。
+- 第一列 ETA 可手動，也可由明確輸入的起算時間＋起算 Offset 自動計算；後續 ETA 使用前列 ETD 加本列剩餘航行時間。
+- `speed/rate <= 0`、Offset 無效或 auto 鏈缺少必要基準 instant 時顯示原因，不生成偽造時間。
+- ROB 維持人工輸入；DTG 由船端輸入海上剩餘里程，不以一般地圖直線距離代替。
 
 ## 6. 協作與保存
 
@@ -126,8 +131,7 @@ etd_utc = etc_utc + departure_buffer_days
 
 ### 7.1 已驗證模板
 
-- `無公式版本`：A1:W13，print area A1:M10，4 個 merge。
-- `有公式版本`：A1:W30，print area A1:M27，231 個 merge。
+- 原始模板仍為 A:W；v2 匯出延伸至 AJ，其中 AF:AJ 為隱藏 Offset helper，print area 仍只含 A:M。
 - 全 workbook：160 個公式、31 個資料驗證。
 - ExcelJS 4.4.0 critical round-trip PASS：公式與 cached result、驗證、merge、列高、A:M 欄寬及列印範圍均保留。
 - 已知非關鍵序列化預設：W 欄顯式寬 9 會省略為預設；未設定首頁碼時 `useFirstPageNumber` 布林預設改變。兩者不影響 A:M 報告，但測試中保留紀錄。
@@ -136,14 +140,15 @@ etd_utc = etc_utc + departure_buffer_days
 
 - 一船一 worksheet；多選時一個 workbook 多分頁。
 - worksheet 名稱依船名清理非法字元、限制 31 字並做碰撞尾碼。
-- very-hidden `_manifest` 保存 schema version、workspace、vessel ID、顯示名、document revision、exported_at；不得只靠 sheet 名映射。
-- A:M 對標模板；N:W 可保留計算欄，預設不進列印區。
+- very-hidden `_Itinerary_Meta` 保存 sheet、vessel ID／名稱、schema、revision、updatedAt 與 `excelLayoutVersion=2`；不得只靠 sheet 名映射。
+- A:M 對標報告模板；N:AE 保存 v2 計算、Offset 與起算欄，預設不進列印區。
 - 文字以 `= + - @` 起首時強制文字輸出，避免 formula injection。
 
 ### 7.3 Import
 
 - 只接受 `.xlsx`；拒絕 `.xls/.xlsm`、未知 schema、缺 header、超限檔案／sheet／row、重複 vessel ID。
-- 有 `_manifest` 依不可變 vessel ID；舊模板依 Vsl name 產生人工 mapping，禁止默猜。
+- 有 `_Itinerary_Meta` 依不可變 vessel ID；舊模板依 Vsl name 產生人工 mapping，禁止默猜。
+- v2 依 `excelLayoutVersion=2` 解讀 S:AE；舊 layout 繼續按原 S:W 解讀，`departureBufferDays` 乘 24 轉為完貨後小時。
 - 寫入前顯示目標船、目前／檔案 revision、列數及新增／刪除／變更摘要。
 - 多船 workbook 採 all-or-none；任一船被鎖、stale 或 mapping 不唯一時 0 writes。
 - 匯入公式本身不是 authority；讀 cached result或由 canonical domain 重算。無 cached value 時要求補值／確認。
@@ -155,11 +160,12 @@ etd_utc = etc_utc + departure_buffer_days
 - 船名清單及標題使用與主站船舶卡片相同的 `中文名 + fullName` 顯示規則；所有 active 船舶皆可選。
 - 桌面使用緊湊 spreadsheet table；手機每個港口一張表單卡。
 - 非編輯與編輯狀態的主資料區均使用主站 A:M 相同欄名、順序與內容，不顯示 Excel A–W 字母前綴。
-- 編輯器分為左側 2/3 `輸入／計算區` 與右側 1/3 `自動計算用變化參數區`，兩區各自提供水平捲動。
+- 編輯器分為 `輸入／計算區` 與 `自動計算用變化參數區`，兩區各自水平捲動；桌面分隔條可用滑鼠／鍵盤調整寬度，手機回到單欄。
 - 可新增、複製、排序、刪除列；至少保留一列。
-- 日期與時間分開選；以每列固定 UTC Offset 轉為 UTC，不自動套用地區或夏令時間。
-- `全部手動輸入` 須先警告，並將目前計算結果保留為手動值；`一鍵自動計算` 保留第一列 ETA 手動，其餘可計算時間切為 auto。
-- 自動計算缺少 ETA、UTC Offset、距離、速度、等待時間、裝卸數量／速度或預加時間時，必須列出缺項；補填參數後所有 auto 欄位立即重算，個別時間欄仍可切回手動。
+- 日期可用文字手動輸入／貼上（`YYYY-MM-DD`、`YYYY/MM/DD`、`YYYYMMDD`）或原生 picker；時間另行輸入。
+- 港口 Offset 為預設；ETA／ETB／ETC／ETD 各有「跟隨港口」或獨立 Offset。所有轉換先經 UTC instant，不直接相加不同牆鐘。
+- `全部手動輸入` 須先警告並保留目前值；`一鍵自動計算` 會把第一列 ETA 在內的四個時間欄切為 auto。
+- 首列 auto ETA 需要明確起算時間／Offset；未填的可選時長按 0，補填任何參數後所有 auto 欄位立即重算，個別時間欄仍可切回手動。
 - IndexedDB／namespaced storage 保存草稿；`保存並同步` 與 `取消編輯` 語意分離。
 - 報告動作：產生並下載 Excel，再開啟預填 mailto；瀏覽器無法可靠自動附檔，UI 必須提示手動附上剛下載的檔案。
 
