@@ -11,6 +11,8 @@ const publicVesselNamesMigration = await readFile('supabase/migrations/202609011
 const operationMultiSelectMigration = await readFile('supabase/migrations/20260901125500_itinerary_operation_multi_select.sql', 'utf8');
 const calculationV2Migration = await readFile('supabase/migrations/20260901143000_itinerary_calculation_v2.sql', 'utf8');
 const readbackSql = await readFile('supabase/itinerary-readback.sql', 'utf8');
+assert.equal(readbackSql.includes("'workspaceKey'"), false, 'production readback must not expose the full legacy workspace key');
+assert.equal(readbackSql.includes("'workspaceRef'"), true, 'production readback must expose only a masked workspace reference');
 const rolloutBootstrapReadbackSql = await readFile('supabase/itinerary-rollout-bootstrap-readback.sql', 'utf8');
 const ids = {
   workspace: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

@@ -42,8 +42,7 @@ function_receipt as (
 ),
 rollout_receipt as (
   select coalesce(jsonb_agg(jsonb_build_object(
-    'workspaceId', r.workspace_id,
-    'workspaceKey', w.legacy_key,
+    'workspaceRef', left(r.workspace_id::text, 8),
     'mainEnabled', r.main_enabled,
     'shipPortalEnabled', r.ship_portal_enabled,
     'version', r.version
