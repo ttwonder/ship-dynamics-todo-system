@@ -17,6 +17,7 @@ import ShipItineraryEditor from './ShipItineraryEditor';
 import { dashboardVesselDisplayName } from '../vesselDisplay';
 import { ItineraryBrowseTable, ItineraryMoreParametersButton } from './ItineraryBrowseTable';
 import ItineraryCopyEmailButton from './ItineraryCopyEmailButton';
+import ShipItineraryBriefDialog from './ShipItineraryBriefDialog';
 
 interface EditorState {
   draft: ItineraryDocument;
@@ -77,6 +78,7 @@ export default function ShipItineraryPortal() {
   const setNotice = (text: string) => setNoticeState(text ? { kind: 'text', text } : null);
   const [saving, setSaving] = useState(false);
   const [showMoreParameters, setShowMoreParameters] = useState(false);
+  const [briefOpen, setBriefOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { editorRef.current = editor; }, [editor]);
@@ -173,6 +175,7 @@ export default function ShipItineraryPortal() {
 
   const startEditing = async (mode: 'blank' | 'latest') => {
     if (!backend || !latest) return;
+    if (mode === 'blank' && !window.confirm('這將清空之前的記錄，如要更新，請點擊“從最新狀態修改”。是否繼續？')) return;
     const vessel = vessels.find(item => item.id === latest.vesselId);
     const claim = localBackend
       ? await localBackend.claimLease(latest.vesselId, { holderId, holderLabel: `船端：${vessel?.name || latest.vesselName}` }, 75)
@@ -195,8 +198,12 @@ export default function ShipItineraryPortal() {
     let pendingOperation: ItineraryPendingOperation | undefined;
     const key = itineraryDraftKey(editingBase.workspaceKey, editingBase.vesselId, draftActorId);
     const saved = await readItineraryDraft(key);
-    if (saved && saved.baseRevision === editingBase.revision && window.confirm('找到本機草稿，是否恢復？')) { draft = saved.document; pendingOperation = saved.pendingOperation; }
-    setEditor({ draft, baseRevision: editingBase.revision, lease: claim.lease, dirty: Boolean(saved), readOnly: false, remoteUpdated: false, pendingOperation });
+    if (mode === 'blank') await deleteItineraryDraft(key);
+    else if (saved && saved.baseRevision === editingBase.revision && window.confirm('找到本機草稿，是否恢復？')) {
+      draft = saved.document;
+      pendingOperation = saved.pendingOperation;
+    }
+    setEditor({ draft, baseRevision: editingBase.revision, lease: claim.lease, dirty: mode === 'blank' ? false : Boolean(saved), readOnly: false, remoteUpdated: false, pendingOperation });
     setNotice('');
   };
 
@@ -302,7 +309,8 @@ export default function ShipItineraryPortal() {
   if (!backend) return <main className="ship-portal-shell"><div className="ship-state-card"><h1>船端服務設定不完整</h1><p>目前無法建立受限 Itinerary RPC 連線，未讀取或寫入資料。</p></div></main>;
 
   return <main className="ship-portal-shell">
-    <header className="ship-portal-header"><div>{rollout.demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{rollout.demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div><div className="ship-vessel-picker"><label>船名</label><select value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vessels.map(vessel => <option value={vessel.id} key={vessel.id}>{dashboardVesselDisplayName(vessel)}</option>)}</select></div></header>
+    <header className="ship-portal-header"><div>{rollout.demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{rollout.demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div><div className="ship-vessel-picker"><div className="ship-vessel-picker-label"><label htmlFor="ship-vessel-select">船名</label><button type="button" className="btn ghost small" onClick={() => setBriefOpen(true)}>簡要說明</button></div><select id="ship-vessel-select" value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vessels.map(vessel => <option value={vessel.id} key={vessel.id}>{dashboardVesselDisplayName(vessel)}</option>)}</select></div></header>
+    {briefOpen && <ShipItineraryBriefDialog onClose={() => setBriefOpen(false)} />}
     {notice && <div className="ship-notice">{notice.kind === 'saved' ? formatItinerarySaveConfirmation(notice.updatedAt, noticeNowMs) : notice.text}</div>}
     {!selectedVesselId && <div className="ship-state-card compact"><b>先選擇船名</b><span>再選擇從空白或最新狀態開始。</span></div>}
     {selectedVesselId && latest && !editor && <section className="ship-latest-card">

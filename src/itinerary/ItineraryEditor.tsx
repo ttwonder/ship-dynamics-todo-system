@@ -9,6 +9,8 @@ import type { ItineraryLease, ItineraryLeaseRenewResult, ItinerarySaveResult } f
 import UtcOffsetSelect from './UtcOffsetSelect';
 import ItineraryOperationOptions from './ItineraryOperationOptions';
 import ItineraryDateInput from './ItineraryDateInput';
+import ItineraryTimeInput from './ItineraryTimeInput';
+import ItineraryNumericInput from './ItineraryNumericInput';
 import { parseItineraryRateText, removeShipDraftRow, shipPortTimeZonePatch, shipTimeZonePatch } from './shipItineraryModel';
 import {
   ITINERARY_EDITOR_ACTION_WIDTH, ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS, ITINERARY_EDITOR_MAIN_TABLE_WIDTH,
@@ -51,7 +53,7 @@ function TimeCell({ row, field, disabled, onPatch, onError }: TimeCellProps) {
   };
   return <div className="itinerary-time-inputs">
     <ItineraryDateInput value={date} disabled={disabled} ariaLabel={`${field} 日期`} onChange={value=>commit(value,timeInputRef.current?.value||time||'00:00')}/>
-    <input ref={timeInputRef} key={`${field}-office-time-${time}`} type="time" defaultValue={time} disabled={disabled||!date} onChange={event=>commit(date,event.target.value)}/>
+    <ItineraryTimeInput inputRef={timeInputRef} value={time} ariaLabel={`${field} 時間`} disabled={disabled||!date} onChange={value=>commit(date,value)}/>
     <UtcOffsetSelect className="itinerary-time-zone-select" value={row[ITINERARY_TIME_ZONE_FIELDS[field]]||''} emptyLabel={`跟隨港口（${row.portTimeZone||'未選'}）`} ariaLabel={`${field} UTC Offset`} disabled={disabled} onChange={value=>onPatch(shipTimeZonePatch(row,field,value))}/>
     <button type="button" disabled={disabled||!row[field]} onClick={()=>onPatch({[field]:null})} aria-label="清除時間">×</button>
   </div>;
@@ -219,7 +221,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
             <td><input title={row.cargoQuantityText} value={row.cargoQuantityText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{cargoQuantityText:event.target.value})}/></td>
             <td><TimeCell row={row} field="etaUtc" disabled={readOnly} onError={setMessage} onPatch={patch=>updateRow(row.rowId,patch)}/></td>
             <td><TimeCell row={row} field="etbUtc" disabled={readOnly} onError={setMessage} onPatch={patch=>updateRow(row.rowId,patch)}/></td>
-            <td><input title={row.ldRateText} value={row.ldRateText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{ldRateText:event.target.value,operationRateMtPerHour:parseItineraryRateText(event.target.value)})}/></td>
+            <td><ItineraryNumericInput title={row.ldRateText} value={parseItineraryRateText(row.ldRateText)} label="預計L/D rate (MT/h)" disabled={readOnly} onChange={value=>updateRow(row.rowId,{ldRateText:value===null?'':String(value),operationRateMtPerHour:value})}/></td>
             <td><TimeCell row={row} field="etcUtc" disabled={readOnly} onError={setMessage} onPatch={patch=>updateRow(row.rowId,patch)}/></td>
             <td><TimeCell row={row} field="etdUtc" disabled={readOnly} onError={setMessage} onPatch={patch=>updateRow(row.rowId,patch)}/></td>
             <td><textarea title={row.arrivalDraftText} value={row.arrivalDraftText} disabled={readOnly} onChange={event=>updateRow(row.rowId,{arrivalDraftText:event.target.value})}/></td>

@@ -157,14 +157,16 @@ etd_utc = etc_utc + post_completion_delay_hours
 ## 8. 船端頁
 
 - 獨立 HTML entry，不 import `App.tsx`、AppData、會議、任務或管理模組。
-- 選船後可 `從空白開始` 或 `載入最新版本`。
+- 選船後可 `從空白開始` 或 `從最新狀態修改`；點擊 `從空白開始` 必須先警告「這將清空之前的記錄，如要更新，請點擊“從最新狀態修改”。是否繼續？」。按否不得取得 lease 或開啟編輯器；按是才清除該船舊本機草稿並建立空白 draft，雲端內容仍只在 `保存並同步` 獲得 server ACK 後替換。
+- 船名旁提供 `簡要說明`，列出七點操作說明，以及分開列明首列／後續 ETA、ETB、ETC、ETD 的 v2 公式。
 - 船名清單及標題使用與主站船舶卡片相同的 `中文名 + fullName` 顯示規則；所有 active 船舶皆可選。
 - 桌面與手機都使用緊湊 spreadsheet table；手機將主資料與參數 pane 上下堆疊，各 pane 自己橫向捲動。
 - 非編輯與編輯狀態的主資料區均使用主站 A:N 相同欄名、順序、字體與欄寬 authority，不顯示 Excel A–W 字母前綴；Web 與郵件表格的 ROB 欄頭固定分兩行顯示 `Arr ROB\n(Cargo/Fuel/FW)`、`Dep ROB\n(Cargo/Fuel/FW)`，Excel 匯入／匯出欄名仍維持 `Arr ROB`、`Dep ROB` 以保留模板相容；瀏覽狀態可在 `備註信息` 後展開 11 個預估參數欄。
 - 編輯器分為 `輸入／計算區` 與 `自動計算用變化參數區`，兩區各自水平捲動；桌面分隔條可用滑鼠／鍵盤調整寬度，手機回到單欄。
 - 可新增、複製、排序、刪除列；至少保留一列。
-- 日期可用文字手動輸入／貼上（`YYYY-MM-DD`、`YYYY/MM/DD`、`YYYYMMDD`）或原生 picker；時間另行輸入。
-- 港口 Offset 為預設；ETA／ETB／ETC／ETD 各有「跟隨港口」或獨立 Offset。所有轉換先經 UTC instant，不直接相加不同牆鐘。
+- 日期可用文字手動輸入／貼上（`YYYY-MM-DD`、`YYYY/MM/DD`、`YYYYMMDD`）或原生 picker；文字編輯期間保留原始 buffer 與 caret，只在失焦、Enter、有效貼上或 picker 選擇後提交。時間欄使用不隨 UTC state 更新而重建的原生編輯 buffer。
+- `預計 L/D rate (MT/h)`、`DTG(NM)`、`預估航速(kn)`、`預估等待時間(靠泊前)(h)`、`預計航道航行時間(h)`、`預估等待/延誤時間(完貨前)(h)`、`預估等待/延誤時間(完貨後)(h)` 僅接受非負數字與一個小數點；鍵入或貼上其他字元時阻止寫入並立即警示。右側 `預計 L/D rate (MT/h)` 仍由左側同名輸入欄同步。
+- 港口 Offset 為預設；ETA／ETB／ETC／ETD 各有「跟隨港口」或獨立 Offset。所有轉換先經 UTC instant，不直接相加不同牆鐘。首列起算區顯示 `當下時間＋當下時區`，先選 `當下時區` 再使用 `使用現在`。
 - `全部手動輸入` 須先警告並保留目前值；`一鍵自動計算` 會把第一列 ETA 在內的四個時間欄切為 auto。
 - 首列 auto ETA 需要明確起算時間／Offset；未填的可選時長按 0，補填任何參數後所有 auto 欄位立即重算，個別時間欄仍可切回手動。
 - IndexedDB／namespaced storage 保存草稿；`保存並同步` 與 `取消編輯` 語意分離。

@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { normalizeItineraryDateInput } from './itineraryTime';
 
 interface ItineraryDateInputProps {
@@ -12,6 +12,13 @@ interface ItineraryDateInputProps {
 export default function ItineraryDateInput({ value, disabled = false, ariaLabel, onChange, onInvalid }: ItineraryDateInputProps) {
   const dateInputRef = useRef<HTMLInputElement>(null);
   const pickerInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const textInput = dateInputRef.current;
+    if (textInput && document.activeElement !== textInput && textInput.value !== value) textInput.value = value;
+    const pickerInput = pickerInputRef.current;
+    if (pickerInput && pickerInput.value !== value) pickerInput.value = value;
+  }, [value]);
 
   const commit = (raw: string): boolean => {
     const normalized = normalizeItineraryDateInput(raw);
@@ -48,7 +55,6 @@ export default function ItineraryDateInput({ value, disabled = false, ariaLabel,
 
   return <span className="itinerary-date-entry">
     <input
-      key={`date-text-${value}`}
       ref={dateInputRef}
       className="itinerary-date-text"
       type="text"
@@ -59,7 +65,12 @@ export default function ItineraryDateInput({ value, disabled = false, ariaLabel,
       defaultValue={value}
       disabled={disabled}
       onFocus={event => event.currentTarget.setCustomValidity('')}
-      onChange={event => { if (normalizeItineraryDateInput(event.target.value)) commit(event.target.value); }}
+      onChange={event => event.currentTarget.setCustomValidity('')}
+      onKeyDown={event => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        resetInvalid();
+      }}
       onPaste={event => {
         const pasted = event.clipboardData.getData('text');
         if (!normalizeItineraryDateInput(pasted)) return;
@@ -70,7 +81,6 @@ export default function ItineraryDateInput({ value, disabled = false, ariaLabel,
     />
     <button type="button" className="itinerary-date-picker-button" aria-label={`${ariaLabel}：開啟日期選擇器`} title="選擇日期" disabled={disabled} onClick={openPicker}>▾</button>
     <input
-      key={`date-picker-${value}`}
       ref={pickerInputRef}
       className="itinerary-native-date-picker"
       type="date"

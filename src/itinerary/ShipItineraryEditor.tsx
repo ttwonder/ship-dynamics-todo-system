@@ -8,13 +8,15 @@ import {
 } from './itineraryFieldLayout';
 import {
   addShipDraftRow, removeShipDraftRow, setAllShipTimesManual, setShipAutomaticCalculation,
-  shipCalculationStartTimeZonePatch, shipPortTimeZonePatch, shipTimeZonePatch, updateShipDraftRow,
+  parseItineraryRateText, shipCalculationStartTimeZonePatch, shipPortTimeZonePatch, shipTimeZonePatch, updateShipDraftRow,
 } from './shipItineraryModel';
 import {
   ITINERARY_TIME_ZONE_FIELDS, resolveItineraryTimeZone,
   type ItineraryDocument, type ItineraryRow, type ItineraryTimeField, type ItineraryTimeMode,
 } from './itineraryTypes';
 import ItineraryDateInput from './ItineraryDateInput';
+import ItineraryTimeInput from './ItineraryTimeInput';
+import ItineraryNumericInput from './ItineraryNumericInput';
 import UtcOffsetSelect from './UtcOffsetSelect';
 import ItineraryOperationOptions from './ItineraryOperationOptions';
 
@@ -81,7 +83,7 @@ function TimeInput({ row, field, allowAuto, disabled, onPatch }: { row: Itinerar
         commit(date, time);
       }}
     />
-    <input key={`${field}-time-${timeZone}-${row[field] || ''}`} ref={timeInputRef} type="time" defaultValue={wall?.time || ''} disabled={disabled || automatic || !timeZone || !wall?.date} onChange={event => commit(wall?.date || '', event.target.value)} />
+    <ItineraryTimeInput inputRef={timeInputRef} value={wall?.time || ''} ariaLabel={`${field.slice(0, 3).toUpperCase()} 時間`} disabled={disabled || automatic || !timeZone || !wall?.date} onChange={time => commit(wall?.date || '', time)} />
     <UtcOffsetSelect
       className="ship-time-zone-select"
       value={row[zoneField]}
@@ -110,10 +112,10 @@ function CalculationStartInput({ row, disabled, onPatch }: { row: ItineraryRow; 
     onPatch({ calculationStartUtc: now });
   };
   return <div className="ship-calculation-anchor" aria-label="首列 ETA 起算時間">
-    <div className="ship-calculation-anchor-title"><b>首列 ETA 起算</b><span>當下時間＋Offset</span></div>
+    <div className="ship-calculation-anchor-title"><b>首列 ETA 起算</b><span>當下時間＋當下時區</span></div>
     <ItineraryDateInput value={wall?.date || ''} disabled={disabled || !row.calculationStartTimeZone} ariaLabel="首列 ETA 起算日期" onChange={date => commit(date, timeInputRef.current?.value || wall?.time || '00:00')} />
-    <input key={`start-time-${row.calculationStartTimeZone}-${row.calculationStartUtc || ''}`} ref={timeInputRef} type="time" defaultValue={wall?.time || ''} disabled={disabled || !row.calculationStartTimeZone || !wall?.date} aria-label="首列 ETA 起算時間" onChange={event => commit(wall?.date || '', event.target.value)} />
-    <UtcOffsetSelect value={row.calculationStartTimeZone} emptyLabel="起算 Offset" ariaLabel="首列 ETA 起算 UTC Offset" disabled={disabled} onChange={value => onPatch(shipCalculationStartTimeZonePatch(row, value))} />
+    <ItineraryTimeInput inputRef={timeInputRef} value={wall?.time || ''} disabled={disabled || !row.calculationStartTimeZone || !wall?.date} ariaLabel="首列 ETA 起算時間" onChange={time => commit(wall?.date || '', time)} />
+    <UtcOffsetSelect value={row.calculationStartTimeZone} emptyLabel="當下時區" ariaLabel="首列 ETA 起算當下時區" disabled={disabled} onChange={value => onPatch(shipCalculationStartTimeZonePatch(row, value))} />
     <button type="button" className="btn ghost small" disabled={disabled || !row.calculationStartTimeZone} onClick={useNow}>使用現在</button>
   </div>;
 }
@@ -194,7 +196,7 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
               <td><textarea value={row.cargoQuantityText} disabled={readOnly} onChange={event => patchRow(row.rowId, { cargoQuantityText: event.target.value })} /></td>
               <td><TimeInput row={row} field="etaUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
               <td><TimeInput row={row} field="etbUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
-              <td><input value={row.ldRateText} inputMode="decimal" disabled={readOnly} onChange={event => patchRow(row.rowId, { ldRateText: event.target.value })} /></td>
+              <td><ItineraryNumericInput value={parseItineraryRateText(row.ldRateText)} label="預計L/D rate (MT/h)" disabled={readOnly} onChange={value => patchRow(row.rowId, { ldRateText: value === null ? '' : String(value) })} /></td>
               <td><TimeInput row={row} field="etcUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
               <td><TimeInput row={row} field="etdUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
               <td><textarea value={row.arrivalDraftText} disabled={readOnly} onChange={event => patchRow(row.rowId, { arrivalDraftText: event.target.value })} /></td>
@@ -216,17 +218,17 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
             <thead><tr><th>#</th>{ITINERARY_PARAMETER_FIELD_LABELS.map(label => <th key={label}>{label}</th>)}</tr></thead>
             <tbody>{document.rows.map((row, index) => <tr key={row.rowId}>
               <td className="ship-row-number">{index + 1}</td>
-              <td><input type="number" min="0" value={row.oceanDistanceNm ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { oceanDistanceNm: numeric(event.target.value) })} /></td>
-              <td><input type="number" min="0" step="0.1" value={row.speedKnots ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { speedKnots: numeric(event.target.value) })} /></td>
+              <td><ItineraryNumericInput value={row.oceanDistanceNm} label="DTG(NM)" disabled={readOnly} onChange={value => patchRow(row.rowId, { oceanDistanceNm: value })} /></td>
+              <td><ItineraryNumericInput value={row.speedKnots} label="預估航速(kn)" disabled={readOnly} onChange={value => patchRow(row.rowId, { speedKnots: value })} /></td>
               <td className="ship-derived">{displayHours(row.sailingHours)}</td>
-              <td><input type="number" min="0" step="0.1" value={row.berthWaitHours ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { berthWaitHours: numeric(event.target.value) })} /></td>
-              <td><input type="number" min="0" step="0.1" value={row.channelSailingHours ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { channelSailingHours: numeric(event.target.value) })} /></td>
+              <td><ItineraryNumericInput value={row.berthWaitHours} label="預估等待時間(靠泊前)(h)" disabled={readOnly} onChange={value => patchRow(row.rowId, { berthWaitHours: value })} /></td>
+              <td><ItineraryNumericInput value={row.channelSailingHours} label="預計航道航行時間(h)" disabled={readOnly} onChange={value => patchRow(row.rowId, { channelSailingHours: value })} /></td>
               <td><input value={row.tanksText} disabled={readOnly} onChange={event => patchRow(row.rowId, { tanksText: event.target.value })} /></td>
               <td><input type="number" min="0" step="0.1" value={row.operationQuantityMt ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { operationQuantityMt: numeric(event.target.value) })} /></td>
               <td className="ship-derived">{row.operationRateMtPerHour === null ? '—' : displayHours(row.operationRateMtPerHour)}</td>
               <td className="ship-derived">{displayHours(row.operationHours)}</td>
-              <td><input type="number" min="0" step="0.1" value={row.preCompletionDelayHours ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { preCompletionDelayHours: numeric(event.target.value) })} /></td>
-              <td><input type="number" min="0" step="0.1" value={row.postCompletionDelayHours ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { postCompletionDelayHours: numeric(event.target.value), departureBufferDays: null })} /></td>
+              <td><ItineraryNumericInput value={row.preCompletionDelayHours} label="預估等待/延誤時間(完貨前)(h)" disabled={readOnly} onChange={value => patchRow(row.rowId, { preCompletionDelayHours: value })} /></td>
+              <td><ItineraryNumericInput value={row.postCompletionDelayHours} label="預估等待/延誤時間(完貨後)(h)" disabled={readOnly} onChange={value => patchRow(row.rowId, { postCompletionDelayHours: value, departureBufferDays: null })} /></td>
             </tr>)}</tbody>
           </table>
         </div>

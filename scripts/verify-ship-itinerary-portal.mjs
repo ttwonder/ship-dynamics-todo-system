@@ -132,6 +132,11 @@ try {
   const panel = fs.readFileSync('src/itinerary/ItineraryPanel.tsx', 'utf8');
   const officeEditor = fs.readFileSync('src/itinerary/ItineraryEditor.tsx', 'utf8');
   const dateInput = fs.readFileSync('src/itinerary/ItineraryDateInput.tsx', 'utf8');
+  const timeInputPath = 'src/itinerary/ItineraryTimeInput.tsx';
+  const numericInputPath = 'src/itinerary/ItineraryNumericInput.tsx';
+  const briefDialogPath = 'src/itinerary/ShipItineraryBriefDialog.tsx';
+  assert.equal(fs.existsSync(timeInputPath), true, 'Owner and ship time editing need one caret-stable input');
+  const timeInput = fs.readFileSync(timeInputPath, 'utf8');
   const purposeInput = fs.readFileSync('src/itinerary/ItineraryOperationOptions.tsx', 'utf8');
   const css = fs.readFileSync('src/itinerary/shipItinerary.css', 'utf8');
   const officeCompactCss = fs.readFileSync('src/itinerary/itineraryCompact.css', 'utf8');
@@ -197,6 +202,8 @@ try {
   assert.match(editor, /calculationStartUtc/);
   assert.match(editor, /calculationStartTimeZone/);
   assert.match(editor, /使用現在/);
+  assert.match(editor, /當下時間＋當下時區/);
+  assert.doesNotMatch(editor, /當下時間＋Offset/);
   assert.match(editor, /role="separator"/);
   assert.match(editor, /onPointerMove=/);
   assert.match(editor, /shipTimeZonePatch/);
@@ -250,11 +257,62 @@ try {
   assert.match(officeEditor, /ItineraryDateInput/);
   assert.match(officeEditor, /removeShipDraftRow/, 'owner row deletion must preserve the first-row ETA calculation anchor');
   assert.match(dateInput, /dateInputRef/, 'manual date input must retain an in-progress text editing state');
-  assert.match(editor, /timeInputRef/, 'manual time input must retain native in-progress editing state');
-  assert.match(editor, /type="time"[^>]*defaultValue=/, 'time must use an uncontrolled native editing buffer');
-  assert.doesNotMatch(editor, /type="time"[^>]*value=/, 'controlled time values reset partially typed hours/minutes');
+  assert.doesNotMatch(dateInput, /key=\{`date-(?:text|picker)-\$\{value\}`\}/, 'a parent date update must not remount the focused text input');
+  const dateTextBlock = dateInput.slice(dateInput.indexOf('className="itinerary-date-text"'), dateInput.indexOf('/>', dateInput.indexOf('className="itinerary-date-text"')));
+  assert.doesNotMatch(dateTextBlock, /onChange=\{[^}]*commit/, 'an in-progress date edit must not commit and re-render on every digit');
+  assert.match(dateTextBlock, /onBlur=\{resetInvalid\}/, 'manual date text must commit only after the editing gesture is complete');
+  assert.match(timeInput, /type="time"/);
+  assert.match(timeInput, /defaultValue=\{value\}/, 'time must use an uncontrolled native editing buffer');
+  assert.doesNotMatch(timeInput, /\bkey=/, 'a parent UTC update must not remount the focused time input');
+  assert.match(editor, /ItineraryTimeInput/, 'ship time fields must use the caret-stable shared input');
+  assert.match(officeEditor, /ItineraryTimeInput/, 'Owner time fields must use the caret-stable shared input');
   assert.match(dateInput, /className="itinerary-date-text"/, 'manual date text input must expose a stable semantic class');
   assert.match(dateInput, /onPaste=/, 'date text input must explicitly support pasted ISO dates');
+
+  assert.equal(fs.existsSync(numericInputPath), true, 'requested numeric-only fields need one shared input contract');
+  const numericInput = fs.readFileSync(numericInputPath, 'utf8');
+  const numericModule = await server.ssrLoadModule(`/${numericInputPath}`);
+  for (const valid of ['', '0', '26', '12.5', '12.', '.5']) assert.equal(numericModule.isItineraryNumericDraft(valid), true, `${valid || 'empty'} must be a valid numeric editing state`);
+  for (const invalid of ['abc', '12a', '-1', '1e2', '1,000', '1.2.3']) assert.equal(numericModule.isItineraryNumericDraft(invalid), false, `${invalid} must be rejected as non-numeric input`);
+  assert.equal(numericModule.itineraryNumericDraftValue('12.5'), 12.5);
+  assert.equal(numericModule.itineraryNumericDraftValue('.'), null, 'a lone decimal point is an editing state, not persisted data');
+  assert.equal(numericModule.itineraryNumericWarning('DTG(NM)'), 'DTG(NM)僅限輸入數字，可使用小數點。');
+  assert.match(numericInput, /onBeforeInput=/, 'typing a forbidden character must be intercepted');
+  assert.match(numericInput, /onPaste=/, 'pasting non-numeric text must be intercepted');
+  assert.match(numericInput, /onChange\(itineraryNumericDraftValue\(raw\)\);/, 'a lone decimal point must clear the prior numeric value instead of leaving hidden stale data');
+  assert.doesNotMatch(numericInput, /if \(raw !== '\.'\)/, 'numeric draft updates must not special-case a lone decimal point into stale parent state');
+  assert.match(numericInput, /window\.alert/, 'non-numeric input must show the requested warning');
+  assert.ok((editor.match(/<ItineraryNumericInput/g) || []).length >= 7, 'ship editor must protect L/D rate, DTG, speed and four waiting/sailing/delay fields');
+  assert.ok((officeEditor.match(/<ItineraryNumericInput/g) || []).length >= 1, 'Owner L/D rate must use the same numeric-only input');
+
+  const blankConfirm = '這將清空之前的記錄，如要更新，請點擊“從最新狀態修改”。是否繼續？';
+  assert.ok(portal.includes(blankConfirm), 'blank start must show the exact destructive-change warning');
+  assert.ok(startEditingBlock.indexOf(blankConfirm) >= 0 && startEditingBlock.indexOf(blankConfirm) < startClaimIndex, 'declining blank start must cancel before claiming a lease or changing a draft');
+  assert.match(startEditingBlock, /mode === 'blank'[\s\S]*deleteItineraryDraft[\s\S]*else if \(saved/, 'confirmed blank start must clear the prior local record instead of restoring it');
+  assert.match(startEditingBlock, /dirty: mode === 'blank' \? false : Boolean\(saved\)/, 'blank start must remain clean while latest-mode draft semantics stay unchanged');
+  assert.doesNotMatch(startEditingBlock, /restoredDraft/, 'blank-start cleanup must not alter latest-mode restore bookkeeping');
+  assert.match(portal, />簡要說明<\/button>/, 'the ship-name picker must expose the instructions button');
+  assert.match(portal, /ShipItineraryBriefDialog/);
+  assert.equal(fs.existsSync(briefDialogPath), true, 'ship portal needs a concise instructions dialog');
+  const briefDialog = fs.readFileSync(briefDialogPath, 'utf8');
+  const briefModule = await server.ssrLoadModule(`/${briefDialogPath}`);
+  const briefHtml = renderToStaticMarkup(createElement(briefModule.default, { onClose() {} }));
+  for (const text of [
+    '首先選擇“當下時區”，然後點擊“使用現在”，則起算時間確定',
+    '港口後跟隨的時區選擇，是該港口的時區',
+    '所有帶有“手”或者“自”的欄位，均可以進行手動輸入，或者自動計算。',
+    '自動計算的資料需要到“自動計算用變化參數區”中修改',
+    '如果全部手動輸入，可以選擇“全部手動輸入”，則“自動計算用變化參數區”內數據，可以有選擇的輸入',
+    '輸入完後，務必按“保存並同步”！',
+    '瀏覽模式下，具備“一鍵複製”然後可以去郵件粘貼，或，導出excel發送的功能。',
+    '首列 ETA＝起算時間＋DTG÷預估航速',
+    '後續 ETA＝上一港 ETD＋本列 DTG÷本列預估航速',
+    'ETB＝ETA＋預估等待時間（靠泊前）＋預計航道航行時間',
+    'ETC＝ETB＋預估等待／延誤時間（完貨前）＋裝卸貨量÷預計 L/D rate',
+    'ETD＝ETC＋預估等待／延誤時間（完貨後）',
+  ]) assert.ok(briefHtml.includes(text), `brief instructions must include: ${text}`);
+  assert.match(briefDialog, /role="dialog"/);
+  assert.match(css, /\.ship-brief-dialog\{/);
   console.log('ship_itinerary_portal_model=PASS');
 } finally {
   await server.close();
