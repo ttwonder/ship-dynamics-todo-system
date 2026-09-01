@@ -128,6 +128,13 @@ try {
   assert.equal(time.wallTimeToInstant('2026-11-01', '01:30', 'America/Los_Angeles').ok, false);
 
   const now = Date.parse('2026-08-31T08:00:00Z');
+  assert.equal(time.formatItineraryUpdatedAt('2026-08-31T08:05:06Z'), '2026/08/31 16:05');
+  assert.equal(time.formatItineraryUpdatedAt(null), '尚未同步');
+  assert.equal(time.formatItineraryUpdatedAt('not-an-instant'), '更新時間無效');
+  assert.equal(
+    time.formatItinerarySaveConfirmation('2026-08-31T07:49:00Z', now),
+    '已保存並同步｜更新時間：2026/08/31 15:49（台北）｜11 分鐘前更新',
+  );
   assert.equal(time.formatRelativeUpdatedAt('2026-08-31T07:49:00Z', now), '11 分鐘前更新');
   assert.equal(time.formatRelativeUpdatedAt('2026-08-31T05:00:00Z', now), '3 小時前更新');
   assert.equal(time.formatRelativeUpdatedAt('2026-08-29T08:00:00Z', now), '2 天前更新');

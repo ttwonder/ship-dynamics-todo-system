@@ -172,6 +172,11 @@ try {
   const syncLoadIndex = syncLatestBlock.indexOf('backend.loadDocument');
   const syncEditorIndex = syncLatestBlock.indexOf('setEditor');
   assert.ok(syncClaimIndex >= 0 && syncLoadIndex > syncClaimIndex && syncEditorIndex > syncLoadIndex, 'sync latest must claim, reload authority, then replace the editor base');
+  const saveEditorBlock = portal.slice(portal.indexOf('const saveEditor = async'), portal.indexOf('const exportDocument ='));
+  assert.doesNotMatch(saveEditorBlock, /已保存並同步 Revision/, 'save confirmation must not foreground an internal revision number');
+  assert.match(saveEditorBlock, /updatedAt:\s*result\.document\.updatedAt/, 'save confirmation must retain the server-confirmed update time');
+  assert.match(portal, /formatItinerarySaveConfirmation\(notice\.updatedAt,\s*noticeNowMs\)/, 'save confirmation must render the exact and relative confirmed update time');
+  assert.match(portal, /setInterval\(\(\)\s*=>\s*setNoticeNowMs\(Date\.now\(\)\)/, 'relative save time must continue advancing while the confirmation remains visible');
   assert.ok((portal.match(/setLatest\(previous => selectLatestItineraryDocument\(previous,/g) || []).length >= 4, 'initial load, polling, edit reload and sync reload must all publish monotonically');
   assert.match(editor, /ship-editor-workspace/);
   assert.match(editor, /ship-editor-main-pane/);

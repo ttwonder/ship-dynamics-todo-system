@@ -144,6 +144,17 @@ export function addHoursToInstant(instant: string, hours: number): string | null
   }
 }
 
+export function formatItineraryUpdatedAt(updatedAt: string | null): string {
+  if (!updatedAt) return '尚未同步';
+  try {
+    const local = Temporal.Instant.from(updatedAt).toZonedDateTimeISO('Asia/Taipei');
+    const two = (value: number) => String(value).padStart(2, '0');
+    return `${local.year}/${two(local.month)}/${two(local.day)} ${two(local.hour)}:${two(local.minute)}`;
+  } catch {
+    return '更新時間無效';
+  }
+}
+
 export function formatRelativeUpdatedAt(updatedAt: string | null, nowMs = Date.now()): string {
   if (!updatedAt) return '尚未同步';
   const updatedMs = Date.parse(updatedAt);
@@ -159,4 +170,10 @@ export function formatRelativeUpdatedAt(updatedAt: string | null, nowMs = Date.n
   const months = Math.floor(days / 30);
   if (months < 12) return `${months} 個月前更新`;
   return `${Math.floor(months / 12)} 年前更新`;
+}
+
+export function formatItinerarySaveConfirmation(updatedAt: string | null, nowMs = Date.now()): string {
+  const exact = formatItineraryUpdatedAt(updatedAt);
+  if (!updatedAt || exact === '更新時間無效') return `已保存並同步｜更新時間：${exact}`;
+  return `已保存並同步｜更新時間：${exact}（台北）｜${formatRelativeUpdatedAt(updatedAt, nowMs)}`;
 }

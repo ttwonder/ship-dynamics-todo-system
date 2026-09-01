@@ -4,7 +4,7 @@ import { createDemoItineraryDocuments } from './itineraryDemoData';
 import { ITINERARY_DEMO_VESSELS } from './itineraryDemoVessels';
 import { deleteItineraryDraft, itineraryDraftKey, readItineraryDraft, saveItineraryDraft, type ItineraryPendingOperation } from './itineraryDraftStore';
 import { downloadItineraryWorkbook, parseItineraryWorkbook } from './itineraryExcel';
-import { formatRelativeUpdatedAt } from './itineraryTime';
+import { formatItinerarySaveConfirmation, formatRelativeUpdatedAt } from './itineraryTime';
 import { createEmptyItineraryDocument, createItineraryId, type ItineraryDocument } from './itineraryTypes';
 import { validateItineraryDocument } from './itineraryValidation';
 import { useShipPortalRollout } from './itineraryRollout';
@@ -26,6 +26,10 @@ interface EditorState {
   remoteUpdated: boolean;
   pendingOperation?: ItineraryPendingOperation;
 }
+
+type PortalNotice =
+  | { kind: 'text'; text: string }
+  | { kind: 'saved'; updatedAt: string | null };
 
 function browserId(storage: Storage, key: string, prefix: string): string {
   const existing = storage.getItem(key);
@@ -67,12 +71,21 @@ export default function ShipItineraryPortal() {
   const [latest, setLatest] = useState<ItineraryDocument | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const editorRef = useRef<EditorState | null>(null);
-  const [notice, setNotice] = useState('');
+  const [notice, setNoticeState] = useState<PortalNotice | null>(null);
+  const [noticeNowMs, setNoticeNowMs] = useState(() => Date.now());
+  const setNotice = (text: string) => setNoticeState(text ? { kind: 'text', text } : null);
   const [saving, setSaving] = useState(false);
   const [showMoreParameters, setShowMoreParameters] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { editorRef.current = editor; }, [editor]);
+
+  useEffect(() => {
+    if (notice?.kind !== 'saved') return;
+    setNoticeNowMs(Date.now());
+    const timer = window.setInterval(() => setNoticeNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [notice]);
 
   useEffect(() => {
     if (!localBackend) return;
@@ -220,7 +233,7 @@ export default function ShipItineraryPortal() {
     void backend.releaseLease(editor.lease);
     setLatest(withPublicVesselName(result.document, vessels.find(vessel => vessel.id === result.document.vesselId)));
     setEditor(null);
-    setNotice(`已保存並同步 Revision ${result.document.revision}。`);
+    setNoticeState({ kind: 'saved', updatedAt: result.document.updatedAt });
   };
 
   const exportDocument = async (document: ItineraryDocument, prefix: string): Promise<string | null> => {
@@ -289,7 +302,7 @@ export default function ShipItineraryPortal() {
 
   return <main className="ship-portal-shell">
     <header className="ship-portal-header"><div>{rollout.demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{rollout.demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div><div className="ship-vessel-picker"><label>船名</label><select value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vessels.map(vessel => <option value={vessel.id} key={vessel.id}>{dashboardVesselDisplayName(vessel)}</option>)}</select></div></header>
-    {notice && <div className="ship-notice">{notice}</div>}
+    {notice && <div className="ship-notice">{notice.kind === 'saved' ? formatItinerarySaveConfirmation(notice.updatedAt, noticeNowMs) : notice.text}</div>}
     {!selectedVesselId && <div className="ship-state-card compact"><b>先選擇船名</b><span>再選擇從空白或最新狀態開始。</span></div>}
     {selectedVesselId && latest && !editor && <section className="ship-latest-card">
       <div className="ship-latest-head">
