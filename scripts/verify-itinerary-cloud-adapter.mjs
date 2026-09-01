@@ -55,18 +55,19 @@ try {
   assert.equal(publicDoc.updatedAt, '2026-08-31T00:00:00Z');
 
   const rolloutClient = new FakeClient((name) => {
-    if (name === 'sd_itinerary_owner_update_rollout') return { data: { ok: true, version: 2, mainEnabled: true, shipPortalEnabled: false, replayed: false }, error: null };
+    if (name === 'sd_itinerary_owner_update_rollout') return { data: { ok: true, version: 2, mainEnabled: true, shipPortalEnabled: true, replayed: false }, error: null };
     throw new Error(`unexpected rollout RPC ${name}`);
   });
   const rolloutOperationId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
-  const rolloutUpdate = await cloud.updateOwnerItineraryRollout({ expectedVersion: 1, mainEnabled: true, operationId: rolloutOperationId }, config, rolloutClient);
+  const rolloutUpdate = await cloud.updateOwnerItineraryRollout({ expectedVersion: 1, mainEnabled: true, shipPortalEnabled: true, operationId: rolloutOperationId }, config, rolloutClient);
   assert.equal(rolloutUpdate.version, 2);
+  assert.equal(rolloutUpdate.shipPortalEnabled, true);
   const rolloutCall = rolloutClient.calls[0];
   assert.equal(rolloutCall.name, 'sd_itinerary_owner_update_rollout');
   assert.equal(rolloutCall.args.p_expected_version, 1);
   assert.equal(rolloutCall.args.p_operation_id, rolloutOperationId);
   assert.equal(rolloutCall.args.p_main_enabled, true);
-  assert.equal(rolloutCall.args.p_ship_portal_enabled, false);
+  assert.equal(rolloutCall.args.p_ship_portal_enabled, true);
   assert.deepEqual(rolloutCall.args.p_role_permissions, {
     admin: { view: false, edit: false, import: false, export: false, calendar: false },
     operator: { view: false, edit: false, import: false, export: false, calendar: false },
@@ -75,10 +76,10 @@ try {
 
   const rolloutRecoveryClient = new FakeClient((name) => {
     if (name === 'sd_itinerary_owner_update_rollout') return { data: null, error: { message: 'network response lost' } };
-    if (name === 'sd_itinerary_operation_status_office') return { data: { ok: true, version: 2, mainEnabled: true, shipPortalEnabled: false, replayed: false }, error: null };
+    if (name === 'sd_itinerary_operation_status_office') return { data: { ok: true, version: 2, mainEnabled: true, shipPortalEnabled: true, replayed: false }, error: null };
     throw new Error(`unexpected rollout recovery RPC ${name}`);
   });
-  const recoveredRollout = await cloud.updateOwnerItineraryRollout({ expectedVersion: 1, mainEnabled: true, operationId: rolloutOperationId }, config, rolloutRecoveryClient);
+  const recoveredRollout = await cloud.updateOwnerItineraryRollout({ expectedVersion: 1, mainEnabled: true, shipPortalEnabled: true, operationId: rolloutOperationId }, config, rolloutRecoveryClient);
   assert.equal(recoveredRollout.replayed, true);
   assert.deepEqual(rolloutRecoveryClient.calls.map(call => call.name), ['sd_itinerary_owner_update_rollout', 'sd_itinerary_operation_status_office']);
   assert.equal(rolloutRecoveryClient.calls[1].args.p_operation_id, rolloutOperationId);

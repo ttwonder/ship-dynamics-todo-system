@@ -10,6 +10,7 @@ try {
   const dashboardSource = fs.readFileSync('src/Dashboard.tsx', 'utf8');
   const itineraryDashboardSource = fs.readFileSync('src/itinerary/ItineraryDashboard.tsx', 'utf8');
   const itineraryCssSource = fs.readFileSync('src/itinerary/itinerary.css', 'utf8');
+  const rolloutDialogSource = fs.readFileSync('src/itinerary/ItineraryOwnerRolloutDialog.tsx', 'utf8');
   const vesselDisplayPath = 'src/itinerary/itineraryVesselDisplay.ts';
   assert.equal(fs.existsSync(vesselDisplayPath), true, 'Itinerary must project the same vessel display name used by vessel cards');
   const vesselDisplay = await server.ssrLoadModule(`/${vesselDisplayPath}`);
@@ -23,6 +24,17 @@ try {
   assert.match(utcOffsetHtml, /UTC\+5:45/);
   assert.match(utcOffsetHtml, /UTC\+14/);
   assert.doesNotMatch(utcOffsetHtml, /Asia\//, 'new offset choices must not expose region names');
+  const rolloutDialog = await server.ssrLoadModule('/src/itinerary/ItineraryOwnerRolloutDialog.tsx');
+  const rolloutBase = {
+    version: 2, mainEnabled: true, permissions: { view: true, edit: true, import: true, export: true, calendar: true },
+    demoMode: false, loading: false, source: 'cloud', authStatus: 'verified', authMessage: '',
+  };
+  const closedPortalHtml = renderToStaticMarkup(createElement(rolloutDialog.default, { rollout: { ...rolloutBase, shipPortalEnabled: false }, onUpdated() {}, onClose() {} }));
+  const openPortalHtml = renderToStaticMarkup(createElement(rolloutDialog.default, { rollout: { ...rolloutBase, shipPortalEnabled: true }, onUpdated() {}, onClose() {} }));
+  assert.match(closedPortalHtml, /開啟船端入口/);
+  assert.match(openPortalHtml, /關閉船端入口/);
+  assert.doesNotMatch(closedPortalHtml + openPortalHtml, /強制保持關閉/);
+  assert.match(rolloutDialogSource, /void apply\(rollout\.mainEnabled,\s*nextShipPortalEnabled\)/, 'portal action must preserve the main state and send its explicit target');
   const amber = {
     id: 'vessel-amber',
     name: '安華',

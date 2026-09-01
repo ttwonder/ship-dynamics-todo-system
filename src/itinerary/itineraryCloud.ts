@@ -76,6 +76,7 @@ export interface PublicItineraryVessel { id: string; name: string; shortName: st
 export interface ItineraryOwnerRolloutUpdateInput {
   expectedVersion: number;
   mainEnabled: boolean;
+  shipPortalEnabled: boolean;
   operationId: string;
 }
 
@@ -83,7 +84,7 @@ export interface ItineraryOwnerRolloutUpdateResult {
   ok: true;
   version: number;
   mainEnabled: boolean;
-  shipPortalEnabled: false;
+  shipPortalEnabled: boolean;
   replayed: boolean;
 }
 
@@ -100,10 +101,10 @@ function parseOwnerRolloutUpdateResult(
 ): ItineraryOwnerRolloutUpdateResult {
   const version = Number(value.version);
   if (value.ok !== true || !Number.isSafeInteger(version) || version < 1
-      || value.mainEnabled !== input.mainEnabled || value.shipPortalEnabled !== false) {
+      || value.mainEnabled !== input.mainEnabled || value.shipPortalEnabled !== input.shipPortalEnabled) {
     throw new Error('Itinerary rollout 回應格式不正確。');
   }
-  return { ok: true, version, mainEnabled: input.mainEnabled, shipPortalEnabled: false, replayed: recovered || value.replayed === true };
+  return { ok: true, version, mainEnabled: input.mainEnabled, shipPortalEnabled: input.shipPortalEnabled, replayed: recovered || value.replayed === true };
 }
 
 export async function updateOwnerItineraryRollout(
@@ -112,7 +113,8 @@ export async function updateOwnerItineraryRollout(
   client: ItineraryRpcClient | null = getItineraryOfficeClient(config),
 ): Promise<ItineraryOwnerRolloutUpdateResult> {
   if (!client) throw new Error('Itinerary authenticated client is unavailable.');
-  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1 || !input.operationId.trim()) {
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1
+      || typeof input.mainEnabled !== 'boolean' || typeof input.shipPortalEnabled !== 'boolean' || !input.operationId.trim()) {
     throw new Error('Itinerary rollout 請求格式不正確。');
   }
   const args = {
@@ -120,7 +122,7 @@ export async function updateOwnerItineraryRollout(
     p_expected_version: input.expectedVersion,
     p_operation_id: input.operationId,
     p_main_enabled: input.mainEnabled,
-    p_ship_portal_enabled: false,
+    p_ship_portal_enabled: input.shipPortalEnabled,
     p_role_permissions: disabledRolePermissions(),
   };
   try {
