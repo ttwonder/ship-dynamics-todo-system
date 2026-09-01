@@ -12,4 +12,22 @@ assert.ok(html.indexOf(configMatch[0]) < moduleIndex, 'supabase config must load
 assert.ok(fs.existsSync('dist/supabase-config.js'), 'production build must copy public/supabase-config.js');
 assert.ok(fs.statSync('dist/supabase-config.js').size > 0, 'built Supabase config must not be empty');
 
+const assetDirectory = 'dist/assets';
+const cssAssets = fs.readdirSync(assetDirectory).filter(name => name.endsWith('.css'));
+assert.ok(cssAssets.length > 0, 'production build must emit CSS assets');
+const builtCss = cssAssets.map(name => fs.readFileSync(`${assetDirectory}/${name}`, 'utf8')).join('\n');
+const findCssRule = selector => {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return builtCss.match(new RegExp(`${escaped}\\{[^}]*\\}`))?.[0] || '';
+};
+const assertRuleIncludes = (selector, declarations) => {
+  const rule = findCssRule(selector);
+  assert.ok(rule, `production CSS must include ${selector}`);
+  for (const declaration of declarations) assert.ok(rule.includes(declaration), `${selector} must retain ${declaration}`);
+};
+assertRuleIncludes('.itinerary-calendar-controls', ['font-size:12px', 'min-height:42px']);
+assertRuleIncludes('.itinerary-calendar-day-track', ['height:36px', 'background:#243142', 'color:#f8fafc']);
+assertRuleIncludes('.itinerary-calendar-event', ['height:28px', 'background:#176b5b', 'color:#fff', 'font-size:12px']);
+assert.doesNotMatch(builtCss, /@media\(prefers-color-scheme:dark\)\{\.itinerary-calendar/, 'production CSS must not restore the partial dark calendar override');
+
 console.log('itinerary_build_output=PASS');

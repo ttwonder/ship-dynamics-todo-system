@@ -110,26 +110,26 @@
 }
 @media(max-width:480px){.itinerary-auth-dialog>label{grid-template-columns:1fr;gap:3px;white-space:normal}}
 
-.itinerary-calendar{display:grid;gap:5px;min-width:0}
-.itinerary-calendar-controls{display:flex;align-items:center;gap:6px;min-height:34px;padding:4px 6px;border:1px solid var(--line);border-radius:8px;background:var(--panel);font-size:9px}
-.itinerary-calendar-controls>label{display:flex;align-items:center;gap:3px;white-space:nowrap;font-weight:800}
-.itinerary-calendar-controls input[type=date],.itinerary-calendar-controls input[list],.itinerary-calendar-controls select{height:24px;border:1px solid var(--line);border-radius:4px;background:var(--panel);padding:1px 4px;color:inherit;font:inherit}
-.itinerary-calendar-controls input[type=range]{width:86px}
-.itinerary-calendar-fields{display:flex;align-items:center;gap:5px;margin-left:auto;white-space:nowrap}
-.itinerary-calendar-fields label{display:flex;align-items:center;gap:2px}
+.itinerary-calendar{display:grid;gap:7px;min-width:0}
+.itinerary-calendar-controls{display:flex;align-items:center;gap:8px;min-height:42px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);font-size:12px;line-height:1.25}
+.itinerary-calendar-controls>label{display:flex;align-items:center;gap:4px;white-space:nowrap;font-weight:800}
+.itinerary-calendar-controls input[type=date],.itinerary-calendar-controls input[list],.itinerary-calendar-controls select{height:30px;border:1px solid var(--line);border-radius:5px;background:var(--panel);padding:2px 6px;color:inherit;font:inherit}
+.itinerary-calendar-controls input[type=range]{width:110px}
+.itinerary-calendar-fields{display:flex;align-items:center;gap:8px;margin-left:auto;white-space:nowrap}
+.itinerary-calendar-fields label{display:flex;align-items:center;gap:3px}
+.itinerary-calendar-fields input[type=checkbox]{width:15px;height:15px}
 .itinerary-calendar-scroll{overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel);scrollbar-gutter:stable}
-.itinerary-calendar-grid{min-width:100%;font-size:9px}
-.itinerary-calendar-axis,.itinerary-calendar-row{display:flex;min-height:26px;border-bottom:1px solid var(--line)}
+.itinerary-calendar-grid{min-width:100%;font-size:12px;line-height:1.25}
+.itinerary-calendar-axis,.itinerary-calendar-row{display:flex;min-height:36px;border-bottom:1px solid var(--line)}
 .itinerary-calendar-axis{position:sticky;top:0;z-index:4;background:var(--panel)}
-.itinerary-calendar-vessel-label{position:sticky;left:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:4px;width:164px;min-width:164px;padding:2px 5px;border-right:1px solid var(--line);background:var(--panel);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.itinerary-calendar-vessel-label{position:sticky;left:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:6px;width:164px;min-width:164px;padding:4px 8px;border-right:1px solid var(--line);background:var(--panel);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .itinerary-calendar-vessel-label b{overflow:hidden;text-overflow:ellipsis}
-.itinerary-calendar-vessel-label span{color:var(--muted)}
-.itinerary-calendar-day-track{display:flex;height:26px;background:#edf2f6}
-.itinerary-calendar-day-track span{display:flex;align-items:center;justify-content:center;flex:0 0 auto;border-right:1px solid var(--line);font-weight:800}
-.itinerary-calendar-track{position:relative;height:26px;background-image:linear-gradient(to right,transparent calc(100% - 1px),var(--line) calc(100% - 1px));background-repeat:repeat-x}
-.itinerary-calendar-event{position:absolute;top:3px;height:20px;min-width:20px;overflow:hidden;border-radius:4px;background:#dff4ed;color:#0d5d4c;padding:2px 4px;white-space:nowrap;text-overflow:ellipsis;line-height:16px}
-.itinerary-calendar-event.unloading{background:#e7edff;color:#304e9e}
-.itinerary-calendar-event span{margin-left:4px;font-size:8px;opacity:.82}
-.itinerary-calendar-no-events{padding:9px;color:var(--muted)}
+.itinerary-calendar-vessel-label span{color:#596579;font-weight:700}
+.itinerary-calendar-day-track{display:flex;height:36px;background:#243142;color:#f8fafc}
+.itinerary-calendar-day-track span{display:flex;align-items:center;justify-content:center;flex:0 0 auto;border-right:1px solid #526175;font-weight:800}
+.itinerary-calendar-track{position:relative;height:36px;background-image:linear-gradient(to right,transparent calc(100% - 1px),var(--line) calc(100% - 1px));background-repeat:repeat-x}
+.itinerary-calendar-event{position:absolute;box-sizing:border-box;top:4px;height:28px;min-width:28px;overflow:hidden;border-radius:5px;background:#176b5b;color:#fff;padding:4px 7px;white-space:nowrap;text-overflow:ellipsis;line-height:20px;font-size:12px;font-weight:700;box-shadow:0 1px 2px rgba(15,23,42,.18)}
+.itinerary-calendar-event.unloading{background:#3657a7;color:#fff}
+.itinerary-calendar-event span{margin-left:6px;font-size:11px;font-weight:600;opacity:1}
+.itinerary-calendar-no-events{padding:11px;color:var(--muted);font-size:12px}
 @media(max-width:850px){.itinerary-calendar-controls{align-items:flex-start;flex-wrap:wrap}.itinerary-calendar-fields{width:100%;margin-left:0;overflow:auto}.itinerary-calendar-vessel-label{width:126px;min-width:126px}}
-@media(prefers-color-scheme:dark){.itinerary-calendar-day-track{background:#243142}.itinerary-calendar-event{background:#173b33;color:#8be1c9}.itinerary-calendar-event.unloading{background:#26365f;color:#b6c6ff}}
