@@ -14,6 +14,8 @@ import { PublicItineraryCloudRepository, type PublicItineraryVessel } from './it
 import { pendingOperationForDocument } from './itineraryOperation';
 import { selectLatestItineraryDocument } from './itineraryFreshness';
 import ShipItineraryEditor from './ShipItineraryEditor';
+import { dashboardVesselDisplayName } from '../vesselDisplay';
+import { ITINERARY_MAIN_FIELD_LABELS } from './itineraryFieldLayout';
 
 interface EditorState {
   draft: ItineraryDocument;
@@ -45,6 +47,12 @@ function saveError(code: string): string {
   if (code === 'invalid-document') return '欄位未通過檢查，請補齊後再保存。';
   if (code === 'unknown-outcome') return '保存結果仍無法確認；草稿與相同操作識別已保留，可重試相同內容。';
   return '保存未完成，草稿仍保留。';
+}
+
+function withPublicVesselName(document: ItineraryDocument, vessel?: PublicItineraryVessel): ItineraryDocument {
+  if (!vessel) return document;
+  const vesselName = dashboardVesselDisplayName(vessel);
+  return document.vesselName === vesselName ? document : { ...document, vesselName };
 }
 
 export default function ShipItineraryPortal() {
@@ -90,7 +98,9 @@ export default function ShipItineraryPortal() {
     void Promise.resolve(backend.loadDocument(selectedVesselId)).then(document => {
       if (!current) return;
       const vessel = vessels.find(item => item.id === selectedVesselId);
-      const loaded = document || createEmptyItineraryDocument({ workspaceKey: cloudBackend?.config.workspaceKey || 'local-itinerary-demo', vesselId: selectedVesselId, vesselName: vessel?.name || selectedVesselId });
+      const loaded = document
+        ? withPublicVesselName(document, vessel)
+        : createEmptyItineraryDocument({ workspaceKey: cloudBackend?.config.workspaceKey || 'local-itinerary-demo', vesselId: selectedVesselId, vesselName: vessel ? dashboardVesselDisplayName(vessel) : selectedVesselId });
       setLatest(previous => selectLatestItineraryDocument(previous, loaded));
     }).catch(error => { if (current) setNotice(error instanceof Error ? error.message : 'Itinerary 載入失敗。'); });
     return () => { current = false; };
@@ -101,8 +111,9 @@ export default function ShipItineraryPortal() {
     let current = true;
     const publish = (document: ItineraryDocument | null) => {
       if (!current || !document) return;
-      setLatest(previous => selectLatestItineraryDocument(previous, document));
-      setEditor(previous => previous && document.revision > previous.baseRevision ? { ...previous, readOnly: true, remoteUpdated: true } : previous);
+      const displayed = withPublicVesselName(document, vessels.find(vessel => vessel.id === selectedVesselId));
+      setLatest(previous => selectLatestItineraryDocument(previous, displayed));
+      setEditor(previous => previous && displayed.revision > previous.baseRevision ? { ...previous, readOnly: true, remoteUpdated: true } : previous);
     };
     const onStorage = (event: StorageEvent) => {
       if (!localBackend || event.key !== localBackend.documentKey(selectedVesselId)) return;
@@ -164,7 +175,7 @@ export default function ShipItineraryPortal() {
     let editingBase: ItineraryDocument;
     try {
       const reloaded = await Promise.resolve(backend.loadDocument(latest.vesselId));
-      editingBase = selectLatestItineraryDocument(latest, reloaded) || latest;
+      editingBase = withPublicVesselName(selectLatestItineraryDocument(latest, reloaded) || latest, vessels.find(vessel => vessel.id === latest.vesselId));
     } catch (error) {
       await Promise.resolve(backend.releaseLease(claim.lease));
       setNotice(error instanceof Error ? error.message : '取得最新 Itinerary 失敗，未開啟編輯器。');
@@ -212,7 +223,7 @@ export default function ShipItineraryPortal() {
     }
     await deleteItineraryDraft(itineraryDraftKey(result.document.workspaceKey, result.document.vesselId, draftActorId));
     void backend.releaseLease(editor.lease);
-    setLatest(result.document);
+    setLatest(withPublicVesselName(result.document, vessels.find(vessel => vessel.id === result.document.vesselId)));
     setEditor(null);
     setNotice(`已保存並同步 Revision ${result.document.revision}。`);
   };
@@ -247,7 +258,7 @@ export default function ShipItineraryPortal() {
     let editingBase: ItineraryDocument;
     try {
       const reloaded = await Promise.resolve(backend.loadDocument(latest.vesselId));
-      editingBase = selectLatestItineraryDocument(latest, reloaded) || latest;
+      editingBase = withPublicVesselName(selectLatestItineraryDocument(latest, reloaded) || latest, vessels.find(vessel => vessel.id === latest.vesselId));
     } catch (error) {
       await Promise.resolve(backend.releaseLease(claim.lease));
       setNotice(error instanceof Error ? error.message : '取得最新 Itinerary 失敗，原草稿已保留。');
@@ -282,10 +293,10 @@ export default function ShipItineraryPortal() {
   if (!backend) return <main className="ship-portal-shell"><div className="ship-state-card"><h1>船端服務設定不完整</h1><p>目前無法建立受限 Itinerary RPC 連線，未讀取或寫入資料。</p></div></main>;
 
   return <main className="ship-portal-shell">
-    <header className="ship-portal-header"><div>{rollout.demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{rollout.demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div><div className="ship-vessel-picker"><label>船名</label><select value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vessels.map(vessel => <option value={vessel.id} key={vessel.id}>{vessel.name}</option>)}</select></div></header>
+    <header className="ship-portal-header"><div>{rollout.demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{rollout.demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div><div className="ship-vessel-picker"><label>船名</label><select value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vessels.map(vessel => <option value={vessel.id} key={vessel.id}>{dashboardVesselDisplayName(vessel)}</option>)}</select></div></header>
     {notice && <div className="ship-notice">{notice}</div>}
     {!selectedVesselId && <div className="ship-state-card compact"><b>先選擇船名</b><span>再選擇從空白或最新狀態開始。</span></div>}
-    {selectedVesselId && latest && !editor && <section className="ship-latest-card"><div className="ship-latest-head"><div><h2>{latest.vesselName}</h2><span>{formatRelativeUpdatedAt(latest.updatedAt)}｜Revision {latest.revision}</span></div><div><button className="btn ghost small" onClick={() => void exportDocument(latest, 'Itinerary')}>匯出最新 Excel</button><button className="btn ghost small" title="下載 Excel 並開啟郵件；附件需手動加入" onClick={() => void prepareEmailReport(latest)}>準備郵件報告</button><button className="btn ghost small" onClick={() => void startEditing('blank')}>從空白開始</button><button className="btn primary small" onClick={() => void startEditing('latest')}>從最新狀態修改</button></div></div><div className="ship-latest-scroll"><table><thead><tr><th>Voy</th><th>Port</th><th>L/U</th><th>ETA</th><th>ETB</th><th>ETC</th><th>ETD</th></tr></thead><tbody>{latest.rows.map(row => <tr key={row.rowId}><td>{row.voyageNumber || '—'}</td><td>{row.portDockName || '—'}</td><td>{row.operation || '—'}</td><td>{localTime(row.etaUtc, row.portTimeZone)}</td><td>{localTime(row.etbUtc, row.portTimeZone)}</td><td>{localTime(row.etcUtc, row.portTimeZone)}</td><td>{localTime(row.etdUtc, row.portTimeZone)}</td></tr>)}</tbody></table></div></section>}
+    {selectedVesselId && latest && !editor && <section className="ship-latest-card"><div className="ship-latest-head"><div><h2>{latest.vesselName}</h2><span>{formatRelativeUpdatedAt(latest.updatedAt)}｜Revision {latest.revision}</span></div><div><button className="btn ghost small" onClick={() => void exportDocument(latest, 'Itinerary')}>匯出最新 Excel</button><button className="btn ghost small" title="下載 Excel 並開啟郵件；附件需手動加入" onClick={() => void prepareEmailReport(latest)}>準備郵件報告</button><button className="btn ghost small" onClick={() => void startEditing('blank')}>從空白開始</button><button className="btn primary small" onClick={() => void startEditing('latest')}>從最新狀態修改</button></div></div><div className="ship-latest-scroll"><table><thead><tr>{ITINERARY_MAIN_FIELD_LABELS.map(label=><th key={label}>{label}</th>)}</tr></thead><tbody>{latest.rows.map(row => <tr key={row.rowId}><td>{row.voyageNumber || '—'}</td><td>{row.portDockName || '—'}</td><td>{row.operation || '—'}</td><td className="ship-latest-multiline">{row.cargoQuantityText || '—'}</td><td>{localTime(row.etaUtc, row.portTimeZone)}</td><td>{localTime(row.etbUtc, row.portTimeZone)}</td><td>{row.ldRateText || '—'}</td><td>{localTime(row.etcUtc, row.portTimeZone)}</td><td>{localTime(row.etdUtc, row.portTimeZone)}</td><td className="ship-latest-multiline">{row.arrivalDraftText || '—'}</td><td className="ship-latest-multiline">{row.departureDraftText || '—'}</td><td className="ship-latest-multiline">{row.arrivalRobText || '—'}</td><td className="ship-latest-multiline">{row.departureRobText || '—'}</td></tr>)}</tbody></table></div></section>}
     {editor && <><div className="ship-edit-toolbar"><b>{editor.draft.vesselName}</b><span>基準 Revision {editor.baseRevision}</span><button className="btn ghost small" disabled={editor.readOnly} onClick={() => fileInputRef.current?.click()}>匯入單船 Excel</button><button className="btn ghost small" onClick={() => void exportDocument(editor.draft, 'Itinerary_Draft')}>匯出草稿</button><input ref={fileInputRef} className="itinerary-file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => { const file = event.target.files?.[0]; if (file) void importFile(file); }} /></div><ShipItineraryEditor document={editor.draft} readOnly={editor.readOnly} canSave={hasShipDraftBusinessContent(editor.draft)} remoteUpdated={editor.remoteUpdated} saving={saving} onChange={draft => setEditor(previous => previous ? { ...previous, draft, dirty: true, pendingOperation: undefined } : previous)} onSave={() => void saveEditor()} onCancel={() => void discardEditor()} onClosePreservingDraft={closeEditor} onDiscardDraft={() => void discardEditor()} onSyncLatest={syncLatest} onExportDraft={() => void exportDocument(editor.draft, 'Itinerary_Conflict_Draft')} /></>}
   </main>;
 }

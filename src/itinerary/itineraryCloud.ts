@@ -71,7 +71,7 @@ function saveFailure(error: unknown): ItinerarySaveResult {
   return { ok: false, code: 'unknown-outcome', message: text };
 }
 
-export interface PublicItineraryVessel { id: string; name: string; shortName: string }
+export interface PublicItineraryVessel { id: string; name: string; shortName: string; fullName: string }
 
 export interface ItineraryOwnerRolloutUpdateInput {
   expectedVersion: number;
@@ -227,7 +227,7 @@ export class PublicItineraryCloudRepository {
 
   async listVessels(): Promise<PublicItineraryVessel[]> {
     const values = await rpc<Array<Record<string, unknown>>>(this.client, 'sd_itinerary_public_list_vessels', { p_workspace_key: this.config.workspaceKey });
-    return values.map(value => ({ id: String(value.id), name: String(value.name), shortName: String(value.shortName || '') }));
+    return values.map(value => ({ id: String(value.id), name: String(value.name), shortName: String(value.shortName || ''), fullName: String(value.fullName || '') }));
   }
   async loadDocument(vesselId: string) {
     return parseDocument(await rpc(this.client, 'sd_itinerary_public_load', { p_workspace_key: this.config.workspaceKey, p_vessel_id: vesselId }));

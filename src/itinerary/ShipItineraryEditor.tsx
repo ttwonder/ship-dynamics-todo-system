@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { recalculateItineraryRows } from './itineraryDomain';
 import { instantToWallTime, wallTimeToInstant } from './itineraryTime';
-import { addShipDraftRow, removeShipDraftRow, updateShipDraftRow } from './shipItineraryModel';
+import { ITINERARY_MAIN_FIELD_LABELS, ITINERARY_PARAMETER_FIELD_LABELS } from './itineraryFieldLayout';
+import { addShipDraftRow, removeShipDraftRow, setAllShipTimesManual, setShipAutomaticCalculation, updateShipDraftRow } from './shipItineraryModel';
 import type { ItineraryDocument, ItineraryRow, ItineraryTimeMode } from './itineraryTypes';
 import UtcOffsetSelect from './UtcOffsetSelect';
 
@@ -44,51 +45,99 @@ function TimeInput({ row, field, allowAuto, disabled, onPatch }: { row: Itinerar
     if (result.ok) onPatch({ [field]: result.instant, [modeField]: 'manual' } as Partial<ItineraryRow>);
   };
   const automatic = mode === 'auto';
+  const modeLabel = automatic ? '自' : '手';
   return <div className="ship-time-input">
-    <button type="button" className={`ship-mode ${automatic ? 'auto' : 'manual'}`} disabled={disabled || !allowAuto} onClick={() => onPatch({ [modeField]: automatic ? 'manual' : 'auto' } as Partial<ItineraryRow>)}>{automatic ? 'A' : 'M'}</button>
+    <button type="button" className={`ship-mode ${automatic ? 'auto' : 'manual'}`} title={allowAuto ? automatic ? '自動計算；點擊改為手動' : '手動輸入；點擊改為自動' : '第一列 ETA 必須手動輸入'} aria-label={allowAuto ? automatic ? '切換為手動輸入' : '切換為自動計算' : '第一列 ETA 手動輸入'} disabled={disabled || !allowAuto} onClick={() => onPatch({ [modeField]: automatic ? 'manual' : 'auto' } as Partial<ItineraryRow>)}>{modeLabel}</button>
     <input type="date" value={wall?.date || ''} disabled={disabled || automatic} onChange={event => applyWall(event.target.value, wall?.time || '00:00')} />
     <input type="time" value={wall?.time || ''} disabled={disabled || automatic || !wall?.date} onChange={event => applyWall(wall?.date || '', event.target.value)} />
   </div>;
 }
 
+function gapMessage(missing: Array<{ rowNumber: number; label: string }>): string {
+  const grouped = new Map<number, string[]>();
+  missing.forEach(item => grouped.set(item.rowNumber, [...(grouped.get(item.rowNumber) || []), item.label]));
+  return [...grouped.entries()].map(([row, labels]) => `第 ${row} 列：${[...new Set(labels)].join('、')}`).join('\n');
+}
+
 export default function ShipItineraryEditor({ document, readOnly, canSave, remoteUpdated, saving, onChange, onSave, onCancel, onClosePreservingDraft, onDiscardDraft, onSyncLatest, onExportDraft }: ShipItineraryEditorProps) {
+  const [modeMessage, setModeMessage] = useState('');
   const calculation = useMemo(() => recalculateItineraryRows(document.rows), [document.rows]);
   const patchRow = (rowId: string, patch: Partial<ItineraryRow>) => onChange(updateShipDraftRow(document, rowId, patch));
+
+  const switchAllManual = () => {
+    if (!window.confirm('切換後，所有 ETA／ETB／ETC／ETD 都改為手動輸入；修改右側參數將不再更新這些時間。確定繼續嗎？')) return;
+    onChange(setAllShipTimesManual(document));
+    setModeMessage('已切換為全手動輸入；目前計算結果已保留為手動值。');
+  };
+
+  const calculateAllAutomatic = () => {
+    const result = setShipAutomaticCalculation(document);
+    onChange(result.document);
+    if (result.missing.length) {
+      const details = gapMessage(result.missing);
+      setModeMessage(`自動計算尚缺資料：\n${details}`);
+      window.alert(`自動計算尚缺以下資料：\n${details}\n\n請補填後再按一次「一鍵自動計算」，或將個別時間欄切換為「手」。`);
+      return;
+    }
+    setModeMessage('自動計算完成；後續修改右側參數時，標示「自」的時間會立即重算。');
+  };
 
   return <section className="ship-editor" aria-label="船端 Itinerary 編輯器">
     {remoteUpdated && <div className="ship-conflict-banner"><b>辦公室已有更新，保存已暫停。</b><span>目前草稿仍在本機；先匯出草稿或直接載入最新，再繼續。</span><div><button className="btn ghost small" onClick={onExportDraft}>匯出目前草稿</button><button className="btn primary small" onClick={onSyncLatest}>同步最新</button></div></div>}
     {readOnly && !remoteUpdated && <div className="ship-conflict-banner"><b>編輯鎖已失效，畫面已凍結。</b><span>草稿仍保留，不會自動覆蓋雲端。</span></div>}
-    <div className="ship-editor-scroll">
-      <table className="ship-editor-table">
-        <thead><tr><th>#</th><th>A Voy</th><th>B Port & Dock</th><th>C L/U</th><th>D Qty</th><th>E ETA</th><th>F ETB</th><th>G L/D rate</th><th>H ETC</th><th>I ETD</th><th>J Arr Draft</th><th>K Dep Draft</th><th>L arr ROB</th><th>M dep ROB</th><th>N UTC Offset</th><th>O Dist nm</th><th>P Speed kt</th><th>Q Sail h</th><th>R Wait h</th><th>S Tanks</th><th>T Qty MT</th><th>U Rate</th><th>V Op h</th><th>W Buffer d</th><th></th></tr></thead>
-        <tbody>{document.rows.map((row, index) => <tr key={row.rowId}>
-          <td className="ship-row-number">{index + 1}</td>
-          <td><input value={row.voyageNumber} disabled={readOnly} onChange={event => patchRow(row.rowId, { voyageNumber: event.target.value })} /></td>
-          <td><input value={row.portDockName} disabled={readOnly} onChange={event => patchRow(row.rowId, { portDockName: event.target.value })} /></td>
-          <td><select value={row.operation} disabled={readOnly} onChange={event => patchRow(row.rowId, { operation: event.target.value as ItineraryRow['operation'] })}><option value="">—</option><option value="Loading">Loading</option><option value="Unloading">Unloading</option></select></td>
-          <td><input value={row.cargoQuantityText} disabled={readOnly} onChange={event => patchRow(row.rowId, { cargoQuantityText: event.target.value })} /></td>
-          <td><TimeInput row={row} field="etaUtc" allowAuto={index > 0} disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
-          <td><TimeInput row={row} field="etbUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
-          <td><input value={row.ldRateText} disabled={readOnly} onChange={event => patchRow(row.rowId, { ldRateText: event.target.value })} /></td>
-          <td><TimeInput row={row} field="etcUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
-          <td><TimeInput row={row} field="etdUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
-          <td><input value={row.arrivalDraftText} disabled={readOnly} onChange={event => patchRow(row.rowId, { arrivalDraftText: event.target.value })} /></td>
-          <td><input value={row.departureDraftText} disabled={readOnly} onChange={event => patchRow(row.rowId, { departureDraftText: event.target.value })} /></td>
-          <td><input value={row.arrivalRobText} disabled={readOnly} onChange={event => patchRow(row.rowId, { arrivalRobText: event.target.value })} /></td>
-          <td><input value={row.departureRobText} disabled={readOnly} onChange={event => patchRow(row.rowId, { departureRobText: event.target.value })} /></td>
-          <td><UtcOffsetSelect value={row.portTimeZone} disabled={readOnly} onChange={value => patchRow(row.rowId, { portTimeZone: value })} /></td>
-          <td><input type="number" min="0" value={row.oceanDistanceNm ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { oceanDistanceNm: numeric(event.target.value) })} /></td>
-          <td><input type="number" min="0" step="0.1" value={row.speedKnots ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { speedKnots: numeric(event.target.value) })} /></td>
-          <td className="ship-derived">{row.sailingHours ?? '—'}</td>
-          <td><input type="number" min="0" step="0.1" value={row.berthWaitHours ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { berthWaitHours: numeric(event.target.value) })} /></td>
-          <td><input value={row.tanksText} disabled={readOnly} onChange={event => patchRow(row.rowId, { tanksText: event.target.value })} /></td>
-          <td><input type="number" min="0" step="0.1" value={row.operationQuantityMt ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { operationQuantityMt: numeric(event.target.value) })} /></td>
-          <td><input type="number" min="0" step="0.1" value={row.operationRateMtPerHour ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { operationRateMtPerHour: numeric(event.target.value) })} /></td>
-          <td className="ship-derived">{row.operationHours === null ? '—' : row.operationHours.toFixed(1)}</td>
-          <td><input type="number" min="0" step="0.05" value={row.departureBufferDays ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { departureBufferDays: numeric(event.target.value) })} /></td>
-          <td><button type="button" className="ship-row-delete" disabled={readOnly || document.rows.length <= 1} onClick={() => onChange(removeShipDraftRow(document, row.rowId))}>×</button></td>
-        </tr>)}</tbody>
-      </table>
+    <div className="ship-editor-mode-bar">
+      <div><b>計算模式</b><span>單一時間欄可用「自／手」切換</span></div>
+      <button type="button" className="btn ghost small" disabled={readOnly} onClick={switchAllManual}>全部手動輸入</button>
+      <button type="button" className="btn primary small" disabled={readOnly} onClick={calculateAllAutomatic}>一鍵自動計算</button>
+      {modeMessage && <span className="ship-mode-message" role="status">{modeMessage}</span>}
+    </div>
+    <div className="ship-editor-workspace">
+      <section className="ship-editor-pane ship-editor-main-pane" aria-label="輸入與計算區">
+        <header><b>輸入／計算區</b><span>與主頁 Itinerary 欄位一致</span></header>
+        <div className="ship-editor-pane-scroll" tabIndex={0}>
+          <table className="ship-editor-grid ship-editor-main-table">
+            <thead><tr><th>#</th>{ITINERARY_MAIN_FIELD_LABELS.map(label => <th key={label}>{label}</th>)}<th>操作</th></tr></thead>
+            <tbody>{document.rows.map((row, index) => <tr key={row.rowId}>
+              <td className="ship-row-number">{index + 1}</td>
+              <td><input value={row.voyageNumber} disabled={readOnly} onChange={event => patchRow(row.rowId, { voyageNumber: event.target.value })} /></td>
+              <td><input value={row.portDockName} disabled={readOnly} onChange={event => patchRow(row.rowId, { portDockName: event.target.value })} /></td>
+              <td><select value={row.operation} disabled={readOnly} onChange={event => patchRow(row.rowId, { operation: event.target.value as ItineraryRow['operation'] })}><option value="">—</option><option value="Loading">Loading</option><option value="Unloading">Unloading</option></select></td>
+              <td><textarea value={row.cargoQuantityText} disabled={readOnly} onChange={event => patchRow(row.rowId, { cargoQuantityText: event.target.value })} /></td>
+              <td><TimeInput row={row} field="etaUtc" allowAuto={index > 0} disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
+              <td><TimeInput row={row} field="etbUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
+              <td><input value={row.ldRateText} disabled={readOnly} onChange={event => patchRow(row.rowId, { ldRateText: event.target.value })} /></td>
+              <td><TimeInput row={row} field="etcUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
+              <td><TimeInput row={row} field="etdUtc" allowAuto disabled={readOnly} onPatch={patch => patchRow(row.rowId, patch)} /></td>
+              <td><textarea value={row.arrivalDraftText} disabled={readOnly} onChange={event => patchRow(row.rowId, { arrivalDraftText: event.target.value })} /></td>
+              <td><textarea value={row.departureDraftText} disabled={readOnly} onChange={event => patchRow(row.rowId, { departureDraftText: event.target.value })} /></td>
+              <td><textarea value={row.arrivalRobText} disabled={readOnly} onChange={event => patchRow(row.rowId, { arrivalRobText: event.target.value })} /></td>
+              <td><textarea value={row.departureRobText} disabled={readOnly} onChange={event => patchRow(row.rowId, { departureRobText: event.target.value })} /></td>
+              <td><button type="button" className="ship-row-delete" disabled={readOnly || document.rows.length <= 1} onClick={() => onChange(removeShipDraftRow(document, row.rowId))}>×</button></td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section className="ship-editor-pane ship-editor-parameter-pane" aria-label="自動計算參數區">
+        <header><b>自動計算用變化參數區</b><span>修改後即時更新「自」欄位</span></header>
+        <div className="ship-editor-pane-scroll" tabIndex={0}>
+          <table className="ship-editor-grid ship-editor-parameter-table">
+            <thead><tr><th>#</th>{ITINERARY_PARAMETER_FIELD_LABELS.map(label => <th key={label}>{label}</th>)}</tr></thead>
+            <tbody>{document.rows.map((row, index) => <tr key={row.rowId}>
+              <td className="ship-row-number">{index + 1}</td>
+              <td><UtcOffsetSelect value={row.portTimeZone} disabled={readOnly} onChange={value => patchRow(row.rowId, { portTimeZone: value })} /></td>
+              <td><input type="number" min="0" value={row.oceanDistanceNm ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { oceanDistanceNm: numeric(event.target.value) })} /></td>
+              <td><input type="number" min="0" step="0.1" value={row.speedKnots ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { speedKnots: numeric(event.target.value) })} /></td>
+              <td className="ship-derived">{row.sailingHours ?? '—'}</td>
+              <td><input type="number" min="0" step="0.1" value={row.berthWaitHours ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { berthWaitHours: numeric(event.target.value) })} /></td>
+              <td><input value={row.tanksText} disabled={readOnly} onChange={event => patchRow(row.rowId, { tanksText: event.target.value })} /></td>
+              <td><input type="number" min="0" step="0.1" value={row.operationQuantityMt ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { operationQuantityMt: numeric(event.target.value) })} /></td>
+              <td><input type="number" min="0" step="0.1" value={row.operationRateMtPerHour ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { operationRateMtPerHour: numeric(event.target.value) })} /></td>
+              <td className="ship-derived">{row.operationHours === null ? '—' : row.operationHours.toFixed(1)}</td>
+              <td><input type="number" min="0" step="0.05" value={row.departureBufferDays ?? ''} disabled={readOnly} onChange={event => patchRow(row.rowId, { departureBufferDays: numeric(event.target.value) })} /></td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      </section>
     </div>
     <div className="ship-editor-footer">
       <button type="button" className="btn ghost small" disabled={readOnly} onClick={() => onChange(addShipDraftRow(document))}>＋ 下一行</button>

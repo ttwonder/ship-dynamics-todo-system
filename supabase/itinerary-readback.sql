@@ -70,6 +70,19 @@ offset_receipt as (
     'rejectOutOfRange', not public.sd_itinerary_utc_offset_valid('UTC+14:15'),
     'rejectNonQuarterHour', not public.sd_itinerary_utc_offset_valid('UTC+5:20')
   ) value
+),
+vessel_name_receipt as (
+  select jsonb_build_object(
+    'activeVesselCount', (select count(*) from public.sd_vessels where is_active),
+    'activeMissingFullNameCount', (select count(*) from public.sd_vessels where is_active and btrim(coalesce(full_name, '')) = ''),
+    'publicListFullNameComplete', coalesce((
+      select bool_and(item ? 'fullName' and btrim(coalesce(item->>'fullName', '')) <> '')
+      from public.sd_itinerary_rollout r
+      join public.sd_workspaces w on w.id = r.workspace_id
+      cross join lateral jsonb_array_elements(public.sd_itinerary_public_list_vessels(w.legacy_key)) item
+      where r.ship_portal_enabled
+    ), true)
+  ) value
 )
 select jsonb_build_object(
   'tables', (select value from table_receipt),
@@ -77,6 +90,7 @@ select jsonb_build_object(
   'rollout', (select value from rollout_receipt),
   'privileges', (select value from privilege_receipt),
   'utcOffsets', (select value from offset_receipt),
+  'vesselNames', (select value from vessel_name_receipt),
   'documentCount', (select count(*) from public.sd_itinerary_documents),
   'historyCount', (select count(*) from public.sd_itinerary_history)
 ) as itinerary_readback;

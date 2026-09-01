@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { formatRelativeUpdatedAt, instantToWallTime } from './itineraryTime';
 import type { ItineraryDocument, ItineraryRow } from './itineraryTypes';
+import { ITINERARY_MAIN_FIELD_LABELS } from './itineraryFieldLayout';
 
 interface ItineraryPanelProps {
   document: ItineraryDocument;
@@ -35,9 +36,7 @@ export default function ItineraryPanel({ document, selected, nowMs, canEdit, onT
     </header>
     <div className="itinerary-table-scroll" tabIndex={0} aria-label={`${document.vesselName} Itinerary`}>
       <table className="itinerary-table">
-        <thead><tr>
-          <th>Voy No.</th><th className="itinerary-port-column">Port &amp; Dock Name</th><th>L / U</th><th>B/F or I/F Qty (MT)</th><th>ETA (LT)</th><th>ETB (LT)</th><th>L/D rate</th><th>ETC (LT)</th><th>ETD (LT)</th><th>Arr Draft</th><th>Dep Draft</th><th>arr ROB</th><th>dep ROB</th>
-        </tr></thead>
+        <thead><tr>{ITINERARY_MAIN_FIELD_LABELS.map((label,index)=><th className={index===1?'itinerary-port-column':undefined} key={label}>{label}</th>)}</tr></thead>
         <tbody>{visibleRows.map(row=><tr key={row.rowId}>
           <td title={row.voyageNumber}>{text(row.voyageNumber)}</td><td className="itinerary-port-column" title={row.portDockName}>{text(row.portDockName)}</td><td>{row.operation || dash}</td><td className="itinerary-multiline" title={row.cargoQuantityText}>{text(row.cargoQuantityText)}</td><td>{localDateTime(row.etaUtc,row)}</td><td>{localDateTime(row.etbUtc,row)}</td><td title={row.ldRateText}>{text(row.ldRateText)}</td><td>{localDateTime(row.etcUtc,row)}</td><td>{localDateTime(row.etdUtc,row)}</td><td title={row.arrivalDraftText}>{text(row.arrivalDraftText)}</td><td title={row.departureDraftText}>{text(row.departureDraftText)}</td><td title={row.arrivalRobText}>{text(row.arrivalRobText)}</td><td title={row.departureRobText}>{text(row.departureRobText)}</td>
         </tr>)}</tbody>

@@ -3,6 +3,18 @@ import { createBlankItineraryRow, createEmptyItineraryDocument, type ItineraryDo
 
 export type ShipDraftStartMode = 'blank' | 'latest';
 
+export interface ShipAutomaticInputGap {
+  rowId: string;
+  rowNumber: number;
+  field: keyof ItineraryRow;
+  label: string;
+}
+
+export interface ShipAutomaticCalculationResult {
+  document: ItineraryDocument;
+  missing: ShipAutomaticInputGap[];
+}
+
 function cloneDocument(document: ItineraryDocument): ItineraryDocument {
   return structuredClone(document);
 }
@@ -42,6 +54,50 @@ export function removeShipDraftRow(document: ItineraryDocument, rowId: string): 
 export function updateShipDraftRow(document: ItineraryDocument, rowId: string, patch: Partial<ItineraryRow>): ItineraryDocument {
   const next = cloneDocument(document);
   next.rows = recalculateItineraryRows(next.rows.map(row => row.rowId === rowId ? { ...row, ...patch } : row)).rows;
+  return next;
+}
+
+export function shipAutomaticInputGaps(rows: readonly ItineraryRow[]): ShipAutomaticInputGap[] {
+  const missing: ShipAutomaticInputGap[] = [];
+  const require = (row: ItineraryRow, rowNumber: number, field: keyof ItineraryRow, label: string, absent: boolean) => {
+    if (absent) missing.push({ rowId: row.rowId, rowNumber, field, label });
+  };
+  rows.forEach((row, index) => {
+    const rowNumber = index + 1;
+    require(row, rowNumber, 'portTimeZone', 'UTC Offset', !row.portTimeZone);
+    if (index === 0) require(row, rowNumber, 'etaUtc', 'ETA', !row.etaUtc);
+    require(row, rowNumber, 'berthWaitHours', '預估等待時間', row.berthWaitHours === null);
+    require(row, rowNumber, 'operationQuantityMt', '裝卸貨量', row.operationQuantityMt === null);
+    require(row, rowNumber, 'operationRateMtPerHour', '裝卸貨速度', row.operationRateMtPerHour === null);
+    require(row, rowNumber, 'departureBufferDays', '預加時間', row.departureBufferDays === null);
+    if (index < rows.length - 1) {
+      require(row, rowNumber, 'oceanDistanceNm', '航程距離', row.oceanDistanceNm === null);
+      require(row, rowNumber, 'speedKnots', '速度', row.speedKnots === null);
+    }
+  });
+  return missing;
+}
+
+export function setShipAutomaticCalculation(document: ItineraryDocument): ShipAutomaticCalculationResult {
+  const next = cloneDocument(document);
+  const rows = next.rows.map((row, index) => ({
+    ...row,
+    etaMode: index === 0 ? 'manual' as const : 'auto' as const,
+    etbMode: 'auto' as const,
+    etcMode: 'auto' as const,
+    etdMode: 'auto' as const,
+  }));
+  const missing = shipAutomaticInputGaps(rows);
+  next.rows = recalculateItineraryRows(rows).rows;
+  return { document: next, missing };
+}
+
+export function setAllShipTimesManual(document: ItineraryDocument): ItineraryDocument {
+  const next = cloneDocument(document);
+  next.rows = recalculateItineraryRows(next.rows).rows.map(row => ({
+    ...row,
+    etaMode: 'manual', etbMode: 'manual', etcMode: 'manual', etdMode: 'manual',
+  }));
   return next;
 }
 

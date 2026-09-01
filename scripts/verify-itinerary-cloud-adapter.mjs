@@ -44,12 +44,12 @@ try {
   assert.ok(officeClient.calls.some(call => call.name === 'sd_itinerary_operation_status_office'));
 
   const publicClient = new FakeClient((name) => {
-    if (name === 'sd_itinerary_public_list_vessels') return { data: [{ id: 'v1', name: 'Vessel One', shortName: 'V1' }], error: null };
+    if (name === 'sd_itinerary_public_list_vessels') return { data: [{ id: 'v1', name: '安華', shortName: 'SA', fullName: 'FPMC S AMBER' }], error: null };
     if (name === 'sd_itinerary_public_load') return { data: { ...serverDocument, updatedActorKind: 'public' }, error: null };
     throw new Error(`unexpected public RPC ${name}`);
   });
   const publicRepo = new cloud.PublicItineraryCloudRepository(config, publicClient, 'public-browser');
-  assert.deepEqual(await publicRepo.listVessels(), [{ id: 'v1', name: 'Vessel One', shortName: 'V1' }]);
+  assert.deepEqual(await publicRepo.listVessels(), [{ id: 'v1', name: '安華', shortName: 'SA', fullName: 'FPMC S AMBER' }]);
   const publicDoc = await publicRepo.loadDocument('v1');
   assert.equal(publicDoc.updatedActorKind, 'vessel');
   assert.equal(publicDoc.updatedAt, '2026-08-31T00:00:00Z');

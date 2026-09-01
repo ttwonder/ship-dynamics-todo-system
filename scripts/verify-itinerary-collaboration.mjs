@@ -101,7 +101,7 @@ try {
   const dashboardSource = fs.readFileSync('src/itinerary/ItineraryDashboard.tsx', 'utf8');
   const shipPortalSource = fs.readFileSync('src/itinerary/ShipItineraryPortal.tsx', 'utf8');
   assert.match(dashboardSource, /mergeLatestItineraryDocuments\(previous,\s*materialized\)/, 'office polling must merge revisions monotonically');
-  assert.match(shipPortalSource, /selectLatestItineraryDocument\(previous,\s*document\)/, 'ship polling must merge revisions monotonically');
+  assert.match(shipPortalSource, /selectLatestItineraryDocument\(previous,\s*displayed\)/, 'ship polling must project the display name and merge revisions monotonically');
   assert.ok(storage.keys().every(key => key.startsWith('ship-dynamics-itinerary/demo/')));
 
   console.log('itinerary_local_collaboration=PASS');
