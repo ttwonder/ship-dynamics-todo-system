@@ -91,7 +91,12 @@ function uniqueSheetName(value: string, used: Set<string>): string {
 }
 
 function copyTemplateLayout(source: ExcelJS.Worksheet, target: ExcelJS.Worksheet, maxRow: number): void {
-  target.properties = cloneStyle(source.properties);
+  const properties = cloneStyle(source.properties) as Partial<ExcelJS.WorksheetProperties>;
+  // ExcelJS serializes pageSetUpPr before outlinePr, which violates the OOXML
+  // sequence and makes Microsoft Excel discard the whole worksheet. The copied
+  // outline values are Excel's defaults, so omit that redundant node.
+  delete properties.outlineProperties;
+  Object.assign(target.properties, properties);
   target.pageSetup = cloneStyle(source.pageSetup);
   target.headerFooter = cloneStyle(source.headerFooter);
   target.views = [{ state: 'frozen', ySplit: 3, topLeftCell: 'A4', activeCell: 'A4', showGridLines: false, zoomScale: 90, zoomScaleNormal: 100 }];

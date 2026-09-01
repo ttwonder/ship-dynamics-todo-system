@@ -102,8 +102,16 @@ try {
   assert.match(offsetLookupRange, /_Itinerary_Meta.*\$H\$2:\$I\$/);
   assert.equal(workbook.worksheets[2].getCell('H2').value, UTC_OFFSET_OPTIONS[0]);
   assert.equal(workbook.worksheets[2].getCell(1 + UTC_OFFSET_OPTIONS.length, 8).value, UTC_OFFSET_OPTIONS.at(-1));
-  const workbookXml = await (await JSZip.loadAsync(output)).file('xl/workbook.xml').async('string');
+  const outputZip = await JSZip.loadAsync(output);
+  const workbookXml = await outputZip.file('xl/workbook.xml').async('string');
   assert.match(workbookXml, /<calcPr[^>]*fullCalcOnLoad="1"/, 'Excel must fully recalculate live offset helpers on open');
+  for (const sheetNumber of [1, 2]) {
+    const worksheetXml = await outputZip.file(`xl/worksheets/sheet${sheetNumber}.xml`).async('string');
+    const sheetProperties = worksheetXml.match(/<sheetPr>.*?<\/sheetPr>/)?.[0] || '';
+    const outlineIndex = sheetProperties.indexOf('<outlinePr');
+    const pageSetupIndex = sheetProperties.indexOf('<pageSetUpPr');
+    assert.ok(outlineIndex < 0 || pageSetupIndex < 0 || outlineIndex < pageSetupIndex, `sheet${sheetNumber}.xml must not place outlinePr after pageSetUpPr because Microsoft Excel discards that worksheet`);
+  }
   assert.equal(workbook.worksheets[0].getCell('R4').value.formula.includes('P4/Q4'), true);
   assert.equal(workbook.worksheets[0].getCell('R4').value.formula.includes('ROUNDUP'), false);
   assert.equal(workbook.worksheets[0].getCell('E4').value.formula.includes('AE4'), true);
