@@ -94,7 +94,7 @@ interface ItineraryDocument {
 | AD 首列 ETA 起算時間(LT) | `calculationStartUtc` | Excel 顯示 LT，canonical 保存 UTC instant |
 | AE 首列 ETA 起算 UTC Offset | `calculationStartTimeZone` | 固定 UTC Offset；起算時間存在時不可空 |
 
-`departureBufferDays` 僅保留舊 v1 row／Excel 匯入相容；載入時換算為 `postCompletionDelayHours = days * 24`，新 UI 不再顯示或寫入天數。
+`departureBufferDays` 僅保留舊 v1 row／Excel 匯入相容；只有 v2 欄位不存在時才換算為 `postCompletionDelayHours = days * 24`。v2 明確空白代表 0，不可重新套回舊天數；新 UI 不再顯示或寫入天數。
 
 時間欄另有 `etaMode/etbMode/etcMode/etdMode: 'auto' | 'manual'`。人工覆寫後上游變更不得覆蓋；切回 auto 才重新加入計算鏈。
 
@@ -112,7 +112,7 @@ etd_utc = etc_utc + post_completion_delay_hours
 
 - 未填的時長參數按 `0` 參與可用的自動計算；DTG／航速或數量／rate 任一不全時，對應 derived duration 為 null、在公式中按 0，不阻止其他已有參數計算。
 - UTC instant 是 authority；四個 LT 各自使用顯式 Offset，空值則跟隨港口 Offset。修改 Offset 時保留使用者看到的 LT 鐘面時間，再重算 UTC instant。
-- 第一列 ETA 可手動，也可由明確輸入的起算時間＋起算 Offset 自動計算；後續 ETA 使用前列 ETD 加本列剩餘航行時間。
+- 第一列 ETA 可手動，也可由明確輸入的起算時間＋起算 Offset 自動計算；anchor 只可存在第一列，刪除第一列時轉移給新的第一列；後續 ETA 使用前列 ETD 加本列剩餘航行時間。
 - `speed/rate <= 0`、Offset 無效或 auto 鏈缺少必要基準 instant 時顯示原因，不生成偽造時間。
 - ROB 維持人工輸入；DTG 由船端輸入海上剩餘里程，不以一般地圖直線距離代替。
 
@@ -131,8 +131,8 @@ etd_utc = etc_utc + post_completion_delay_hours
 
 ### 7.1 已驗證模板
 
-- 原始模板仍為 A:W；v2 匯出延伸至 AJ，其中 AF:AJ 為隱藏 Offset helper，print area 仍只含 A:M。
-- 全 workbook：160 個公式、31 個資料驗證。
+- 原始模板仍為 A:W；v2 匯出延伸至 AJ，其中 AF:AJ 為隱藏 Offset helper，print area 仍只含 A:M。Offset 下拉使用 very-hidden 命名範圍；helper 以可見 Offset 儲存格的 `VLOOKUP` 公式即時重算，而非匯出時常數。
+- 主時間公式、Offset helper 公式與下拉驗證均納入 round-trip contract。
 - ExcelJS 4.4.0 critical round-trip PASS：公式與 cached result、驗證、merge、列高、A:M 欄寬及列印範圍均保留。
 - 已知非關鍵序列化預設：W 欄顯式寬 9 會省略為預設；未設定首頁碼時 `useFirstPageNumber` 布林預設改變。兩者不影響 A:M 報告，但測試中保留紀錄。
 
@@ -140,7 +140,7 @@ etd_utc = etc_utc + post_completion_delay_hours
 
 - 一船一 worksheet；多選時一個 workbook 多分頁。
 - worksheet 名稱依船名清理非法字元、限制 31 字並做碰撞尾碼。
-- very-hidden `_Itinerary_Meta` 保存 sheet、vessel ID／名稱、schema、revision、updatedAt 與 `excelLayoutVersion=2`；不得只靠 sheet 名映射。
+- very-hidden `_Itinerary_Meta` 保存 sheet、vessel ID／名稱、schema、revision、updatedAt、`excelLayoutVersion=2` 及固定 UTC Offset lookup；不得只靠 sheet 名映射。
 - A:M 對標報告模板；N:AE 保存 v2 計算、Offset 與起算欄，預設不進列印區。
 - 文字以 `= + - @` 起首時強制文字輸出，避免 formula injection。
 
@@ -148,7 +148,7 @@ etd_utc = etc_utc + post_completion_delay_hours
 
 - 只接受 `.xlsx`；拒絕 `.xls/.xlsm`、未知 schema、缺 header、超限檔案／sheet／row、重複 vessel ID。
 - 有 `_Itinerary_Meta` 依不可變 vessel ID；舊模板依 Vsl name 產生人工 mapping，禁止默猜。
-- v2 依 `excelLayoutVersion=2` 解讀 S:AE；舊 layout 繼續按原 S:W 解讀，`departureBufferDays` 乘 24 轉為完貨後小時。
+- v2 依 `excelLayoutVersion=2` 解讀 S:AE；舊 layout 繼續按原 S:W 解讀，`departureBufferDays` 乘 24 轉為完貨後小時；非首列的起算時間／Offset 以 `first-row-only` 拒絕。
 - 寫入前顯示目標船、目前／檔案 revision、列數及新增／刪除／變更摘要。
 - 多船 workbook 採 all-or-none；任一船被鎖、stale 或 mapping 不唯一時 0 writes。
 - 匯入公式本身不是 authority；讀 cached result或由 canonical domain 重算。無 cached value 時要求補值／確認。

@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import { createServer } from 'vite';
 
 const server = await createServer({ root: process.cwd(), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
   const { createEmptyItineraryDocument, createBlankItineraryRow } = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
   const { recalculateItineraryRows } = await server.ssrLoadModule('/src/itinerary/itineraryDomain.ts');
+  const { UTC_OFFSET_OPTIONS } = await server.ssrLoadModule('/src/itinerary/itineraryTime.ts');
   const { buildItineraryWorkbook, parseItineraryWorkbook } = await server.ssrLoadModule('/src/itinerary/itineraryExcel.ts');
 
   const first = createBlankItineraryRow('row-a', 0);
@@ -74,11 +76,31 @@ try {
   assert.equal(workbook.worksheets[0].getCell('AB4').value, 'UTC+8:45');
   assert.equal(workbook.worksheets[0].getCell('AC4').value, 'UTC-6');
   assert.equal(workbook.worksheets[0].getCell('AE4').value, 'UTC+8');
-  assert.equal(workbook.worksheets[0].getCell('AF4').value, 8);
-  assert.equal(workbook.worksheets[0].getCell('AG4').value, 8);
-  assert.equal(workbook.worksheets[0].getCell('AH4').value, 9);
-  assert.equal(workbook.worksheets[0].getCell('AI4').value, 8.75);
-  assert.equal(workbook.worksheets[0].getCell('AJ4').value, -6);
+  const helperExpectations = [
+    ['AF4', 'AE4', 8],
+    ['AG4', 'IF(Z4="",N4,Z4)', 8],
+    ['AH4', 'IF(AA4="",N4,AA4)', 9],
+    ['AI4', 'IF(AB4="",N4,AB4)', 8.75],
+    ['AJ4', 'IF(AC4="",N4,AC4)', -6],
+  ];
+  for (const [address, source, result] of helperExpectations) {
+    const helper = workbook.worksheets[0].getCell(address).value;
+    assert.equal(typeof helper, 'object', `${address} must be a live formula, not a stale numeric helper`);
+    assert.match(helper.formula, /VLOOKUP/);
+    assert.ok(helper.formula.includes(source), `${address} must derive from ${source}`);
+    assert.equal(helper.result, result);
+  }
+  for (const address of ['N4','Z4','AA4','AB4','AC4','AE4']) {
+    assert.equal(workbook.worksheets[0].getCell(address).dataValidation.formulae?.[0], 'ItineraryUtcOffsetLabels');
+  }
+  const offsetLabelRange = workbook.definedNames.getRanges('ItineraryUtcOffsetLabels').ranges.join(',');
+  const offsetLookupRange = workbook.definedNames.getRanges('ItineraryUtcOffsetLookup').ranges.join(',');
+  assert.match(offsetLabelRange, /_Itinerary_Meta.*\$H\$2:\$H\$/);
+  assert.match(offsetLookupRange, /_Itinerary_Meta.*\$H\$2:\$I\$/);
+  assert.equal(workbook.worksheets[2].getCell('H2').value, UTC_OFFSET_OPTIONS[0]);
+  assert.equal(workbook.worksheets[2].getCell(1 + UTC_OFFSET_OPTIONS.length, 8).value, UTC_OFFSET_OPTIONS.at(-1));
+  const workbookXml = await (await JSZip.loadAsync(output)).file('xl/workbook.xml').async('string');
+  assert.match(workbookXml, /<calcPr[^>]*fullCalcOnLoad="1"/, 'Excel must fully recalculate live offset helpers on open');
   assert.equal(workbook.worksheets[0].getCell('Q4').value.formula.includes('O4/P4'), true);
   assert.equal(workbook.worksheets[0].getCell('Q4').value.formula.includes('ROUNDUP'), false);
   assert.equal(workbook.worksheets[0].getCell('E4').value.formula.includes('AD4'), true);
@@ -105,6 +127,25 @@ try {
   assert.equal(workbook.worksheets[0].pageSetup.fitToHeight, 0);
   assert.equal(workbook.worksheets[0].pageSetup.printTitlesRow, '1:3');
   assert.equal(workbook.worksheets[0].pageSetup.horizontalCentered, true);
+
+  const editableOffsetWorkbook = new ExcelJS.Workbook();
+  await editableOffsetWorkbook.xlsx.load(output);
+  editableOffsetWorkbook.worksheets[0].getCell('Z4').value = 'UTC+9';
+  const editableOffsetBytes = await editableOffsetWorkbook.xlsx.writeBuffer();
+  const editableOffsetReloaded = new ExcelJS.Workbook();
+  await editableOffsetReloaded.xlsx.load(editableOffsetBytes);
+  assert.equal(editableOffsetReloaded.worksheets[0].getCell('Z4').value, 'UTC+9');
+  assert.match(editableOffsetReloaded.worksheets[0].getCell('AG4').value.formula, /IF\(Z4="",N4,Z4\)/);
+  assert.ok(editableOffsetReloaded.definedNames.getRanges('ItineraryUtcOffsetLookup').ranges.length > 0);
+  assert.equal(editableOffsetReloaded.worksheets[0].getCell('Z4').dataValidation.formulae?.[0], 'ItineraryUtcOffsetLabels');
+
+  const laterAnchorWorkbook = new ExcelJS.Workbook();
+  await laterAnchorWorkbook.xlsx.load(output);
+  laterAnchorWorkbook.worksheets[0].getCell('AD6').value = new Date('2026-09-01T00:00:00Z');
+  laterAnchorWorkbook.worksheets[0].getCell('AE6').value = 'UTC+8';
+  const laterAnchorBytes = await laterAnchorWorkbook.xlsx.writeBuffer();
+  const parsedLaterAnchor = await parseItineraryWorkbook(laterAnchorBytes.buffer.slice(laterAnchorBytes.byteOffset, laterAnchorBytes.byteOffset + laterAnchorBytes.byteLength));
+  assert.ok(parsedLaterAnchor.sheets[0].issues.some(issue => issue.code === 'first-row-only' && issue.rowNumber === 6), 'Excel must reject an ETA calculation anchor outside its first itinerary row');
 
   const parsed = await parseItineraryWorkbook(output);
   assert.equal(parsed.sheets.length, 2);

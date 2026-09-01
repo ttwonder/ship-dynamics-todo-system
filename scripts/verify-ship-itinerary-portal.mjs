@@ -37,6 +37,15 @@ try {
   assert.equal(model.trimTrailingBlankShipRows(withSecond).rows.length, 1);
   assert.equal(model.removeShipDraftRow(withSecond, 'row-2').rows.length, 1);
   assert.equal(model.removeShipDraftRow(blank, 'blank-row').rows.length, 1);
+  const anchoredRows = model.addShipDraftRow(blank, 'new-first-after-delete');
+  Object.assign(anchoredRows.rows[0], { calculationStartUtc: '2026-09-01T00:00:00Z', calculationStartTimeZone: 'UTC+8' });
+  const afterFirstRemoval = model.removeShipDraftRow(anchoredRows, anchoredRows.rows[0].rowId);
+  assert.equal(afterFirstRemoval.rows[0].calculationStartUtc, '2026-09-01T00:00:00Z', 'deleting row one must transfer the ETA calculation anchor to the new first row');
+  assert.equal(afterFirstRemoval.rows[0].calculationStartTimeZone, 'UTC+8');
+  const anchoredThree = model.addShipDraftRow(model.addShipDraftRow(blank, 'anchor-row-2'), 'anchor-row-3');
+  Object.assign(anchoredThree.rows[0], { calculationStartUtc: '2026-09-01T00:00:00Z', calculationStartTimeZone: 'UTC+8' });
+  const afterLaterRemoval = model.removeShipDraftRow(anchoredThree, 'anchor-row-3');
+  assert.equal(afterLaterRemoval.rows[0].calculationStartUtc, '2026-09-01T00:00:00Z', 'deleting a later row must not alter the first-row anchor');
   assert.equal(model.hasRemoteItineraryUpdate(9, 10), true);
   assert.equal(model.hasRemoteItineraryUpdate(9, 9), false);
 
@@ -167,6 +176,7 @@ try {
   assert.match(dateInput, /placeholder="YYYY-MM-DD"/);
   assert.match(editor, /ItineraryDateInput/);
   assert.match(officeEditor, /ItineraryDateInput/);
+  assert.match(officeEditor, /removeShipDraftRow/, 'owner row deletion must preserve the first-row ETA calculation anchor');
   assert.match(dateInput, /dateInputRef/, 'manual date input must retain an in-progress text editing state');
   assert.match(editor, /timeInputRef/, 'manual time input must retain native in-progress editing state');
   assert.match(editor, /type="time"[^>]*defaultValue=/, 'time must use an uncontrolled native editing buffer');

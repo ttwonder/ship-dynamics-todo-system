@@ -116,6 +116,14 @@ calculation_v2_receipt as (
   select jsonb_build_object(
     'acceptsCompleteV2', public.sd_itinerary_rows_valid(jsonb_build_array(value)),
     'acceptsLegacyV1', public.sd_itinerary_rows_valid(jsonb_build_array((select value from purpose_fixture))),
+    'acceptsTwoRowsWithSingleAnchor', public.sd_itinerary_rows_valid(jsonb_build_array(
+      value,
+      value || jsonb_build_object('rowId','readback-row-2','sortOrder',1,'calculationStartUtc',null,'calculationStartTimeZone','')
+    )),
+    'rejectsLaterAnchor', not public.sd_itinerary_rows_valid(jsonb_build_array(
+      value,
+      value || jsonb_build_object('rowId','readback-row-2','sortOrder',1)
+    )),
     'rejectsPartialV2', not public.sd_itinerary_rows_valid(jsonb_build_array(value - 'etdTimeZone')),
     'rejectsInvalidLtOffset', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('etbTimeZone','UTC+14:15'))),
     'rejectsRoundedSailingHours', not public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('sailingHours',9)))

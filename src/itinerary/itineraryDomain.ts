@@ -137,10 +137,10 @@ export function recalculateItineraryRows(inputRows: readonly ItineraryRow[]): It
     }
 
     if (row.etdMode === 'auto') {
-      const legacyPostHours = finiteOrNull(row.postCompletionDelayHours) === null
-        ? durationOrZero(row.departureBufferDays) * 24
-        : 0;
-      const hours = durationOrZero(row.postCompletionDelayHours) + legacyPostHours;
+      const hasV2PostDelay = Object.prototype.hasOwnProperty.call(row, 'postCompletionDelayHours');
+      const hours = hasV2PostDelay
+        ? durationOrZero(row.postCompletionDelayHours)
+        : durationOrZero(row.departureBufferDays) * 24;
       row.etdUtc = row.etcUtc ? addHoursToInstant(row.etcUtc, hours) : null;
     }
   });

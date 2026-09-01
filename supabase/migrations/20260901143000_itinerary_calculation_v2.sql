@@ -121,6 +121,7 @@ begin
       if v_start_zone <> '' and not public.sd_itinerary_utc_offset_valid(v_start_zone)
          and not exists(select 1 from pg_catalog.pg_timezone_names where name = v_start_zone) then return false; end if;
       if v_row->'calculationStartUtc' <> 'null'::jsonb and v_start_zone = '' then return false; end if;
+      if v_ordinal > 1 and (v_row->'calculationStartUtc' <> 'null'::jsonb or v_start_zone <> '') then return false; end if;
     elsif (v_row->'etaUtc' <> 'null'::jsonb or v_row->'etbUtc' <> 'null'::jsonb or v_row->'etcUtc' <> 'null'::jsonb or v_row->'etdUtc' <> 'null'::jsonb) and v_zone = '' then
       return false;
     end if;

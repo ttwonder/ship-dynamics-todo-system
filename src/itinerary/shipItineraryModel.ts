@@ -49,7 +49,15 @@ export function addShipDraftRow(document: ItineraryDocument, rowId?: string): It
 export function removeShipDraftRow(document: ItineraryDocument, rowId: string): ItineraryDocument {
   if (document.rows.length <= 1) return cloneDocument(document);
   const next = cloneDocument(document);
+  const removedFirstRow = next.rows[0]?.rowId === rowId ? next.rows[0] : null;
   const remaining = next.rows.filter(row => row.rowId !== rowId).map((row, index) => ({ ...row, sortOrder: index }));
+  if (removedFirstRow && remaining[0]) {
+    remaining[0] = {
+      ...remaining[0],
+      calculationStartUtc: removedFirstRow.calculationStartUtc,
+      calculationStartTimeZone: removedFirstRow.calculationStartTimeZone,
+    };
+  }
   next.rows = recalculateItineraryRows(remaining.length ? remaining : [createBlankItineraryRow(undefined, 0)]).rows;
   if (next.rows[0]) next.rows[0].etaMode = next.rows[0].etaUtc ? next.rows[0].etaMode : 'manual';
   return next;

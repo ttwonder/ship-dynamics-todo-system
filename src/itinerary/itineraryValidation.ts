@@ -126,6 +126,7 @@ export function validateItineraryDocument(input: unknown): ItineraryValidationRe
       }
       if (typeof row.calculationStartTimeZone === 'string' && row.calculationStartTimeZone && !isValidItineraryTimeZone(row.calculationStartTimeZone)) add(errors, `${path}.calculationStartTimeZone`, 'invalid-time-zone', '請選擇有效的起算 UTC Offset。');
       if (row.calculationStartUtc !== null && !row.calculationStartTimeZone) add(errors, `${path}.calculationStartTimeZone`, 'time-zone-required', '首列 ETA 起算時間必須有 UTC Offset。');
+      if (index > 0 && (row.calculationStartUtc !== null || row.calculationStartTimeZone !== '')) add(errors, `${path}.calculationStartUtc`, 'first-row-only', 'ETA 起算時間與 UTC Offset 只可設定於第一列。');
     });
   }
   return errors.length ? { ok: false, errors } : { ok: true, value: document };

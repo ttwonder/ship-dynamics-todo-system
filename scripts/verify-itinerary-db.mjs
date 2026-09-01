@@ -125,6 +125,15 @@ try {
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC-6' })])]), true);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'Asia/Seoul' })])]), true, 'legacy IANA rows must stay writable during compatibility');
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row()])]), true);
+  const validTwoRowV2 = [
+    v2Row({ rowId: 'v2-row-1', sortOrder: 0 }),
+    v2Row({ rowId: 'v2-row-2', sortOrder: 1, calculationStartUtc: null, calculationStartTimeZone: '' }),
+  ];
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify(validTwoRowV2)]), true);
+  const invalidLaterAnchor = structuredClone(validTwoRowV2);
+  invalidLaterAnchor[1].calculationStartUtc = '2026-09-01T00:00:00Z';
+  invalidLaterAnchor[1].calculationStartTimeZone = 'UTC+8';
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify(invalidLaterAnchor)]), false, 'ETA calculation anchor must be first-row only');
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ operation: 'To Unload / waiting order / repair' })])]), true);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ operation: 'inspection / To Load' })])]), false, 'Purpose order must be canonical');
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ operation: 'docking / docking' })])]), false, 'Purpose choices must not repeat');
@@ -282,6 +291,26 @@ try {
   assert.deepEqual(readback.vesselNames, { activeVesselCount: 2, activeMissingFullNameCount: 0, publicListFullNameComplete: true });
   const bootstrapReadback = (await db.query(rolloutBootstrapReadbackSql)).rows[0];
   assert.ok(Object.values(bootstrapReadback).every(Boolean));
+
+  const withoutOperationMigration = new PGlite();
+  try {
+    await withoutOperationMigration.exec(`
+      create schema auth;
+      create role anon noinherit;
+      create role authenticated noinherit;
+      create role service_role noinherit bypassrls;
+      create table auth.users(id uuid primary key,email text);
+      create function auth.uid() returns uuid language sql stable as $$select null::uuid$$;
+    `);
+    await withoutOperationMigration.exec(foundation);
+    await withoutOperationMigration.exec(migration);
+    await withoutOperationMigration.exec(utcOffsetMigration);
+    await withoutOperationMigration.exec(calculationV2Migration);
+    const directV2 = await withoutOperationMigration.query('select public.sd_itinerary_rows_valid($1::jsonb) as valid', [JSON.stringify([v2Row()])]);
+    assert.equal(directV2.rows[0].valid, true, 'v2 migration must work even when the earlier operation migration was not run');
+  } finally {
+    await withoutOperationMigration.close();
+  }
 
   console.log('itinerary_postgres_contract=PASS');
 } finally {

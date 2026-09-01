@@ -1,12 +1,14 @@
 import type ExcelJS from 'exceljs';
 import { recalculateItineraryRows } from './itineraryDomain';
-import { addHoursToInstant, formatUtcOffsetMinutes, instantToWallTime, isValidItineraryTimeZone, parseUtcOffsetMinutes, wallTimeToInstant } from './itineraryTime';
+import { addHoursToInstant, formatUtcOffsetMinutes, instantToWallTime, isValidItineraryTimeZone, parseUtcOffsetMinutes, UTC_OFFSET_OPTIONS, wallTimeToInstant } from './itineraryTime';
 import { createBlankItineraryRow, createItineraryId, formatItineraryOperation, ITINERARY_SCHEMA_VERSION, ITINERARY_TIME_ZONE_FIELDS, normalizeItineraryOperation, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryOperation, type ItineraryRow } from './itineraryTypes';
 
 const META_SHEET = '_Itinerary_Meta';
 const MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const EXCEL_LAYOUT_VERSION = 2;
 const EXCEL_MAX_COLUMN = 36;
+const OFFSET_LABEL_RANGE_NAME = 'ItineraryUtcOffsetLabels';
+const OFFSET_LOOKUP_RANGE_NAME = 'ItineraryUtcOffsetLookup';
 const MERGED_COLUMNS = [1, 2, 3, 4, 7, ...Array.from({ length: 27 }, (_, index) => index + 10)];
 const TIME_FIELDS = ['etaUtc', 'etbUtc', 'etcUtc', 'etdUtc'] as const;
 
@@ -14,7 +16,7 @@ type TimeField = typeof TIME_FIELDS[number];
 type ExcelRuntime = { Workbook: new () => ExcelJS.Workbook; default?: { Workbook: new () => ExcelJS.Workbook } };
 
 export interface ItineraryExcelIssue {
-  code: 'invalid-template' | 'invalid-operation' | 'time-zone-required' | 'invalid-time' | 'calculation';
+  code: 'invalid-template' | 'invalid-operation' | 'time-zone-required' | 'invalid-time' | 'calculation' | 'first-row-only';
   message: string;
   rowNumber?: number;
   field?: string;
@@ -151,6 +153,18 @@ function formulaValue(formula: string, result: Date | number | string | null): E
   return result === null ? { formula } : { formula, result };
 }
 
+function offsetLookupFormula(sourceExpression: string, cachedHours: number | null): ExcelJS.CellFormulaValue {
+  const fallback = cachedHours ?? 0;
+  return formulaValue(`IFERROR(VLOOKUP(${sourceExpression},${OFFSET_LOOKUP_RANGE_NAME},2,FALSE),${fallback})`, fallback);
+}
+
+function setOffsetValidation(cell: ExcelJS.Cell): void {
+  cell.dataValidation = {
+    type: 'list', allowBlank: true, showErrorMessage: false,
+    formulae: [OFFSET_LABEL_RANGE_NAME],
+  };
+}
+
 function setTimePair(worksheet: ExcelJS.Worksheet, primary: number, column: number, instant: string | null, mode: ItineraryRow['etaMode'], formula: string | null, timeZone: string): void {
   const value = wallDate(instant, timeZone);
   for (const rowNumber of [primary, primary + 1]) {
@@ -200,6 +214,7 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
     worksheet.getCell(primary, 12).value = row.arrivalRobText;
     worksheet.getCell(primary, 13).value = row.departureRobText;
     worksheet.getCell(primary, 14).value = row.portTimeZone;
+    setOffsetValidation(worksheet.getCell(primary, 14));
     worksheet.getCell(primary, 15).value = row.oceanDistanceNm;
     worksheet.getCell(primary, 16).value = row.speedKnots;
     worksheet.getCell(primary, 17).value = row.sailingHours !== null
@@ -220,16 +235,17 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
     worksheet.getCell(primary, 30).value = wallDate(row.calculationStartUtc, row.calculationStartTimeZone);
     worksheet.getCell(primary, 30).numFmt = 'yyyy-mm-dd hh:mm';
     worksheet.getCell(primary, 31).value = row.calculationStartTimeZone;
+    for (const column of [26, 27, 28, 29, 31]) setOffsetValidation(worksheet.getCell(primary, column));
 
     const etaZone = resolveItineraryTimeZone(row, 'etaUtc');
     const etbZone = resolveItineraryTimeZone(row, 'etbUtc');
     const etcZone = resolveItineraryTimeZone(row, 'etcUtc');
     const etdZone = resolveItineraryTimeZone(row, 'etdUtc');
-    worksheet.getCell(primary, 32).value = offsetHours(row.calculationStartUtc, row.calculationStartTimeZone);
-    worksheet.getCell(primary, 33).value = offsetHours(row.etaUtc, etaZone);
-    worksheet.getCell(primary, 34).value = offsetHours(row.etbUtc, etbZone);
-    worksheet.getCell(primary, 35).value = offsetHours(row.etcUtc, etcZone);
-    worksheet.getCell(primary, 36).value = offsetHours(row.etdUtc, etdZone);
+    worksheet.getCell(primary, 32).value = offsetLookupFormula(`AE${primary}`, offsetHours(row.calculationStartUtc, row.calculationStartTimeZone));
+    worksheet.getCell(primary, 33).value = offsetLookupFormula(`IF(Z${primary}="",N${primary},Z${primary})`, offsetHours(row.etaUtc, etaZone));
+    worksheet.getCell(primary, 34).value = offsetLookupFormula(`IF(AA${primary}="",N${primary},AA${primary})`, offsetHours(row.etbUtc, etbZone));
+    worksheet.getCell(primary, 35).value = offsetLookupFormula(`IF(AB${primary}="",N${primary},AB${primary})`, offsetHours(row.etcUtc, etcZone));
+    worksheet.getCell(primary, 36).value = offsetLookupFormula(`IF(AC${primary}="",N${primary},AC${primary})`, offsetHours(row.etdUtc, etdZone));
 
     const previousPrimary = primary - 2;
     const etaFormula = index === 0
@@ -284,6 +300,15 @@ export async function buildItineraryWorkbook(documents: ItineraryDocument[], tem
   const meta = workbook.addWorksheet(META_SHEET, { state: 'veryHidden' });
   meta.addRow(['sheetName', 'vesselId', 'vesselName', 'schemaVersion', 'revision', 'updatedAt', 'excelLayoutVersion']);
   for (const entry of metadata) meta.addRow([entry.sheetName, entry.document.vesselId, entry.document.vesselName, ITINERARY_SCHEMA_VERSION, entry.document.revision, entry.document.updatedAt, EXCEL_LAYOUT_VERSION]);
+  meta.getCell('H1').value = 'UTC Offset';
+  meta.getCell('I1').value = 'Offset Hours';
+  UTC_OFFSET_OPTIONS.forEach((label, index) => {
+    meta.getCell(index + 2, 8).value = label;
+    meta.getCell(index + 2, 9).value = (parseUtcOffsetMinutes(label) || 0) / 60;
+  });
+  const offsetLastRow = 1 + UTC_OFFSET_OPTIONS.length;
+  workbook.definedNames.add(`${META_SHEET}!$H$2:$H$${offsetLastRow}`, OFFSET_LABEL_RANGE_NAME);
+  workbook.definedNames.add(`${META_SHEET}!$H$2:$I$${offsetLastRow}`, OFFSET_LOOKUP_RANGE_NAME);
   meta.state = 'veryHidden';
 
   onStage?.('write');
@@ -397,7 +422,7 @@ function timeZoneFromRaw(rawZone: unknown): string {
 function resolveSources(sourceRows: ImportedRowSource[], overrides: Record<string, string>): { rows: ItineraryRow[]; issues: ItineraryExcelIssue[]; needs: ParsedItinerarySheet['timeZoneNeeds'] } {
   const issues: ItineraryExcelIssue[] = [];
   const needs: ParsedItinerarySheet['timeZoneNeeds'] = [];
-  const rows = sourceRows.map(source => {
+  const rows = sourceRows.map((source, index) => {
     const row = structuredClone(source.row);
     issues.push(...source.sourceIssues.map(issue => ({ ...issue, rowNumber: source.excelRow })));
     const rawZone = source.rawTimeZone;
@@ -430,11 +455,15 @@ function resolveSources(sourceRows: ImportedRowSource[], overrides: Record<strin
     }
 
     const startZone = timeZoneFromRaw(source.rawCalculationStartTimeZone);
-    if (startZone) {
+    if (index > 0 && (startZone || source.calculationStartWall)) {
+      row.calculationStartUtc = null;
+      row.calculationStartTimeZone = '';
+      issues.push({ code: 'first-row-only', rowNumber: source.excelRow, field: 'calculationStartUtc', message: `Excel 第 ${source.excelRow} 列不可設定首列 ETA 起算時間或 UTC Offset。` });
+    } else if (startZone) {
       if (isValidItineraryTimeZone(startZone)) row.calculationStartTimeZone = startZone;
       else issues.push({ code: 'time-zone-required', rowNumber: source.excelRow, field: 'calculationStartTimeZone', message: `Excel 第 ${source.excelRow} 列首列 ETA 起算 UTC Offset 無效。` });
     }
-    if (source.calculationStartWall && row.calculationStartTimeZone) {
+    if (index === 0 && source.calculationStartWall && row.calculationStartTimeZone) {
       const converted = wallTimeToInstant(source.calculationStartWall.date, source.calculationStartWall.time, row.calculationStartTimeZone);
       if (converted.ok) row.calculationStartUtc = converted.instant;
       else issues.push({ code: 'invalid-time', rowNumber: source.excelRow, field: 'calculationStartUtc', message: `Excel 第 ${source.excelRow} 列首列 ETA 起算時間無效。` });

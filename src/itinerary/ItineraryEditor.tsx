@@ -9,7 +9,7 @@ import type { ItineraryLease, ItineraryLeaseRenewResult, ItinerarySaveResult } f
 import UtcOffsetSelect from './UtcOffsetSelect';
 import ItineraryOperationOptions from './ItineraryOperationOptions';
 import ItineraryDateInput from './ItineraryDateInput';
-import { parseItineraryRateText, shipPortTimeZonePatch, shipTimeZonePatch } from './shipItineraryModel';
+import { parseItineraryRateText, removeShipDraftRow, shipPortTimeZonePatch, shipTimeZonePatch } from './shipItineraryModel';
 import { ITINERARY_MAIN_FIELD_LABELS } from './itineraryFieldLayout';
 
 interface ItineraryEditorProps {
@@ -150,7 +150,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   });
   const removeRow = (rowId: string) => updateDraft(current => {
     if (current.rows.length === 1) return { ...current, rows: [createBlankItineraryRow(current.rows[0].rowId, 0)] };
-    return { ...current, rows: resequenceItineraryRows(current.rows.filter(row => row.rowId !== rowId)) };
+    return removeShipDraftRow(current, rowId);
   });
 
   const submit = async () => {

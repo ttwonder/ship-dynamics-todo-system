@@ -60,6 +60,19 @@ try {
   assert.equal(calculated.rows[1].etcUtc, calculated.rows[1].etbUtc, 'blank operation inputs count as zero');
   assert.equal(calculated.rows[1].etdUtc, calculated.rows[1].etcUtc, 'blank post-completion delay counts as zero');
   assert.equal(calculated.issues.length, 0);
+
+  const explicitBlankPost = types.createBlankItineraryRow('explicit-blank-post', 0);
+  Object.assign(explicitBlankPost, {
+    calculationStartUtc: '2026-09-01T00:00:00Z', calculationStartTimeZone: 'UTC',
+    portTimeZone: 'UTC', departureBufferDays: 0.25, postCompletionDelayHours: null,
+  });
+  const explicitBlankPostCalculated = domain.recalculateItineraryRows([explicitBlankPost]).rows[0];
+  assert.equal(explicitBlankPostCalculated.etdUtc, explicitBlankPostCalculated.etcUtc, 'an explicit v2 null post-delay must contribute zero');
+  const legacyPost = structuredClone(explicitBlankPost);
+  delete legacyPost.postCompletionDelayHours;
+  const legacyPostCalculated = domain.recalculateItineraryRows([legacyPost]).rows[0];
+  assert.equal(legacyPostCalculated.etdUtc, time.addHoursToInstant(legacyPostCalculated.etcUtc, 6), 'only a legacy row missing the v2 key may fall back to departureBufferDays');
+
   assert.equal(types.resolveItineraryTimeZone(first, 'etaUtc'), 'UTC+8');
   assert.equal(types.resolveItineraryTimeZone(first, 'etbUtc'), 'UTC+9');
 
@@ -155,6 +168,15 @@ try {
   const invalidStartOffsetResult = validation.validateItineraryDocument(invalidStartOffset);
   assert.equal(invalidStartOffsetResult.ok, false);
   assert.ok(invalidStartOffsetResult.errors.some(error => error.path.endsWith('.calculationStartTimeZone') && error.code === 'time-zone-required'));
+
+  const laterAnchor = structuredClone(document);
+  laterAnchor.rows.push({
+    ...structuredClone(document.rows[0]), rowId: 'row-2', sortOrder: 1,
+    calculationStartUtc: '2026-09-01T00:00:00Z', calculationStartTimeZone: 'UTC+8',
+  });
+  const laterAnchorResult = validation.validateItineraryDocument(laterAnchor);
+  assert.equal(laterAnchorResult.ok, false);
+  assert.ok(laterAnchorResult.errors.some(error => error.path === 'rows[1].calculationStartUtc' && error.code === 'first-row-only'));
 
   const duplicate = structuredClone(document);
   duplicate.rows.push({ ...duplicate.rows[0] });
