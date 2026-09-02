@@ -292,6 +292,10 @@ try {
   assert.match(startEditingBlock, /dirty: mode === 'blank' \? false : Boolean\(saved\)/, 'blank start must remain clean while latest-mode draft semantics stay unchanged');
   assert.doesNotMatch(startEditingBlock, /restoredDraft/, 'blank-start cleanup must not alter latest-mode restore bookkeeping');
   assert.match(portal, />簡要說明<\/button>/, 'the ship-name picker must expose the instructions button');
+  const briefButtonIndex = portal.indexOf('>簡要說明</button>');
+  const vesselLabelIndex = portal.indexOf('<label htmlFor="ship-vessel-select">船名</label>');
+  const vesselSelectIndex = portal.indexOf('<select id="ship-vessel-select"');
+  assert.ok(briefButtonIndex >= 0 && vesselLabelIndex > briefButtonIndex && vesselSelectIndex > vesselLabelIndex, 'brief instructions must sit to the left of the ship-name label, never between the label and select');
   assert.match(portal, /ShipItineraryBriefDialog/);
   assert.equal(fs.existsSync(briefDialogPath), true, 'ship portal needs a concise instructions dialog');
   const briefDialog = fs.readFileSync(briefDialogPath, 'utf8');
@@ -313,6 +317,11 @@ try {
   ]) assert.ok(briefHtml.includes(text), `brief instructions must include: ${text}`);
   assert.match(briefDialog, /role="dialog"/);
   assert.match(css, /\.ship-brief-dialog\{/);
+  const briefBodyRules = css.match(/\.ship-brief-body\{[^}]*\}/g) || [];
+  assert.ok(briefBodyRules.length >= 1 && briefBodyRules.every(rule => rule.includes('font-size:14px')), 'brief explanation text must stay 14px at every viewport');
+  assert.match(css, /\.ship-brief-dialog header p\{[^}]*font-size:14px/, 'brief dialog subtitle must be 14px');
+  assert.match(css, /\.ship-brief-formulas h3\{[^}]*font-size:14px/, 'brief formula heading must be 14px');
+  assert.match(css, /\.ship-brief-formulas>p\{[^}]*font-size:14px/, 'brief formula note must be 14px');
   console.log('ship_itinerary_portal_model=PASS');
 } finally {
   await server.close();
