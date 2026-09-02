@@ -8,6 +8,7 @@ const server = await createServer({ root: process.cwd(), server: { middlewareMod
 try {
   const calendar = await server.ssrLoadModule('/src/itinerary/itineraryCalendarModel.ts');
   const calendarView = await server.ssrLoadModule('/src/itinerary/ItineraryCalendar.tsx');
+  const taskSchedule = await server.ssrLoadModule('/src/taskPlannedSchedule.ts');
   const email = await server.ssrLoadModule('/src/itinerary/itineraryEmail.ts');
   const types = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
   const doc = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'v1', vesselName: 'TEST VESSEL', rowId: 'r1' });
@@ -38,6 +39,18 @@ try {
   assert.equal(lanes[1].events.length, 0);
   assert.equal(lanes[1].layerCount, 1, 'an empty selected vessel still needs one base-height lane');
 
+  const task = {
+    id: 'task-calendar-1', vesselId: 'v1', description: '跟進主機修理', status: '等待備件', priority: '高',
+    plannedStartDate: '2026-09-02', plannedDurationDays: 0.5, isClosed: false,
+  };
+  const taskEvents = taskSchedule.projectTaskPlannedCalendarEvents([task], [{ id: 'v1', vesselName: 'TEST VESSEL' }], 'UTC+8');
+  const mixedLanes = calendar.buildItineraryCalendarLanes([doc, secondDoc], range.startInstant, range.endInstant, taskEvents);
+  const taskEntry = mixedLanes[0].events.find(event => event.source === 'task');
+  assert.ok(taskEntry, 'scheduled tasks must be projected into the matching vessel lane');
+  assert.equal(taskEntry.eventId, 'task:task-calendar-1:v1');
+  assert.ok(taskEntry.widthPercent > 7 && taskEntry.widthPercent < 8, '0.5 day must occupy half of one 96px day column');
+  assert.ok(taskEntry.layer > 0, 'a task overlapping an itinerary event must use the shared overlap allocator');
+
   const now = Date.now();
   const renderedFirst = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'render-v1', vesselName: 'FIRST VESSEL', rowId: 'render-r1' });
   Object.assign(renderedFirst.rows[0], { voyageNumber: 'NOW-1', etaUtc: new Date(now).toISOString(), etdUtc: new Date(now + 48 * 60 * 60 * 1000).toISOString() });
@@ -45,7 +58,9 @@ try {
   Object.assign(renderedOverlap, { voyageNumber: 'NOW-2', etaUtc: new Date(now + 24 * 60 * 60 * 1000).toISOString(), etdUtc: new Date(now + 72 * 60 * 60 * 1000).toISOString() });
   renderedFirst.rows.push(renderedOverlap);
   const renderedSecond = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'render-v2', vesselName: 'SECOND VESSEL', rowId: 'render-empty' });
-  const calendarHtml = renderToStaticMarkup(React.createElement(calendarView.default, { documents: [renderedFirst, renderedSecond] }));
+  const localTaskDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
+  const renderedTask = { ...task, id: 'render-task', vesselId: 'render-v2', description: '更新消防設備', plannedStartDate: localTaskDate, plannedDurationDays: 1 };
+  const calendarHtml = renderToStaticMarkup(React.createElement(calendarView.default, { documents: [renderedFirst, renderedSecond], tasks: [renderedTask] }));
   assert.equal((calendarHtml.match(/class="itinerary-calendar-row"/g) || []).length, 2, 'two selected vessels must render exactly two vessel rows');
   assert.match(calendarHtml, /FIRST VESSEL/);
   assert.match(calendarHtml, /SECOND VESSEL/);
@@ -53,6 +68,10 @@ try {
   assert.match(calendarHtml, />96px</, 'calendar default day width must be 96px');
   assert.match(calendarHtml, /min-height:68px/, 'two overlapping events must expand only their vessel lane');
   assert.match(calendarHtml, /top:36px/, 'the overlapping event must render in the second sub-layer');
+  assert.match(calendarHtml, /要事｜更新消防設備/);
+  assert.match(calendarHtml, /Itinerary 裝港/);
+  assert.match(calendarHtml, /要事排程/);
+  assert.match(calendarHtml, /預計執行天數：1 天/);
 
   const compactCss = fs.readFileSync('src/itinerary/itineraryCompact.css', 'utf8');
   assert.match(compactCss, /\.itinerary-calendar-controls\{[^}]*font-size:12px/, 'calendar controls must remain readable');
@@ -62,6 +81,9 @@ try {
   assert.match(compactCss, /\.itinerary-calendar-track\{[^}]*min-height:36px/, 'event tracks need a readable base height and must remain free to grow');
   assert.match(compactCss, /\.itinerary-calendar-event\{[^}]*height:28px[^}]*background:#176b5b[^}]*color:#fff[^}]*font-size:12px/, 'calendar events need readable high-contrast labels');
   assert.match(compactCss, /\.itinerary-calendar-event\.unloading\{[^}]*background:#3657a7[^}]*color:#fff/, 'unloading events need an equally readable semantic color');
+  assert.match(compactCss, /\.itinerary-calendar-event\.task\{[^}]*background:/, 'task events need a distinct fixed color');
+  assert.match(compactCss, /\.itinerary-calendar-event\.task\.completed\{[^}]*background:#746f79[^}]*color:#fff/, 'closed task events need an opaque low-saturation color with readable white text');
+  assert.doesNotMatch(compactCss, /\.itinerary-calendar-event\.task\.completed\{[^}]*opacity:/, 'completed event opacity must not reduce the 12px title contrast');
   assert.match(compactCss, /\.itinerary-calendar-event span\{[^}]*font-size:11px/, 'optional ETA–ETD text must not fall back to 8px');
   assert.doesNotMatch(compactCss, /@media\(prefers-color-scheme:dark\)\{\.itinerary-calendar/, 'OS dark preference must not create a half-dark calendar inside the light app');
   assert.match(

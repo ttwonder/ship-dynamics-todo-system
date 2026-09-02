@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { UserAccount, Vessel } from '../types';
+import type { TaskItem, UserAccount, Vessel } from '../types';
+import { changedTaskPlannedCalendarEvents, projectTaskPlannedCalendarEvents } from '../taskPlannedSchedule';
 import { createDemoItineraryDocuments } from './itineraryDemoData';
 import { createEmptyItineraryDocument, createItineraryId, createItineraryOperationId, type ItineraryDocument } from './itineraryTypes';
 import { LocalDemoItineraryBackend, type ItineraryLease } from './itineraryCollaboration';
@@ -19,6 +20,8 @@ interface ItineraryDashboardProps {
   user: UserAccount;
   actor: ItineraryMainActor;
   vessels: Vessel[];
+  calendarTaskVessels: Vessel[];
+  calendarTasks: TaskItem[];
   selectedVesselIds: string[];
   setSelectedVesselIds: (ids: string[]) => void;
 }
@@ -58,7 +61,7 @@ function browserHolderId(): string {
   }
 }
 
-export default function ItineraryDashboard({ user, actor, vessels, selectedVesselIds, setSelectedVesselIds }: ItineraryDashboardProps) {
+export default function ItineraryDashboard({ user, actor, vessels, calendarTaskVessels, calendarTasks, selectedVesselIds, setSelectedVesselIds }: ItineraryDashboardProps) {
   const permissions = UNRESTRICTED_ITINERARY_PERMISSIONS;
   const demoMode = localDemoModeRequested();
   const [clockOrigin] = useState(() => Date.now());
@@ -85,11 +88,28 @@ export default function ItineraryDashboard({ user, actor, vessels, selectedVesse
   const visibleIds = vessels.map(vessel => vessel.id);
   const everyVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedVesselIds.includes(id));
   const selectedDocuments = selectedVesselIds.map(id => displayDocuments[id]).filter((document): document is ItineraryDocument => Boolean(document));
+  const calendarTaskEvents = useMemo(() => projectTaskPlannedCalendarEvents(
+    calendarTasks,
+    calendarTaskVessels.map(vessel => ({ id: vessel.id, vesselName: itineraryVesselDisplayName(vessel) })),
+    'UTC',
+  ), [calendarTasks, calendarTaskVessels]);
+  const previousCalendarTaskEventsRef = useRef<typeof calendarTaskEvents | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const previous = previousCalendarTaskEventsRef.current;
+    if (previous) {
+      const changed = changedTaskPlannedCalendarEvents(previous, calendarTaskEvents)
+        .filter(event => selectedVesselIds.includes(event.vesselId));
+      const vesselNames = Array.from(new Set(changed.map(event => event.vesselName)));
+      if (vesselNames.length) setNotice(`［${vesselNames.join('、')}］有新的預計執行要事，行事曆已同步更新。`);
+    }
+    previousCalendarTaskEventsRef.current = calendarTaskEvents;
+  }, [calendarTaskEvents, selectedVesselIds]);
 
   useEffect(() => {
     if (!backend) return;
@@ -265,7 +285,7 @@ export default function ItineraryDashboard({ user, actor, vessels, selectedVesse
     {demoMode&&<div className="itinerary-demo-banner" role="status"><b>真實 UI＋測試資料</b><span>目前只在本機 Itinerary demo 模式顯示；沒有讀寫正式 Supabase 或現有 AppData。</span></div>}
     {notice&&<div className="itinerary-notice" role="status">{notice}</div>}
     {!backend&&<div className="itinerary-empty"><b>Itinerary 雲端連線不可用</b><span>為避免讀到不完整資料，目前採 fail-closed。</span></div>}
-    {backend&&displayMode==='calendar'&&<ItineraryCalendar documents={selectedDocuments}/>}
+    {backend&&displayMode==='calendar'&&<ItineraryCalendar documents={selectedDocuments} tasks={calendarTasks}/>}
     {backend&&displayMode==='table'&&<div className="itinerary-panel-list">{vessels.map(vessel=>{
       const document=displayDocuments[vessel.id];
       return document?<ItineraryPanel key={vessel.id} document={document} selected={selectedVesselIds.includes(vessel.id)} nowMs={nowMs} canEdit={permissions.edit} onToggleSelected={()=>toggleVessel(vessel.id)} onNotice={setNotice} onEdit={()=>void openEditor(vessel.id)}/>:null;

@@ -778,7 +778,7 @@ export default function NormalizedApp() {
         canEditVessel={canEdit} canCreateTasks={canCreate} canEditTasks={canEdit}
         canViewInternalControl={!projection.vesselAccount}/>
       : tab === 'dashboard' ? <DashboardView user={user} itineraryActor={{ userId: user.id }} users={data.users} vessels={visibleVessels}
-        tasks={visibleTasks} internalControlCases={visibleCases}
+        tasks={visibleTasks} calendarTasks={data.tasks} internalControlCases={visibleCases}
         meetings={dashboardMeetingAlerts(
           data.meetings,
           visibleVessels.map(vessel => vessel.id),

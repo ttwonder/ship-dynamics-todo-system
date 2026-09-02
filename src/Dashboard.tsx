@@ -31,6 +31,7 @@ interface DashboardProps {
   users: UserAccount[];
   vessels: Vessel[];
   tasks: TaskItem[];
+  calendarTasks: TaskItem[];
   internalControlCases: InternalControlCase[];
   meetings: DashboardMeetingAlert[];
   selected: string[];
@@ -54,7 +55,7 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, itineraryActor, users, vessels, tasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ user, itineraryActor, users, vessels, tasks, calendarTasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [vesselFilters, setVesselFilters] = useState(emptyVesselFilterState);
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
@@ -136,7 +137,7 @@ export default function Dashboard({ user, itineraryActor, users, vessels, tasks,
       <input className="dashboard-search" value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
       <VesselFilterControls filters={vesselFilters} shipTypes={shipTypes} supervisors={supervisors} onChange={setVesselFilters} showMeeting={canUseMeetings}/>
     </div>
-    {dashboardMode==='itinerary'?<Suspense fallback={<div className="itinerary-empty">正在載入 Itinerary 視圖…</div>}><ItineraryDashboard user={user} actor={itineraryActor} vessels={visible} selectedVesselIds={itinerarySelected} setSelectedVesselIds={setItinerarySelected}/></Suspense>:<div className="fleet-card-grid">{visible.map(vessel => {
+    {dashboardMode==='itinerary'?<Suspense fallback={<div className="itinerary-empty">正在載入 Itinerary 視圖…</div>}><ItineraryDashboard user={user} actor={itineraryActor} vessels={visible} calendarTaskVessels={vessels} calendarTasks={calendarTasks} selectedVesselIds={itinerarySelected} setSelectedVesselIds={setItinerarySelected}/></Suspense>:<div className="fleet-card-grid">{visible.map(vessel => {
       const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
       const attentionTasks = vesselAttentionTasks(vesselTasks);
       const abnormalMeetings = abnormalMeetingsForVessel(vessel.id);

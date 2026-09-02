@@ -28,6 +28,7 @@ import { canonicalizeMeetingTaskItemIds } from './meetingTaskItemIds';
 
 import { DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES, isValidInternalControlDate, sanitizeEquipmentFailureSubcategories, taskToInternalControlCase, validateInternalControlCase } from './internalControlWorkflow';
 import { taipeiDateKey } from './taipeiTime';
+import { normalizePlannedDurationDays, normalizePlannedStartDate } from './taskPlannedSchedule';
 
 const roles: UserRole[] = ['owner', 'admin', 'operator', 'vessel'];
 const INVALID_PASSWORD_HASH = '0'.repeat(64);
@@ -455,6 +456,8 @@ export function normalizeAppData(value: unknown): AppData | null {
       status,
       expectedDate: text(item.expectedDate),
       reportDate: normalizeDateText(item.reportDate) || taipeiDateKey(text(item.createdAt, timestamp)) || taipeiDateKey(timestamp),
+      plannedStartDate: normalizePlannedStartDate(item.plannedStartDate),
+      plannedDurationDays: normalizePlannedDurationDays(item.plannedDurationDays),
       departments: strings(item.departments),
       ownerUserIds: strings(item.ownerUserIds),
       isClosed,

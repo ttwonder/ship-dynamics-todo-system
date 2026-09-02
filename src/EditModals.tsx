@@ -14,6 +14,7 @@ import { taskIsClosedForVessel, taskProgressForVessel, taskVesselProgressSummary
 import { categoryChoicesForTask } from './taskCategories';
 import { clearScheduleValue, composeScheduleValue, scheduleDateValue, scheduleTimeValue } from './scheduleTime';
 import { formatTaipeiDateTime } from './taipeiTime';
+import { buildPlannedTaskSchedule, isPlannedDurationEditingInput, normalizePlannedStartDate, parsePlannedDurationInput, plannedDurationInputAfterDateChange } from './taskPlannedSchedule';
 export { scheduleDateValue as scheduleInputValue } from './scheduleTime';
 
 type Commit = (updater: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => void;
@@ -162,6 +163,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const [saving,setSaving]=useState(false);
   useEscapeClose(()=>{if(!saving)close();});
   const [draft, setDraft] = useState<TaskItem | null>(() => task ? clone(task) : null);
+  const [plannedDurationInput,setPlannedDurationInput]=useState(()=>task?.plannedDurationDays===undefined?'':String(task.plannedDurationDays));
   useEffect(()=>{if(creating&&draft)onDraftChange?.(clone(draft));},[creating,draft,onDraftChange]);
   const expectedUpdatedAtRef=useRef(task?.updatedAt||'');
   const expectedRevisionRef=useRef(data.revision);
@@ -228,7 +230,13 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     if (isRichTextEmpty(draft.description)) return alert('請填寫事項內容');
     if (creating && !selectedCategories.length) return alert('請選擇分類');
     if ((creating||draft.isInternalControl) && !draft.departments.length) return alert('請選擇涉及部門');
+    const parsedPlannedDuration=parsePlannedDurationInput(plannedDurationInput);
+    if(!parsedPlannedDuration.ok)return alert('請輸入 0.5 或正整數的預計執行天數');
     const saved=clone(draft);
+    const normalizedPlannedStartDate=normalizePlannedStartDate(saved.plannedStartDate);
+    if(saved.plannedStartDate&&!normalizedPlannedStartDate)return alert('請選擇有效的預計執行日期');
+    if(normalizedPlannedStartDate)saved.plannedStartDate=normalizedPlannedStartDate;else delete saved.plannedStartDate;
+    if(parsedPlannedDuration.value===undefined)delete saved.plannedDurationDays;else saved.plannedDurationDays=parsedPlannedDuration.value;
     saved.categories = selectedCategories;
     saved.category = saved.categories[0] || '';
     if(saved.isInternalControl&&selectedCategories.includes('設備故障')&&!saved.equipmentSubcategory)return alert('請選擇設備故障細項');
@@ -257,6 +265,10 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const selectedVessel=data.vessels.find(vessel=>vessel.id===progressScope);
   const editorTitle=hasMeetingScope?(readOnly?'查看臨會／專題待辦':'更新臨會／專題待辦'):(creating?'新增要事':readOnly?'查看要事':'更新要事');
   const taskCategoryChoices = categoryChoicesForTask(draft, data.settings);
+  const parsedPlannedDuration=parsePlannedDurationInput(plannedDurationInput);
+  const plannedSchedule=parsedPlannedDuration.ok&&parsedPlannedDuration.value!==undefined
+    ?buildPlannedTaskSchedule(draft.plannedStartDate,parsedPlannedDuration.value,'UTC')
+    :null;
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" disabled={saving} onClick={()=>void remove()}>刪除待辦</button>}{!readOnly&&!creating&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} disabled={saving} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" disabled={saving} onClick={close}>{readOnly?'關閉':creating?'取消並關閉':'取消'}</button>{!readOnly&&<button className="btn primary" disabled={saving} onClick={save}>{saving?'正在確認雲端…':creating?'保存並關閉':'保存變更'}</button>}</div></div>
     {readOnly&&readOnlyReason&&<div className="callout info read-only-server-note" role="status"><b>只讀詳情</b><span>{readOnlyReason}；此頁不可修改或保存。</span></div>}
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
@@ -266,11 +278,12 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
       <div className="field"><label>{hasMeetingScope?'會議議題關注程度':'要事關注程度'}{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><select disabled={globalReadOnly||hasMeetingScope} required={creating} aria-required={creating} value={draft.priority} onChange={event=>{const value=event.target.value as TaskPriority;change(target=>{target.priority=value;});}}>{data.settings.priorities.map(priority=><option key={priority}>{priority}</option>)}</select>{hasMeetingScope&&<small>範圍與關注程度由臨會／專題同步</small>}</div>
       <div className="field span-3"><label>事項內容{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><RichTextEditor ariaLabel="事項內容" required={creating} readOnly={globalReadOnly} value={draft.description} onChange={value=>change(target=>{target.description=value;})}/></div>
       <div className="field span-2"><label>{perVesselMode?'總體狀態／決議':'目前狀態／決議'}</label><RichTextEditor ariaLabel="目前狀態／決議" readOnly={globalReadOnly} value={draft.status} onChange={value=>change(target=>{target.status=value;})}/></div>
-      <div className="field"><label>預計完成日期</label><input type="date" value={draft.expectedDate} onChange={event=>{const value=event.target.value;change(target=>{target.expectedDate=value;});}}/></div>
+      <div className="field"><label>期望完成日期/DL</label><input type="date" value={draft.expectedDate} onChange={event=>{const value=event.target.value;change(target=>{target.expectedDate=value;});}}/></div>
       <div className="field"><label>報告日期</label><input type="date" value={draft.reportDate} onChange={event=>{const value=event.target.value;change(target=>{target.reportDate=value;});}}/></div>
+      <div className="task-planned-time-group span-2"><span className="task-planned-time-title">預計執行時間</span><div className="task-planned-time-fields"><div className="field"><label>預計執行日期</label><input aria-label="預計執行日期" type="date" value={draft.plannedStartDate||''} onChange={event=>{const value=event.target.value;const nextDurationInput=plannedDurationInputAfterDateChange(value,plannedDurationInput);setPlannedDurationInput(nextDurationInput);change(target=>{if(value)target.plannedStartDate=value;else delete target.plannedStartDate;const parsed=parsePlannedDurationInput(nextDurationInput);if(parsed.ok&&parsed.value!==undefined)target.plannedDurationDays=parsed.value;else delete target.plannedDurationDays;});}}/></div><div className="field"><label>預計執行天數</label><span className="planned-duration-input"><input aria-label="預計執行天數" type="text" inputMode="decimal" value={plannedDurationInput} placeholder="0.5 或整數" onChange={event=>{const value=event.target.value;if(!isPlannedDurationEditingInput(value))return;setPlannedDurationInput(value);const parsed=parsePlannedDurationInput(value);change(target=>{if(parsed.ok&&parsed.value!==undefined)target.plannedDurationDays=parsed.value;else delete target.plannedDurationDays;});}} onBlur={()=>{if(!parsePlannedDurationInput(plannedDurationInput).ok)alert('請輸入 0.5 或正整數的預計執行天數');}}/><b>天</b></span></div></div>{plannedSchedule?.ok&&<small className="task-planned-range"><b>預計執行區間</b><span>{plannedSchedule.rangeLabel}</span></small>}</div>
+      {currentUser.role!=='vessel'&&<label className="aware-toggle internal-control-toggle"><input type="checkbox" checked={draft.isInternalControl} disabled={!creating&&Boolean(task?.isInternalControl)&&!canCancelInternalControl} onChange={event=>{const value=event.target.checked;if(draft.isInternalControl&&!value)alert(FLOW_INTERNAL_CONTROL_REMINDER);change(target=>{target.isInternalControl=value;});}}/><span>內部管控（台面下異常管控）</span></label>}
       <label className="aware-toggle"><input type="checkbox" checked={draft.isAware} onChange={event=>{const value=event.target.checked;change(target=>{target.isAware=value;});}}/><span>標記為知曉事項</span></label>
       <label className="aware-toggle abnormal-toggle"><input type="checkbox" checked={draft.isAbnormal} onChange={event=>{const value=event.target.checked;change(target=>{target.isAbnormal=value;});}}/><span>近期需特別關注的異常（勾選後看板顯示「異常存在」）</span></label>
-      {currentUser.role!=='vessel'&&<label className="aware-toggle internal-control-toggle"><input type="checkbox" checked={draft.isInternalControl} disabled={!creating&&Boolean(task?.isInternalControl)&&!canCancelInternalControl} onChange={event=>{const value=event.target.checked;if(draft.isInternalControl&&!value)alert(FLOW_INTERNAL_CONTROL_REMINDER);change(target=>{target.isInternalControl=value;});}}/><span>內部管控（台面下異常管控）</span></label>}
     </div>
     <CheckboxMultiPicker label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating} values={draft.categories || (draft.category ? [draft.category] : [])} choices={taskCategoryChoices.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
     {draft.isInternalControl&&(draft.categories||[]).includes('設備故障')&&<div className="field"><label>設備故障細項<span className="danger-note" aria-hidden="true">＊</span></label><select required value={draft.equipmentSubcategory||''} onChange={event=>{const value=event.target.value;change(target=>{target.equipmentSubcategory=value||undefined;});}}><option value="">請選擇</option>{data.settings.equipmentFailureSubcategories.map(item=><option key={item}>{item}</option>)}</select></div>}

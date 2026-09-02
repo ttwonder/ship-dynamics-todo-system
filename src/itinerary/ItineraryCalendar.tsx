@@ -1,11 +1,18 @@
 import { useMemo, useState } from 'react';
+import type { TaskItem } from '../types';
+import { richTextToPlainText } from '../richText';
+import { projectTaskPlannedCalendarEvents } from '../taskPlannedSchedule';
+import { taskProgressForVessel } from '../taskVesselProgress';
 import { buildItineraryCalendarLanes, calendarRangeFromLocalDate } from './itineraryCalendarModel';
 import { instantToWallTime } from './itineraryTime';
 import { formatItineraryOperation, itineraryOperationSelected } from './itineraryTypes';
 import type { ItineraryDocument } from './itineraryTypes';
 import UtcOffsetSelect from './UtcOffsetSelect';
 
-interface ItineraryCalendarProps { documents: ItineraryDocument[] }
+interface ItineraryCalendarProps {
+  documents: ItineraryDocument[];
+  tasks?: TaskItem[];
+}
 
 const CALENDAR_EVENT_HEIGHT = 28;
 const CALENDAR_EVENT_GAP = 4;
@@ -16,14 +23,22 @@ function todayInZone(zone: string): string {
   return local.ok ? local.date : new Date().toISOString().slice(0, 10);
 }
 
-export default function ItineraryCalendar({ documents }: ItineraryCalendarProps) {
+export default function ItineraryCalendar({ documents, tasks = [] }: ItineraryCalendarProps) {
   const [timeZone, setTimeZone] = useState('UTC+8');
   const [startDate, setStartDate] = useState(() => todayInZone('UTC+8'));
   const [days, setDays] = useState(14);
   const [dayWidth, setDayWidth] = useState(96);
   const [fields, setFields] = useState({ voyage: true, port: true, operation: true, times: false });
   const range = useMemo(() => calendarRangeFromLocalDate(startDate, days, timeZone), [startDate, days, timeZone]);
-  const lanes = useMemo(() => range.ok ? buildItineraryCalendarLanes(documents, range.startInstant, range.endInstant) : [], [documents, range]);
+  const taskEvents = useMemo(() => projectTaskPlannedCalendarEvents(
+    tasks,
+    documents.map(document => ({ id: document.vesselId, vesselName: document.vesselName })),
+    timeZone,
+  ), [documents, tasks, timeZone]);
+  const lanes = useMemo(
+    () => range.ok ? buildItineraryCalendarLanes(documents, range.startInstant, range.endInstant, taskEvents) : [],
+    [documents, range, taskEvents],
+  );
   const labels = range.ok ? range.dayStarts.slice(0, -1).map(instant => {
     const local = instantToWallTime(instant, timeZone);
     return local.ok ? local.date.slice(5) : '—';
@@ -40,6 +55,12 @@ export default function ItineraryCalendar({ documents }: ItineraryCalendarProps)
       <label>顯示時區<UtcOffsetSelect value={timeZone} onChange={setTimeZone} /></label>
       <div className="itinerary-calendar-fields">內容：{(Object.keys(fields) as Array<keyof typeof fields>).map(field => <label key={field}><input type="checkbox" checked={fields[field]} onChange={() => toggle(field)} />{{ voyage: '航次', port: '港口', operation: '裝卸', times: 'ETA–ETD' }[field]}</label>)}</div>
     </div>
+    <div className="itinerary-calendar-legend no-print" aria-label="行事曆圖例">
+      <span><i className="loading" />Itinerary 裝港</span>
+      <span><i className="unloading" />Itinerary 卸港</span>
+      <span><i className="task" />要事排程</span>
+      <span><i className="task completed" />已結案要事</span>
+    </div>
     {!range.ok ? <div className="itinerary-notice">日期、期間或 UTC Offset 無效，已停止繪製。</div> : <div className="itinerary-calendar-scroll">
       <div className="itinerary-calendar-grid" style={{ width: 164 + trackWidth }}>
         <div className="itinerary-calendar-axis"><div className="itinerary-calendar-vessel-label">船舶</div><div className="itinerary-calendar-day-track" style={{ width: trackWidth }}>{labels.map(label => <span style={{ width: dayWidth }} key={label}>{label}</span>)}</div></div>
@@ -49,6 +70,28 @@ export default function ItineraryCalendar({ documents }: ItineraryCalendarProps)
             <div className="itinerary-calendar-vessel-label"><b>{lane.vesselName}</b><span>{lane.events.length} 項</span></div>
             <div className="itinerary-calendar-track" style={{ width: trackWidth, height: laneHeight, backgroundSize: `${dayWidth}px 100%` }}>
               {lane.events.map(entry => {
+                const eventTop = CALENDAR_TRACK_PADDING + entry.layer * (CALENDAR_EVENT_HEIGHT + CALENDAR_EVENT_GAP);
+                if (entry.source === 'task') {
+                  const description = richTextToPlainText(entry.task.description).trim() || '未填事項內容';
+                  const progress = taskProgressForVessel(entry.task, entry.vesselId);
+                  const status = richTextToPlainText(progress.status).trim() || '尚未填寫';
+                  const content = `要事｜${description}`;
+                  const title = [
+                    entry.vesselName,
+                    content,
+                    `預計執行日期：${entry.task.plannedStartDate}`,
+                    `預計執行天數：${entry.task.plannedDurationDays} 天`,
+                    `預計執行區間：${entry.rangeLabel}`,
+                    `關注程度：${entry.task.priority}`,
+                    `狀態：${status}`,
+                  ].join('\n');
+                  return <div
+                    className={`itinerary-calendar-event task${progress.isClosed ? ' completed' : ''}`}
+                    key={entry.eventId}
+                    style={{ left: `${entry.leftPercent}%`, width: `${entry.widthPercent}%`, top: eventTop }}
+                    title={title}
+                  ><b>{content}</b></div>;
+                }
                 const content = [fields.voyage && entry.row.voyageNumber, fields.port && entry.row.portDockName, fields.operation && formatItineraryOperation(entry.row.operation)].filter(Boolean).join('｜') || 'Itinerary';
                 const localTime = (instant: string | null) => {
                   if (!instant) return '—';
@@ -56,8 +99,7 @@ export default function ItineraryCalendar({ documents }: ItineraryCalendarProps)
                   return value.ok ? `${value.date.slice(5)} ${value.time}` : '—';
                 };
                 const timeText = fields.times ? `${localTime(entry.row.etaUtc)} → ${localTime(entry.row.etdUtc)}` : '';
-                const eventTop = CALENDAR_TRACK_PADDING + entry.layer * (CALENDAR_EVENT_HEIGHT + CALENDAR_EVENT_GAP);
-                return <div className={`itinerary-calendar-event ${itineraryOperationSelected(entry.row.operation, 'unload') && !itineraryOperationSelected(entry.row.operation, 'load') ? 'unloading' : 'loading'}`} key={entry.row.rowId} style={{ left: `${entry.leftPercent}%`, width: `${entry.widthPercent}%`, top: eventTop }} title={`${entry.vesselName} ${content}`}><b>{content}</b>{timeText && <span>{timeText}</span>}</div>;
+                return <div className={`itinerary-calendar-event ${itineraryOperationSelected(entry.row.operation, 'unload') && !itineraryOperationSelected(entry.row.operation, 'load') ? 'unloading' : 'loading'}`} key={entry.eventId} style={{ left: `${entry.leftPercent}%`, width: `${entry.widthPercent}%`, top: eventTop }} title={`${entry.vesselName} ${content}`}><b>{content}</b>{timeText && <span>{timeText}</span>}</div>;
               })}
               {!lane.events.length && <span className="itinerary-calendar-lane-empty">此期間無事件</span>}
             </div>
