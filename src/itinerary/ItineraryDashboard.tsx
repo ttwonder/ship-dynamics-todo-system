@@ -247,7 +247,7 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
         {permissions.import&&<><button type="button" className="btn small ghost" onClick={()=>fileInputRef.current?.click()} disabled={Boolean(excelBusy)}>{excelBusy==='import'?'檢查中…':'匯入 Excel'}</button><input ref={fileInputRef} className="itinerary-file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event=>{const file=event.target.files?.[0];if(file)void readImportFile(file);}}/></>}
       </div>
     </div>
-    {demoMode&&<div className="itinerary-demo-banner" role="status"><b>真實 UI＋測試資料</b><span>目前只在本機 Owner demo 模式顯示；沒有讀寫正式 Supabase 或現有 AppData。</span></div>}
+    {demoMode&&<div className="itinerary-demo-banner" role="status"><b>真實 UI＋測試資料</b><span>目前只在本機 Itinerary demo 模式顯示；沒有讀寫正式 Supabase 或現有 AppData。</span></div>}
     {notice&&<div className="itinerary-notice" role="status">{notice}</div>}
     {!backend&&<div className="itinerary-empty"><b>Itinerary 雲端連線不可用</b><span>為避免讀到不完整資料，目前採 fail-closed。</span></div>}
     {backend&&displayMode==='calendar'&&<ItineraryCalendar documents={selectedDocuments}/>}

@@ -42,7 +42,7 @@ export function localItineraryDemoRequested(location: LocationLike): boolean {
 }
 
 export function localDemoRollout(role: UserRole, location: LocationLike): ItineraryRollout {
-  if (role !== 'owner' || !localItineraryDemoRequested(location)) return disabledItineraryRollout(role);
+  if (role === 'vessel' || !localItineraryDemoRequested(location)) return disabledItineraryRollout(role);
   return {
     version: null,
     mainEnabled: true,
@@ -66,7 +66,7 @@ export function parseItineraryRollout(value: unknown, role: UserRole): Itinerary
   const permissionRow = record(rolePermissions?.[role]);
   const rawVersion = payload?.version;
   const version = typeof rawVersion === 'number' && Number.isSafeInteger(rawVersion) && rawVersion > 0 ? rawVersion : null;
-  if (payload?.main_enabled !== true || !permissionRow || permissionRow.view !== true) {
+  if (role === 'vessel' || payload?.main_enabled !== true || !permissionRow || permissionRow.view !== true) {
     return {
       ...disabledItineraryRollout(role, 'verified'),
       version,

@@ -88,9 +88,9 @@ export interface ItineraryOwnerRolloutUpdateResult {
   replayed: boolean;
 }
 
-const disabledRolePermissions = () => ({
-  admin: { view: false, edit: false, import: false, export: false, calendar: false },
-  operator: { view: false, edit: false, import: false, export: false, calendar: false },
+const officeRolePermissions = () => ({
+  admin: { view: true, edit: true, import: true, export: true, calendar: true },
+  operator: { view: true, edit: true, import: true, export: true, calendar: true },
   vessel: { view: false, edit: false, import: false, export: false, calendar: false },
 });
 
@@ -123,7 +123,7 @@ export async function updateOwnerItineraryRollout(
     p_operation_id: input.operationId,
     p_main_enabled: input.mainEnabled,
     p_ship_portal_enabled: input.shipPortalEnabled,
-    p_role_permissions: disabledRolePermissions(),
+    p_role_permissions: officeRolePermissions(),
   };
   try {
     return parseOwnerRolloutUpdateResult(

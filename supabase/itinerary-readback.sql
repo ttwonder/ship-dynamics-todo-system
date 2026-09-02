@@ -138,6 +138,35 @@ notes_receipt as (
   ) value
   from calculation_v2_fixture
 ),
+role_permission_receipt as (
+  select jsonb_build_object(
+    'workspaceCount', (select count(*) from public.sd_workspaces),
+    'ownerFull', not exists (
+      select 1
+      from public.sd_workspaces w
+      left join public.sd_itinerary_role_permissions p on p.workspace_id = w.id and p.role = 'owner'
+      where not coalesce(p.can_view and p.can_edit and p.can_import and p.can_export and p.can_calendar, false)
+    ),
+    'adminFull', not exists (
+      select 1
+      from public.sd_workspaces w
+      left join public.sd_itinerary_role_permissions p on p.workspace_id = w.id and p.role = 'admin'
+      where not coalesce(p.can_view and p.can_edit and p.can_import and p.can_export and p.can_calendar, false)
+    ),
+    'operatorFull', not exists (
+      select 1
+      from public.sd_workspaces w
+      left join public.sd_itinerary_role_permissions p on p.workspace_id = w.id and p.role = 'operator'
+      where not coalesce(p.can_view and p.can_edit and p.can_import and p.can_export and p.can_calendar, false)
+    ),
+    'vesselBlocked', not exists (
+      select 1
+      from public.sd_workspaces w
+      left join public.sd_itinerary_role_permissions p on p.workspace_id = w.id and p.role = 'vessel'
+      where not coalesce(not p.can_view and not p.can_edit and not p.can_import and not p.can_export and not p.can_calendar, false)
+    )
+  ) value
+),
 vessel_name_receipt as (
   select jsonb_build_object(
     'activeVesselCount', (select count(*) from public.sd_vessels where is_active),
@@ -160,6 +189,7 @@ select jsonb_build_object(
   'purposes', (select value from purpose_receipt),
   'calculationV2', (select value from calculation_v2_receipt),
   'notes', (select value from notes_receipt),
+  'officeRolePermissions', (select value from role_permission_receipt),
   'vesselNames', (select value from vessel_name_receipt),
   'documentCount', (select count(*) from public.sd_itinerary_documents),
   'historyCount', (select count(*) from public.sd_itinerary_history)

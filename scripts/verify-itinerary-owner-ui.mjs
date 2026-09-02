@@ -25,8 +25,10 @@ try {
   assert.match(utcOffsetHtml, /UTC\+14/);
   assert.doesNotMatch(utcOffsetHtml, /Asia\//, 'new offset choices must not expose region names');
   const rolloutDialog = await server.ssrLoadModule('/src/itinerary/ItineraryOwnerRolloutDialog.tsx');
+  const fullPermissions = { view: true, edit: true, import: true, export: true, calendar: true };
+  const noPermissions = { view: false, edit: false, import: false, export: false, calendar: false };
   const rolloutBase = {
-    version: 2, mainEnabled: true, permissions: { view: true, edit: true, import: true, export: true, calendar: true },
+    version: 2, mainEnabled: true, permissions: fullPermissions,
     demoMode: false, loading: false, source: 'cloud', authStatus: 'verified', authMessage: '',
   };
   const closedPortalHtml = renderToStaticMarkup(createElement(rolloutDialog.default, { rollout: { ...rolloutBase, shipPortalEnabled: false }, onUpdated() {}, onClose() {} }));
@@ -85,15 +87,15 @@ try {
   assert.equal(rollout.localItineraryDemoRequested({ hostname: 'ttwonder.github.io', search: '?itineraryDemo=1' }), false);
   assert.equal(rollout.localItineraryDemoRequested({ hostname: '127.0.0.1', search: '' }), false);
 
-  const demo = rollout.localDemoRollout('owner', { hostname: '127.0.0.1', search: '?itineraryDemo=1' });
-  assert.equal(demo.mainEnabled, true);
-  assert.equal(demo.demoMode, true);
-  assert.equal(demo.permissions.view, true);
-  assert.equal(demo.permissions.edit, true);
-
-  const nonOwnerDemo = rollout.localDemoRollout('admin', { hostname: '127.0.0.1', search: '?itineraryDemo=1' });
-  assert.equal(nonOwnerDemo.mainEnabled, false);
-  assert.equal(nonOwnerDemo.permissions.view, false);
+  for (const role of ['owner', 'admin', 'operator']) {
+    const demo = rollout.localDemoRollout(role, { hostname: '127.0.0.1', search: '?itineraryDemo=1' });
+    assert.equal(demo.mainEnabled, true, `${role} must receive the office Itinerary entry`);
+    assert.equal(demo.demoMode, true);
+    assert.deepEqual(demo.permissions, fullPermissions, `${role} must receive the complete Itinerary action set`);
+  }
+  const vesselDemo = rollout.localDemoRollout('vessel', { hostname: '127.0.0.1', search: '?itineraryDemo=1' });
+  assert.equal(vesselDemo.mainEnabled, false, 'vessel accounts must remain outside the main-site Itinerary entry');
+  assert.deepEqual(vesselDemo.permissions, noPermissions);
 
   const disabled = rollout.disabledItineraryRollout('owner');
   assert.equal(disabled.mainEnabled, false);
@@ -119,16 +121,29 @@ try {
   assert.equal(rollout.ownerCanBootstrapItinerary('owner', ownerWithoutSession), true);
   assert.equal(rollout.ownerCanBootstrapItinerary('admin', ownerWithoutSession), false);
 
-  const parsed = rollout.parseItineraryRollout({
+  const officeRolePayload = {
     main_enabled: true,
     ship_portal_enabled: false,
     role_permissions: {
-      owner: { view: true, edit: true, import: true, export: true, calendar: true },
-      admin: { view: false, edit: false, import: false, export: false, calendar: false },
+      owner: fullPermissions,
+      admin: fullPermissions,
+      operator: fullPermissions,
+      vessel: noPermissions,
     },
-  }, 'owner');
-  assert.equal(parsed.mainEnabled, true);
-  assert.equal(parsed.permissions.calendar, true);
+  };
+  for (const role of ['owner', 'admin', 'operator']) {
+    const parsed = rollout.parseItineraryRollout(officeRolePayload, role);
+    assert.equal(parsed.mainEnabled, true, `${role} cloud rollout must mount the main Itinerary`);
+    assert.deepEqual(parsed.permissions, fullPermissions);
+  }
+  const vesselParsed = rollout.parseItineraryRollout(officeRolePayload, 'vessel');
+  assert.equal(vesselParsed.mainEnabled, false);
+  assert.deepEqual(vesselParsed.permissions, noPermissions);
+  const malformedVesselGrant = rollout.parseItineraryRollout({
+    ...officeRolePayload,
+    role_permissions: { ...officeRolePayload.role_permissions, vessel: fullPermissions },
+  }, 'vessel');
+  assert.equal(malformedVesselGrant.mainEnabled, false, 'the client must fail closed if a malformed backend payload grants Vessel access');
   assert.equal(rollout.parseItineraryRollout({ main_enabled: true, role_permissions: {} }, 'owner').mainEnabled, false);
 
   assert.match(dashboardSource, /lazy\(\(\)\s*=>\s*import\('\.\/itinerary\/ItineraryDashboard'\)\)/);
@@ -139,11 +154,15 @@ try {
   assert.match(itineraryDashboardSource, /className="btn small itinerary-view-toggle"/, 'calendar toggle must use its prominent semantic class');
   assert.match(itineraryCssSource, /\.itinerary-view-toggle\{[^}]*background:[^}]*color:#fff/i, 'calendar toggle must have a colored high-contrast treatment');
   assert.match(dashboardSource, /ItineraryOwnerRolloutDialog/);
-  assert.match(dashboardSource, /驗證 Itinerary Owner/);
-  assert.match(dashboardSource, /Itinerary 試行設定/);
+  assert.match(dashboardSource, /Itinerary 開放設定/);
+  assert.match(rolloutDialogSource, /Owner／Admin／Operator/);
+  assert.match(rolloutDialogSource, /Vessel 主頁始終不開放/);
+  assert.doesNotMatch(rolloutDialogSource, /Owner 試行|Admin／Operator／Vessel 的主頁權限始終保持關閉/);
   assert.match(dashboardSource, /<ItineraryDashboard[\s\S]*vessels=\{visible\}/);
   assert.doesNotMatch(itineraryDashboardSource, /user\.role\s*[!=]==?\s*['"]owner['"]/, 'cloud action permissions must remain configurable after the Owner-only pilot');
   assert.match(itineraryDashboardSource, /backend&&displayMode==='table'/, 'the cloud repository must mount the same production table path as local demo');
+  assert.match(itineraryDashboardSource, /目前只在本機 Itinerary demo 模式顯示/);
+  assert.doesNotMatch(itineraryDashboardSource, /Owner demo 模式/, 'the shared office-role demo must not be mislabeled as Owner-only');
   const officeEditConfirmation = "if (!window.confirm('請盡量以船端修改為主，確定要修改嗎？')) return;";
   const confirmationIndex = itineraryDashboardSource.indexOf(officeEditConfirmation);
   const leaseClaimIndex = itineraryDashboardSource.indexOf('await backend.claimLease', confirmationIndex);

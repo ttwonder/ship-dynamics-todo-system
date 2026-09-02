@@ -69,8 +69,8 @@ try {
   assert.equal(rolloutCall.args.p_main_enabled, true);
   assert.equal(rolloutCall.args.p_ship_portal_enabled, true);
   assert.deepEqual(rolloutCall.args.p_role_permissions, {
-    admin: { view: false, edit: false, import: false, export: false, calendar: false },
-    operator: { view: false, edit: false, import: false, export: false, calendar: false },
+    admin: { view: true, edit: true, import: true, export: true, calendar: true },
+    operator: { view: true, edit: true, import: true, export: true, calendar: true },
     vessel: { view: false, edit: false, import: false, export: false, calendar: false },
   });
 
