@@ -58,7 +58,7 @@ try {
   Object.assign(renderedOverlap, { voyageNumber: 'NOW-2', etaUtc: new Date(now + 24 * 60 * 60 * 1000).toISOString(), etdUtc: new Date(now + 72 * 60 * 60 * 1000).toISOString() });
   renderedFirst.rows.push(renderedOverlap);
   const renderedSecond = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'render-v2', vesselName: 'SECOND VESSEL', rowId: 'render-empty' });
-  const localTaskDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
+  const localTaskDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
   const renderedTask = { ...task, id: 'render-task', vesselId: 'render-v2', description: '更新消防設備', plannedStartDate: localTaskDate, plannedDurationDays: 1 };
   const calendarHtml = renderToStaticMarkup(React.createElement(calendarView.default, { documents: [renderedFirst, renderedSecond], tasks: [renderedTask] }));
   assert.equal((calendarHtml.match(/class="itinerary-calendar-row"/g) || []).length, 2, 'two selected vessels must render exactly two vessel rows');
@@ -72,11 +72,25 @@ try {
   assert.match(calendarHtml, /Itinerary 裝港/);
   assert.match(calendarHtml, /要事排程/);
   assert.match(calendarHtml, /預計執行天數：1 天/);
+  const stickyAxisIndex = calendarHtml.indexOf('itinerary-calendar-sticky-axis');
+  const horizontalScrollIndex = calendarHtml.indexOf('itinerary-calendar-scroll');
+  assert.ok(stickyAxisIndex >= 0 && stickyAxisIndex < horizontalScrollIndex, 'the sticky date axis must sit outside the horizontal overflow container');
+  assert.match(calendarHtml, /class="itinerary-calendar-day-viewport"/, 'the synchronized date axis needs its own clipping viewport');
+  assert.match(calendarHtml, /transform:translateX\(0px\)/, 'the date axis must expose its horizontal scroll transform');
+  assert.match(calendarHtml, /width:calc\(var\(--itinerary-calendar-vessel-width\) \+ 1344px\)/, 'grid width must share the responsive vessel-width variable');
 
   const compactCss = fs.readFileSync('src/itinerary/itineraryCompact.css', 'utf8');
+  const calendarViewSource = fs.readFileSync('src/itinerary/ItineraryCalendar.tsx', 'utf8');
+  assert.match(calendarViewSource, /querySelector<HTMLElement>\('\.topbar'\)/, 'sticky top must be measured from the actual responsive topbar');
+  assert.match(calendarViewSource, /ResizeObserver/, 'topbar height changes from zoom or responsive wrapping must update the sticky offset');
+  assert.match(calendarViewSource, /setHorizontalScroll\(event\.currentTarget\.scrollLeft\)/, 'body horizontal scrolling must synchronize the date axis');
   assert.match(compactCss, /\.itinerary-calendar-controls\{[^}]*font-size:12px/, 'calendar controls must remain readable');
+  assert.match(compactCss, /\.itinerary-calendar-frame\{[^}]*--itinerary-calendar-vessel-width:164px[^}]*min-width:0[^}]*width:100%[^}]*max-width:100%[^}]*border:1px solid var\(--line\)/, 'the non-scrolling frame must contain wide timelines while owning the border and responsive vessel width');
+  assert.match(compactCss, /\.itinerary-calendar-sticky-axis\{[^}]*position:sticky[^}]*top:var\(--itinerary-calendar-sticky-top,0px\)[^}]*z-index:/, 'date axis must stick below the measured app header');
+  assert.match(compactCss, /\.itinerary-calendar-day-viewport\{[^}]*overflow:hidden/, 'the translated date row must be clipped to the calendar viewport');
   assert.match(compactCss, /\.itinerary-calendar-grid\{[^}]*font-size:12px/, 'calendar labels must use the same readable density as the browse table');
-  assert.match(compactCss, /\.itinerary-calendar-axis,\.itinerary-calendar-row\{[^}]*min-height:36px/, 'calendar rows must have enough height for readable labels');
+  assert.match(compactCss, /\.itinerary-calendar-sticky-axis,\.itinerary-calendar-row\{[^}]*min-height:36px/, 'calendar rows must have enough height for readable labels');
+  assert.match(compactCss, /\.itinerary-calendar-vessel-label\{[^}]*z-index:3[^}]*width:var\(--itinerary-calendar-vessel-width\)[^}]*min-width:var\(--itinerary-calendar-vessel-width\)[^}]*background:var\(--paper,#fff\)/, 'body vessel labels must be an opaque mask above horizontally scrolled events');
   assert.match(compactCss, /\.itinerary-calendar-day-track\{[^}]*height:36px[^}]*background:#eef3f8[^}]*color:#243142/, 'date headings need a light background and dark text');
   assert.match(compactCss, /\.itinerary-calendar-track\{[^}]*min-height:36px/, 'event tracks need a readable base height and must remain free to grow');
   assert.match(compactCss, /\.itinerary-calendar-event\{[^}]*height:28px[^}]*background:#176b5b[^}]*color:#fff[^}]*font-size:12px/, 'calendar events need readable high-contrast labels');
@@ -86,6 +100,7 @@ try {
   assert.doesNotMatch(compactCss, /\.itinerary-calendar-event\.task\.completed\{[^}]*opacity:/, 'completed event opacity must not reduce the 12px title contrast');
   assert.match(compactCss, /\.itinerary-calendar-event span\{[^}]*font-size:11px/, 'optional ETA–ETD text must not fall back to 8px');
   assert.doesNotMatch(compactCss, /@media\(prefers-color-scheme:dark\)\{\.itinerary-calendar/, 'OS dark preference must not create a half-dark calendar inside the light app');
+  assert.match(compactCss, /@media\(max-width:850px\)\{[^}]*\.itinerary-calendar-frame\{--itinerary-calendar-vessel-width:126px\}/, 'zoom/mobile breakpoint must change the shared vessel width rather than only body labels');
   assert.match(
     compactCss,
     /@media\(max-width:720px\)\{[\s\S]*\.itinerary-panel-head\{grid-template-columns:auto minmax\(0,1fr\)\}[\s\S]*\.itinerary-panel-meta\{grid-column:1\/-1;justify-content:flex-start\}/,

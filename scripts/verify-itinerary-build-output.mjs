@@ -48,7 +48,11 @@ const assertRuleIncludes = (selector, declarations) => {
   for (const declaration of declarations) assert.ok(rule.includes(declaration), `${selector} must retain ${declaration}`);
 };
 assertRuleIncludes('.itinerary-calendar-controls', ['font-size:12px', 'min-height:42px']);
-assertRuleIncludes('.itinerary-calendar-axis .itinerary-calendar-vessel-label', ['background:#eef3f8', 'color:#243142']);
+assertRuleIncludes('.itinerary-calendar-frame', ['--itinerary-calendar-vessel-width:164px', 'width:100%', 'min-width:0', 'max-width:100%']);
+assertRuleIncludes('.itinerary-calendar-sticky-axis', ['position:sticky', 'top:var(--itinerary-calendar-sticky-top,0px)', 'z-index:12', 'background:#eef3f8']);
+assertRuleIncludes('.itinerary-calendar-day-viewport', ['min-width:0', 'overflow:hidden']);
+assertRuleIncludes('.itinerary-calendar-vessel-label', ['z-index:3', 'background:var(--paper,#fff)']);
+assertRuleIncludes('.itinerary-calendar-sticky-axis .itinerary-calendar-vessel-label', ['background:#eef3f8', 'color:#243142']);
 assertRuleIncludes('.itinerary-calendar-day-track', ['height:36px', 'background:#eef3f8', 'color:#243142']);
 assertRuleIncludes('.itinerary-calendar-event', ['height:28px', 'background:#176b5b', 'color:#fff', 'font-size:12px']);
 assertRuleIncludes('.itinerary-browse-table th.itinerary-field-heading-multiline', ['white-space:pre-line']);

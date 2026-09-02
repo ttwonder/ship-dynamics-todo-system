@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { TaskItem } from '../types';
 import { richTextToPlainText } from '../richText';
 import { projectTaskPlannedCalendarEvents } from '../taskPlannedSchedule';
@@ -28,6 +29,9 @@ export default function ItineraryCalendar({ documents, tasks = [] }: ItineraryCa
   const [startDate, setStartDate] = useState(() => todayInZone('UTC+8'));
   const [days, setDays] = useState(14);
   const [dayWidth, setDayWidth] = useState(96);
+  const [horizontalScroll, setHorizontalScroll] = useState(0);
+  const [stickyTop, setStickyTop] = useState(0);
+  const calendarScrollRef = useRef<HTMLDivElement>(null);
   const [fields, setFields] = useState({ voyage: true, port: true, operation: true, times: false });
   const range = useMemo(() => calendarRangeFromLocalDate(startDate, days, timeZone), [startDate, days, timeZone]);
   const taskEvents = useMemo(() => projectTaskPlannedCalendarEvents(
@@ -45,6 +49,25 @@ export default function ItineraryCalendar({ documents, tasks = [] }: ItineraryCa
   }) : [];
   const toggle = (field: keyof typeof fields) => setFields(previous => ({ ...previous, [field]: !previous[field] }));
   const trackWidth = days * dayWidth;
+  const frameStyle = { '--itinerary-calendar-sticky-top': `${stickyTop}px` } as CSSProperties;
+
+  useEffect(() => {
+    const topbar = document.querySelector<HTMLElement>('.topbar');
+    if (!topbar) return;
+    const updateStickyTop = () => setStickyTop(Math.max(0, Math.ceil(topbar.getBoundingClientRect().bottom)));
+    updateStickyTop();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateStickyTop);
+    observer?.observe(topbar);
+    window.addEventListener('resize', updateStickyTop);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateStickyTop);
+    };
+  }, []);
+
+  useEffect(() => {
+    setHorizontalScroll(calendarScrollRef.current?.scrollLeft ?? 0);
+  }, [trackWidth]);
 
   if (!documents.length) return <div className="itinerary-empty"><b>先選取船舶</b><span>行事曆只顯示 Itinerary 選取狀態，不使用船舶卡片的批量選取。</span></div>;
   return <div className="itinerary-calendar">
@@ -61,10 +84,14 @@ export default function ItineraryCalendar({ documents, tasks = [] }: ItineraryCa
       <span><i className="task" />要事排程</span>
       <span><i className="task completed" />已結案要事</span>
     </div>
-    {!range.ok ? <div className="itinerary-notice">日期、期間或 UTC Offset 無效，已停止繪製。</div> : <div className="itinerary-calendar-scroll">
-      <div className="itinerary-calendar-grid" style={{ width: 164 + trackWidth }}>
-        <div className="itinerary-calendar-axis"><div className="itinerary-calendar-vessel-label">船舶</div><div className="itinerary-calendar-day-track" style={{ width: trackWidth }}>{labels.map(label => <span style={{ width: dayWidth }} key={label}>{label}</span>)}</div></div>
-        {lanes.map((lane) => {
+    {!range.ok ? <div className="itinerary-notice">日期、期間或 UTC Offset 無效，已停止繪製。</div> : <div className="itinerary-calendar-frame" style={frameStyle}>
+      <div className="itinerary-calendar-sticky-axis">
+        <div className="itinerary-calendar-vessel-label">船舶</div>
+        <div className="itinerary-calendar-day-viewport"><div className="itinerary-calendar-day-track" style={{ width: trackWidth, transform: `translateX(${-horizontalScroll}px)` }}>{labels.map(label => <span style={{ width: dayWidth }} key={label}>{label}</span>)}</div></div>
+      </div>
+      <div className="itinerary-calendar-scroll" ref={calendarScrollRef} onScroll={event => setHorizontalScroll(event.currentTarget.scrollLeft)}>
+        <div className="itinerary-calendar-grid" style={{ width: `calc(var(--itinerary-calendar-vessel-width) + ${trackWidth}px)` }}>
+          {lanes.map((lane) => {
           const laneHeight = CALENDAR_TRACK_PADDING * 2 + lane.layerCount * CALENDAR_EVENT_HEIGHT + (lane.layerCount - 1) * CALENDAR_EVENT_GAP;
           return <div className="itinerary-calendar-row" key={lane.vesselId} style={{ minHeight: laneHeight }}>
             <div className="itinerary-calendar-vessel-label"><b>{lane.vesselName}</b><span>{lane.events.length} 項</span></div>
@@ -104,7 +131,8 @@ export default function ItineraryCalendar({ documents, tasks = [] }: ItineraryCa
               {!lane.events.length && <span className="itinerary-calendar-lane-empty">此期間無事件</span>}
             </div>
           </div>;
-        })}
+          })}
+        </div>
       </div>
     </div>}
   </div>;

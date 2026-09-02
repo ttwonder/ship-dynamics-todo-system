@@ -125,15 +125,18 @@
 .itinerary-calendar-legend i.unloading{background:#3657a7}
 .itinerary-calendar-legend i.task{background:#6f3f91}
 .itinerary-calendar-legend i.task.completed{background:#746f79}
-.itinerary-calendar-scroll{overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--panel);scrollbar-gutter:stable}
+.itinerary-calendar-frame{--itinerary-calendar-vessel-width:164px;min-width:0;width:100%;max-width:100%;position:relative;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.itinerary-calendar-sticky-axis{position:sticky;top:var(--itinerary-calendar-sticky-top,0px);z-index:12;display:flex;min-height:36px;overflow:hidden;border-bottom:1px solid var(--line);border-radius:8px 8px 0 0;background:#eef3f8;box-shadow:0 3px 7px rgba(36,49,66,.12)}
+.itinerary-calendar-day-viewport{min-width:0;flex:1;overflow:hidden;background:#eef3f8}
+.itinerary-calendar-scroll{overflow:auto;border-radius:0 0 8px 8px;background:var(--panel);scrollbar-gutter:stable}
 .itinerary-calendar-grid{min-width:100%;font-size:12px;line-height:1.25}
-.itinerary-calendar-axis,.itinerary-calendar-row{display:flex;min-height:36px;border-bottom:1px solid var(--line)}
-.itinerary-calendar-axis{position:sticky;top:0;z-index:4;background:var(--panel)}
-.itinerary-calendar-vessel-label{position:sticky;left:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:6px;width:164px;min-width:164px;padding:4px 8px;border-right:1px solid var(--line);background:var(--panel);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.itinerary-calendar-sticky-axis,.itinerary-calendar-row{display:flex;min-height:36px}
+.itinerary-calendar-row{border-bottom:1px solid var(--line)}
+.itinerary-calendar-vessel-label{position:sticky;left:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:6px;width:var(--itinerary-calendar-vessel-width);min-width:var(--itinerary-calendar-vessel-width);padding:4px 8px;border-right:1px solid var(--line);background:var(--paper,#fff);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.itinerary-calendar-sticky-axis .itinerary-calendar-vessel-label{position:relative;left:auto;z-index:2;background:#eef3f8;color:#243142}
 .itinerary-calendar-vessel-label b{overflow:hidden;text-overflow:ellipsis}
 .itinerary-calendar-vessel-label span{color:#596579;font-weight:700}
-.itinerary-calendar-axis .itinerary-calendar-vessel-label{background:#eef3f8;color:#243142}
-.itinerary-calendar-day-track{display:flex;height:36px;background:#eef3f8;color:#243142}
+.itinerary-calendar-day-track{display:flex;height:36px;background:#eef3f8;color:#243142;will-change:transform}
 .itinerary-calendar-day-track span{display:flex;align-items:center;justify-content:center;flex:0 0 auto;border-right:1px solid #cbd5e1;font-weight:800}
 .itinerary-calendar-track{position:relative;min-height:36px;background-image:linear-gradient(to right,transparent calc(100% - 1px),var(--line) calc(100% - 1px));background-repeat:repeat-x}
 .itinerary-calendar-event{position:absolute;box-sizing:border-box;top:4px;height:28px;min-width:28px;overflow:hidden;border-radius:5px;background:#176b5b;color:#fff;padding:4px 7px;white-space:nowrap;text-overflow:ellipsis;line-height:20px;font-size:12px;font-weight:700;box-shadow:0 1px 2px rgba(15,23,42,.18)}
@@ -142,4 +145,4 @@
 .itinerary-calendar-event.task.completed{background:#746f79;color:#fff}
 .itinerary-calendar-event span{margin-left:6px;font-size:11px;font-weight:600;opacity:1}
 .itinerary-calendar-lane-empty{position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:11px}
-@media(max-width:850px){.itinerary-calendar-controls{align-items:flex-start;flex-wrap:wrap}.itinerary-calendar-fields{width:100%;margin-left:0;overflow:auto}.itinerary-calendar-vessel-label{width:126px;min-width:126px}}
+@media(max-width:850px){.itinerary-calendar-frame{--itinerary-calendar-vessel-width:126px}.itinerary-calendar-controls{align-items:flex-start;flex-wrap:wrap}.itinerary-calendar-fields{width:100%;margin-left:0;overflow:auto}}
