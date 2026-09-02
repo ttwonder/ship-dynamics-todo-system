@@ -17,9 +17,7 @@ import { attentionFilterGroup, effectiveVesselManagerNames, emptyVesselFilterSta
 import { WEEKLY_ATTENTION_OPTIONS } from './weeklyAttention';
 import type { VesselAttentionSaveState } from './vesselAttentionSaveQueue';
 import { dashboardVesselCardId } from './dashboardVesselReturn';
-import { ownerCanBootstrapItinerary, ownerCanManageItineraryRollout, useItineraryRollout } from './itinerary/itineraryRollout';
-import ItineraryOfficeAuthDialog from './itinerary/ItineraryOfficeAuthDialog';
-import ItineraryOwnerRolloutDialog from './itinerary/ItineraryOwnerRolloutDialog';
+import type { ItineraryMainActor } from './itinerary/itineraryCloud';
 
 const ItineraryDashboard = lazy(() => import('./itinerary/ItineraryDashboard'));
 
@@ -29,6 +27,7 @@ const automaticAttentionLevelLabel = (level: VesselAttentionLevel, hasPscWindow:
 
 interface DashboardProps {
   user: UserAccount;
+  itineraryActor: ItineraryMainActor;
   users: UserAccount[];
   vessels: Vessel[];
   tasks: TaskItem[];
@@ -55,20 +54,13 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, users, vessels, tasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ user, itineraryActor, users, vessels, tasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [vesselFilters, setVesselFilters] = useState(emptyVesselFilterState);
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
   const [scheduleNow, setScheduleNow] = useState(() => new Date());
   const [dashboardMode, setDashboardMode] = useState<'cards' | 'itinerary'>('cards');
   const [itinerarySelected, setItinerarySelected] = useState<string[]>([]);
-  const [itineraryAuthOpen, setItineraryAuthOpen] = useState(false);
-  const [itineraryRolloutOpen, setItineraryRolloutOpen] = useState(false);
-  const [itineraryAuthGeneration, setItineraryAuthGeneration] = useState(0);
-  const itineraryRollout = useItineraryRollout(user, itineraryAuthGeneration);
-  const itineraryOwnerBootstrap = ownerCanBootstrapItinerary(user.role, itineraryRollout);
-  const itineraryOwnerManage = ownerCanManageItineraryRollout(user.role, itineraryRollout);
-  const itineraryAuthTriggerVisible = itineraryRollout.authStatus === 'required' || itineraryOwnerBootstrap;
   const scheduleField = { ETA: 'eta', ETB: 'etb', ETD: 'etd' } as const;
 
   useEffect(() => {
@@ -76,14 +68,6 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (!itineraryRollout.permissions.view) setDashboardMode('cards');
-  }, [itineraryRollout.permissions.view]);
-
-  useEffect(() => {
-    setItineraryAuthOpen(false);
-    setItineraryRolloutOpen(false);
-  }, [user.id, user.department, user.name, user.username, user.role]);
 
   useEffect(() => {
     const allowed = new Set(vessels.map(vessel => vessel.id));
@@ -138,10 +122,8 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
   return <section className="dashboard-view">
     <div className="page-heading">
       <div><h1>船舶看板</h1><p>集中查看上下港、位置、載況、時間、貨物、未來一週關注與重要要事。</p></div>
-      {(itineraryRollout.permissions.view||itineraryAuthTriggerVisible||itineraryOwnerManage||canEdit||canUseMeetings||canUseReports)&&<div className="heading-actions no-print">{itineraryRollout.permissions.view&&<button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='itinerary'} onClick={()=>setDashboardMode(mode=>mode==='cards'?'itinerary':'cards')}>{dashboardMode==='itinerary'?'返回船舶卡片':'切換 Itinerary 視圖'}</button>}{itineraryAuthTriggerVisible&&<button type="button" className="btn itinerary-auth-trigger" title={itineraryRollout.authMessage} onClick={()=>setItineraryAuthOpen(true)}>{itineraryOwnerBootstrap?'設定並驗證 Itinerary':'驗證 Itinerary 身份'}</button>}{itineraryOwnerManage&&<button type="button" className="btn itinerary-rollout-trigger" onClick={()=>setItineraryRolloutOpen(true)}>Itinerary 開放設定</button>}{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新船舶（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>}
+      <div className="heading-actions no-print"><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='itinerary'} onClick={()=>setDashboardMode(mode=>mode==='cards'?'itinerary':'cards')}>{dashboardMode==='itinerary'?'返回船舶卡片':'切換顯示Itinerary信息'}</button>{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新船舶（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>
     </div>
-    {itineraryAuthOpen&&<ItineraryOfficeAuthDialog user={user} onClose={()=>setItineraryAuthOpen(false)} onAuthenticated={()=>{setItineraryAuthOpen(false);setItineraryAuthGeneration(value=>value+1);}}/>}
-    {itineraryRolloutOpen&&itineraryOwnerManage&&<ItineraryOwnerRolloutDialog rollout={itineraryRollout} onClose={()=>setItineraryRolloutOpen(false)} onUpdated={()=>{setItineraryRolloutOpen(false);setItineraryAuthGeneration(value=>value+1);}}/>}
     <div className="metric-grid">
       <div className="metric-card blue"><small>今日船舶</small><b>{vessels.length}</b><span>艘</span></div>
       <button type="button" className="metric-card metric-link pink" onClick={() => onTaskMetric('open')}><small>未結要事</small><b>{openTasks.length}</b><span>件</span></button>
@@ -154,7 +136,7 @@ export default function Dashboard({ user, users, vessels, tasks, internalControl
       <input className="dashboard-search" value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
       <VesselFilterControls filters={vesselFilters} shipTypes={shipTypes} supervisors={supervisors} onChange={setVesselFilters} showMeeting={canUseMeetings}/>
     </div>
-    {dashboardMode==='itinerary'&&itineraryRollout.permissions.view?<Suspense fallback={<div className="itinerary-empty">正在載入 Itinerary 視圖…</div>}><ItineraryDashboard user={user} vessels={visible} selectedVesselIds={itinerarySelected} setSelectedVesselIds={setItinerarySelected} permissions={itineraryRollout.permissions} demoMode={itineraryRollout.demoMode}/></Suspense>:<div className="fleet-card-grid">{visible.map(vessel => {
+    {dashboardMode==='itinerary'?<Suspense fallback={<div className="itinerary-empty">正在載入 Itinerary 視圖…</div>}><ItineraryDashboard user={user} actor={itineraryActor} vessels={visible} selectedVesselIds={itinerarySelected} setSelectedVesselIds={setItinerarySelected}/></Suspense>:<div className="fleet-card-grid">{visible.map(vessel => {
       const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
       const attentionTasks = vesselAttentionTasks(vesselTasks);
       const abnormalMeetings = abnormalMeetingsForVessel(vessel.id);

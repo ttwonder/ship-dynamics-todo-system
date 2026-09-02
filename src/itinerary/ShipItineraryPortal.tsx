@@ -7,7 +7,7 @@ import { downloadItineraryWorkbook, parseItineraryWorkbook } from './itineraryEx
 import { formatItinerarySaveConfirmation, formatRelativeUpdatedAt } from './itineraryTime';
 import { createEmptyItineraryDocument, createItineraryId, type ItineraryDocument } from './itineraryTypes';
 import { validateItineraryDocument } from './itineraryValidation';
-import { useShipPortalRollout } from './itineraryRollout';
+
 import { createShipDraft, hasShipDraftBusinessContent, trimTrailingBlankShipRows } from './shipItineraryModel';
 import { buildItineraryMailto } from './itineraryEmail';
 import { PublicItineraryCloudRepository, type PublicItineraryVessel } from './itineraryCloud';
@@ -55,20 +55,27 @@ function withPublicVesselName(document: ItineraryDocument, vessel?: PublicItiner
   return document.vesselName === vesselName ? document : { ...document, vesselName };
 }
 
+function localShipPortalDemoRequested() {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname.toLowerCase();
+  return (host === 'localhost' || host === '127.0.0.1')
+    && new URLSearchParams(window.location.search).get('itineraryDemo') === '1';
+}
+
 export default function ShipItineraryPortal() {
-  const rollout = useShipPortalRollout();
+  const demoMode = localShipPortalDemoRequested();
   const [holderId] = useState(() => typeof window === 'undefined' ? 'ship-ssr' : browserId(window.sessionStorage, 'ship-dynamics-itinerary/public/holder-id', 'ship-tab'));
   const [draftActorId] = useState(() => typeof window === 'undefined' ? 'ship-ssr' : browserId(window.localStorage, 'ship-dynamics-itinerary/public/browser-id', 'ship-browser'));
-  const localBackend = useMemo(() => rollout.demoMode && typeof window !== 'undefined'
+  const localBackend = useMemo(() => demoMode && typeof window !== 'undefined'
     ? new LocalDemoItineraryBackend({ storage: window.localStorage, workspaceKey: 'local-itinerary-demo' })
-    : null, [rollout.demoMode]);
+    : null, [demoMode]);
   const cloudBackend = useMemo(() => {
-    if (!rollout.enabled || rollout.demoMode || typeof window === 'undefined') return null;
+    if (demoMode || typeof window === 'undefined') return null;
     try { return new PublicItineraryCloudRepository(undefined, undefined, draftActorId); } catch { return null; }
-  }, [rollout.enabled, rollout.demoMode, draftActorId]);
+  }, [demoMode, draftActorId]);
   const backend = localBackend || cloudBackend;
   const [cloudVessels, setCloudVessels] = useState<PublicItineraryVessel[]>([]);
-  const vessels = rollout.demoMode ? ITINERARY_DEMO_VESSELS : cloudVessels;
+  const vessels = demoMode ? ITINERARY_DEMO_VESSELS : cloudVessels;
   const [selectedVesselId, setSelectedVesselId] = useState('');
   const [latest, setLatest] = useState<ItineraryDocument | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -304,12 +311,10 @@ export default function ShipItineraryPortal() {
     }
   };
 
-  if (rollout.loading) return <main className="ship-portal-shell"><div className="ship-state-card">正在確認 Itinerary 開放狀態…</div></main>;
-  if (!rollout.enabled) return <main className="ship-portal-shell"><div className="ship-state-card"><h1>Itinerary 尚未開放</h1><p>請稍後再試；此頁目前不會讀取或寫入船舶資料。</p></div></main>;
   if (!backend) return <main className="ship-portal-shell"><div className="ship-state-card"><h1>船端服務設定不完整</h1><p>目前無法建立受限 Itinerary RPC 連線，未讀取或寫入資料。</p></div></main>;
 
   return <main className="ship-portal-shell">
-    <header className="ship-portal-header"><div>{rollout.demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{rollout.demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div><div className="ship-vessel-picker"><div className="ship-vessel-picker-label"><button type="button" className="btn ghost small" onClick={() => setBriefOpen(true)}>簡要說明</button><label htmlFor="ship-vessel-select">船名</label></div><select id="ship-vessel-select" value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vessels.map(vessel => <option value={vessel.id} key={vessel.id}>{dashboardVesselDisplayName(vessel)}</option>)}</select></div></header>
+    <header className="ship-portal-header"><div>{demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div><div className="ship-vessel-picker"><div className="ship-vessel-picker-label"><button type="button" className="btn ghost small" onClick={() => setBriefOpen(true)}>簡要說明</button><label htmlFor="ship-vessel-select">船名</label></div><select id="ship-vessel-select" value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vessels.map(vessel => <option value={vessel.id} key={vessel.id}>{dashboardVesselDisplayName(vessel)}</option>)}</select></div></header>
     {briefOpen && <ShipItineraryBriefDialog onClose={() => setBriefOpen(false)} />}
     {notice && <div className="ship-notice">{notice.kind === 'saved' ? formatItinerarySaveConfirmation(notice.updatedAt, noticeNowMs) : notice.text}</div>}
     {!selectedVesselId && <div className="ship-state-card compact"><b>先選擇船名</b><span>再選擇從空白或最新狀態開始。</span></div>}

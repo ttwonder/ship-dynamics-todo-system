@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { UserAccount, Vessel } from '../types';
 import { createDemoItineraryDocuments } from './itineraryDemoData';
-import type { ItineraryPermissions } from './itineraryRollout';
 import { createEmptyItineraryDocument, createItineraryId, createItineraryOperationId, type ItineraryDocument } from './itineraryTypes';
 import { LocalDemoItineraryBackend, type ItineraryLease } from './itineraryCollaboration';
 import { deleteItineraryDraft, itineraryDraftKey, readItineraryDraft, type ItineraryPendingOperation } from './itineraryDraftStore';
@@ -9,7 +8,7 @@ import ItineraryPanel from './ItineraryPanel';
 import ItineraryEditor from './ItineraryEditor';
 import ItineraryImportPreview, { type ItineraryImportApplyItem, type ItineraryImportApplyResult } from './ItineraryImportPreview';
 import ItineraryCalendar from './ItineraryCalendar';
-import { OfficeItineraryCloudRepository } from './itineraryCloud';
+import { OfficeItineraryCloudRepository, type ItineraryMainActor } from './itineraryCloud';
 import type { ParsedItineraryWorkbook } from './itineraryExcel';
 import { itineraryVesselDisplayName, projectItineraryDocumentsForDisplay, resolveItineraryEditorDocument, withItineraryVesselDisplayName } from './itineraryVesselDisplay';
 import { mergeLatestItineraryDocuments, selectLatestItineraryDocument } from './itineraryFreshness';
@@ -18,11 +17,25 @@ import './itineraryCompact.css';
 
 interface ItineraryDashboardProps {
   user: UserAccount;
+  actor: ItineraryMainActor;
   vessels: Vessel[];
   selectedVesselIds: string[];
   setSelectedVesselIds: (ids: string[]) => void;
-  permissions: ItineraryPermissions;
-  demoMode: boolean;
+}
+
+const UNRESTRICTED_ITINERARY_PERMISSIONS = {
+  view: true,
+  edit: true,
+  import: true,
+  export: true,
+  calendar: true,
+} as const;
+
+function localDemoModeRequested() {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname.toLowerCase();
+  return (host === 'localhost' || host === '127.0.0.1')
+    && new URLSearchParams(window.location.search).get('itineraryDemo') === '1';
 }
 
 interface OpenEditorState {
@@ -45,7 +58,9 @@ function browserHolderId(): string {
   }
 }
 
-export default function ItineraryDashboard({ user, vessels, selectedVesselIds, setSelectedVesselIds, permissions, demoMode }: ItineraryDashboardProps) {
+export default function ItineraryDashboard({ user, actor, vessels, selectedVesselIds, setSelectedVesselIds }: ItineraryDashboardProps) {
+  const permissions = UNRESTRICTED_ITINERARY_PERMISSIONS;
+  const demoMode = localDemoModeRequested();
   const [clockOrigin] = useState(() => Date.now());
   const [nowMs, setNowMs] = useState(clockOrigin);
   const [documents, setDocuments] = useState<Record<string, ItineraryDocument>>({});
@@ -63,8 +78,8 @@ export default function ItineraryDashboard({ user, vessels, selectedVesselIds, s
     : null, [demoMode]);
   const cloudBackend = useMemo(() => {
     if (demoMode || typeof window === 'undefined') return null;
-    try { return new OfficeItineraryCloudRepository(); } catch { return null; }
-  }, [demoMode]);
+    try { return new OfficeItineraryCloudRepository(actor); } catch { return null; }
+  }, [demoMode, actor.userId]);
   const backend = localBackend || cloudBackend;
   const displayDocuments = useMemo(() => projectItineraryDocumentsForDisplay(documents, vessels), [documents, vessels]);
   const visibleIds = vessels.map(vessel => vessel.id);

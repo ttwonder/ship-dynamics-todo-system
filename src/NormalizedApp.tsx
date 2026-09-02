@@ -777,7 +777,7 @@ export default function NormalizedApp() {
         onOpenInternalControl={() => setTab('internal')}
         canEditVessel={canEdit} canCreateTasks={canCreate} canEditTasks={canEdit}
         canViewInternalControl={!projection.vesselAccount}/>
-      : tab === 'dashboard' ? <DashboardView user={user} users={data.users} vessels={visibleVessels}
+      : tab === 'dashboard' ? <DashboardView user={user} itineraryActor={{ userId: user.id }} users={data.users} vessels={visibleVessels}
         tasks={visibleTasks} internalControlCases={visibleCases}
         meetings={dashboardMeetingAlerts(
           data.meetings,

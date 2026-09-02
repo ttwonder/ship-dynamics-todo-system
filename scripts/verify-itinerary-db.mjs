@@ -15,6 +15,12 @@ const itineraryNotesMigration = await readFile('supabase/migrations/202609021000
 const officeRoleAccessMigrationPath = 'supabase/migrations/20260902105700_itinerary_office_role_access.sql';
 assert.equal(existsSync(officeRoleAccessMigrationPath), true, 'an additive migration must promote Admin and Operator without rewriting applied migrations');
 const officeRoleAccessMigration = await readFile(officeRoleAccessMigrationPath, 'utf8');
+const mainSessionAccessMigrationPath = 'supabase/migrations/20260902134143_itinerary_main_session_access.sql';
+assert.equal(existsSync(mainSessionAccessMigrationPath), true, 'an additive migration must replace the second Itinerary login with the main AppData actor');
+const mainSessionAccessMigration = await readFile(mainSessionAccessMigrationPath, 'utf8');
+assert.doesNotMatch(mainSessionAccessMigration, /p_actor_guard|create or replace function public\.sd_itinerary_main_authorize|create or replace function public\.sd_itinerary_main_owner_update_rollout/, 'universal access migration must not retain a dedicated guard or Owner-only rollout API');
+assert.match(mainSessionAccessMigration, /main_enabled\s*=\s*true[\s\S]*ship_portal_enabled\s*=\s*true/, 'both Itinerary entrypoints must be forced open');
+assert.match(mainSessionAccessMigration, /revoke execute on function public\.sd_itinerary_owner_update_rollout\(text,bigint,uuid,boolean,boolean,jsonb\)/, 'historical Owner rollout switch must be disabled');
 const readbackSql = await readFile('supabase/itinerary-readback.sql', 'utf8');
 assert.equal(readbackSql.includes("'workspaceKey'"), false, 'production readback must not expose the full legacy workspace key');
 assert.equal(readbackSql.includes("'workspaceRef'"), true, 'production readback must expose only a masked workspace reference');
@@ -33,13 +39,30 @@ const nextOperation = () => `90000000-0000-4000-8000-${String(++operation).padSt
 const rolePermissions = (admin = {}) => ({
   admin: { view: true, edit: true, import: true, export: true, calendar: true, ...admin },
   operator: { view: true, edit: true, import: true, export: true, calendar: true },
-  vessel: { view: false, edit: false, import: false, export: false, calendar: false },
+  vessel: { view: true, edit: true, import: true, export: true, calendar: true },
 });
-const legacyOwnerOnlyPermissions = () => ({
-  admin: { view: false, edit: false, import: false, export: false, calendar: false },
-  operator: { view: false, edit: false, import: false, export: false, calendar: false },
-  vessel: { view: false, edit: false, import: false, export: false, calendar: false },
-});
+const appStatePayload = {
+  untouched: true,
+  users: [
+    { id: 'legacy-owner', department: '管理', name: 'Owner', username: 'owner', role: 'owner', isActive: true, managedVesselIds: [] },
+    { id: 'legacy-admin', department: '管理', name: 'Admin', username: 'admin', role: 'admin', isActive: true, managedVesselIds: [] },
+    { id: 'legacy-operator', department: '營運', name: 'Operator', username: 'operator', role: 'operator', isActive: true, managedVesselIds: [] },
+    { id: 'legacy-vessel', department: '船端', name: 'Vessel', username: 'vessel', role: 'vessel', isActive: true, managedVesselIds: ['v1'] },
+  ],
+  vessels: [
+    { id: 'v1', isActive: true, assignedUserIds: [], delegateManagers: [] },
+    { id: 'v2', isActive: true, assignedUserIds: [], delegateManagers: [] },
+  ],
+  settings: {
+    rolePermissions: {
+      owner: { viewAllVessels: true },
+      admin: { viewAllVessels: true },
+      operator: { viewAllVessels: true },
+      vessel: { viewAllVessels: false },
+    },
+    nonOwnerPasswordResetVersion: 0,
+  },
+};
 const row = (overrides = {}) => ({
   rowId: 'row-1', sortOrder: 0, voyageNumber: 'V001', portDockName: 'ULSAN', operation: 'To Load / To Unload', cargoQuantityText: '5000 MT',
   etaUtc: '2026-09-01T00:00:00Z', etbUtc: '2026-09-01T02:00:00Z', ldRateText: '400 MT/H', etcUtc: '2026-09-01T14:30:00Z', etdUtc: '2026-09-01T20:30:00Z',
@@ -70,10 +93,6 @@ async function asAnon(action) {
   try { return await action(); } finally { await db.exec('reset role;'); }
 }
 const rollout = (userId) => asUser(userId, () => scalar('select public.sd_itinerary_get_rollout($1)', ['default']));
-const updateRollout = (expected, op, main, portal, permissions) => asUser(ids.owner, () => scalar(
-  'select public.sd_itinerary_owner_update_rollout($1,$2::bigint,$3::uuid,$4,$5,$6::jsonb)',
-  ['default', expected, op, main, portal, JSON.stringify(permissions)],
-));
 
 try {
   await db.exec(`
@@ -120,8 +139,9 @@ try {
       ('${ids.workspace}','v1','Vessel One','V1','Vessel One','bulk','fleet'),
       ('${ids.workspace}','v2','Vessel Two','V2','Vessel Two','tanker','fleet');
     create table public.ship_dynamics_app_state(workspace_key text primary key,revision bigint not null,payload jsonb not null);
-    insert into public.ship_dynamics_app_state values('default',77,'{"untouched":true}');
+    insert into public.ship_dynamics_app_state values('default',77,'{}');
   `);
+  await db.query("update public.ship_dynamics_app_state set payload=$1::jsonb where workspace_key='default'", [JSON.stringify(appStatePayload)]);
   await db.exec(migration);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row()])]), false, 'deployed base migration must reproduce the old IANA-only rejection');
   await db.exec(rolloutBootstrapMigration);
@@ -133,22 +153,73 @@ try {
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ notesText: '靠港前請再次確認' })])]), false, 'pre-notes validator must reject the additive field');
   await db.exec(itineraryNotesMigration);
   await db.exec(officeRoleAccessMigration);
+  await db.exec(mainSessionAccessMigration);
+  const mainArgumentRows = (await db.query(`
+    select proc.proname, proc.proargnames
+    from pg_proc proc
+    join pg_namespace namespace on namespace.oid = proc.pronamespace
+    where namespace.nspname = 'public'
+      and proc.proname = any($1::text[])
+  `, [[
+    'sd_itinerary_main_actor',
+    'sd_itinerary_main_load_many',
+    'sd_itinerary_main_claim_lease',
+    'sd_itinerary_main_renew_lease',
+    'sd_itinerary_main_release_lease',
+    'sd_itinerary_main_save',
+    'sd_itinerary_main_operation_status',
+  ]])).rows;
+  const mainArgumentNames = Object.fromEntries(mainArgumentRows.map(row => [row.proname, row.proargnames]));
+  assert.deepEqual(mainArgumentNames, {
+    sd_itinerary_main_actor: ['p_workspace_key', 'p_actor_user_id'],
+    sd_itinerary_main_load_many: ['p_workspace_key', 'p_vessel_ids', 'p_actor_user_id'],
+    sd_itinerary_main_claim_lease: ['p_workspace_key', 'p_vessel_id', 'p_holder_session', 'p_holder_label', 'p_ttl_seconds', 'p_actor_user_id'],
+    sd_itinerary_main_renew_lease: ['p_workspace_key', 'p_vessel_id', 'p_lease_id', 'p_holder_session', 'p_fencing_token', 'p_ttl_seconds', 'p_actor_user_id'],
+    sd_itinerary_main_release_lease: ['p_workspace_key', 'p_vessel_id', 'p_lease_id', 'p_holder_session', 'p_fencing_token', 'p_actor_user_id'],
+    sd_itinerary_main_save: ['p_workspace_key', 'p_vessel_id', 'p_expected_revision', 'p_operation_id', 'p_rows', 'p_lease_id', 'p_holder_session', 'p_fencing_token', 'p_actor_label', 'p_actor_user_id'],
+    sd_itinerary_main_operation_status: ['p_workspace_key', 'p_operation_id', 'p_actor_user_id'],
+  }, 'PostgREST dispatch requires SQL argument names to match every cloud adapter payload');
+  await db.exec(`
+    update public.sd_memberships set legacy_user_id = case user_id
+      when '${ids.owner}'::uuid then 'legacy-owner'
+      when '${ids.admin}'::uuid then 'legacy-admin'
+      when '${ids.operator}'::uuid then 'legacy-operator'
+      when '${ids.vessel}'::uuid then 'legacy-vessel'
+      else legacy_user_id end
+    where workspace_id = '${ids.workspace}'::uuid;
+  `);
+
+  const emptyOfficeLoad = [{ document: null, vesselId: 'v1', vesselName: 'Vessel One' }];
+  const mainLoad = actorUserId => asAnon(() => scalar(
+    'select public.sd_itinerary_main_load_many($1,$2::text[],$3)',
+    ['default', ['v1'], actorUserId],
+  ));
 
   const ownerInitial = await rollout(ids.owner);
-  assert.equal(ownerInitial.version, 1);
-  assert.equal(ownerInitial.main_enabled, false);
-  assert.equal(ownerInitial.ship_portal_enabled, false);
+  assert.equal(ownerInitial.version, 2);
+  assert.equal(ownerInitial.main_enabled, true);
+  assert.equal(ownerInitial.ship_portal_enabled, true);
   assert.equal(ownerInitial.role_permissions.owner.view, true);
   assert.deepEqual(ownerInitial.office_identity, { department: '管理', display_name: 'Owner', username_label: 'owner', role: 'owner' });
   assert.deepEqual((await rollout(ids.admin)).role_permissions.admin, rolePermissions().admin);
   assert.deepEqual((await rollout(ids.operator)).role_permissions.operator, rolePermissions().operator);
   assert.deepEqual((await rollout(ids.vessel)).role_permissions.vessel, rolePermissions().vessel);
-  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'owner'])), false);
-  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'admin'])), false);
-  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'operator'])), false);
-  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'vessel'])), false);
-  assert.deepEqual(await asAnon(() => scalar('select public.sd_itinerary_get_public_rollout($1)', ['default'])), { ship_portal_enabled: false });
-  assert.deepEqual(await asAnon(() => scalar('select public.sd_itinerary_public_list_vessels($1)', ['default'])), []);
+  for (const role of ['owner', 'admin', 'operator', 'vessel']) {
+    assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', role])), true);
+  }
+  assert.deepEqual(await asAnon(() => scalar('select public.sd_itinerary_get_public_rollout($1)', ['default'])), { ship_portal_enabled: true });
+  assert.deepEqual(await asAnon(() => scalar('select public.sd_itinerary_public_list_vessels($1)', ['default'])), [
+    { id: 'v1', name: 'Vessel One', shortName: 'V1', fullName: 'Vessel One' },
+    { id: 'v2', name: 'Vessel Two', shortName: 'V2', fullName: 'Vessel Two' },
+  ]);
+  for (const actorUserId of ['legacy-owner', 'legacy-admin', 'legacy-operator', 'legacy-vessel', ids.owner, ids.admin, ids.operator, ids.vessel]) {
+    assert.deepEqual(await mainLoad(actorUserId), emptyOfficeLoad, `${actorUserId} must use the universal main Itinerary path`);
+  }
+  await assert.rejects(() => mainLoad('unknown-user'), /not-authorized/i);
+  await assert.rejects(
+    () => asAnon(() => scalar('select public.sd_itinerary_main_actor($1,$2)', ['default', 'legacy-owner'])),
+    /permission denied/i,
+  );
   await assert.rejects(() => asAnon(() => db.query('select * from public.sd_itinerary_documents')), /permission denied/i);
   await assert.rejects(() => asUser(ids.admin, () => db.query('select * from public.sd_itinerary_documents')), /permission denied/i);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row()])]), true);
@@ -186,35 +257,75 @@ try {
 
   await db.query('update public.sd_login_options set must_change_password=true where workspace_id=$1 and user_id=$2', [ids.workspace, ids.owner]);
   assert.equal((await rollout(ids.owner)).office_identity, null);
-  await assert.rejects(() => updateRollout(1, nextOperation(), true, false, rolePermissions()), /owner-required/i);
+  assert.deepEqual(await mainLoad('legacy-owner'), emptyOfficeLoad, 'main AppData actor must not depend on the historical Itinerary Auth session');
   await assert.rejects(() => asUser(ids.owner, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']])), /not-authorized/i);
   await assert.rejects(() => asUser(ids.owner, () => scalar('select public.sd_itinerary_operation_status_office($1,$2::uuid)', ['default', '90000000-0000-4000-8000-999999999999'])), /not-authorized/i);
   await db.query('update public.sd_login_options set must_change_password=false where workspace_id=$1 and user_id=$2', [ids.workspace, ids.owner]);
 
-  const rolloutOp = nextOperation();
-  const enabled = await updateRollout(1, rolloutOp, true, false, legacyOwnerOnlyPermissions());
-  assert.equal(enabled.version, 2);
-  assert.equal((await updateRollout(1, rolloutOp, true, false, legacyOwnerOnlyPermissions())).replayed, true);
-  await assert.rejects(() => updateRollout(1, rolloutOp, true, true, legacyOwnerOnlyPermissions()), /operation-mismatch/i);
-  assert.equal((await rollout(ids.owner)).main_enabled, true);
-  assert.equal((await rollout(ids.owner)).version, 2);
-  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'owner'])), true);
-  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'admin'])), true);
-  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'operator'])), true);
-  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'vessel'])), false);
-  assert.deepEqual((await rollout(ids.admin)).role_permissions.admin, rolePermissions().admin, 'legacy clients must not disable Admin access');
-  assert.deepEqual((await rollout(ids.operator)).role_permissions.operator, rolePermissions().operator, 'legacy clients must not disable Operator access');
-  const emptyOfficeLoad = [{ document: null, vesselId: 'v1', vesselName: 'Vessel One' }];
+  for (const userId of [ids.owner, ids.admin]) {
+    await assert.rejects(
+      () => asUser(userId, () => scalar(
+        'select public.sd_itinerary_owner_update_rollout($1,$2::bigint,$3::uuid,$4,$5,$6::jsonb)',
+        ['default', 2, nextOperation(), false, false, JSON.stringify(rolePermissions())],
+      )),
+      /permission denied/i,
+    );
+  }
   assert.deepEqual(await asUser(ids.admin, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']])), emptyOfficeLoad);
   assert.deepEqual(await asUser(ids.operator, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']])), emptyOfficeLoad);
-  await assert.rejects(() => asUser(ids.vessel, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']])), /not-authorized/i);
-  await assert.rejects(
-    () => asUser(ids.admin, () => scalar(
-      'select public.sd_itinerary_owner_update_rollout($1,$2::bigint,$3::uuid,$4,$5,$6::jsonb)',
-      ['default', 2, nextOperation(), true, false, JSON.stringify(rolePermissions())],
-    )),
-    /owner-required/i,
-  );
+  assert.deepEqual(await asUser(ids.vessel, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']])), emptyOfficeLoad);
+
+  const mainAdminLease = await asAnon(() => scalar(
+    'select public.sd_itinerary_main_claim_lease($1,$2,$3,$4,$5,$6)',
+    ['default', 'v2', 'main-admin-tab', 'Forged label', 75, 'legacy-admin'],
+  ));
+  assert.equal(mainAdminLease.ok, true);
+  const mainAdminOperation = nextOperation();
+  const mainAdminSaveParams = [
+    'default', 'v2', 0, mainAdminOperation, JSON.stringify([row({ voyageNumber: 'MAIN-ADMIN' })]),
+    mainAdminLease.leaseId, 'main-admin-tab', mainAdminLease.fencingToken, 'Forged Admin',
+    'legacy-admin',
+  ];
+  const mainAdminSaved = await asAnon(() => scalar(
+    'select public.sd_itinerary_main_save($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8::bigint,$9,$10)',
+    mainAdminSaveParams,
+  ));
+  assert.equal(mainAdminSaved.document.updatedActorLabel, 'Admin', 'server must use the authoritative main-login display name');
+  assert.equal(Number(mainAdminSaved.revision), 1);
+  assert.equal((await asAnon(() => scalar(
+    'select public.sd_itinerary_main_save($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8::bigint,$9,$10)',
+    mainAdminSaveParams,
+  ))).replayed, true);
+  assert.equal((await asAnon(() => scalar(
+    'select public.sd_itinerary_main_operation_status($1,$2::uuid,$3)',
+    ['default', mainAdminOperation, 'legacy-admin'],
+  ))).revision, 1);
+  assert.equal((await asAnon(() => scalar(
+    'select public.sd_itinerary_main_operation_status($1,$2::uuid,$3)',
+    ['default', mainAdminOperation, 'legacy-operator'],
+  ))).status, 'missing');
+  assert.equal(await scalar("select updated_actor_id::text from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v2'", [ids.workspace]), ids.admin);
+  const mainOperatorLease = await asAnon(() => scalar(
+    'select public.sd_itinerary_main_claim_lease($1,$2,$3,$4,$5,$6)',
+    ['default', 'v2', 'main-operator-tab', 'Operator', 75, 'legacy-operator'],
+  ));
+  assert.equal(mainOperatorLease.ok, true);
+  assert.equal(await asAnon(() => scalar(
+    'select public.sd_itinerary_main_release_lease($1,$2,$3::uuid,$4,$5::bigint,$6)',
+    ['default', 'v2', mainOperatorLease.leaseId, 'main-operator-tab', mainOperatorLease.fencingToken, 'legacy-operator'],
+  )), true);
+
+  const mainVesselLease = await asAnon(() => scalar(
+    'select public.sd_itinerary_main_claim_lease($1,$2,$3,$4,$5,$6)',
+    ['default', 'v2', 'main-vessel-tab', 'Vessel', 75, 'legacy-vessel'],
+  ));
+  assert.equal(mainVesselLease.ok, true);
+  const mainVesselSaved = await asAnon(() => scalar(
+    'select public.sd_itinerary_main_save($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8::bigint,$9,$10)',
+    ['default', 'v2', 1, nextOperation(), JSON.stringify([row({ voyageNumber: 'MAIN-VESSEL' })]), mainVesselLease.leaseId, 'main-vessel-tab', mainVesselLease.fencingToken, 'Forged Vessel', 'legacy-vessel'],
+  ));
+  assert.equal(mainVesselSaved.document.updatedActorLabel, 'Vessel');
+  assert.equal(Number(mainVesselSaved.revision), 2);
 
   const adminLease = await asUser(ids.admin, () => scalar('select public.sd_itinerary_claim_office_lease($1,$2,$3,$4,$5)', ['default', 'v1', 'admin-tab', 'Admin', 75]));
   assert.equal(adminLease.ok, true);
@@ -246,9 +357,6 @@ try {
   assert.equal(Number(await scalar("select revision from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 1);
   assert.equal(await asUser(ids.owner, () => scalar('select public.sd_itinerary_release_office_lease($1,$2,$3::uuid,$4,$5::bigint)', ['default', 'v1', invalidLease.leaseId, 'owner-tab', invalidLease.fencingToken])), true);
 
-  const portalOp = nextOperation();
-  const portalEnabled = await updateRollout(2, portalOp, true, true, rolePermissions());
-  assert.equal(portalEnabled.version, 3);
   const publicVessels = await asAnon(() => scalar('select public.sd_itinerary_public_list_vessels($1)', ['default']));
   assert.deepEqual(publicVessels, [
     { id: 'v1', name: 'Vessel One', shortName: 'V1', fullName: 'Vessel One' },
@@ -280,19 +388,15 @@ try {
   const history = await asUser(ids.owner, () => scalar('select public.sd_itinerary_history($1,$2,$3)', ['default', 'v1', 30]));
   assert.deepEqual(history.map(item => item.revision), [2, 1]);
 
-  const adminPermissionsOp = nextOperation();
-  await updateRollout(3, adminPermissionsOp, true, true, legacyOwnerOnlyPermissions());
-  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'admin'])), true);
-  assert.equal(await asAnon(() => scalar('select public.sd_itinerary_get_office_entry($1,$2)', ['default', 'operator'])), true);
-  const adminLoaded = await asUser(ids.admin, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']]));
-  assert.equal(adminLoaded[0].document.revision, 2);
-  const operatorLoaded = await asUser(ids.operator, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']]));
-  assert.equal(operatorLoaded[0].document.revision, 2);
+  for (const userId of [ids.admin, ids.operator, ids.vessel]) {
+    const loaded = await asUser(userId, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']]));
+    assert.equal(loaded[0].document.revision, 2);
+  }
   assert.deepEqual((await rollout(ids.admin)).role_permissions.admin, rolePermissions().admin);
   assert.deepEqual((await rollout(ids.operator)).role_permissions.operator, rolePermissions().operator);
   assert.deepEqual((await rollout(ids.vessel)).role_permissions.vessel, rolePermissions().vessel);
 
-  assert.deepEqual((await db.query("select revision,payload from public.ship_dynamics_app_state where workspace_key='default'")).rows[0], { revision: 77, payload: { untouched: true } });
+  assert.deepEqual((await db.query("select revision,payload from public.ship_dynamics_app_state where workspace_key='default'")).rows[0], { revision: 77, payload: appStatePayload });
   assert.equal(Number(await scalar("select count(*)::int from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
 
   await db.exec(migration);
@@ -303,15 +407,22 @@ try {
   await db.exec(calculationV2Migration);
   await db.exec(itineraryNotesMigration);
   await db.exec(officeRoleAccessMigration);
-  assert.equal(Number(await scalar('select version from public.sd_itinerary_rollout where workspace_id=$1::uuid', [ids.workspace])), 4);
+  await db.exec(mainSessionAccessMigration);
+  assert.equal(Number(await scalar('select version from public.sd_itinerary_rollout where workspace_id=$1::uuid', [ids.workspace])), 2);
   assert.equal(Number(await scalar("select revision from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
   assert.equal(Number(await scalar("select count(*)::int from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
-  assert.deepEqual((await db.query("select revision,payload from public.ship_dynamics_app_state where workspace_key='default'")).rows[0], { revision: 77, payload: { untouched: true } });
+  assert.deepEqual((await db.query("select revision,payload from public.ship_dynamics_app_state where workspace_key='default'")).rows[0], { revision: 77, payload: appStatePayload });
 
   const privileges = (await db.query(`select
     has_table_privilege('anon','public.sd_itinerary_documents','SELECT') as anon_table,
     has_table_privilege('authenticated','public.sd_itinerary_documents','SELECT') as auth_table,
     has_function_privilege('anon','public.sd_itinerary_get_office_entry(text,text)','EXECUTE') as anon_office_entry,
+    to_regprocedure('public.sd_itinerary_main_get_rollout(text,text,jsonb)') is null as main_rollout_absent,
+    to_regprocedure('public.sd_itinerary_main_owner_update_rollout(text,bigint,uuid,boolean,boolean,text,jsonb)') is null as main_owner_update_absent,
+    has_function_privilege('anon','public.sd_itinerary_main_load_many(text,text[],text)','EXECUTE') as anon_main_load,
+    has_function_privilege('anon','public.sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text)','EXECUTE') as anon_main_save,
+    has_function_privilege('anon','public.sd_itinerary_main_actor(text,text)','EXECUTE') as anon_main_actor_helper,
+    has_function_privilege('authenticated','public.sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb)','EXECUTE') as auth_owner_update,
     has_function_privilege('anon','public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)','EXECUTE') as anon_public_save,
     has_function_privilege('anon','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE') as anon_office_save,
     has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE') as auth_office_save,
@@ -322,15 +433,42 @@ try {
     has_function_privilege('anon','public.sd_itinerary_rows_valid(jsonb)','EXECUTE') as anon_rows_validator,
     has_function_privilege('authenticated','public.sd_itinerary_rows_valid(jsonb)','EXECUTE') as auth_rows_validator
   `)).rows[0];
-  assert.deepEqual(privileges, { anon_table: false, auth_table: false, anon_office_entry: true, anon_public_save: true, anon_office_save: false, auth_office_save: true, anon_offset_validator: false, auth_offset_validator: false, anon_purpose_validator: false, auth_purpose_validator: false, anon_rows_validator: false, auth_rows_validator: false });
+  assert.deepEqual(privileges, {
+    anon_table: false,
+    auth_table: false,
+    anon_office_entry: true,
+    main_rollout_absent: true,
+    main_owner_update_absent: true,
+    anon_main_load: true,
+    anon_main_save: true,
+    anon_main_actor_helper: false,
+    auth_owner_update: false,
+    anon_public_save: true,
+    anon_office_save: false,
+    auth_office_save: true,
+    anon_offset_validator: false,
+    auth_offset_validator: false,
+    anon_purpose_validator: false,
+    auth_purpose_validator: false,
+    anon_rows_validator: false,
+    auth_rows_validator: false,
+  });
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC+5:45' })])]), true);
 
   const readback = (await db.query(readbackSql)).rows[0].itinerary_readback;
   assert.ok(Object.values(readback.tables).every(Boolean));
   assert.ok(Object.values(readback.functions).every(Boolean));
+  assert.ok(readback.rollout.every(item => item.mainEnabled && item.shipPortalEnabled && item.permanentlyOpen));
   assert.deepEqual(readback.privileges, {
     anonOfficeSaveExecute: false,
     anonOfficeEntryExecute: true,
+    mainRolloutAbsent: true,
+    mainOwnerUpdateAbsent: true,
+    anonMainLoadExecute: true,
+    anonMainSaveExecute: true,
+    anonMainActorHelperExecute: false,
+    authenticatedMainSaveExecute: true,
+    authenticatedOwnerUpdateExecute: false,
     anonPublicSaveExecute: true,
     anonDirectDocumentSelect: false,
     anonOffsetValidatorExecute: false,
@@ -356,7 +494,7 @@ try {
     ownerFull: true,
     adminFull: true,
     operatorFull: true,
-    vesselBlocked: true,
+    vesselFull: true,
   });
   assert.deepEqual(readback.vesselNames, { activeVesselCount: 2, activeMissingFullNameCount: 0, publicListFullNameComplete: true });
   const bootstrapReadback = (await db.query(rolloutBootstrapReadbackSql)).rows[0];

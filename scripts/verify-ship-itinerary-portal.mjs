@@ -6,7 +6,6 @@ import { createServer } from 'vite';
 
 const server = await createServer({ root: process.cwd(), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
-  const rollout = await server.ssrLoadModule('/src/itinerary/itineraryRollout.ts');
   const model = await server.ssrLoadModule('/src/itinerary/shipItineraryModel.ts');
   const types = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
   const layoutPath = 'src/itinerary/itineraryFieldLayout.ts';
@@ -28,8 +27,6 @@ try {
   assert.deepEqual([5,6,8,9].map(index => layout.ITINERARY_BROWSE_MAIN_COLUMN_WIDTHS[index]), [142,142,142,142], 'browse ETA/ETB/ETC/ETD columns must be equal and wide enough for complete local time');
   assert.equal(layout.ITINERARY_BROWSE_MAIN_COLUMN_WIDTHS[14], layout.ITINERARY_BROWSE_MAIN_COLUMN_WIDTHS[1], 'Notes and Next Port columns must have the same browse width');
 
-  assert.equal(rollout.localShipPortalDemoRequested({ hostname: '127.0.0.1', search: '?itineraryDemo=1' }), true);
-  assert.equal(rollout.localShipPortalDemoRequested({ hostname: 'example.com', search: '?itineraryDemo=1' }), false);
 
   const latest = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'v1', vesselName: 'TEST', rowId: 'base-row' });
   latest.revision = 9;
@@ -128,6 +125,8 @@ try {
   const html = fs.readFileSync('ship-itinerary.html', 'utf8');
   const entry = fs.readFileSync('src/ship-itinerary-main.tsx', 'utf8');
   const portal = fs.readFileSync('src/itinerary/ShipItineraryPortal.tsx', 'utf8');
+  assert.doesNotMatch(portal, /useShipPortalRollout|rollout\.enabled|rollout\.loading|Itinerary 尚未開放|正在確認 Itinerary 開放狀態/, 'ship input page must stay open without a rollout gate');
+  assert.match(portal, /const demoMode = localShipPortalDemoRequested\(\)/, 'local QA data must remain isolated after rollout removal');
   const editor = fs.readFileSync('src/itinerary/ShipItineraryEditor.tsx', 'utf8');
   const panel = fs.readFileSync('src/itinerary/ItineraryPanel.tsx', 'utf8');
   const officeEditor = fs.readFileSync('src/itinerary/ItineraryEditor.tsx', 'utf8');

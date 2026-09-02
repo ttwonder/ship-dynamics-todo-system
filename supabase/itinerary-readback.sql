@@ -28,6 +28,13 @@ expected_functions(signature) as (
     ('sd_itinerary_operation_status_public(text,uuid,text)'),
     ('sd_itinerary_history(text,text,integer)'),
     ('sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb)'),
+    ('sd_itinerary_main_actor(text,text)'),
+    ('sd_itinerary_main_load_many(text,text[],text)'),
+    ('sd_itinerary_main_claim_lease(text,text,text,text,integer,text)'),
+    ('sd_itinerary_main_renew_lease(text,text,uuid,text,bigint,integer,text)'),
+    ('sd_itinerary_main_release_lease(text,text,uuid,text,bigint,text)'),
+    ('sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text)'),
+    ('sd_itinerary_main_operation_status(text,uuid,text)'),
     ('sd_itinerary_utc_offset_valid(text)'),
     ('sd_itinerary_purpose_valid(text)'),
     ('sd_itinerary_rows_valid(jsonb)')
@@ -45,6 +52,7 @@ rollout_receipt as (
     'workspaceRef', left(r.workspace_id::text, 8),
     'mainEnabled', r.main_enabled,
     'shipPortalEnabled', r.ship_portal_enabled,
+    'permanentlyOpen', r.main_enabled and r.ship_portal_enabled,
     'version', r.version
   ) order by w.legacy_key), '[]'::jsonb) value
   from public.sd_itinerary_rollout r
@@ -55,6 +63,13 @@ privilege_receipt as (
     'anonDirectDocumentSelect', has_table_privilege('anon','public.sd_itinerary_documents','SELECT'),
     'authenticatedDirectDocumentSelect', has_table_privilege('authenticated','public.sd_itinerary_documents','SELECT'),
     'anonOfficeEntryExecute', has_function_privilege('anon','public.sd_itinerary_get_office_entry(text,text)','EXECUTE'),
+    'mainRolloutAbsent', to_regprocedure('public.sd_itinerary_main_get_rollout(text,text,jsonb)') is null,
+    'mainOwnerUpdateAbsent', to_regprocedure('public.sd_itinerary_main_owner_update_rollout(text,bigint,uuid,boolean,boolean,text,jsonb)') is null,
+    'anonMainLoadExecute', has_function_privilege('anon','public.sd_itinerary_main_load_many(text,text[],text)','EXECUTE'),
+    'anonMainSaveExecute', has_function_privilege('anon','public.sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text)','EXECUTE'),
+    'anonMainActorHelperExecute', has_function_privilege('anon','public.sd_itinerary_main_actor(text,text)','EXECUTE'),
+    'authenticatedMainSaveExecute', has_function_privilege('authenticated','public.sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text)','EXECUTE'),
+    'authenticatedOwnerUpdateExecute', has_function_privilege('authenticated','public.sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb)','EXECUTE'),
     'anonPublicSaveExecute', has_function_privilege('anon','public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)','EXECUTE'),
     'anonOfficeSaveExecute', has_function_privilege('anon','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE'),
     'authenticatedOfficeSaveExecute', has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE'),
@@ -159,11 +174,11 @@ role_permission_receipt as (
       left join public.sd_itinerary_role_permissions p on p.workspace_id = w.id and p.role = 'operator'
       where not coalesce(p.can_view and p.can_edit and p.can_import and p.can_export and p.can_calendar, false)
     ),
-    'vesselBlocked', not exists (
+    'vesselFull', not exists (
       select 1
       from public.sd_workspaces w
       left join public.sd_itinerary_role_permissions p on p.workspace_id = w.id and p.role = 'vessel'
-      where not coalesce(not p.can_view and not p.can_edit and not p.can_import and not p.can_export and not p.can_calendar, false)
+      where not coalesce(p.can_view and p.can_edit and p.can_import and p.can_export and p.can_calendar, false)
     )
   ) value
 ),

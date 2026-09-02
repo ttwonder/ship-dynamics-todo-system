@@ -1,30 +1,20 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseClient, getSupabaseConfig, type ResolvedSupabaseConfig } from '../cloud';
-import { createNormalizedSupabaseClient } from '../normalizedSupabaseClient';
 import type { ItineraryLease, ItineraryLeaseClaimResult, ItineraryLeaseRenewResult, ItinerarySaveInput, ItinerarySaveResult } from './itineraryCollaboration';
 import { normalizeInstant } from './itineraryTime';
 import type { ItineraryDocument } from './itineraryTypes';
 import { validateItineraryDocument } from './itineraryValidation';
 
-export const ITINERARY_OFFICE_SESSION_STORAGE_KEY = 'ship-dynamics.itinerary.supabase-session';
+export type ItineraryRpcClient = Pick<NonNullable<ReturnType<typeof getSupabaseClient>>, 'rpc'>;
 
-let officeClient: SupabaseClient | null = null;
-let officeClientKey = '';
-type ItineraryRpcClient = Pick<SupabaseClient, 'rpc'>;
+export interface ItineraryMainActor {
+  userId: string;
+}
 
-export function getItineraryOfficeClient(config: ResolvedSupabaseConfig | null = getSupabaseConfig()): SupabaseClient | null {
-  if (!config) return null;
-  const key = `${config.supabaseUrl}|${config.supabaseAnonKey}`;
-  if (!officeClient || officeClientKey !== key) {
-    officeClient = createNormalizedSupabaseClient({
-      supabaseUrl: config.supabaseUrl,
-      supabaseAnonKey: config.supabaseAnonKey,
-      workspaceId: config.workspaceKey,
-      storageKey: ITINERARY_OFFICE_SESSION_STORAGE_KEY,
-    });
-    officeClientKey = key;
+function mainActorArgs(actor: ItineraryMainActor): { p_actor_user_id: string } {
+  if (!actor.userId.trim()) {
+    throw new Error('Itinerary 主系統登入身份不存在。');
   }
-  return officeClient;
+  return { p_actor_user_id: actor.userId };
 }
 
 function message(error: unknown): string {
@@ -73,98 +63,33 @@ function saveFailure(error: unknown): ItinerarySaveResult {
 
 export interface PublicItineraryVessel { id: string; name: string; shortName: string; fullName: string }
 
-export interface ItineraryOwnerRolloutUpdateInput {
-  expectedVersion: number;
-  mainEnabled: boolean;
-  shipPortalEnabled: boolean;
-  operationId: string;
-}
-
-export interface ItineraryOwnerRolloutUpdateResult {
-  ok: true;
-  version: number;
-  mainEnabled: boolean;
-  shipPortalEnabled: boolean;
-  replayed: boolean;
-}
-
-const officeRolePermissions = () => ({
-  admin: { view: true, edit: true, import: true, export: true, calendar: true },
-  operator: { view: true, edit: true, import: true, export: true, calendar: true },
-  vessel: { view: false, edit: false, import: false, export: false, calendar: false },
-});
-
-function parseOwnerRolloutUpdateResult(
-  value: Record<string, unknown>,
-  input: ItineraryOwnerRolloutUpdateInput,
-  recovered = false,
-): ItineraryOwnerRolloutUpdateResult {
-  const version = Number(value.version);
-  if (value.ok !== true || !Number.isSafeInteger(version) || version < 1
-      || value.mainEnabled !== input.mainEnabled || value.shipPortalEnabled !== input.shipPortalEnabled) {
-    throw new Error('Itinerary rollout 回應格式不正確。');
-  }
-  return { ok: true, version, mainEnabled: input.mainEnabled, shipPortalEnabled: input.shipPortalEnabled, replayed: recovered || value.replayed === true };
-}
-
-export async function updateOwnerItineraryRollout(
-  input: ItineraryOwnerRolloutUpdateInput,
-  config: ResolvedSupabaseConfig = requiredConfig(),
-  client: ItineraryRpcClient | null = getItineraryOfficeClient(config),
-): Promise<ItineraryOwnerRolloutUpdateResult> {
-  if (!client) throw new Error('Itinerary authenticated client is unavailable.');
-  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1
-      || typeof input.mainEnabled !== 'boolean' || typeof input.shipPortalEnabled !== 'boolean' || !input.operationId.trim()) {
-    throw new Error('Itinerary rollout 請求格式不正確。');
-  }
-  const args = {
-    p_workspace_key: config.workspaceKey,
-    p_expected_version: input.expectedVersion,
-    p_operation_id: input.operationId,
-    p_main_enabled: input.mainEnabled,
-    p_ship_portal_enabled: input.shipPortalEnabled,
-    p_role_permissions: officeRolePermissions(),
-  };
-  try {
-    return parseOwnerRolloutUpdateResult(
-      await rpc<Record<string, unknown>>(client, 'sd_itinerary_owner_update_rollout', args),
-      input,
-    );
-  } catch (error) {
-    try {
-      const status = await rpc<Record<string, unknown>>(client, 'sd_itinerary_operation_status_office', {
-        p_workspace_key: config.workspaceKey,
-        p_operation_id: input.operationId,
-      });
-      return parseOwnerRolloutUpdateResult(status, input, true);
-    } catch {
-      throw error;
-    }
-  }
-}
-
 export class OfficeItineraryCloudRepository {
   readonly config: ResolvedSupabaseConfig;
-  readonly client: SupabaseClient;
+  readonly client: ItineraryRpcClient;
+  readonly actor: ItineraryMainActor;
 
-  constructor(config: ResolvedSupabaseConfig = requiredConfig(), client: SupabaseClient | null = getItineraryOfficeClient(config)) {
-    if (!client) throw new Error('Itinerary authenticated client is unavailable.');
+  constructor(actor: ItineraryMainActor, config: ResolvedSupabaseConfig = requiredConfig(), client: ItineraryRpcClient | null = getSupabaseClient(config)) {
+    if (!client) throw new Error('Itinerary 雲端 client 不可用。');
+    mainActorArgs(actor);
+    this.actor = actor;
     this.config = config;
     this.client = client;
   }
 
+  private actorArgs() { return mainActorArgs(this.actor); }
+
   async loadMany(vesselIds: string[]): Promise<Record<string, ItineraryDocument | null>> {
-    const rows = await rpc<Array<Record<string, unknown>>>(this.client, 'sd_itinerary_load_many', {
-      p_workspace_key: this.config.workspaceKey, p_vessel_ids: vesselIds,
+    const rows = await rpc<Array<Record<string, unknown>>>(this.client, 'sd_itinerary_main_load_many', {
+      p_workspace_key: this.config.workspaceKey, p_vessel_ids: vesselIds, ...this.actorArgs(),
     });
     return Object.fromEntries(rows.map(row => [String(row.vesselId), parseDocument(row.document)]));
   }
   async loadDocument(vesselId: string) { return (await this.loadMany([vesselId]))[vesselId] || null; }
 
   async claimLease(vesselId: string, actor: { holderId: string; holderLabel: string }, ttlSeconds = 75): Promise<ItineraryLeaseClaimResult> {
-    const value = await rpc<Record<string, unknown>>(this.client, 'sd_itinerary_claim_office_lease', {
+    const value = await rpc<Record<string, unknown>>(this.client, 'sd_itinerary_main_claim_lease', {
       p_workspace_key: this.config.workspaceKey, p_vessel_id: vesselId, p_holder_session: actor.holderId,
-      p_holder_label: actor.holderLabel, p_ttl_seconds: ttlSeconds,
+      p_holder_label: actor.holderLabel, p_ttl_seconds: ttlSeconds, ...this.actorArgs(),
     });
     return value.ok === true
       ? { ok: true, lease: leaseFrom(value, this.config.workspaceKey, vesselId, actor.holderId, actor.holderLabel) }
@@ -172,17 +97,17 @@ export class OfficeItineraryCloudRepository {
   }
 
   async renewLease(lease: ItineraryLease, ttlSeconds = 75): Promise<ItineraryLeaseRenewResult> {
-    const value = await rpc<Record<string, unknown>>(this.client, 'sd_itinerary_renew_office_lease', {
+    const value = await rpc<Record<string, unknown>>(this.client, 'sd_itinerary_main_renew_lease', {
       p_workspace_key: this.config.workspaceKey, p_vessel_id: lease.vesselId, p_lease_id: lease.leaseId,
-      p_holder_session: lease.holderId, p_fencing_token: lease.fence, p_ttl_seconds: ttlSeconds,
+      p_holder_session: lease.holderId, p_fencing_token: lease.fence, p_ttl_seconds: ttlSeconds, ...this.actorArgs(),
     });
     return value.ok === true ? { ok: true, lease: leaseFrom(value, this.config.workspaceKey, lease.vesselId, lease.holderId, lease.holderLabel) } : { ok: false, code: 'lease-expired' };
   }
 
   async releaseLease(lease: ItineraryLease): Promise<boolean> {
-    return rpc<boolean>(this.client, 'sd_itinerary_release_office_lease', {
+    return rpc<boolean>(this.client, 'sd_itinerary_main_release_lease', {
       p_workspace_key: this.config.workspaceKey, p_vessel_id: lease.vesselId, p_lease_id: lease.leaseId,
-      p_holder_session: lease.holderId, p_fencing_token: lease.fence,
+      p_holder_session: lease.holderId, p_fencing_token: lease.fence, ...this.actorArgs(),
     });
   }
 
@@ -192,17 +117,17 @@ export class OfficeItineraryCloudRepository {
       p_expected_revision: input.expectedRevision, p_operation_id: input.operationId,
       p_rows: input.document.rows, p_lease_id: input.lease.leaseId,
       p_holder_session: input.lease.holderId, p_fencing_token: input.lease.fence,
-      p_actor_label: input.actorLabel,
+      p_actor_label: input.actorLabel, ...this.actorArgs(),
     };
     try {
-      const result = await rpc<Record<string, unknown>>(this.client, 'sd_itinerary_save_office', args);
+      const result = await rpc<Record<string, unknown>>(this.client, 'sd_itinerary_main_save', args);
       const document = parseDocument(result.document);
       if (!document) throw new Error('保存回應缺少文件。');
       return { ok: true, document, replayed: result.replayed === true };
     } catch (error) {
       try {
-        const status = await rpc<Record<string, unknown>>(this.client, 'sd_itinerary_operation_status_office', {
-          p_workspace_key: this.config.workspaceKey, p_operation_id: input.operationId,
+        const status = await rpc<Record<string, unknown>>(this.client, 'sd_itinerary_main_operation_status', {
+          p_workspace_key: this.config.workspaceKey, p_operation_id: input.operationId, ...this.actorArgs(),
         });
         const recovered = parseDocument(status.document);
         if (recovered) return { ok: true, document: recovered, replayed: true };
@@ -214,10 +139,10 @@ export class OfficeItineraryCloudRepository {
 
 export class PublicItineraryCloudRepository {
   readonly config: ResolvedSupabaseConfig;
-  readonly client: SupabaseClient;
+  readonly client: ItineraryRpcClient;
   readonly actorKey: string;
 
-  constructor(config: ResolvedSupabaseConfig = requiredConfig(), client: SupabaseClient | null = getSupabaseClient(config), actorKey = '') {
+  constructor(config: ResolvedSupabaseConfig = requiredConfig(), client: ItineraryRpcClient | null = getSupabaseClient(config), actorKey = '') {
     if (!client) throw new Error('Itinerary public client is unavailable.');
     if (!actorKey.trim()) throw new Error('Itinerary public browser identity is unavailable.');
     this.config = config;
