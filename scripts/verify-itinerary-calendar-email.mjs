@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 
 const server = await createServer({ root: process.cwd(), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
   const calendar = await server.ssrLoadModule('/src/itinerary/itineraryCalendarModel.ts');
+  const calendarView = await server.ssrLoadModule('/src/itinerary/ItineraryCalendar.tsx');
   const email = await server.ssrLoadModule('/src/itinerary/itineraryEmail.ts');
   const types = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
   const doc = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'v1', vesselName: 'TEST VESSEL', rowId: 'r1' });
@@ -18,12 +21,45 @@ try {
   assert.equal(calendar.calendarRangeFromLocalDate('2026-09-01', 7, 'UTC+5:45').ok, true);
   assert.equal(calendar.calendarRangeFromLocalDate('2026-09-01', 7, 'GMT+8').ok, false);
 
+  const sequential = types.createBlankItineraryRow('r2', 1);
+  Object.assign(sequential, { voyageNumber: 'V002', etaUtc: '2026-09-03T00:00:00Z', etdUtc: '2026-09-04T00:00:00Z' });
+  const overlapping = types.createBlankItineraryRow('r3', 2);
+  Object.assign(overlapping, { voyageNumber: 'V003', etaUtc: '2026-09-02T12:00:00Z', etdUtc: '2026-09-03T12:00:00Z' });
+  const tripleOverlap = types.createBlankItineraryRow('r5', 3);
+  Object.assign(tripleOverlap, { voyageNumber: 'V004', etaUtc: '2026-09-02T18:00:00Z', etdUtc: '2026-09-02T21:00:00Z' });
+  doc.rows.push(sequential, overlapping, tripleOverlap);
+  const secondDoc = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'v2', vesselName: 'SECOND VESSEL', rowId: 'r4' });
+  Object.assign(secondDoc.rows[0], { etaUtc: '2026-10-01T00:00:00Z', etdUtc: '2026-10-02T00:00:00Z' });
+  const lanes = calendar.buildItineraryCalendarLanes([doc, secondDoc], range.startInstant, range.endInstant);
+  assert.deepEqual(lanes.map(lane => [lane.vesselId, lane.vesselName]), [['v1', 'TEST VESSEL'], ['v2', 'SECOND VESSEL']], 'every selected vessel needs one lane even without an event in range');
+  assert.equal(lanes[0].events.length, 4);
+  assert.deepEqual(lanes[0].events.map(event => [event.row.rowId, event.layer]), [['r1', 0], ['r3', 1], ['r5', 2], ['r2', 0]], 'only overlapping events should move to a higher sub-layer, and a later non-overlapping event should reuse the base layer');
+  assert.equal(lanes[0].layerCount, 3, 'vessel lane height must follow arbitrary maximum overlap depth');
+  assert.equal(lanes[1].events.length, 0);
+  assert.equal(lanes[1].layerCount, 1, 'an empty selected vessel still needs one base-height lane');
+
+  const now = Date.now();
+  const renderedFirst = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'render-v1', vesselName: 'FIRST VESSEL', rowId: 'render-r1' });
+  Object.assign(renderedFirst.rows[0], { voyageNumber: 'NOW-1', etaUtc: new Date(now).toISOString(), etdUtc: new Date(now + 48 * 60 * 60 * 1000).toISOString() });
+  const renderedOverlap = types.createBlankItineraryRow('render-r2', 1);
+  Object.assign(renderedOverlap, { voyageNumber: 'NOW-2', etaUtc: new Date(now + 24 * 60 * 60 * 1000).toISOString(), etdUtc: new Date(now + 72 * 60 * 60 * 1000).toISOString() });
+  renderedFirst.rows.push(renderedOverlap);
+  const renderedSecond = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'render-v2', vesselName: 'SECOND VESSEL', rowId: 'render-empty' });
+  const calendarHtml = renderToStaticMarkup(React.createElement(calendarView.default, { documents: [renderedFirst, renderedSecond] }));
+  assert.equal((calendarHtml.match(/class="itinerary-calendar-row"/g) || []).length, 2, 'two selected vessels must render exactly two vessel rows');
+  assert.match(calendarHtml, /FIRST VESSEL/);
+  assert.match(calendarHtml, /SECOND VESSEL/);
+  assert.doesNotMatch(calendarHtml, /#1|#2/, 'port-order labels must not split one vessel into separate rows');
+  assert.match(calendarHtml, />96px</, 'calendar default day width must be 96px');
+  assert.match(calendarHtml, /min-height:68px/, 'two overlapping events must expand only their vessel lane');
+  assert.match(calendarHtml, /top:36px/, 'the overlapping event must render in the second sub-layer');
+
   const compactCss = fs.readFileSync('src/itinerary/itineraryCompact.css', 'utf8');
   assert.match(compactCss, /\.itinerary-calendar-controls\{[^}]*font-size:12px/, 'calendar controls must remain readable');
   assert.match(compactCss, /\.itinerary-calendar-grid\{[^}]*font-size:12px/, 'calendar labels must use the same readable density as the browse table');
   assert.match(compactCss, /\.itinerary-calendar-axis,\.itinerary-calendar-row\{[^}]*min-height:36px/, 'calendar rows must have enough height for readable labels');
-  assert.match(compactCss, /\.itinerary-calendar-day-track\{[^}]*height:36px[^}]*background:#243142[^}]*color:#f8fafc/, 'date headings need explicit high-contrast text and background');
-  assert.match(compactCss, /\.itinerary-calendar-track\{[^}]*height:36px/, 'event tracks must match the readable row height');
+  assert.match(compactCss, /\.itinerary-calendar-day-track\{[^}]*height:36px[^}]*background:#eef3f8[^}]*color:#243142/, 'date headings need a light background and dark text');
+  assert.match(compactCss, /\.itinerary-calendar-track\{[^}]*min-height:36px/, 'event tracks need a readable base height and must remain free to grow');
   assert.match(compactCss, /\.itinerary-calendar-event\{[^}]*height:28px[^}]*background:#176b5b[^}]*color:#fff[^}]*font-size:12px/, 'calendar events need readable high-contrast labels');
   assert.match(compactCss, /\.itinerary-calendar-event\.unloading\{[^}]*background:#3657a7[^}]*color:#fff/, 'unloading events need an equally readable semantic color');
   assert.match(compactCss, /\.itinerary-calendar-event span\{[^}]*font-size:11px/, 'optional ETA–ETD text must not fall back to 8px');

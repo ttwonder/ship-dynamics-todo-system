@@ -126,11 +126,12 @@
 .itinerary-calendar-vessel-label{position:sticky;left:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:6px;width:164px;min-width:164px;padding:4px 8px;border-right:1px solid var(--line);background:var(--panel);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .itinerary-calendar-vessel-label b{overflow:hidden;text-overflow:ellipsis}
 .itinerary-calendar-vessel-label span{color:#596579;font-weight:700}
-.itinerary-calendar-day-track{display:flex;height:36px;background:#243142;color:#f8fafc}
-.itinerary-calendar-day-track span{display:flex;align-items:center;justify-content:center;flex:0 0 auto;border-right:1px solid #526175;font-weight:800}
-.itinerary-calendar-track{position:relative;height:36px;background-image:linear-gradient(to right,transparent calc(100% - 1px),var(--line) calc(100% - 1px));background-repeat:repeat-x}
+.itinerary-calendar-axis .itinerary-calendar-vessel-label{background:#eef3f8;color:#243142}
+.itinerary-calendar-day-track{display:flex;height:36px;background:#eef3f8;color:#243142}
+.itinerary-calendar-day-track span{display:flex;align-items:center;justify-content:center;flex:0 0 auto;border-right:1px solid #cbd5e1;font-weight:800}
+.itinerary-calendar-track{position:relative;min-height:36px;background-image:linear-gradient(to right,transparent calc(100% - 1px),var(--line) calc(100% - 1px));background-repeat:repeat-x}
 .itinerary-calendar-event{position:absolute;box-sizing:border-box;top:4px;height:28px;min-width:28px;overflow:hidden;border-radius:5px;background:#176b5b;color:#fff;padding:4px 7px;white-space:nowrap;text-overflow:ellipsis;line-height:20px;font-size:12px;font-weight:700;box-shadow:0 1px 2px rgba(15,23,42,.18)}
 .itinerary-calendar-event.unloading{background:#3657a7;color:#fff}
 .itinerary-calendar-event span{margin-left:6px;font-size:11px;font-weight:600;opacity:1}
-.itinerary-calendar-no-events{padding:11px;color:var(--muted);font-size:12px}
+.itinerary-calendar-lane-empty{position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:11px}
 @media(max-width:850px){.itinerary-calendar-controls{align-items:flex-start;flex-wrap:wrap}.itinerary-calendar-fields{width:100%;margin-left:0;overflow:auto}.itinerary-calendar-vessel-label{width:126px;min-width:126px}}

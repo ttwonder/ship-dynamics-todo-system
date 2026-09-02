@@ -35,7 +35,8 @@ const assertRuleIncludes = (selector, declarations) => {
   for (const declaration of declarations) assert.ok(rule.includes(declaration), `${selector} must retain ${declaration}`);
 };
 assertRuleIncludes('.itinerary-calendar-controls', ['font-size:12px', 'min-height:42px']);
-assertRuleIncludes('.itinerary-calendar-day-track', ['height:36px', 'background:#243142', 'color:#f8fafc']);
+assertRuleIncludes('.itinerary-calendar-axis .itinerary-calendar-vessel-label', ['background:#eef3f8', 'color:#243142']);
+assertRuleIncludes('.itinerary-calendar-day-track', ['height:36px', 'background:#eef3f8', 'color:#243142']);
 assertRuleIncludes('.itinerary-calendar-event', ['height:28px', 'background:#176b5b', 'color:#fff', 'font-size:12px']);
 assertRuleIncludes('.itinerary-browse-table th.itinerary-field-heading-multiline', ['white-space:pre-line']);
 assertRuleIncludes('.itinerary-editor-table th.itinerary-field-heading-multiline', ['white-space:pre-line']);

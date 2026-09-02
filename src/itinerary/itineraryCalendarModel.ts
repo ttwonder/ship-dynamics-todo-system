@@ -21,6 +21,17 @@ export interface ItineraryCalendarEntry {
   widthPercent: number;
 }
 
+export interface ItineraryCalendarLaneEvent extends ItineraryCalendarEntry {
+  layer: number;
+}
+
+export interface ItineraryCalendarLane {
+  vesselId: string;
+  vesselName: string;
+  events: ItineraryCalendarLaneEvent[];
+  layerCount: number;
+}
+
 export function calendarRangeFromLocalDate(localDate: string, days: number, timeZone: string): ItineraryCalendarRangeResult {
   if (!isValidItineraryTimeZone(timeZone)) return { ok: false, reason: 'invalid-time-zone' };
   if (!Number.isInteger(days) || days < 1 || days > 60) return { ok: false, reason: 'invalid-days' };
@@ -66,4 +77,28 @@ export function buildItineraryCalendarEntries(documents: ItineraryDocument[], ra
     }
   }
   return entries.sort((a, b) => Date.parse(a.startInstant) - Date.parse(b.startInstant) || a.vesselName.localeCompare(b.vesselName));
+}
+
+export function buildItineraryCalendarLanes(documents: ItineraryDocument[], rangeStart: string, rangeEnd: string): ItineraryCalendarLane[] {
+  const rangeStartMs = Date.parse(rangeStart);
+  const rangeEndMs = Date.parse(rangeEnd);
+  return documents.map(document => {
+    const layerEnds: number[] = [];
+    const events = buildItineraryCalendarEntries([document], rangeStart, rangeEnd).map((entry): ItineraryCalendarLaneEvent => {
+      const rawStart = Date.parse(entry.startInstant);
+      const rawEnd = Math.max(rawStart, Date.parse(entry.endInstant));
+      const visibleStart = Math.max(rangeStartMs, rawStart);
+      const visibleEnd = Math.min(rangeEndMs, rawEnd);
+      let layer = layerEnds.findIndex(layerEnd => layerEnd <= visibleStart);
+      if (layer < 0) layer = layerEnds.length;
+      layerEnds[layer] = visibleEnd;
+      return { ...entry, layer };
+    });
+    return {
+      vesselId: document.vesselId,
+      vesselName: document.vesselName,
+      events,
+      layerCount: Math.max(1, layerEnds.length),
+    };
+  });
 }
