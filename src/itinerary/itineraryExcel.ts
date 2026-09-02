@@ -7,10 +7,16 @@ const META_SHEET = '_Itinerary_Meta';
 const MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const EXCEL_LAYOUT_VERSION = 3;
 const EXCEL_MAX_COLUMN = 37;
+const EXCEL_VISIBLE_COLUMN = 32;
 const OFFSET_LABEL_RANGE_NAME = 'ItineraryUtcOffsetLabels';
 const OFFSET_LOOKUP_RANGE_NAME = 'ItineraryUtcOffsetLookup';
 const MERGED_COLUMNS = [1, 2, 3, 4, 7, ...Array.from({ length: 28 }, (_, index) => index + 10)];
 const TIME_FIELDS = ['etaUtc', 'etbUtc', 'etcUtc', 'etdUtc'] as const;
+const VISIBLE_COLUMN_WIDTHS = [10, 20, 18, 22, 15, 15, 18, 15, 15, 14, 14, 14, 14, 28, 12, 10, 12, 15, 18, 18, 14, 14, 18, 16, 20, 20, 16, 16, 16, 16, 22, 18] as const;
+const BLACK = 'FF000000';
+const WHITE = 'FFFFFFFF';
+const TITLE_FILL = 'FFF2F2F2';
+const HEADER_FILL = 'FFD9E2F3';
 
 type TimeField = typeof TIME_FIELDS[number];
 type ExcelRuntime = { Workbook: new () => ExcelJS.Workbook; default?: { Workbook: new () => ExcelJS.Workbook } };
@@ -73,6 +79,28 @@ function cloneStyle<T>(value: T): T {
   return value ? JSON.parse(JSON.stringify(value)) as T : value;
 }
 
+function hasDraftContent(value: string): boolean {
+  const normalized = value.replace(/\s+/g, '').toUpperCase();
+  return Boolean(normalized && normalized !== 'A:F:');
+}
+
+function hasItineraryExportContent(row: ItineraryRow): boolean {
+  const textValues = [
+    row.voyageNumber, row.portDockName, row.operation, row.cargoQuantityText, row.ldRateText,
+    row.arrivalRobText, row.departureRobText, row.notesText, row.portTimeZone,
+    row.etaTimeZone, row.etbTimeZone, row.etcTimeZone, row.etdTimeZone,
+    row.calculationStartTimeZone, row.tanksText,
+  ];
+  if (textValues.some(value => value.trim())) return true;
+  if (hasDraftContent(row.arrivalDraftText) || hasDraftContent(row.departureDraftText)) return true;
+  if ([row.etaUtc, row.etbUtc, row.etcUtc, row.etdUtc, row.calculationStartUtc].some(Boolean)) return true;
+  return [
+    row.oceanDistanceNm, row.speedKnots, row.sailingHours, row.berthWaitHours,
+    row.channelSailingHours, row.preCompletionDelayHours, row.postCompletionDelayHours,
+    row.operationQuantityMt, row.operationRateMtPerHour, row.operationHours,
+  ].some(value => value !== null);
+}
+
 function cleanSheetName(value: string): string {
   const cleaned = value.replace(/[\\/*?:\[\]]+/g, ' ').replace(/\s+/g, ' ').trim();
   return (cleaned || 'Itinerary').slice(0, 31);
@@ -106,7 +134,6 @@ function copyTemplateLayout(source: ExcelJS.Worksheet, target: ExcelJS.Worksheet
     to.width = from.width;
     to.hidden = from.hidden;
     to.outlineLevel = from.outlineLevel;
-    to.style = cloneStyle(from.style);
   }
   for (let rowNumber = 1; rowNumber <= maxRow; rowNumber += 1) {
     const templateRowNumber = rowNumber <= source.rowCount ? rowNumber : (rowNumber % 2 === 0 ? 4 : 5);
@@ -125,7 +152,7 @@ function copyTemplateLayout(source: ExcelJS.Worksheet, target: ExcelJS.Worksheet
       to.fill = cloneStyle(from.fill);
       to.font = cloneStyle(from.font);
       to.protection = cloneStyle(from.protection);
-      if (rowNumber <= 3) to.value = from.value;
+      if (rowNumber <= 3 && column <= 14) to.value = from.value;
     }
   }
   for (const range of ['A1:N1', 'A2:B2', 'C2:D2', 'L2:M2']) target.mergeCells(range);
@@ -178,6 +205,79 @@ function setTimePair(worksheet: ExcelJS.Worksheet, primary: number, column: numb
   }
 }
 
+function solidFill(argb: string): ExcelJS.Fill {
+  return { type: 'pattern', pattern: 'solid', fgColor: { argb } };
+}
+
+function thinBorder(): Partial<ExcelJS.Borders> {
+  const side = () => ({ style: 'thin' as const, color: { argb: BLACK } });
+  return { left: side(), right: side(), top: side(), bottom: side() };
+}
+
+function exportFont(size = 11, bold = false): Partial<ExcelJS.Font> {
+  return { name: 'Calibri', family: 2, size, bold, color: { argb: BLACK } };
+}
+
+function applyDocumentPresentation(worksheet: ExcelJS.Worksheet, lastRow: number): void {
+  VISIBLE_COLUMN_WIDTHS.forEach((width, index) => { worksheet.getColumn(index + 1).width = width; });
+  for (let column = EXCEL_VISIBLE_COLUMN + 1; column <= EXCEL_MAX_COLUMN; column += 1) {
+    worksheet.getColumn(column).hidden = true;
+    worksheet.getColumn(column).width = 12;
+  }
+
+  worksheet.getRow(1).height = 28;
+  worksheet.getRow(2).height = 22;
+  worksheet.getRow(3).height = 60;
+  for (let row = 4; row <= lastRow; row += 1) worksheet.getRow(row).height = 24;
+
+  for (let row = 1; row <= lastRow; row += 1) {
+    for (let column = 1; column <= EXCEL_MAX_COLUMN; column += 1) {
+      const cell = worksheet.getCell(row, column);
+      cell.font = exportFont();
+      cell.fill = solidFill(WHITE);
+      cell.border = {};
+      cell.alignment = {
+        ...cell.alignment,
+        horizontal: 'center',
+        vertical: 'middle',
+        wrapText: true,
+        shrinkToFit: false,
+      };
+    }
+  }
+
+  const title = worksheet.getCell('A1');
+  title.font = exportFont(14, true);
+  title.fill = solidFill(TITLE_FILL);
+  title.alignment = { horizontal: 'center', vertical: 'middle' };
+  worksheet.getCell('A2').font = exportFont(11, true);
+  worksheet.getCell('A2').alignment = { horizontal: 'left', vertical: 'middle' };
+  worksheet.getCell('K2').font = exportFont(11, true);
+  worksheet.getCell('K2').alignment = { horizontal: 'right', vertical: 'middle' };
+  worksheet.getCell('L2').alignment = { horizontal: 'center', vertical: 'middle' };
+
+  for (let column = 1; column <= EXCEL_MAX_COLUMN; column += 1) {
+    const header = worksheet.getCell(3, column);
+    header.font = exportFont(11, true);
+    header.fill = solidFill(HEADER_FILL);
+    header.border = thinBorder();
+    header.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true, shrinkToFit: false };
+  }
+
+  for (let row = 4; row <= lastRow; row += 1) {
+    for (let column = 1; column <= EXCEL_MAX_COLUMN; column += 1) {
+      const cell = worksheet.getCell(row, column);
+      cell.font = exportFont();
+      cell.fill = solidFill(WHITE);
+      cell.border = thinBorder();
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true, shrinkToFit: false };
+    }
+    for (const column of [2, 3, 4, 10, 11, 12, 13, 14, 21]) {
+      worksheet.getCell(row, column).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true, shrinkToFit: false };
+    }
+  }
+}
+
 function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocument): void {
   worksheet.getCell('A1').value = "Ship's Itinerary";
   worksheet.getCell('A2').value = `Vsl name: ${document.vesselName}`;
@@ -194,12 +294,6 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
     'ETB Offset (h)', 'ETC Offset (h)', 'ETD Offset (h)',
   ];
   headers.forEach((header, index) => { worksheet.getCell(3, index + 1).value = header; });
-  worksheet.getColumn(14).width = 28;
-  for (let column = 33; column <= 37; column += 1) {
-    worksheet.getColumn(column).hidden = true;
-    worksheet.getColumn(column).width = 12;
-  }
-  for (let column = 25; column <= 32; column += 1) worksheet.getColumn(column).width = column === 31 ? 22 : 18;
 
   document.rows.forEach((row, index) => {
     const primary = 4 + index * 2;
@@ -224,15 +318,19 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
     setOffsetValidation(worksheet.getCell(primary, 15));
     worksheet.getCell(primary, 16).value = row.oceanDistanceNm;
     worksheet.getCell(primary, 17).value = row.speedKnots;
-    worksheet.getCell(primary, 18).value = row.sailingHours !== null
+    const sailingHoursCell = worksheet.getCell(primary, 18);
+    sailingHoursCell.value = row.sailingHours !== null
       ? formulaValue(`IF(OR(P${primary}="",Q${primary}=""),"",P${primary}/Q${primary})`, row.sailingHours) : null;
+    sailingHoursCell.numFmt = '0.0';
     worksheet.getCell(primary, 19).value = row.berthWaitHours;
     worksheet.getCell(primary, 20).value = row.channelSailingHours;
     worksheet.getCell(primary, 21).value = row.tanksText;
     worksheet.getCell(primary, 22).value = row.operationQuantityMt;
     worksheet.getCell(primary, 23).value = row.operationRateMtPerHour;
-    worksheet.getCell(primary, 24).value = row.operationHours !== null
+    const operationHoursCell = worksheet.getCell(primary, 24);
+    operationHoursCell.value = row.operationHours !== null
       ? formulaValue(`IF(OR(V${primary}="",W${primary}=""),"",V${primary}/W${primary})`, row.operationHours) : null;
+    operationHoursCell.numFmt = '0.0';
     worksheet.getCell(primary, 25).value = row.preCompletionDelayHours;
     worksheet.getCell(primary, 26).value = row.postCompletionDelayHours;
     worksheet.getCell(primary, 27).value = row.etaTimeZone;
@@ -267,7 +365,8 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
     setTimePair(worksheet, primary, 9, row.etdUtc, row.etdMode, etdFormula, etdZone);
   });
 
-  const lastRow = Math.max(5, 3 + document.rows.length * 2);
+  const lastRow = 3 + document.rows.length * 2;
+  applyDocumentPresentation(worksheet, lastRow);
   worksheet.pageSetup.printArea = `A1:N${lastRow}`;
   worksheet.pageSetup.fitToPage = true;
   worksheet.pageSetup.fitToWidth = 1;
@@ -297,11 +396,12 @@ export async function buildItineraryWorkbook(documents: ItineraryDocument[], tem
   onStage?.('sheets');
   for (const document of documents) {
     const sheetName = uniqueSheetName(document.vesselName, used);
-    const maxRow = Math.max(30, 3 + document.rows.length * 2);
+    const exportDocument = { ...document, rows: document.rows.filter(hasItineraryExportContent) };
+    const maxRow = 3 + exportDocument.rows.length * 2;
     const worksheet = workbook.addWorksheet(sheetName);
     copyTemplateLayout(templateSheet, worksheet, maxRow);
-    fillDocumentSheet(worksheet, document);
-    metadata.push({ sheetName, document });
+    fillDocumentSheet(worksheet, exportDocument);
+    metadata.push({ sheetName, document: exportDocument });
   }
 
   const meta = workbook.addWorksheet(META_SHEET, { state: 'veryHidden' });

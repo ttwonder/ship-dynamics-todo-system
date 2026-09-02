@@ -29,7 +29,8 @@ try {
   assert.equal(calculated.issues.length, 0);
 
   const alpha = createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'v-alpha', vesselName: 'TEST ALPHA', rowId: 'unused' });
-  alpha.rows = calculated.rows;
+  const trailingBlank = createBlankItineraryRow('row-blank', 2);
+  alpha.rows = [...calculated.rows, trailingBlank];
   alpha.revision = 7;
   alpha.updatedAt = '2026-08-31T01:02:03Z';
   const beta = structuredClone(alpha);
@@ -114,6 +115,8 @@ try {
   }
   assert.equal(workbook.worksheets[0].getCell('R4').value.formula.includes('P4/Q4'), true);
   assert.equal(workbook.worksheets[0].getCell('R4').value.formula.includes('ROUNDUP'), false);
+  assert.equal(workbook.worksheets[0].getCell('R4').numFmt, '0.0', 'remaining sailing time must display one decimal place');
+  assert.equal(workbook.worksheets[0].getCell('X4').numFmt, '0.0', 'estimated operation time must display one decimal place');
   assert.equal(workbook.worksheets[0].getCell('E4').value.formula.includes('AE4'), true);
   assert.equal(workbook.worksheets[0].getCell('E6').value.formula.includes('I4'), true);
   assert.equal(workbook.worksheets[0].getCell('E6').value.formula.includes('R6'), true);
@@ -121,15 +124,59 @@ try {
   assert.equal(workbook.worksheets[0].getCell('H4').value.formula.includes('Y4'), true);
   assert.equal(workbook.worksheets[0].getCell('I4').value.formula.includes('Z4'), true);
   for (let column = 33; column <= 37; column += 1) assert.equal(workbook.worksheets[0].getColumn(column).hidden, true, `helper column ${column} must stay hidden`);
+  for (let column = 1; column <= 37; column += 1) assert.notEqual(workbook.worksheets[0].getColumn(column).fill?.fgColor?.argb, 'FFFFFF00', `column ${column} must not paint unused rows yellow`);
+  for (let row = 1; row <= 2; row += 1) {
+    for (let column = 15; column <= 37; column += 1) assert.equal(workbook.worksheets[0].getCell(row, column).value, null, `tail header residue at row ${row}, column ${column}`);
+  }
   assert.ok(workbook.worksheets[0].model.merges.includes('A4:A5'));
   assert.equal(workbook.worksheets[0].pageSetup.printArea, 'A1:N7');
-  for (let column = 1; column <= 13; column += 1) assert.equal(workbook.worksheets[0].getColumn(column).width, templateSheet.getColumn(column).width, `column ${column} width must match the approved template`);
-  assert.ok(workbook.worksheets[0].getColumn(14).width >= 26, 'notes must have a readable visible Excel width');
-  for (let row = 1; row <= 7; row += 1) assert.equal(workbook.worksheets[0].getRow(row).height, templateSheet.getRow(row).height, `row ${row} height must match the approved template`);
+  assert.equal(workbook.worksheets[0].rowCount, 7, 'the export must stop after the last content row pair');
+  assert.equal(workbook.worksheets[0].getRow(8).hasValues, false, 'a trailing blank itinerary row must not create worksheet rows');
+  const expectedVisibleWidths = [10, 20, 18, 22, 15, 15, 18, 15, 15, 14, 14, 14, 14, 28, 12, 10, 12, 15, 18, 18, 14, 14, 18, 16, 20, 20, 16, 16, 16, 16, 22, 18];
+  expectedVisibleWidths.forEach((width, index) => assert.equal(workbook.worksheets[0].getColumn(index + 1).width, width, `visible column ${index + 1} must use the readable layout width`));
+  assert.equal(workbook.worksheets[0].getRow(1).height, 28);
+  assert.equal(workbook.worksheets[0].getRow(2).height, 22);
+  assert.equal(workbook.worksheets[0].getRow(3).height, 60, 'wrapped headers need enough height to remain fully visible');
+  for (let row = 4; row <= 7; row += 1) assert.equal(workbook.worksheets[0].getRow(row).height, 24, `data row ${row} must use the compact readable height`);
   assert.equal(workbook.worksheets[0].getCell('A1').font.bold, true);
   assert.equal(workbook.worksheets[0].getCell('A1').fill.fgColor.argb, 'FFF2F2F2');
-  assert.equal(workbook.worksheets[0].getCell('B4').fill.fgColor.argb, 'FFFFFF00');
+  assert.equal(workbook.worksheets[0].getCell('B4').fill.fgColor.argb, 'FFFFFFFF');
   assert.equal(workbook.worksheets[0].getCell('B4').alignment.wrapText, true);
+  for (let column = 1; column <= 32; column += 1) {
+    const header = workbook.worksheets[0].getCell(3, column);
+    assert.equal(header.font.name, 'Calibri', `header ${header.address} must use the same font as the main columns`);
+    assert.equal(header.font.size, 11, `header ${header.address} must use a consistent 11 pt font`);
+    assert.equal(header.font.color?.argb, 'FF000000', `header ${header.address} must be black`);
+    assert.equal(header.alignment.wrapText, true, `header ${header.address} must wrap instead of shrinking`);
+    assert.notEqual(header.alignment.shrinkToFit, true, `header ${header.address} must not visually shrink its font`);
+    for (const side of ['left', 'right', 'top', 'bottom']) assert.equal(header.border[side]?.style, 'thin', `header ${header.address} ${side} border must be thin`);
+  }
+  for (let row = 1; row <= 7; row += 1) {
+    for (let column = 1; column <= 37; column += 1) {
+      const cell = workbook.worksheets[0].getCell(row, column);
+      assert.notEqual(cell.fill.fgColor?.argb, 'FFFFFF00', `${cell.address} must not retain a yellow fill`);
+      if (cell.value !== null && cell.value !== undefined && cell.value !== '') assert.equal(cell.font.color?.argb, 'FF000000', `${cell.address} visible text must be black`);
+      for (const side of ['left', 'right', 'top', 'bottom']) {
+        const style = cell.border[side]?.style;
+        if (style) assert.equal(style, 'thin', `${cell.address} ${side} border must not be thicker than adjacent cells`);
+      }
+    }
+  }
+  const mergedVisibleColumns = [1, 2, 3, 4, 7, ...Array.from({ length: 23 }, (_, index) => index + 10)];
+  for (const primary of [4, 6]) {
+    for (const column of mergedVisibleColumns) {
+      const top = workbook.worksheets[0].getCell(primary, column);
+      const bottom = workbook.worksheets[0].getCell(primary + 1, column);
+      for (const side of ['left', 'right', 'top']) assert.equal(top.border[side]?.style, 'thin', `${top.address} logical cell edge must be complete`);
+      for (const side of ['left', 'right', 'bottom']) assert.equal(bottom.border[side]?.style, 'thin', `${bottom.address} logical cell edge must be complete`);
+    }
+    for (const column of [5, 6, 8, 9]) {
+      for (const row of [primary, primary + 1]) {
+        const cell = workbook.worksheets[0].getCell(row, column);
+        for (const side of ['left', 'right', 'top', 'bottom']) assert.equal(cell.border[side]?.style, 'thin', `${cell.address} time-cell border must be complete`);
+      }
+    }
+  }
   assert.equal(workbook.worksheets[0].views[0].state, 'frozen');
   assert.equal(workbook.worksheets[0].views[0].ySplit, 3);
   assert.equal(workbook.worksheets[0].views[0].topLeftCell, 'A4');
