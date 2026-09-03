@@ -3,7 +3,7 @@ export const ITINERARY_MAIN_FIELD_LABELS = [
   'Next Port & Dock Name',
   'Destination\nUTC Offset',
   'Purpose',
-  'B/F or I/F Qty (MT/BBLS)',
+  'B/F or I/F Qty\n(MT/BBLS/M3)',
   'ETA (LT)',
   'ETB (LT)',
   '預計L/D rate (MT/h)',
