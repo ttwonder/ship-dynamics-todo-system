@@ -24,6 +24,8 @@ const previousPortMigration = await readFile(previousPortMigrationPath, 'utf8');
 const alternativePlansMigrationPath = 'supabase/migrations/20260903190000_itinerary_alternative_plans.sql';
 assert.equal(existsSync(alternativePlansMigrationPath), true, 'an additive migration must persist alternative plans inside the Itinerary document');
 const alternativePlansMigration = await readFile(alternativePlansMigrationPath, 'utf8');
+const previousPortBackfillSql = await readFile('supabase/itinerary-previous-port-backfill.sql', 'utf8');
+const previousPortBackfillReadbackSql = await readFile('supabase/itinerary-previous-port-backfill-readback.sql', 'utf8');
 assert.match(alternativePlansMigration, /notify\s+pgrst\s*,\s*'reload schema'\s*;/i, 'RPC signature changes must notify PostgREST to reload its schema cache');
 assert.doesNotMatch(mainSessionAccessMigration, /p_actor_guard|create or replace function public\.sd_itinerary_main_authorize|create or replace function public\.sd_itinerary_main_owner_update_rollout/, 'universal access migration must not retain a dedicated guard or Owner-only rollout API');
 assert.match(mainSessionAccessMigration, /main_enabled\s*=\s*true[\s\S]*ship_portal_enabled\s*=\s*true/, 'both Itinerary entrypoints must be forced open');
@@ -689,6 +691,53 @@ try {
   assert.deepEqual(readback.vesselNames, { activeVesselCount: 2, activeMissingFullNameCount: 0, publicListFullNameComplete: true });
   const bootstrapReadback = (await db.query(rolloutBootstrapReadbackSql)).rows[0];
   assert.ok(Object.values(bootstrapReadback).every(Boolean));
+
+  const backfillFixtureRows = [v2Row({ rowId: 'backfill-v2-row', previousPortName: '' })];
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify(backfillFixtureRows)]), true);
+  await db.query(`
+    insert into public.sd_vessels(
+      workspace_id,id,name,short_name,full_name,ship_type,fleet_category,position
+    ) values (
+      $1::uuid,'v-backfill','Backfill Vessel','BF','Backfill Vessel','bulk','fleet',
+      '{"lastPort":"YOKOHAMA"}'::jsonb
+    )
+  `, [ids.workspace]);
+  await db.query(`
+    insert into public.sd_itinerary_documents(
+      workspace_id,vessel_id,revision,schema_version,rows_payload,
+      alternative_plans_payload,updated_at,updated_actor_kind,updated_actor_label
+    ) values ($1::uuid,'v-backfill',1,1,$2::jsonb,'[]'::jsonb,clock_timestamp(),'office','Fixture')
+  `, [ids.workspace, JSON.stringify(backfillFixtureRows)]);
+  await db.query(`
+    insert into public.sd_itinerary_history(
+      workspace_id,vessel_id,revision,schema_version,rows_payload,
+      alternative_plans_payload,actor_kind,actor_label,operation_id
+    ) values ($1::uuid,'v-backfill',1,1,$2::jsonb,'[]'::jsonb,'office','Fixture',$3::uuid)
+  `, [ids.workspace, JSON.stringify(backfillFixtureRows), nextOperation()]);
+
+  await db.exec(previousPortBackfillSql);
+  const backfilledDocument = (await db.query(`
+    select revision,rows_payload,alternative_plans_payload,updated_actor_label
+    from public.sd_itinerary_documents
+    where workspace_id=$1::uuid and vessel_id='v-backfill'
+  `, [ids.workspace])).rows[0];
+  assert.equal(backfilledDocument.revision, 2);
+  assert.equal(backfilledDocument.rows_payload[0].previousPortName, 'YOKOHAMA');
+  assert.deepEqual(backfilledDocument.alternative_plans_payload, []);
+  assert.equal(backfilledDocument.updated_actor_label, '系統回填：船卡上一港');
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify(backfilledDocument.rows_payload)]), true);
+  assert.equal(Number(await scalar(`select count(*)::integer from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v-backfill' and actor_label='系統回填：船卡上一港'`, [ids.workspace])), 1);
+  assert.equal(Number(await scalar(`select count(*)::integer from public.sd_itinerary_operations where workspace_id=$1::uuid and target_key='vessel:v-backfill' and actor_key='system:previous-port-backfill-v1'`, [ids.workspace])), 1);
+
+  const previousPortBackfillReadback = (await db.query(previousPortBackfillReadbackSql)).rows[0].previous_port_backfill_readback;
+  assert.equal(previousPortBackfillReadback.verified, true);
+  assert.equal(previousPortBackfillReadback.totals.remainingFillable, 0);
+  assert.equal(previousPortBackfillReadback.totals.backfillHistoryRows, 1);
+  assert.equal(previousPortBackfillReadback.totals.backfillOperationRows, 1);
+
+  await db.exec(previousPortBackfillSql);
+  assert.equal(Number(await scalar(`select count(*)::integer from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v-backfill' and actor_label='系統回填：船卡上一港'`, [ids.workspace])), 1, 'exact final schema rerun must remain idempotent');
+  assert.equal(Number(await scalar(`select revision from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v-backfill'`, [ids.workspace])), 2);
 
   const withoutOperationMigration = new PGlite();
   try {
