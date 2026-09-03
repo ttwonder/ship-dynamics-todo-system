@@ -3,6 +3,7 @@ import type { ItineraryLease, ItineraryLeaseClaimResult, ItineraryLeaseRenewResu
 import { normalizeInstant } from './itineraryTime';
 import type { ItineraryDocument } from './itineraryTypes';
 import { validateItineraryDocument } from './itineraryValidation';
+import { synchronizeShipAlternativeAnchors } from './shipItineraryModel';
 
 export type ItineraryRpcClient = Pick<NonNullable<ReturnType<typeof getSupabaseClient>>, 'rpc'>;
 
@@ -112,10 +113,12 @@ export class OfficeItineraryCloudRepository {
   }
 
   async save(input: ItinerarySaveInput): Promise<ItinerarySaveResult> {
+    const synchronizedDocument = synchronizeShipAlternativeAnchors(input.document);
     const args = {
       p_workspace_key: this.config.workspaceKey, p_vessel_id: input.document.vesselId,
       p_expected_revision: input.expectedRevision, p_operation_id: input.operationId,
-      p_rows: input.document.rows, p_lease_id: input.lease.leaseId,
+      p_rows: synchronizedDocument.rows, p_alternative_plans: synchronizedDocument.alternativePlans,
+      p_lease_id: input.lease.leaseId,
       p_holder_session: input.lease.holderId, p_fencing_token: input.lease.fence,
       p_actor_label: input.actorLabel, ...this.actorArgs(),
     };
@@ -185,7 +188,8 @@ export class PublicItineraryCloudRepository {
     const args = {
       p_workspace_key: this.config.workspaceKey, p_vessel_id: validation.value.vesselId,
       p_expected_revision: input.expectedRevision, p_operation_id: input.operationId,
-      p_rows: validation.value.rows, p_lease_id: input.lease.leaseId,
+      p_rows: validation.value.rows, p_alternative_plans: validation.value.alternativePlans,
+      p_lease_id: input.lease.leaseId,
       p_actor_key: this.actorKey, p_holder_session: input.lease.holderId, p_fencing_token: input.lease.fence,
     };
     try {

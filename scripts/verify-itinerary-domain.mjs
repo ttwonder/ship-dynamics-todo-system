@@ -238,6 +238,15 @@ try {
   const firstPending = operations.pendingOperationForDocument(document, null, () => '10000000-0000-4000-8000-000000000001');
   const samePending = operations.pendingOperationForDocument(structuredClone(document), firstPending, () => { throw new Error('same bytes must reuse the operation'); });
   assert.equal(samePending.id, firstPending.id);
+  const legacyDocumentWithoutAlternatives = structuredClone(document);
+  delete legacyDocumentWithoutAlternatives.alternativePlans;
+  const legacyPending = {
+    id: '10000000-0000-4000-8000-000000000003',
+    signature: JSON.stringify(legacyDocumentWithoutAlternatives),
+  };
+  const migratedLegacyPending = operations.pendingOperationForDocument(document, legacyPending, () => { throw new Error('the exact legacy empty-alternative operation must be reused'); });
+  assert.equal(migratedLegacyPending.id, legacyPending.id);
+  assert.equal(migratedLegacyPending.signature, operations.itineraryDocumentSignature(document), 'the in-memory pending signature must converge to the current document bytes');
   const changedDocument = structuredClone(document);
   changedDocument.rows[0].voyageNumber = 'CHANGED';
   const changedPending = operations.pendingOperationForDocument(changedDocument, firstPending, () => '10000000-0000-4000-8000-000000000002');

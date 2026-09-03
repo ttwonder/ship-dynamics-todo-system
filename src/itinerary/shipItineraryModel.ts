@@ -1,7 +1,7 @@
 import { recalculateItineraryRows } from './itineraryDomain';
 import { instantToWallTime, isValidItineraryTimeZone, wallTimeToInstant } from './itineraryTime';
 import {
-  createBlankItineraryRow, createEmptyItineraryDocument, ITINERARY_TIME_ZONE_FIELDS, resolveItineraryTimeZone,
+  createBlankItineraryRow, createEmptyItineraryDocument, createItineraryId, ITINERARY_MAX_ALTERNATIVE_PLANS, ITINERARY_TIME_ZONE_FIELDS, resolveItineraryTimeZone,
   type ItineraryDocument, type ItineraryRow, type ItineraryTimeField,
 } from './itineraryTypes';
 
@@ -23,6 +23,28 @@ function cloneDocument(document: ItineraryDocument): ItineraryDocument {
   return structuredClone(document);
 }
 
+function documentAlternativePlans(document: ItineraryDocument) {
+  return Array.isArray(document.alternativePlans) ? document.alternativePlans : [];
+}
+
+function synchronizeAlternativeAnchors(document: ItineraryDocument): ItineraryDocument {
+  const formalAnchor = document.rows[0];
+  document.alternativePlans = documentAlternativePlans(document).map(plan => ({
+    ...plan,
+    rows: recalculateItineraryRows(plan.rows.map((row, index) => ({
+      ...row,
+      previousPortName: '',
+      calculationStartUtc: index === 0 ? formalAnchor?.calculationStartUtc || null : null,
+      calculationStartTimeZone: index === 0 ? formalAnchor?.calculationStartTimeZone || '' : '',
+    }))).rows,
+  }));
+  return document;
+}
+
+export function synchronizeShipAlternativeAnchors(document: ItineraryDocument): ItineraryDocument {
+  return synchronizeAlternativeAnchors(cloneDocument(document));
+}
+
 export function createShipDraft(latest: ItineraryDocument, mode: ShipDraftStartMode, blankRowId?: string): ItineraryDocument {
   if (mode === 'latest') return cloneDocument(latest);
   const blank = createEmptyItineraryDocument({ workspaceKey: latest.workspaceKey, vesselId: latest.vesselId, vesselName: latest.vesselName, rowId: blankRowId });
@@ -34,7 +56,8 @@ export function createShipDraft(latest: ItineraryDocument, mode: ShipDraftStartM
   blank.rows[0].etbMode = 'auto';
   blank.rows[0].etcMode = 'auto';
   blank.rows[0].etdMode = 'auto';
-  return blank;
+  blank.alternativePlans = structuredClone(documentAlternativePlans(latest));
+  return synchronizeAlternativeAnchors(blank);
 }
 
 export function addShipDraftRow(document: ItineraryDocument, rowId?: string): ItineraryDocument {
@@ -61,7 +84,7 @@ export function removeShipDraftRow(document: ItineraryDocument, rowId: string): 
   }
   next.rows = recalculateItineraryRows(remaining.length ? remaining : [createBlankItineraryRow(undefined, 0)]).rows;
   if (next.rows[0]) next.rows[0].etaMode = next.rows[0].etaUtc ? next.rows[0].etaMode : 'manual';
-  return next;
+  return removedFirstRow ? synchronizeAlternativeAnchors(next) : next;
 }
 
 export function updateShipDraftRow(document: ItineraryDocument, rowId: string, patch: Partial<ItineraryRow>): ItineraryDocument {
@@ -69,6 +92,124 @@ export function updateShipDraftRow(document: ItineraryDocument, rowId: string, p
   const normalizedPatch = { ...patch };
   if (Object.prototype.hasOwnProperty.call(patch, 'ldRateText')) normalizedPatch.operationRateMtPerHour = parseItineraryRateText(patch.ldRateText || '');
   next.rows = recalculateItineraryRows(next.rows.map(row => row.rowId === rowId ? { ...row, ...normalizedPatch } : row)).rows;
+  const changesAnchor = next.rows[0]?.rowId === rowId
+    && (Object.prototype.hasOwnProperty.call(patch, 'calculationStartUtc') || Object.prototype.hasOwnProperty.call(patch, 'calculationStartTimeZone'));
+  return changesAnchor ? synchronizeAlternativeAnchors(next) : next;
+}
+
+export function replaceShipDraftRows(document: ItineraryDocument, rows: ItineraryRow[]): ItineraryDocument {
+  const next = cloneDocument(document);
+  next.rows = rows.map(row => ({ ...row }));
+  return synchronizeAlternativeAnchors(next);
+}
+
+export function addShipAlternativePlan(document: ItineraryDocument, planId = createItineraryId('alternative'), rowId = createItineraryId('alternative-row')): ItineraryDocument {
+  const next = cloneDocument(document);
+  const plans = documentAlternativePlans(next);
+  if (plans.length >= ITINERARY_MAX_ALTERNATIVE_PLANS) {
+    next.alternativePlans = plans;
+    return next;
+  }
+  const formalAnchor = next.rows[0];
+  const row = createBlankItineraryRow(rowId, 0);
+  row.etaMode = 'manual';
+  row.previousPortName = '';
+  row.calculationStartUtc = formalAnchor?.calculationStartUtc || null;
+  row.calculationStartTimeZone = formalAnchor?.calculationStartTimeZone || '';
+  next.alternativePlans = [...plans, { planId, sortOrder: plans.length, rows: [row] }];
+  return next;
+}
+
+export function removeShipAlternativePlan(document: ItineraryDocument, planId: string): ItineraryDocument {
+  const next = cloneDocument(document);
+  next.alternativePlans = documentAlternativePlans(next)
+    .filter(plan => plan.planId !== planId)
+    .map((plan, index) => ({ ...plan, sortOrder: index }));
+  return next;
+}
+
+export function updateShipAlternativePlanRow(document: ItineraryDocument, planId: string, rowId: string, patch: Partial<ItineraryRow>): ItineraryDocument {
+  const next = cloneDocument(document);
+  const normalizedPatch = { ...patch };
+  delete normalizedPatch.previousPortName;
+  delete normalizedPatch.calculationStartUtc;
+  delete normalizedPatch.calculationStartTimeZone;
+  if (Object.prototype.hasOwnProperty.call(patch, 'ldRateText')) normalizedPatch.operationRateMtPerHour = parseItineraryRateText(patch.ldRateText || '');
+  next.alternativePlans = documentAlternativePlans(next).map(plan => plan.planId !== planId ? plan : {
+    ...plan,
+    rows: recalculateItineraryRows(plan.rows.map(row => row.rowId === rowId ? { ...row, ...normalizedPatch } : row)).rows,
+  });
+  return next;
+}
+
+export function addShipAlternativePlanRow(document: ItineraryDocument, planId: string, rowId = createItineraryId('alternative-row')): ItineraryDocument {
+  const next = cloneDocument(document);
+  next.alternativePlans = documentAlternativePlans(next).map(plan => {
+    if (plan.planId !== planId) return plan;
+    const row = createBlankItineraryRow(rowId, plan.rows.length);
+    row.portTimeZone = plan.rows[plan.rows.length - 1]?.portTimeZone || '';
+    return { ...plan, rows: recalculateItineraryRows([...plan.rows, row]).rows };
+  });
+  return next;
+}
+
+export function removeShipAlternativePlanRow(document: ItineraryDocument, planId: string, rowId: string): ItineraryDocument {
+  const next = cloneDocument(document);
+  const formalAnchor = next.rows[0];
+  next.alternativePlans = documentAlternativePlans(next).map(plan => {
+    if (plan.planId !== planId || plan.rows.length <= 1) return plan;
+    const removedFirst = plan.rows[0]?.rowId === rowId;
+    const rows = plan.rows.filter(row => row.rowId !== rowId).map((row, index) => ({
+      ...row,
+      sortOrder: index,
+      previousPortName: '',
+      calculationStartUtc: index === 0 && removedFirst ? formalAnchor?.calculationStartUtc || null : row.calculationStartUtc,
+      calculationStartTimeZone: index === 0 && removedFirst ? formalAnchor?.calculationStartTimeZone || '' : row.calculationStartTimeZone,
+    }));
+    const recalculated = recalculateItineraryRows(rows).rows;
+    if (removedFirst && recalculated[0]) recalculated[0].etaMode = recalculated[0].etaUtc ? recalculated[0].etaMode : 'manual';
+    return { ...plan, rows: recalculated };
+  });
+  return next;
+}
+
+export function setShipAlternativeAutomaticCalculation(document: ItineraryDocument, planId: string): ShipAutomaticCalculationResult {
+  const next = cloneDocument(document);
+  let missing: ShipAutomaticInputGap[] = [];
+  next.alternativePlans = documentAlternativePlans(next).map(plan => {
+    if (plan.planId !== planId) return plan;
+    const rows = plan.rows.map(row => ({ ...row, etaMode: 'auto' as const, etbMode: 'auto' as const, etcMode: 'auto' as const, etdMode: 'auto' as const }));
+    missing = shipAutomaticInputGaps(rows);
+    return { ...plan, rows: recalculateItineraryRows(rows).rows };
+  });
+  return { document: next, missing };
+}
+
+export function setAllShipAlternativeTimesManual(document: ItineraryDocument, planId: string): ItineraryDocument {
+  const next = cloneDocument(document);
+  next.alternativePlans = documentAlternativePlans(next).map(plan => plan.planId !== planId ? plan : {
+    ...plan,
+    rows: recalculateItineraryRows(plan.rows).rows.map(row => ({
+      ...row,
+      etaMode: 'manual', etbMode: 'manual', etcMode: 'manual', etdMode: 'manual',
+    })),
+  });
+  return next;
+}
+
+export function promoteShipAlternativePlanToDraft(document: ItineraryDocument, planId: string, createRowId: () => string = () => createItineraryId('row')): ItineraryDocument {
+  const next = cloneDocument(document);
+  const plan = documentAlternativePlans(next).find(candidate => candidate.planId === planId);
+  if (!plan) return next;
+  const formalFirst = next.rows[0];
+  next.rows = recalculateItineraryRows(plan.rows.map((row, index) => ({
+    ...structuredClone(row),
+    rowId: createRowId(),
+    sortOrder: index,
+    previousPortName: index === 0 ? formalFirst?.previousPortName || '' : '',
+    calculationStartUtc: index === 0 ? formalFirst?.calculationStartUtc || null : null,
+    calculationStartTimeZone: index === 0 ? formalFirst?.calculationStartTimeZone || '' : '',
+  }))).rows;
   return next;
 }
 
@@ -183,5 +324,14 @@ export function trimTrailingBlankShipRows(document: ItineraryDocument): Itinerar
   const next = cloneDocument(document);
   while (next.rows.length > 1 && !rowHasBusinessContent(next.rows[next.rows.length - 1])) next.rows.pop();
   next.rows = next.rows.map((row, index) => ({ ...row, sortOrder: index }));
-  return next;
+  next.alternativePlans = documentAlternativePlans(next).map((plan, planIndex) => {
+    const rows = plan.rows.map(row => ({ ...row }));
+    while (rows.length > 1 && !rowHasBusinessContent(rows[rows.length - 1])) rows.pop();
+    return {
+      ...plan,
+      sortOrder: planIndex,
+      rows: rows.map((row, rowIndex) => ({ ...row, sortOrder: rowIndex, previousPortName: '' })),
+    };
+  });
+  return synchronizeAlternativeAnchors(next);
 }

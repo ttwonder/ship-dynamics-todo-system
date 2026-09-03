@@ -9,7 +9,8 @@ try {
   const { createEmptyItineraryDocument, createBlankItineraryRow } = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
   const { recalculateItineraryRows } = await server.ssrLoadModule('/src/itinerary/itineraryDomain.ts');
   const { UTC_OFFSET_OPTIONS } = await server.ssrLoadModule('/src/itinerary/itineraryTime.ts');
-  const { buildItineraryWorkbook, parseItineraryWorkbook } = await server.ssrLoadModule('/src/itinerary/itineraryExcel.ts');
+  const { buildItineraryWorkbook, buildItineraryWorkbookWithAlternatives, parseItineraryWorkbook } = await server.ssrLoadModule('/src/itinerary/itineraryExcel.ts');
+  const { addShipAlternativePlan } = await server.ssrLoadModule('/src/itinerary/shipItineraryModel.ts');
 
   const first = createBlankItineraryRow('row-a', 0);
   Object.assign(first, {
@@ -54,6 +55,29 @@ try {
   assert.equal(workbook.worksheets[0].name, 'TEST ALPHA');
   assert.equal(workbook.worksheets[1].name, 'TEST BETA');
   assert.equal(workbook.worksheets[0].getCell('A2').value, 'Vsl name: TEST ALPHA');
+
+  let combinedDocument = addShipAlternativePlan(alpha, 'alternative-1', 'alternative-row-1');
+  combinedDocument.alternativePlans[0].rows[0].voyageNumber = 'ALT-001';
+  combinedDocument.alternativePlans[0].rows[0].portDockName = 'ALTERNATIVE PORT 1';
+  combinedDocument = addShipAlternativePlan(combinedDocument, 'alternative-2', 'alternative-row-2');
+  combinedDocument.alternativePlans[1].rows[0].voyageNumber = 'ALT-002';
+  combinedDocument.alternativePlans[1].rows[0].portDockName = 'ALTERNATIVE PORT 2';
+  const combinedOutput = await buildItineraryWorkbookWithAlternatives(combinedDocument, template.buffer.slice(template.byteOffset, template.byteOffset + template.byteLength));
+  const combinedWorkbook = new ExcelJS.Workbook();
+  await combinedWorkbook.xlsx.load(combinedOutput);
+  assert.deepEqual(combinedWorkbook.worksheets.map(sheet => sheet.name), ['正式方案', '備選方案1', '備選方案2', '_Itinerary_Meta']);
+  assert.equal(combinedWorkbook.worksheets[0].getCell('A4').value, 'V001');
+  assert.equal(combinedWorkbook.worksheets[1].getCell('A4').value, 'ALT-001');
+  assert.equal(combinedWorkbook.worksheets[2].getCell('B4').value, 'ALTERNATIVE PORT 2');
+  for (const sheet of combinedWorkbook.worksheets.slice(0, 3)) {
+    assert.equal(sheet.getCell('A2').value, 'Vsl name: TEST ALPHA', 'all sheets must keep the real vessel name');
+    assert.deepEqual(sheet.getColumn(1).width, combinedWorkbook.worksheets[0].getColumn(1).width, 'all sheets must reuse the formal column builder');
+    assert.deepEqual(sheet.getRow(3).height, combinedWorkbook.worksheets[0].getRow(3).height, 'all sheets must reuse the formal row-height builder');
+    assert.deepEqual(sheet.getCell('A3').style, combinedWorkbook.worksheets[0].getCell('A3').style, 'all sheets must reuse the formal header style');
+  }
+  assert.equal(combinedWorkbook.worksheets[3].getCell('J2').value, 'BUSAN', 'formal metadata must retain previous port');
+  assert.equal(combinedWorkbook.worksheets[3].getCell('J3').value, '', 'alternative metadata must not inherit previous port');
+  assert.equal(combinedWorkbook.worksheets[3].getCell('J4').value, '', 'alternative metadata must not inherit previous port');
   assert.equal(workbook.worksheets[0].getCell('A4').value, 'V001');
   assert.equal(workbook.worksheets[0].getCell('B3').value, 'Next Port & Dock Name');
   assert.equal(workbook.worksheets[0].getCell('C3').value, 'Purpose');

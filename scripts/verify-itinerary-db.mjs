@@ -21,6 +21,10 @@ const mainSessionAccessMigration = await readFile(mainSessionAccessMigrationPath
 const previousPortMigrationPath = 'supabase/migrations/20260903143000_itinerary_previous_port_name.sql';
 assert.equal(existsSync(previousPortMigrationPath), true, 'an additive migration must persist and validate the ship-entered previous port');
 const previousPortMigration = await readFile(previousPortMigrationPath, 'utf8');
+const alternativePlansMigrationPath = 'supabase/migrations/20260903190000_itinerary_alternative_plans.sql';
+assert.equal(existsSync(alternativePlansMigrationPath), true, 'an additive migration must persist alternative plans inside the Itinerary document');
+const alternativePlansMigration = await readFile(alternativePlansMigrationPath, 'utf8');
+assert.match(alternativePlansMigration, /notify\s+pgrst\s*,\s*'reload schema'\s*;/i, 'RPC signature changes must notify PostgREST to reload its schema cache');
 assert.doesNotMatch(mainSessionAccessMigration, /p_actor_guard|create or replace function public\.sd_itinerary_main_authorize|create or replace function public\.sd_itinerary_main_owner_update_rollout/, 'universal access migration must not retain a dedicated guard or Owner-only rollout API');
 assert.match(mainSessionAccessMigration, /main_enabled\s*=\s*true[\s\S]*ship_portal_enabled\s*=\s*true/, 'both Itinerary entrypoints must be forced open');
 assert.match(mainSessionAccessMigration, /revoke execute on function public\.sd_itinerary_owner_update_rollout\(text,bigint,uuid,boolean,boolean,jsonb\)/, 'historical Owner rollout switch must be disabled');
@@ -82,6 +86,11 @@ const v2Row = (overrides = {}) => ({
   channelSailingHours: 1, preCompletionDelayHours: 2, postCompletionDelayHours: 3,
   calculationStartUtc: '2026-08-31T00:00:00Z', calculationStartTimeZone: 'UTC+8',
   ...overrides,
+});
+const alternativePlan = (index, overrides = {}) => ({
+  planId: `alternative-${index + 1}`,
+  sortOrder: index,
+  rows: [v2Row({ rowId: `alternative-row-${index + 1}`, previousPortName: '', ...overrides })],
 });
 
 async function scalar(sql, params = []) {
@@ -160,6 +169,18 @@ try {
   await db.exec(mainSessionAccessMigration);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ previousPortName: 'BUSAN' })])]), false, 'pre-previous-port validator must reject the additive field');
   await db.exec(previousPortMigration);
+  await db.exec(alternativePlansMigration);
+  assert.deepEqual((await db.query(`
+    select table_name, column_name, data_type
+    from information_schema.columns
+    where table_schema='public'
+      and table_name in ('sd_itinerary_documents','sd_itinerary_history')
+      and column_name='alternative_plans_payload'
+    order by table_name
+  `)).rows, [
+    { table_name: 'sd_itinerary_documents', column_name: 'alternative_plans_payload', data_type: 'jsonb' },
+    { table_name: 'sd_itinerary_history', column_name: 'alternative_plans_payload', data_type: 'jsonb' },
+  ]);
   const mainArgumentRows = (await db.query(`
     select proc.proname, proc.proargnames
     from pg_proc proc
@@ -182,9 +203,15 @@ try {
     sd_itinerary_main_claim_lease: ['p_workspace_key', 'p_vessel_id', 'p_holder_session', 'p_holder_label', 'p_ttl_seconds', 'p_actor_user_id'],
     sd_itinerary_main_renew_lease: ['p_workspace_key', 'p_vessel_id', 'p_lease_id', 'p_holder_session', 'p_fencing_token', 'p_ttl_seconds', 'p_actor_user_id'],
     sd_itinerary_main_release_lease: ['p_workspace_key', 'p_vessel_id', 'p_lease_id', 'p_holder_session', 'p_fencing_token', 'p_actor_user_id'],
-    sd_itinerary_main_save: ['p_workspace_key', 'p_vessel_id', 'p_expected_revision', 'p_operation_id', 'p_rows', 'p_lease_id', 'p_holder_session', 'p_fencing_token', 'p_actor_label', 'p_actor_user_id'],
+    sd_itinerary_main_save: ['p_workspace_key', 'p_vessel_id', 'p_expected_revision', 'p_operation_id', 'p_rows', 'p_lease_id', 'p_holder_session', 'p_fencing_token', 'p_actor_label', 'p_actor_user_id', 'p_alternative_plans'],
     sd_itinerary_main_operation_status: ['p_workspace_key', 'p_operation_id', 'p_actor_user_id'],
   }, 'PostgREST dispatch requires SQL argument names to match every cloud adapter payload');
+  assert.deepEqual((await db.query(`
+    select proc.proargnames
+    from pg_proc proc
+    join pg_namespace namespace on namespace.oid=proc.pronamespace
+    where namespace.nspname='public' and proc.proname='sd_itinerary_save_public'
+  `)).rows, [{ proargnames: ['p_workspace_key', 'p_vessel_id', 'p_expected_revision', 'p_operation_id', 'p_rows', 'p_lease_id', 'p_actor_key', 'p_holder_session', 'p_fencing_token', 'p_alternative_plans'] }]);
   await db.exec(`
     update public.sd_memberships set legacy_user_id = case user_id
       when '${ids.owner}'::uuid then 'legacy-owner'
@@ -266,6 +293,20 @@ try {
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: '9' })])]), false);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ sailingHours: 19 })])]), false);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify(Array.from({ length: 101 }, (_, index) => row({ rowId: `row-${index}`, sortOrder: index })))]), false);
+  const formalRowsForAlternatives = [v2Row({ previousPortName: 'BUSAN' })];
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify([]), JSON.stringify(formalRowsForAlternatives)]), true);
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify([alternativePlan(0)]), JSON.stringify(formalRowsForAlternatives)]), true);
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify(Array.from({ length: 5 }, (_, index) => alternativePlan(index))), JSON.stringify(formalRowsForAlternatives)]), true);
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify(Array.from({ length: 6 }, (_, index) => alternativePlan(index))), JSON.stringify(formalRowsForAlternatives)]), false, 'the database must reject a sixth alternative plan');
+  const duplicatePlanIds = [alternativePlan(0), { ...alternativePlan(1), planId: 'alternative-1' }];
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify(duplicatePlanIds), JSON.stringify(formalRowsForAlternatives)]), false, 'planId values must be unique');
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify([{ ...alternativePlan(0), sortOrder: 1 }]), JSON.stringify(formalRowsForAlternatives)]), false, 'alternative plans must retain contiguous display order');
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify([{ ...alternativePlan(0), planId: 'p'.repeat(121) }]), JSON.stringify(formalRowsForAlternatives)]), false, 'the database planId limit must match the TypeScript 120-character limit');
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify([{ ...alternativePlan(0), extra: true }]), JSON.stringify(formalRowsForAlternatives)]), false, 'alternative plan objects must reject unknown fields');
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify([alternativePlan(0, { previousPortName: 'MUST NOT CROSS' })]), JSON.stringify(formalRowsForAlternatives)]), false, 'formal previous-port metadata must not cross into an alternative');
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify([alternativePlan(0, { calculationStartUtc: '2026-09-02T00:00:00Z' })]), JSON.stringify(formalRowsForAlternatives)]), false, 'alternative ETA anchors must live-link to the formal anchor');
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify([alternativePlan(0, { calculationStartTimeZone: 'UTC+9' })]), JSON.stringify(formalRowsForAlternatives)]), false, 'alternative ETA anchor offsets must live-link to the formal offset');
+  assert.equal(await scalar('select public.sd_itinerary_alternative_plans_valid($1::jsonb,$2::jsonb)', [JSON.stringify([alternativePlan(0, { rowId: 'row-1' })]), JSON.stringify(formalRowsForAlternatives)]), false, 'row identities must remain disjoint across formal and alternative plans');
 
   await db.query('update public.sd_login_options set must_change_password=true where workspace_id=$1 and user_id=$2', [ids.workspace, ids.owner]);
   assert.equal((await rollout(ids.owner)).office_identity, null);
@@ -409,6 +450,92 @@ try {
   const history = await asUser(ids.owner, () => scalar('select public.sd_itinerary_history($1,$2,$3)', ['default', 'v1', 30]));
   assert.deepEqual(history.map(item => item.revision), [2, 1]);
 
+  const legacyAlternativeOperation = nextOperation();
+  const legacyAlternativeRows = [v2Row({ rowId: 'v2-legacy-empty-alternatives', previousPortName: 'BUSAN', voyageNumber: 'LEGACY-ACK' })];
+  const legacyAlternativeRequest = { vesselId: 'v2', expectedRevision: 2, rows: legacyAlternativeRows };
+  await db.query(`insert into public.sd_itinerary_operations(
+    workspace_id,operation_id,actor_kind,actor_key,target_key,request_payload,request_hash,result,committed_at
+  ) values($1,$2::uuid,'public','legacy-public-browser','vessel:v2',$3::jsonb,md5(($3::jsonb)::text),$4::jsonb,clock_timestamp())`, [
+    ids.workspace,
+    legacyAlternativeOperation,
+    JSON.stringify(legacyAlternativeRequest),
+    JSON.stringify({ ok: true, revision: 2, replayed: false }),
+  ]);
+  const legacyAlternativeReplay = await asAnon(() => scalar(
+    'select public.sd_itinerary_save_public($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8,$9::bigint,$10::jsonb)',
+    ['default', 'v2', 2, legacyAlternativeOperation, JSON.stringify(legacyAlternativeRows), '00000000-0000-4000-8000-000000000099', 'legacy-public-browser', 'legacy-public-tab', 1, JSON.stringify([])],
+  ));
+  assert.equal(legacyAlternativeReplay.replayed, true, 'an exact legacy committed request must replay across the empty-alternative signature upgrade');
+  await assert.rejects(
+    () => asAnon(() => scalar(
+      'select public.sd_itinerary_save_public($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8,$9::bigint,$10::jsonb)',
+      ['default', 'v2', 2, legacyAlternativeOperation, JSON.stringify(legacyAlternativeRows), '00000000-0000-4000-8000-000000000099', 'legacy-public-browser', 'legacy-public-tab', 1, JSON.stringify([alternativePlan(0)])],
+    )),
+    /operation-mismatch/,
+  );
+
+  const alternativeRows = [v2Row({ rowId: 'v2-formal-alternative-save', previousPortName: 'BUSAN', voyageNumber: 'ALT-SAVE' })];
+  const alternativePlans = [alternativePlan(0)];
+  const alternativeLease = await asAnon(() => scalar('select public.sd_itinerary_claim_public_lease($1,$2,$3,$4,$5)', ['default', 'v2', 'public-alternative-browser', 'public-alternative-tab', 75]));
+  const alternativeOperation = nextOperation();
+  const alternativeSaveParams = ['default', 'v2', 2, alternativeOperation, JSON.stringify(alternativeRows), alternativeLease.leaseId, 'public-alternative-browser', 'public-alternative-tab', alternativeLease.fencingToken, JSON.stringify(alternativePlans)];
+  const alternativeSaved = await asAnon(() => scalar('select public.sd_itinerary_save_public($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8,$9::bigint,$10::jsonb)', alternativeSaveParams));
+  assert.equal(Number(alternativeSaved.revision), 3);
+  assert.deepEqual(alternativeSaved.document.alternativePlans, alternativePlans, 'ship save responses must return the embedded alternatives');
+  assert.deepEqual(await scalar("select alternative_plans_payload from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v2'", [ids.workspace]), alternativePlans);
+  assert.equal((await asAnon(() => scalar('select public.sd_itinerary_save_public($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8,$9::bigint,$10::jsonb)', alternativeSaveParams))).replayed, true);
+  const changedAlternativePlans = structuredClone(alternativePlans);
+  changedAlternativePlans[0].rows[0].portDockName = 'DIFFERENT OPERATION PAYLOAD';
+  await assert.rejects(() => asAnon(() => scalar(
+    'select public.sd_itinerary_save_public($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8,$9::bigint,$10::jsonb)',
+    [...alternativeSaveParams.slice(0, 9), JSON.stringify(changedAlternativePlans)],
+  )), /operation-mismatch/i, 'alternative bytes must participate in idempotency identity');
+
+  const preservingMainLease = await asAnon(() => scalar(
+    'select public.sd_itinerary_main_claim_lease($1,$2,$3,$4,$5,$6)',
+    ['default', 'v2', 'main-preserve-tab', 'Admin', 75, 'legacy-admin'],
+  ));
+  await assert.rejects(
+    () => asAnon(() => scalar(
+      'select public.sd_itinerary_main_save($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8::bigint,$9,$10)',
+      ['default', 'v2', 3, nextOperation(), JSON.stringify([v2Row({ rowId: 'v2-legacy-anchor-change', previousPortName: 'BUSAN', calculationStartUtc: '2026-09-02T00:00:00Z' })]), preservingMainLease.leaseId, 'main-preserve-tab', preservingMainLease.fencingToken, 'Admin', 'legacy-admin'],
+    )),
+    /alternative-anchor-sync-required/,
+    'legacy/main omission must fail closed instead of committing alternatives with a stale anchor',
+  );
+  assert.equal(Number(await scalar("select revision from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v2'", [ids.workspace])), 3);
+  assert.equal((await scalar("select alternative_plans_payload from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v2'", [ids.workspace]))[0].rows[0].calculationStartUtc, alternativePlans[0].rows[0].calculationStartUtc);
+  const preservingMainSaved = await asAnon(() => scalar(
+    'select public.sd_itinerary_main_save($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8::bigint,$9,$10)',
+    ['default', 'v2', 3, nextOperation(), JSON.stringify([v2Row({ rowId: 'v2-main-preserve', previousPortName: 'BUSAN', voyageNumber: 'MAIN-PRESERVES-ALT' })]), preservingMainLease.leaseId, 'main-preserve-tab', preservingMainLease.fencingToken, 'Admin', 'legacy-admin'],
+  ));
+  assert.equal(Number(preservingMainSaved.revision), 4);
+  assert.deepEqual(preservingMainSaved.document.alternativePlans, alternativePlans, 'legacy/main omission must preserve existing alternatives');
+  assert.deepEqual(await scalar("select alternative_plans_payload from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v2' and revision=4", [ids.workspace]), alternativePlans, 'history must snapshot preserved alternatives with the formal revision');
+
+  const explicitMainLease = await asAnon(() => scalar(
+    'select public.sd_itinerary_main_claim_lease($1,$2,$3,$4,$5,$6)',
+    ['default', 'v2', 'main-explicit-tab', 'Admin', 75, 'legacy-admin'],
+  ));
+  const anchorBPlans = structuredClone(alternativePlans);
+  anchorBPlans[0].rows[0].calculationStartUtc = '2026-09-02T00:00:00Z';
+  anchorBPlans[0].rows[0].calculationStartTimeZone = 'UTC+9';
+  const explicitMainSaved = await asAnon(() => scalar(
+    'select public.sd_itinerary_main_save($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8::bigint,$9,$10,$11::jsonb)',
+    ['default', 'v2', 4, nextOperation(), JSON.stringify([v2Row({ rowId: 'v2-main-explicit-anchor', previousPortName: 'BUSAN', calculationStartUtc: '2026-09-02T00:00:00Z', calculationStartTimeZone: 'UTC+9' })]), explicitMainLease.leaseId, 'main-explicit-tab', explicitMainLease.fencingToken, 'Admin', 'legacy-admin', JSON.stringify(anchorBPlans)],
+  ));
+  assert.equal(Number(explicitMainSaved.revision), 5);
+  assert.equal(explicitMainSaved.document.alternativePlans[0].rows[0].calculationStartUtc, '2026-09-02T00:00:00Z', 'current main clients may change the shared anchor by sending synchronized alternatives');
+  assert.deepEqual(await scalar("select alternative_plans_payload from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v2' and revision=5", [ids.workspace]), anchorBPlans);
+
+  const deletingAlternativeLease = await asAnon(() => scalar('select public.sd_itinerary_claim_public_lease($1,$2,$3,$4,$5)', ['default', 'v2', 'public-alternative-browser', 'public-alternative-delete', 75]));
+  const deletedAlternatives = await asAnon(() => scalar(
+    'select public.sd_itinerary_save_public($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8,$9::bigint,$10::jsonb)',
+    ['default', 'v2', 5, nextOperation(), JSON.stringify(alternativeRows), deletingAlternativeLease.leaseId, 'public-alternative-browser', 'public-alternative-delete', deletingAlternativeLease.fencingToken, JSON.stringify([])],
+  ));
+  assert.deepEqual(deletedAlternatives.document.alternativePlans, [], 'an explicit ship [] must delete all alternatives');
+  assert.deepEqual(await scalar("select alternative_plans_payload from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v2'", [ids.workspace]), []);
+
   for (const userId of [ids.admin, ids.operator, ids.vessel]) {
     const loaded = await asUser(userId, () => scalar('select public.sd_itinerary_load_many($1,$2::text[])', ['default', ['v1']]));
     assert.equal(loaded[0].document.revision, 2);
@@ -430,6 +557,7 @@ try {
   await db.exec(officeRoleAccessMigration);
   await db.exec(mainSessionAccessMigration);
   await db.exec(previousPortMigration);
+  await db.exec(alternativePlansMigration);
   assert.equal(Number(await scalar('select version from public.sd_itinerary_rollout where workspace_id=$1::uuid', [ids.workspace])), 2);
   assert.equal(Number(await scalar("select revision from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
   assert.equal(Number(await scalar("select count(*)::int from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
@@ -442,10 +570,10 @@ try {
     to_regprocedure('public.sd_itinerary_main_get_rollout(text,text,jsonb)') is null as main_rollout_absent,
     to_regprocedure('public.sd_itinerary_main_owner_update_rollout(text,bigint,uuid,boolean,boolean,text,jsonb)') is null as main_owner_update_absent,
     has_function_privilege('anon','public.sd_itinerary_main_load_many(text,text[],text)','EXECUTE') as anon_main_load,
-    has_function_privilege('anon','public.sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text)','EXECUTE') as anon_main_save,
+    has_function_privilege('anon','public.sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text,jsonb)','EXECUTE') as anon_main_save,
     has_function_privilege('anon','public.sd_itinerary_main_actor(text,text)','EXECUTE') as anon_main_actor_helper,
     has_function_privilege('authenticated','public.sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb)','EXECUTE') as auth_owner_update,
-    has_function_privilege('anon','public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)','EXECUTE') as anon_public_save,
+    has_function_privilege('anon','public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint,jsonb)','EXECUTE') as anon_public_save,
     has_function_privilege('anon','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE') as anon_office_save,
     has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE') as auth_office_save,
     has_function_privilege('anon','public.sd_itinerary_utc_offset_valid(text)','EXECUTE') as anon_offset_validator,
@@ -453,7 +581,13 @@ try {
     has_function_privilege('anon','public.sd_itinerary_purpose_valid(text)','EXECUTE') as anon_purpose_validator,
     has_function_privilege('authenticated','public.sd_itinerary_purpose_valid(text)','EXECUTE') as auth_purpose_validator,
     has_function_privilege('anon','public.sd_itinerary_rows_valid(jsonb)','EXECUTE') as anon_rows_validator,
-    has_function_privilege('authenticated','public.sd_itinerary_rows_valid(jsonb)','EXECUTE') as auth_rows_validator
+    has_function_privilege('authenticated','public.sd_itinerary_rows_valid(jsonb)','EXECUTE') as auth_rows_validator,
+    has_function_privilege('anon','public.sd_itinerary_alternative_plans_valid(jsonb,jsonb)','EXECUTE') as anon_alternative_validator,
+    has_function_privilege('authenticated','public.sd_itinerary_alternative_plans_valid(jsonb,jsonb)','EXECUTE') as auth_alternative_validator,
+    has_function_privilege('anon','public.sd_itinerary_document_json(text,text,text,bigint,jsonb,jsonb,timestamptz,text,text)','EXECUTE') as anon_alternative_document_builder,
+    has_function_privilege('authenticated','public.sd_itinerary_document_json(text,text,text,bigint,jsonb,jsonb,timestamptz,text,text)','EXECUTE') as auth_alternative_document_builder,
+    has_function_privilege('anon','public.sd_itinerary_save_internal(text,text,bigint,uuid,jsonb,text,text,uuid,text,uuid,text,bigint,jsonb)','EXECUTE') as anon_alternative_save_internal,
+    has_function_privilege('authenticated','public.sd_itinerary_save_internal(text,text,bigint,uuid,jsonb,text,text,uuid,text,uuid,text,bigint,jsonb)','EXECUTE') as auth_alternative_save_internal
   `)).rows[0];
   assert.deepEqual(privileges, {
     anon_table: false,
@@ -474,6 +608,12 @@ try {
     auth_purpose_validator: false,
     anon_rows_validator: false,
     auth_rows_validator: false,
+    anon_alternative_validator: false,
+    auth_alternative_validator: false,
+    anon_alternative_document_builder: false,
+    auth_alternative_document_builder: false,
+    anon_alternative_save_internal: false,
+    auth_alternative_save_internal: false,
   });
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'UTC+5:45' })])]), true);
 
@@ -501,6 +641,12 @@ try {
     authenticatedOffsetValidatorExecute: false,
     authenticatedPurposeValidatorExecute: false,
     authenticatedRowsValidatorExecute: false,
+    anonAlternativeValidatorExecute: false,
+    authenticatedAlternativeValidatorExecute: false,
+    anonAlternativeDocumentBuilderExecute: false,
+    authenticatedAlternativeDocumentBuilderExecute: false,
+    anonAlternativeSaveInternalExecute: false,
+    authenticatedAlternativeSaveInternalExecute: false,
   });
   assert.ok(Object.values(readback.utcOffsets).every(Boolean));
   assert.ok(Object.values(readback.purposes).every(Boolean));
@@ -517,6 +663,21 @@ try {
     rejectsLaterRowValue: true,
     publicSaveRequiresValue: true,
     publicSaveRejectsAllWhitespace: true,
+  });
+  assert.deepEqual(readback.alternativePlans, {
+    documentsColumn: true,
+    historyColumn: true,
+    acceptsEmpty: true,
+    acceptsOne: true,
+    rejectsSix: true,
+    rejectsLongPlanId: true,
+    documentIncludesAlternatives: true,
+    currentSaveIncludesAlternatives: true,
+    preservesMissingAlternatives: true,
+    rejectsOmittedAnchorChange: true,
+    operationIdentityIncludesAlternatives: true,
+    legacyEmptyReplayCompatible: true,
+    historyIncludesAlternatives: true,
   });
   assert.deepEqual(readback.officeRolePermissions, {
     workspaceCount: 1,

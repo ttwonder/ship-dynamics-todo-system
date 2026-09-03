@@ -277,6 +277,7 @@ export default function ItineraryDashboard({ user, actor, vessels, calendarTaskV
     <div className="itinerary-toolbar no-print">
       <div><b>Itinerary 看板</b><span>已選 {selectedVesselIds.length}／目前可見 {vessels.length}</span></div>
       <div className="itinerary-toolbar-actions">
+        <a href={`${import.meta.env.BASE_URL}ship-itinerary.html`} target="_blank" rel="noopener noreferrer" className="btn small itinerary-ship-link">打開船端網頁</a>
         <button type="button" className="btn small ghost" onClick={toggleVisible} disabled={!visibleIds.length}>{everyVisibleSelected?'取消選取目前可見':'選取目前可見'}</button>
         <button type="button" className="btn small ghost" onClick={()=>setSelectedVesselIds([])} disabled={!selectedVesselIds.length}>清除選取</button>
         <button type="button" className="btn small itinerary-view-toggle" onClick={()=>setDisplayMode(mode=>mode==='table'?'calendar':'table')}>{displayMode==='table'?'切換行事曆':'返回 Itinerary'}</button>

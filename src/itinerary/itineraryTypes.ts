@@ -1,5 +1,6 @@
 export const ITINERARY_SCHEMA_VERSION = 1 as const;
 export const ITINERARY_MAX_ROWS = 100;
+export const ITINERARY_MAX_ALTERNATIVE_PLANS = 5;
 
 export type ItineraryOperation = string;
 export type ItineraryOperationChoice = 'load' | 'unload' | 'docking' | 'waiting-order' | 'repair' | 'inspection';
@@ -104,6 +105,12 @@ export interface ItineraryRow {
   etdMode: ItineraryTimeMode;
 }
 
+export interface ItineraryAlternativePlan {
+  planId: string;
+  sortOrder: number;
+  rows: ItineraryRow[];
+}
+
 export type ItineraryTimeField = 'etaUtc' | 'etbUtc' | 'etcUtc' | 'etdUtc';
 export type ItineraryTimeZoneField = 'etaTimeZone' | 'etbTimeZone' | 'etcTimeZone' | 'etdTimeZone';
 
@@ -129,6 +136,7 @@ export interface ItineraryDocument {
   updatedActorKind: ItineraryUpdatedActorKind;
   updatedActorLabel: string;
   rows: ItineraryRow[];
+  alternativePlans: ItineraryAlternativePlan[];
 }
 
 export interface EmptyItineraryDocumentInput {
@@ -212,5 +220,6 @@ export function createEmptyItineraryDocument(input: EmptyItineraryDocumentInput)
     updatedActorKind: 'demo',
     updatedActorLabel: '',
     rows: [createBlankItineraryRow(input.rowId, 0)],
+    alternativePlans: [],
   };
 }

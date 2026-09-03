@@ -376,8 +376,13 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
   worksheet.pageSetup.horizontalCentered = true;
 }
 
-export async function buildItineraryWorkbook(documents: ItineraryDocument[], template: ArrayBuffer, onStage?: (stage: ItineraryExcelBuildStage) => void): Promise<ArrayBuffer> {
-  if (!documents.length) throw new Error('至少需要一艘船才能匯出 Excel。');
+interface ItineraryWorkbookSheetSource {
+  sheetName: string;
+  document: ItineraryDocument;
+}
+
+async function buildItineraryWorkbookFromSheets(sources: ItineraryWorkbookSheetSource[], template: ArrayBuffer, onStage?: (stage: ItineraryExcelBuildStage) => void): Promise<ArrayBuffer> {
+  if (!sources.length) throw new Error('至少需要一艘船才能匯出 Excel。');
   onStage?.('exceljs');
   const templateWorkbook = await newWorkbook();
   onStage?.('template');
@@ -394,9 +399,9 @@ export async function buildItineraryWorkbook(documents: ItineraryDocument[], tem
   const metadata: Array<{ sheetName: string; document: ItineraryDocument }> = [];
 
   onStage?.('sheets');
-  for (const document of documents) {
-    const sheetName = uniqueSheetName(document.vesselName, used);
-    const exportDocument = { ...document, rows: document.rows.filter(hasItineraryExportContent) };
+  for (const source of sources) {
+    const sheetName = uniqueSheetName(source.sheetName, used);
+    const exportDocument = { ...source.document, rows: source.document.rows.filter(hasItineraryExportContent) };
     const maxRow = 3 + exportDocument.rows.length * 2;
     const worksheet = workbook.addWorksheet(sheetName);
     copyTemplateLayout(templateSheet, worksheet, maxRow);
@@ -425,14 +430,37 @@ export async function buildItineraryWorkbook(documents: ItineraryDocument[], tem
   return result;
 }
 
+export async function buildItineraryWorkbook(documents: ItineraryDocument[], template: ArrayBuffer, onStage?: (stage: ItineraryExcelBuildStage) => void): Promise<ArrayBuffer> {
+  return buildItineraryWorkbookFromSheets(
+    documents.map(document => ({ sheetName: document.vesselName, document })),
+    template,
+    onStage,
+  );
+}
+
+export async function buildItineraryWorkbookWithAlternatives(document: ItineraryDocument, template: ArrayBuffer, onStage?: (stage: ItineraryExcelBuildStage) => void): Promise<ArrayBuffer> {
+  const alternatives = [...(document.alternativePlans ?? [])].sort((left, right) => left.sortOrder - right.sortOrder);
+  const sources: ItineraryWorkbookSheetSource[] = [
+    { sheetName: '正式方案', document },
+    ...alternatives.map((plan, index) => ({
+      sheetName: `備選方案${index + 1}`,
+      document: {
+        ...document,
+        rows: plan.rows.map(row => ({ ...row, previousPortName: '' })),
+        alternativePlans: [],
+      },
+    })),
+  ];
+  return buildItineraryWorkbookFromSheets(sources, template, onStage);
+}
+
 export async function loadItineraryTemplate(): Promise<ArrayBuffer> {
   const response = await fetch(`${import.meta.env.BASE_URL}templates/itinerary-template-v1.xlsx`, { cache: 'no-store' });
   if (!response.ok) throw new Error(`無法載入 Itinerary Excel 模板（HTTP ${response.status}）。`);
   return response.arrayBuffer();
 }
 
-export async function downloadItineraryWorkbook(documents: ItineraryDocument[], filename: string): Promise<void> {
-  const output = await buildItineraryWorkbook(documents, await loadItineraryTemplate());
+async function downloadWorkbook(output: ArrayBuffer, filename: string): Promise<void> {
   const url = URL.createObjectURL(new Blob([output], { type: MIME }));
   try {
     const anchor = document.createElement('a');
@@ -442,6 +470,14 @@ export async function downloadItineraryWorkbook(documents: ItineraryDocument[], 
   } finally {
     window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
   }
+}
+
+export async function downloadItineraryWorkbook(documents: ItineraryDocument[], filename: string): Promise<void> {
+  await downloadWorkbook(await buildItineraryWorkbook(documents, await loadItineraryTemplate()), filename);
+}
+
+export async function downloadItineraryWorkbookWithAlternatives(document: ItineraryDocument, filename: string): Promise<void> {
+  await downloadWorkbook(await buildItineraryWorkbookWithAlternatives(document, await loadItineraryTemplate()), filename);
 }
 
 function rawCellValue(cell: ExcelJS.Cell): unknown {

@@ -11,6 +11,7 @@ try {
   const taskSchedule = await server.ssrLoadModule('/src/taskPlannedSchedule.ts');
   const email = await server.ssrLoadModule('/src/itinerary/itineraryEmail.ts');
   const types = await server.ssrLoadModule('/src/itinerary/itineraryTypes.ts');
+  const model = await server.ssrLoadModule('/src/itinerary/shipItineraryModel.ts');
   const doc = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'v1', vesselName: 'TEST VESSEL', rowId: 'r1' });
   Object.assign(doc.rows[0], { voyageNumber: 'V001', portDockName: 'ULSAN', operation: 'To Load', etaUtc: '2026-09-01T00:00:00Z', etdUtc: '2026-09-03T00:00:00Z', portTimeZone: 'UTC+9' });
   const range = calendar.calendarRangeFromLocalDate('2026-09-01', 7, 'UTC+8');
@@ -19,6 +20,18 @@ try {
   assert.equal(entries.length, 1);
   assert.equal(entries[0].leftPercent, 8 / (7 * 24) * 100); // Taipei midnight is 16:00Z; event starts eight hours later
   assert.ok(entries[0].widthPercent > 28 && entries[0].widthPercent < 29);
+  const calendarWithAlternative = model.addShipAlternativePlan(doc, 'calendar-alternative', 'calendar-alternative-row');
+  Object.assign(calendarWithAlternative.alternativePlans[0].rows[0], {
+    voyageNumber: 'MUST-NOT-ENTER-CALENDAR',
+    portDockName: 'ALTERNATIVE PORT',
+    etaUtc: '2026-09-01T06:00:00Z',
+    etdUtc: '2026-09-06T00:00:00Z',
+  });
+  assert.deepEqual(
+    calendar.buildItineraryCalendarEntries([calendarWithAlternative], range.startInstant, range.endInstant),
+    entries,
+    'alternative rows must not enter the formal Calendar projection',
+  );
   assert.equal(calendar.calendarRangeFromLocalDate('2026-09-01', 7, 'UTC+5:45').ok, true);
   assert.equal(calendar.calendarRangeFromLocalDate('2026-09-01', 7, 'GMT+8').ok, false);
 
@@ -117,6 +130,8 @@ try {
   assert.match(copyButtonSource, /copyItineraryAndOpenMail/);
   assert.match(panelSource, /<ItineraryCopyEmailButton\b[\s\S]*<ItineraryMoreParametersButton\b/);
   assert.match(dashboardSource, /onNotice=\{setNotice\}/);
+  assert.doesNotMatch(dashboardSource, /alternativePlans|ShipItineraryAlternativesBrowse/, 'the main dashboard must not expose alternative data');
+  assert.doesNotMatch(panelSource, /alternativePlans|ShipItineraryAlternativesBrowse/, 'main-page vessel panels must remain formal-only');
   assert.match(shipPortalSource, /<ItineraryCopyEmailButton\b[\s\S]*<ItineraryMoreParametersButton\b/);
   assert.match(shipPortalSource, /準備郵件報告/);
 
@@ -138,6 +153,13 @@ try {
   assert.ok(!email.ITINERARY_EMAIL_COPY_FIELD_LABELS.includes('備註信息'));
 
   const payload = email.buildItineraryClipboardPayload(doc);
+  const emailWithAlternative = model.addShipAlternativePlan(doc, 'email-alternative', 'email-alternative-row');
+  Object.assign(emailWithAlternative.alternativePlans[0].rows[0], {
+    voyageNumber: 'MUST-NOT-ENTER-EMAIL',
+    portDockName: 'SECRET ALTERNATIVE PORT',
+    cargoQuantityText: '999,999 MT',
+  });
+  assert.deepEqual(email.buildItineraryClipboardPayload(emailWithAlternative), payload, 'alternative rows must not enter email HTML or plain text');
   assert.match(payload.html, /^<table\b/);
   assert.match(payload.html, /<th[^>]*>Voy No\.<\/th>/);
   assert.match(payload.html, /<th[^>]*>Arr ROB<br>\(Cargo\/Fuel\/FW\)<\/th>/);

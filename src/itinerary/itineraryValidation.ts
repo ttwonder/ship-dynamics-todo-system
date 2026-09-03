@@ -1,4 +1,4 @@
-import { ITINERARY_MAX_ROWS, ITINERARY_SCHEMA_VERSION, normalizeItineraryOperation, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
+import { ITINERARY_MAX_ALTERNATIVE_PLANS, ITINERARY_MAX_ROWS, ITINERARY_SCHEMA_VERSION, normalizeItineraryOperation, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
 import { isValidItineraryTimeZone, normalizeInstant } from './itineraryTime';
 
 export interface ItineraryValidationError {
@@ -145,6 +145,60 @@ export function validateItineraryDocument(input: unknown, options: ItineraryVali
       if (row.calculationStartUtc !== null && !row.calculationStartTimeZone) add(errors, `${path}.calculationStartTimeZone`, 'time-zone-required', '首列 ETA 起算時間必須有 UTC Offset。');
       if (index > 0 && (row.calculationStartUtc !== null || row.calculationStartTimeZone !== '')) add(errors, `${path}.calculationStartUtc`, 'first-row-only', 'ETA 起算時間與 UTC Offset 只可設定於第一列。');
     });
+  }
+  const alternativePlansValue = (document as unknown as Record<string, unknown>).alternativePlans;
+  if (alternativePlansValue === undefined) {
+    document.alternativePlans = [];
+  } else if (!Array.isArray(alternativePlansValue) || alternativePlansValue.length > ITINERARY_MAX_ALTERNATIVE_PLANS) {
+    add(errors, 'alternativePlans', 'invalid-alternative-count', `備選方案最多 ${ITINERARY_MAX_ALTERNATIVE_PLANS} 個。`);
+    document.alternativePlans = [];
+  } else {
+    const planIds = new Set<string>();
+    const safeFormalRows = Array.isArray(document.rows)
+      ? document.rows.filter((row): row is ItineraryRow => Boolean(row) && typeof row === 'object' && !Array.isArray(row))
+      : [];
+    const allRowIds = new Set(safeFormalRows.map(row => row.rowId));
+    alternativePlansValue.forEach((typedPlan, index) => {
+      const path = `alternativePlans[${index}]`;
+      if (!typedPlan || typeof typedPlan !== 'object' || Array.isArray(typedPlan)) {
+        add(errors, path, 'invalid-alternative', '備選方案格式無效。');
+        return;
+      }
+      const plan = typedPlan as Record<string, unknown>;
+      const planId = typeof plan.planId === 'string' ? plan.planId : '';
+      if (!planId.trim() || planId.length > 120) add(errors, `${path}.planId`, 'invalid-alternative-id', '備選方案 ID 無效。');
+      else if (planIds.has(planId)) add(errors, `${path}.planId`, 'duplicate-alternative-id', '備選方案 ID 不可重複。');
+      else planIds.add(planId);
+      if (!Number.isInteger(plan.sortOrder) || plan.sortOrder !== index) add(errors, `${path}.sortOrder`, 'invalid-sort-order', '備選方案必須依畫面順序由 0 連續排列。');
+      if (!Array.isArray(plan.rows)) {
+        add(errors, `${path}.rows`, 'invalid-row-count', `備選方案必須有 1 至 ${ITINERARY_MAX_ROWS} 列。`);
+        return;
+      }
+      const planResult = validateItineraryDocument({ ...document, rows: plan.rows, alternativePlans: [] });
+      if (planResult.ok === false) {
+        for (const error of planResult.errors) {
+          if (error.path === 'rows' || error.path.startsWith('rows[')) add(errors, `${path}.${error.path}`, error.code, error.message);
+        }
+        return;
+      }
+      planResult.value.rows.forEach((row, rowIndex) => {
+        if (allRowIds.has(row.rowId)) {
+          add(errors, `${path}.rows[${rowIndex}].rowId`, 'duplicate-row-id', '正式方案與所有備選方案的 rowId 不可重複。');
+        } else {
+          allRowIds.add(row.rowId);
+        }
+      });
+      const contaminatedRow = planResult.value.rows.findIndex(row => Boolean(row.previousPortName));
+      if (contaminatedRow >= 0) add(errors, `${path}.rows[${contaminatedRow}].previousPortName`, 'formal-field-not-allowed', '備選方案不可保存正式上一港資料。');
+      const formalAnchor = safeFormalRows[0];
+      const alternativeAnchor = planResult.value.rows[0];
+      if ((alternativeAnchor?.calculationStartUtc ?? null) !== (formalAnchor?.calculationStartUtc ?? null)
+          || (alternativeAnchor?.calculationStartTimeZone ?? '') !== (formalAnchor?.calculationStartTimeZone ?? '')) {
+        add(errors, `${path}.rows[0].calculationStartUtc`, 'alternative-anchor-mismatch', '備選方案必須沿用正式方案首列 ETA 起算時間與 UTC Offset。');
+      }
+      typedPlan.rows = planResult.value.rows;
+    });
+    document.alternativePlans = alternativePlansValue;
   }
   return errors.length ? { ok: false, errors } : { ok: true, value: document };
 }

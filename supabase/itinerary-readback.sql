@@ -23,7 +23,7 @@ expected_functions(signature) as (
     ('sd_itinerary_release_office_lease(text,text,uuid,text,bigint)'),
     ('sd_itinerary_release_public_lease(text,text,uuid,text,text,bigint)'),
     ('sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)'),
-    ('sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)'),
+    ('sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint,jsonb)'),
     ('sd_itinerary_operation_status_office(text,uuid)'),
     ('sd_itinerary_operation_status_public(text,uuid,text)'),
     ('sd_itinerary_history(text,text,integer)'),
@@ -33,11 +33,14 @@ expected_functions(signature) as (
     ('sd_itinerary_main_claim_lease(text,text,text,text,integer,text)'),
     ('sd_itinerary_main_renew_lease(text,text,uuid,text,bigint,integer,text)'),
     ('sd_itinerary_main_release_lease(text,text,uuid,text,bigint,text)'),
-    ('sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text)'),
+    ('sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text,jsonb)'),
     ('sd_itinerary_main_operation_status(text,uuid,text)'),
     ('sd_itinerary_utc_offset_valid(text)'),
     ('sd_itinerary_purpose_valid(text)'),
-    ('sd_itinerary_rows_valid(jsonb)')
+    ('sd_itinerary_rows_valid(jsonb)'),
+    ('sd_itinerary_alternative_plans_valid(jsonb,jsonb)'),
+    ('sd_itinerary_document_json(text,text,text,bigint,jsonb,jsonb,timestamptz,text,text)'),
+    ('sd_itinerary_save_internal(text,text,bigint,uuid,jsonb,text,text,uuid,text,uuid,text,bigint,jsonb)')
 ),
 table_receipt as (
   select jsonb_object_agg(name, to_regclass('public.' || name) is not null order by name) value
@@ -66,11 +69,11 @@ privilege_receipt as (
     'mainRolloutAbsent', to_regprocedure('public.sd_itinerary_main_get_rollout(text,text,jsonb)') is null,
     'mainOwnerUpdateAbsent', to_regprocedure('public.sd_itinerary_main_owner_update_rollout(text,bigint,uuid,boolean,boolean,text,jsonb)') is null,
     'anonMainLoadExecute', has_function_privilege('anon','public.sd_itinerary_main_load_many(text,text[],text)','EXECUTE'),
-    'anonMainSaveExecute', has_function_privilege('anon','public.sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text)','EXECUTE'),
+    'anonMainSaveExecute', has_function_privilege('anon','public.sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text,jsonb)','EXECUTE'),
     'anonMainActorHelperExecute', has_function_privilege('anon','public.sd_itinerary_main_actor(text,text)','EXECUTE'),
-    'authenticatedMainSaveExecute', has_function_privilege('authenticated','public.sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text)','EXECUTE'),
+    'authenticatedMainSaveExecute', has_function_privilege('authenticated','public.sd_itinerary_main_save(text,text,bigint,uuid,jsonb,uuid,text,bigint,text,text,jsonb)','EXECUTE'),
     'authenticatedOwnerUpdateExecute', has_function_privilege('authenticated','public.sd_itinerary_owner_update_rollout(text,bigint,uuid,boolean,boolean,jsonb)','EXECUTE'),
-    'anonPublicSaveExecute', has_function_privilege('anon','public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)','EXECUTE'),
+    'anonPublicSaveExecute', has_function_privilege('anon','public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint,jsonb)','EXECUTE'),
     'anonOfficeSaveExecute', has_function_privilege('anon','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE'),
     'authenticatedOfficeSaveExecute', has_function_privilege('authenticated','public.sd_itinerary_save_office(text,text,bigint,uuid,jsonb,uuid,text,bigint,text)','EXECUTE'),
     'anonOffsetValidatorExecute', has_function_privilege('anon','public.sd_itinerary_utc_offset_valid(text)','EXECUTE'),
@@ -78,7 +81,13 @@ privilege_receipt as (
     'anonPurposeValidatorExecute', has_function_privilege('anon','public.sd_itinerary_purpose_valid(text)','EXECUTE'),
     'authenticatedPurposeValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_purpose_valid(text)','EXECUTE'),
     'anonRowsValidatorExecute', has_function_privilege('anon','public.sd_itinerary_rows_valid(jsonb)','EXECUTE'),
-    'authenticatedRowsValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_rows_valid(jsonb)','EXECUTE')
+    'authenticatedRowsValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_rows_valid(jsonb)','EXECUTE'),
+    'anonAlternativeValidatorExecute', has_function_privilege('anon','public.sd_itinerary_alternative_plans_valid(jsonb,jsonb)','EXECUTE'),
+    'authenticatedAlternativeValidatorExecute', has_function_privilege('authenticated','public.sd_itinerary_alternative_plans_valid(jsonb,jsonb)','EXECUTE'),
+    'anonAlternativeDocumentBuilderExecute', has_function_privilege('anon','public.sd_itinerary_document_json(text,text,text,bigint,jsonb,jsonb,timestamptz,text,text)','EXECUTE'),
+    'authenticatedAlternativeDocumentBuilderExecute', has_function_privilege('authenticated','public.sd_itinerary_document_json(text,text,text,bigint,jsonb,jsonb,timestamptz,text,text)','EXECUTE'),
+    'anonAlternativeSaveInternalExecute', has_function_privilege('anon','public.sd_itinerary_save_internal(text,text,bigint,uuid,jsonb,text,text,uuid,text,uuid,text,bigint,jsonb)','EXECUTE'),
+    'authenticatedAlternativeSaveInternalExecute', has_function_privilege('authenticated','public.sd_itinerary_save_internal(text,text,bigint,uuid,jsonb,text,text,uuid,text,uuid,text,bigint,jsonb)','EXECUTE')
   ) value
 ),
 offset_receipt as (
@@ -161,8 +170,75 @@ previous_port_receipt as (
       value || jsonb_build_object('previousPortName','BUSAN'),
       value || jsonb_build_object('rowId','readback-row-2','sortOrder',1,'calculationStartUtc',null,'calculationStartTimeZone','','previousPortName','WRONG ROW')
     )),
-    'publicSaveRequiresValue', position('previous-port-required' in pg_get_functiondef('public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)'::regprocedure)) > 0,
-    'publicSaveRejectsAllWhitespace', position('[^[:space:]]' in pg_get_functiondef('public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)'::regprocedure)) > 0
+    'publicSaveRequiresValue', position('previous-port-required' in pg_get_functiondef('public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint,jsonb)'::regprocedure)) > 0,
+    'publicSaveRejectsAllWhitespace', position('[^[:space:]]' in pg_get_functiondef('public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint,jsonb)'::regprocedure)) > 0
+  ) value
+  from calculation_v2_fixture
+),
+alternative_plan_receipt as (
+  select jsonb_build_object(
+    'documentsColumn', exists (
+      select 1 from information_schema.columns
+      where table_schema='public' and table_name='sd_itinerary_documents'
+        and column_name='alternative_plans_payload' and data_type='jsonb'
+    ),
+    'historyColumn', exists (
+      select 1 from information_schema.columns
+      where table_schema='public' and table_name='sd_itinerary_history'
+        and column_name='alternative_plans_payload' and data_type='jsonb'
+    ),
+    'acceptsEmpty', public.sd_itinerary_alternative_plans_valid(
+      '[]'::jsonb,
+      jsonb_build_array(value || jsonb_build_object('previousPortName','BUSAN'))
+    ),
+    'acceptsOne', public.sd_itinerary_alternative_plans_valid(
+      jsonb_build_array(jsonb_build_object(
+        'planId','readback-alternative-1','sortOrder',0,
+        'rows',jsonb_build_array(value || jsonb_build_object('rowId','readback-alternative-row-1','previousPortName',''))
+      )),
+      jsonb_build_array(value || jsonb_build_object('previousPortName','BUSAN'))
+    ),
+    'rejectsSix', not public.sd_itinerary_alternative_plans_valid(
+      (select jsonb_agg(jsonb_build_object(
+        'planId','readback-alternative-' || i,'sortOrder',i,
+        'rows',jsonb_build_array(value || jsonb_build_object('rowId','readback-alternative-row-' || i,'previousPortName',''))
+      ) order by i) from generate_series(0,5) i),
+      jsonb_build_array(value || jsonb_build_object('previousPortName','BUSAN'))
+    ),
+    'rejectsLongPlanId', not public.sd_itinerary_alternative_plans_valid(
+      jsonb_build_array(jsonb_build_object(
+        'planId',repeat('p',121),'sortOrder',0,
+        'rows',jsonb_build_array(value || jsonb_build_object('rowId','readback-alternative-row-long','previousPortName',''))
+      )),
+      jsonb_build_array(value || jsonb_build_object('previousPortName','BUSAN'))
+    ),
+    'documentIncludesAlternatives', position('''alternativePlans''' in pg_get_functiondef(
+      'public.sd_itinerary_document_json(text,text,text,bigint,jsonb,jsonb,timestamptz,text,text)'::regprocedure
+    )) > 0,
+    'currentSaveIncludesAlternatives', position('alternative_plans_payload' in pg_get_functiondef(
+      'public.sd_itinerary_save_internal(text,text,bigint,uuid,jsonb,text,text,uuid,text,uuid,text,bigint,jsonb)'::regprocedure
+    )) > 0,
+    'preservesMissingAlternatives', pg_get_functiondef(
+      'public.sd_itinerary_save_internal(text,text,bigint,uuid,jsonb,text,text,uuid,text,uuid,text,bigint,jsonb)'::regprocedure
+    ) ~* 'case[[:space:]]+when[[:space:]]+p_alternative_plans[[:space:]]+is[[:space:]]+null',
+    'rejectsOmittedAnchorChange', position('alternative-anchor-sync-required' in pg_get_functiondef(
+      'public.sd_itinerary_save_internal(text,text,bigint,uuid,jsonb,text,text,uuid,text,uuid,text,bigint,jsonb)'::regprocedure
+    )) > 0,
+    'operationIdentityIncludesAlternatives', position('''alternativePlans'',p_alternative_plans' in regexp_replace(pg_get_functiondef(
+      'public.sd_itinerary_save_internal(text,text,bigint,uuid,jsonb,text,text,uuid,text,uuid,text,bigint,jsonb)'::regprocedure
+    ), '[[:space:]]', '', 'g')) > 0,
+    'legacyEmptyReplayCompatible', position('v_request_matches' in pg_get_functiondef(
+      'public.sd_itinerary_operation_replay(uuid,uuid,text,text,text,jsonb)'::regprocedure
+    )) > 0
+      and position('''alternativePlans''' in pg_get_functiondef(
+        'public.sd_itinerary_operation_replay(uuid,uuid,text,text,text,jsonb)'::regprocedure
+      )) > 0
+      and position('''[]''' in pg_get_functiondef(
+        'public.sd_itinerary_operation_replay(uuid,uuid,text,text,text,jsonb)'::regprocedure
+      )) > 0,
+    'historyIncludesAlternatives', position('''alternativePlans''' in pg_get_functiondef(
+      'public.sd_itinerary_history(text,text,integer)'::regprocedure
+    )) > 0
   ) value
   from calculation_v2_fixture
 ),
@@ -218,6 +294,7 @@ select jsonb_build_object(
   'calculationV2', (select value from calculation_v2_receipt),
   'notes', (select value from notes_receipt),
   'previousPortName', (select value from previous_port_receipt),
+  'alternativePlans', (select value from alternative_plan_receipt),
   'officeRolePermissions', (select value from role_permission_receipt),
   'vesselNames', (select value from vessel_name_receipt),
   'documentCount', (select count(*) from public.sd_itinerary_documents),

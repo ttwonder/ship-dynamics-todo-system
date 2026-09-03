@@ -152,7 +152,10 @@ try {
   const pendingOperationIndex = saveConfirmationBlock.indexOf('pendingOperationForDocument');
   const backendSaveIndex = saveConfirmationBlock.indexOf('backend.save');
   assert.ok(strictValidationIndex >= 0 && confirmationIndex > strictValidationIndex && pendingOperationIndex > confirmationIndex && backendSaveIndex > pendingOperationIndex, 'cancelable confirmation must run after validation and before any pending operation or cloud save');
-  const editor = fs.readFileSync('src/itinerary/ShipItineraryEditor.tsx', 'utf8');
+  const editor = [
+    'src/itinerary/ShipItineraryEditor.tsx',
+    'src/itinerary/ShipItineraryPlanWorkspace.tsx',
+  ].map(filePath => fs.readFileSync(filePath, 'utf8')).join('\n');
   const shipEditorModule = await server.ssrLoadModule('/src/itinerary/ShipItineraryEditor.tsx');
   const shipEditorMarkup = renderToStaticMarkup(createElement(shipEditorModule.default, {
     document: blank, readOnly: false, canSave: false, remoteUpdated: false, saving: false,

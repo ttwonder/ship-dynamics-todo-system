@@ -7,11 +7,22 @@ export function itineraryDocumentSignature(document: ItineraryDocument): string 
   return JSON.stringify(document);
 }
 
+function legacyEmptyAlternativeSignature(document: ItineraryDocument): string | null {
+  if (document.alternativePlans.length) return null;
+  const legacyDocument: Partial<ItineraryDocument> = { ...document };
+  delete legacyDocument.alternativePlans;
+  return JSON.stringify(legacyDocument);
+}
+
 export function pendingOperationForDocument(
   document: ItineraryDocument,
   current?: ItineraryPendingOperation | null,
   createId: () => string = createItineraryOperationId,
 ): ItineraryPendingOperation {
   const signature = itineraryDocumentSignature(document);
-  return current?.signature === signature && OPERATION_ID.test(current.id) ? current : { id: createId(), signature };
+  if (current && OPERATION_ID.test(current.id)
+      && (current.signature === signature || current.signature === legacyEmptyAlternativeSignature(document))) {
+    return { id: current.id, signature };
+  }
+  return { id: createId(), signature };
 }
