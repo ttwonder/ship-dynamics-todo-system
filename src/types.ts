@@ -1,3 +1,5 @@
+import type { ItineraryOperationalSnapshotEntry } from './itinerary/itineraryOperationalProjection';
+
 export type UserRole = 'owner' | 'admin' | 'operator' | 'vessel';
 export type PermissionKey = 'viewAllVessels' | 'editBusinessContent' | 'createTasks' | 'closeTasks' | 'deleteTasks' | 'manageMeetings' | 'exportReports' | 'enterManagement' | 'manageUsers' | 'manageVessels' | 'viewAuditLogs' | 'manageRolePermissions' | 'manageSystemSettings';
 export type RolePermissions = Record<UserRole, Record<PermissionKey, boolean>>;
@@ -249,7 +251,10 @@ export interface AgendaReport {
 }
 
 export interface MorningReportSnapshot {
+  schemaVersion?: 1 | 2;
   capturedAt: string;
+  projectionCapturedAt?: string;
+  itineraryProjections?: Record<string, ItineraryOperationalSnapshotEntry>;
   windowStartedAt?: string;
   windowEndedAt?: string;
   todayTaskIds?: string[];

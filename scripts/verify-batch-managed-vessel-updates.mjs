@@ -29,9 +29,9 @@ for (const status of ['航行','拋錨','進港中','出港中','停泊','漂航
 }
 assert.ok(app.includes('batchTargetVesselsFor(activeVessels,currentUser,batchSelectedVesselIds)'), 'App 必須把人工勾選解析成exact target，不得把經管船舶自動加入本次操作');
 assert.ok(!batch.includes("currentUser.role === 'owner' || currentUser.role === 'admin' ? vessels"), 'Owner／管理員不得因全船可見權限而把所有船舶誤納入自管批量清單');
-assert.ok(batch.includes('ScheduleDateTimeField'), '批量清單需沿用 ETA／ETB／ETD 日期＋可選時間欄位');
-assert.ok(batch.includes('composeScheduleValue'), '批量清單需保存純日期或日期時間');
-assert.ok(batch.includes('parseCargoLines') && batch.includes('cargoLines'), '批量清單需支援貨名貨量多行編輯');
+assert.ok(batch.includes('ScheduleDateTimeField') && batch.includes('value={vessel.position.eta}') && batch.includes('readOnly aria-readonly="true"'), '批量清單需顯示唯讀 ETA／ETB／ETD 日期時間');
+assert.ok(!batch.includes('composeScheduleValue'), 'Itinerary 權威時間不得由批量清單重新組合寫入');
+assert.ok(batch.includes('由 Itinerary 正式首列同步') && batch.includes('value={cargoLines(vessel.cargo.items)}'), '批量清單需以唯讀方式顯示 Itinerary 貨名貨量');
 assert.ok(batch.includes('value={vessel.position.manualRemark}') && batch.includes('target.position.manualRemark = value'), '批量清單的人工備註必須讀寫與快速更新相同的 position.manualRemark 欄位');
 assert.ok(dashboard.includes('<VesselImportantSummary') && vesselSummary.includes('<strong>人工備註</strong>{vessel.position.manualRemark}'), '單船卡片的共用重要摘要必須顯示批量更新所寫入的人工備註');
 assert.ok(batch.includes('onAddTask(vessel.id)'), '每艘船最後需提供新增要事按鈕');
@@ -121,6 +121,7 @@ try {
 
   const initial = createInitialData();
   const operationalTarget=structuredClone(initial.vessels[0]);
+  const legacyCargoItems=structuredClone(operationalTarget.cargo.items);
   const operationalSource=structuredClone(initial.vessels[0]);
   operationalSource.position.location='草稿位置';
   operationalSource.position.manualRemark='批量更新人工備註';
@@ -133,6 +134,7 @@ try {
   applyVesselOperationalDraft(operationalTarget,operationalSource,'2026-08-05T00:00:00.000Z');
   assert.equal(vesselOperationalDraftEquals(operationalTarget,operationalSource),true,'保存後位置、貨況及船舶動態必須與modal草稿一致');
   assert.equal(operationalTarget.position.manualRemark,'批量更新人工備註','批量保存必須把人工備註同步到單船卡片使用的 position.manualRemark');
+  assert.deepEqual(operationalTarget.cargo.items,legacyCargoItems,'批量保存不得改寫由 Itinerary 權威提供的貨名貨量');
   assert.deepEqual(operationalTarget.assignedUserIds,initial.vessels[0].assignedUserIds,'快速／批量保存不得覆蓋經管人');
   assert.deepEqual(operationalTarget.delegateManagers,initial.vessels[0].delegateManagers,'快速／批量保存不得覆蓋代管關係');
   assert.deepEqual(operationalTarget.weeklyAttention,initial.vessels[0].weeklyAttention,'快速／批量保存不得覆蓋關注度');

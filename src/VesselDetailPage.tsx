@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { AppData, TaskPriority, UserAccount, Vessel } from './types';
+import { itineraryOperationalSourceLabel, type ItineraryOperationalFeedRecord } from './itinerary/itineraryOperationalProjection';
 import { selectVesselDetailTasks, type VesselTaskClosedMode, type VesselTaskSort } from './vesselDetail';
 import { vesselDisplayName } from './vesselDisplay';
 import { taskSourceLabel } from './taskWorkflow';
@@ -28,6 +29,7 @@ interface VesselDetailPageProps {
   vessel: Vessel;
   data: AppData;
   currentUser: UserAccount;
+  itineraryFeedRecord?: ItineraryOperationalFeedRecord;
   onBack: () => void;
   onEditVessel: () => void;
   onAddTask: () => void;
@@ -39,7 +41,7 @@ interface VesselDetailPageProps {
   canViewInternalControl: boolean;
 }
 
-export default function VesselDetailPage({ vessel, data, currentUser, onBack, onEditVessel, onAddTask, onEditTask, onOpenInternalControl, canEditVessel, canCreateTasks, canEditTasks, canViewInternalControl }: VesselDetailPageProps) {
+export default function VesselDetailPage({ vessel, data, currentUser, itineraryFeedRecord, onBack, onEditVessel, onAddTask, onEditTask, onOpenInternalControl, canEditVessel, canCreateTasks, canEditTasks, canViewInternalControl }: VesselDetailPageProps) {
   const [query, setQuery] = useState('');
   const [closedMode, setClosedMode] = useState<VesselTaskClosedMode>('all');
   const [priority, setPriority] = useState<'all' | TaskPriority>('all');
@@ -87,7 +89,7 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
           <div><dt>建立時間</dt><dd>{dateTime(vessel.createdAt)}</dd></div><div><dt>最後更新</dt><dd>{dateTime(vessel.updatedAt)}</dd></div>
         </dl></section>
         <section className="panel vessel-info-panel"><h2>貨載資訊</h2><dl>
-          <div><dt>載況</dt><dd>{value(vessel.cargo.loadStatus)}</dd></div><div><dt>資料來源</dt><dd>{sourceLabel(vessel.cargo.source)}</dd></div>
+          <div><dt>載況</dt><dd>{value(vessel.cargo.loadStatus)}</dd></div><div><dt>貨名貨量來源</dt><dd>{itineraryFeedRecord?itineraryOperationalSourceLabel(itineraryFeedRecord):sourceLabel(vessel.cargo.source)}</dd></div>
           <div className="span-2"><dt>貨名／貨量</dt><dd>{vessel.cargo.items.length ? vessel.cargo.items.map((item,index)=><span className="detail-cargo-line" key={`${item.name}-${index}`}>{value(item.name)}{item.quantity ? `｜${item.quantity}` : ''}</span>) : `${value(vessel.cargo.name)}${vessel.cargo.quantity ? `｜${vessel.cargo.quantity}` : ''}`}</dd></div>
         </dl></section>
       </div>
@@ -100,7 +102,7 @@ export default function VesselDetailPage({ vessel, data, currentUser, onBack, on
           </dl></section>
           <section className="panel vessel-info-panel"><h2>時間與資料來源</h2><dl>
             <div><dt>ETA</dt><dd>{formatScheduleDisplay(vessel.position.eta)||'未設定'}</dd></div><div><dt>ETB</dt><dd>{formatScheduleDisplay(vessel.position.etb)||'未設定'}</dd></div>
-            <div><dt>ETD</dt><dd>{formatScheduleDisplay(vessel.position.etd)||'未設定'}</dd></div><div><dt>位置資料來源</dt><dd>{sourceLabel(vessel.position.source)}</dd></div>
+            <div><dt>ETD</dt><dd>{formatScheduleDisplay(vessel.position.etd)||'未設定'}</dd></div><div><dt>港口／時間來源</dt><dd>{itineraryFeedRecord?itineraryOperationalSourceLabel(itineraryFeedRecord):sourceLabel(vessel.position.source)}</dd></div>
             <div><dt>位置資料更新時間</dt><dd>{dateTime(vessel.position.updatedAt)}</dd></div><div><dt>貨載資料更新時間</dt><dd>{dateTime(vessel.cargo.updatedAt)}</dd></div>
           </dl></section>
         </div>

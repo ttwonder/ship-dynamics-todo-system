@@ -1,4 +1,5 @@
 import type { LoadStatus, NavigationStatus, Vessel, VesselCargoItem } from './types';
+import { applyItineraryOperationalWriteMask } from './vesselOperationalDraft';
 
 /**
  * 智慧船舶系統回傳的單船快照。
@@ -41,8 +42,11 @@ export function mergeSmartShipSnapshot(vessel: Vessel, snapshot: SmartShipVessel
   if (snapshot.eta !== undefined) position.eta = snapshot.eta;
   if (snapshot.etb !== undefined) position.etb = snapshot.etb;
   if (snapshot.etd !== undefined) position.etd = snapshot.etd;
-  position.source = 'smart-ship-api';
-  position.updatedAt = snapshot.fetchedAt;
+  const positionChanged = snapshot.location !== undefined || snapshot.speedKnots !== undefined || snapshot.navigationStatus !== undefined;
+  if (positionChanged) {
+    position.source = 'smart-ship-api';
+    position.updatedAt = snapshot.fetchedAt;
+  }
 
   if (snapshot.loadStatus !== undefined) next.cargo.loadStatus = snapshot.loadStatus;
   if (snapshot.cargoItems !== undefined) {
@@ -50,10 +54,10 @@ export function mergeSmartShipSnapshot(vessel: Vessel, snapshot: SmartShipVessel
     next.cargo.name = snapshot.cargoItems[0]?.name || '';
     next.cargo.quantity = snapshot.cargoItems[0]?.quantity || '';
   }
-  if (snapshot.loadStatus !== undefined || snapshot.cargoItems !== undefined) {
+  if (snapshot.loadStatus !== undefined) {
     next.cargo.source = 'smart-ship-api';
     next.cargo.updatedAt = snapshot.fetchedAt;
   }
-  next.updatedAt = snapshot.fetchedAt;
-  return next;
+  if (positionChanged || snapshot.loadStatus !== undefined) next.updatedAt = snapshot.fetchedAt;
+  return applyItineraryOperationalWriteMask(vessel, next);
 }

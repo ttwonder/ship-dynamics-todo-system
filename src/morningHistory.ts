@@ -1,3 +1,4 @@
+import type { ItineraryProjectionSnapshot } from './itinerary/itineraryOperationalProjection';
 import type { AgendaReport, AppData, InternalControlCase, MorningReportSnapshot, TaskItem, TemporaryMeeting, Vessel } from './types';
 import { isTaipeiBusinessDay, taipeiBusinessDateLabel, taipeiDateKey } from './taipeiTime';
 import { morningDiscussionTasks } from './morningTaskScope';
@@ -17,6 +18,7 @@ export interface DailyMorningSaveInput {
   at?: Date | string | number;
   actorUserId: string;
   source: 'manual' | 'scheduled';
+  itineraryProjectionSnapshot?: ItineraryProjectionSnapshot;
 }
 
 export type DailyMorningSaveResult<T extends MorningHistoryData> =
@@ -108,9 +110,15 @@ function cloneSnapshot(
   manualCutoff: boolean,
   todayTaskIds: string[],
   todayInternalControlCaseIds: string[],
+  itineraryProjectionSnapshot?: ItineraryProjectionSnapshot,
 ): MorningReportSnapshot {
   return structuredClone({
+    schemaVersion: itineraryProjectionSnapshot?.schemaVersion || 1,
     capturedAt,
+    ...(itineraryProjectionSnapshot ? {
+      projectionCapturedAt: itineraryProjectionSnapshot.projectionCapturedAt,
+      itineraryProjections: itineraryProjectionSnapshot.itineraryProjections,
+    } : {}),
     ...(window.startedAt ? { windowStartedAt: window.startedAt } : {}),
     ...(manualCutoff ? { windowEndedAt: window.endedAt, todayTaskIds, todayInternalControlCaseIds } : {}),
     vessels,
@@ -210,6 +218,7 @@ export function upsertDailyMorningReport<T extends MorningHistoryData>(data: T, 
     manualCutoff,
     content.todayTaskIds,
     content.todayInternalControlCaseIds,
+    input.itineraryProjectionSnapshot,
   );
   const report: AgendaReport = {
     id: existing?.id || `daily-morning-${businessDate}`,

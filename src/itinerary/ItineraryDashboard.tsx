@@ -13,12 +13,14 @@ import { OfficeItineraryCloudRepository, type ItineraryMainActor } from './itine
 import type { ParsedItineraryWorkbook } from './itineraryExcel';
 import { itineraryVesselDisplayName, projectItineraryDocumentsForDisplay, resolveItineraryEditorDocument, withItineraryVesselDisplayName } from './itineraryVesselDisplay';
 import { mergeLatestItineraryDocuments, selectLatestItineraryDocument } from './itineraryFreshness';
+import type { ItineraryOperationalFeed } from './useItineraryOperationalProjection';
 import './itinerary.css';
 import './itineraryCompact.css';
 
 interface ItineraryDashboardProps {
   user: UserAccount;
   actor: ItineraryMainActor;
+  operationalFeed?: ItineraryOperationalFeed;
   vessels: Vessel[];
   calendarTaskVessels: Vessel[];
   calendarTasks: TaskItem[];
@@ -61,7 +63,7 @@ function browserHolderId(): string {
   }
 }
 
-export default function ItineraryDashboard({ user, actor, vessels, calendarTaskVessels, calendarTasks, selectedVesselIds, setSelectedVesselIds }: ItineraryDashboardProps) {
+export default function ItineraryDashboard({ user, actor, operationalFeed, vessels, calendarTaskVessels, calendarTasks, selectedVesselIds, setSelectedVesselIds }: ItineraryDashboardProps) {
   const permissions = UNRESTRICTED_ITINERARY_PERMISSIONS;
   const demoMode = localDemoModeRequested();
   const [clockOrigin] = useState(() => Date.now());
@@ -81,9 +83,10 @@ export default function ItineraryDashboard({ user, actor, vessels, calendarTaskV
     : null, [demoMode]);
   const cloudBackend = useMemo(() => {
     if (demoMode || typeof window === 'undefined') return null;
+    if (operationalFeed?.backend) return operationalFeed.backend;
     try { return new OfficeItineraryCloudRepository(actor); } catch { return null; }
-  }, [demoMode, actor.userId]);
-  const backend = localBackend || cloudBackend;
+  }, [demoMode, actor.userId, operationalFeed?.backend]);
+  const backend = demoMode ? localBackend : cloudBackend;
   const displayDocuments = useMemo(() => projectItineraryDocumentsForDisplay(documents, vessels), [documents, vessels]);
   const visibleIds = vessels.map(vessel => vessel.id);
   const everyVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedVesselIds.includes(id));
@@ -112,7 +115,19 @@ export default function ItineraryDashboard({ user, actor, vessels, calendarTaskV
   }, [calendarTaskEvents, selectedVesselIds]);
 
   useEffect(() => {
-    if (!backend) return;
+    if (demoMode || !operationalFeed) return;
+    const workspaceKey=operationalFeed.backend?.config.workspaceKey||'itinerary-cloud';
+    const materialized=Object.fromEntries(vessels.map(vessel=>{
+      const record=operationalFeed.records[vessel.id];
+      return [vessel.id,record?.document||createEmptyItineraryDocument({workspaceKey,vesselId:vessel.id,vesselName:itineraryVesselDisplayName(vessel)})];
+    }));
+    setDocuments(previous=>mergeLatestItineraryDocuments(previous,materialized));
+    const failed=vessels.map(vessel=>operationalFeed.records[vessel.id]).find(record=>record&&(record.status==='error'||record.status==='stale'));
+    if(failed)setNotice(failed.error||'Itinerary 雲端同步狀態異常；目前保留最後確認版本。');
+  },[demoMode,operationalFeed?.records,operationalFeed?.backend,vessels]);
+
+  useEffect(() => {
+    if (!backend || (!demoMode && operationalFeed)) return;
     let current = true;
     const load = async () => {
       try {
@@ -167,6 +182,7 @@ export default function ItineraryDashboard({ user, actor, vessels, calendarTaskV
       return;
     }
     const loaded = await backend.loadDocument(vesselId);
+    if(loaded)operationalFeed?.publishConfirmed(loaded);
     const latest = resolveItineraryEditorDocument(loaded, displayDocuments[vesselId], vessel);
     if (!latest) {
       void backend.releaseLease(claim.lease);
@@ -189,6 +205,7 @@ export default function ItineraryDashboard({ user, actor, vessels, calendarTaskV
   const closeAfterSave = (saved: ItineraryDocument) => {
     if (editor && backend) void backend.releaseLease(editor.lease);
     setDocuments(previous => mergeLatestItineraryDocuments(previous, { [saved.vesselId]: saved }));
+    operationalFeed?.publishConfirmed(saved);
     setEditor(null);
     const vessel = vessels.find(item => item.id === saved.vesselId);
     setNotice(`已保存 ${vessel ? itineraryVesselDisplayName(vessel) : saved.vesselName} Itinerary，Revision ${saved.revision}。`);
@@ -264,6 +281,7 @@ export default function ItineraryDashboard({ user, actor, vessels, calendarTaskV
       void backend.releaseLease(claim.lease);
       if (result.ok === true) {
         savedDocuments[result.document.vesselId] = result.document;
+        operationalFeed?.publishConfirmed(result.document);
         results.push({ sheetName: item.sheet.sheetName, vesselName: current.vesselName, ok: true, message: `已覆蓋，Revision ${result.document.revision}` });
       } else {
         results.push({ sheetName: item.sheet.sheetName, vesselName: current.vesselName, ok: false, message: result.code === 'revision-conflict' ? `Revision 衝突，目前為 ${result.currentRevision ?? '未知'}` : result.message || '未覆蓋' });

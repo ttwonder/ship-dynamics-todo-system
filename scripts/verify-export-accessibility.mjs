@@ -13,7 +13,8 @@ assert.match(meetings,/canExportReports&&/,'会议导出控件必须依权限显
 assert.match(meetings,/canExportReports&&<th className="no-print">選取<\/th>/,'无导出权限时必须隐藏选择栏');
 assert.match(meetings,/canExportReports&&<td className="no-print"><input aria-label=\{`選取會議/,'无导出权限时必须隐藏每列选择框');
 assert.match(app,/const reportPreviewAuthorizedVessels=data\.vessels\.filter\(vessel=>vesselMatchesUser\(vessel,currentUser,canViewAllVessels\)\)/,'报告中心必须先建立当前用户授权船舶集合');
-assert.match(app,/const reportVessels=reportPreviewSnapshot[\s\S]*?: activeVessels;/,'实时报告只能接收当前授权船舶，历史快照也必须与当前授权范围取交集');
+assert.match(app,/const reportBaseVessels=reportPreviewSnapshot[\s\S]*?: activeVessels;/,'即時報告只能接收目前授權船舶，歷史快照也必須與目前授權範圍取交集');
+assert.match(app,/const reportVessels=reportPreviewSnapshot\|\|reportPreviewLiveItinerarySnapshot[\s\S]*?applyItineraryProjectionSnapshot\(reportBaseVessels,reportItineraryEntries\)[\s\S]*?: dashboardVessels;/,'報告輸出必須在授權交集上套用本次凍結的 Itinerary projection');
 assert.match(app,/const selectedIds=_selected\.filter\(id=>allowedIds\.has\(id\)\)[\s\S]*const reportScopeIds=vessels\.map\(v=>v\.id\)[\s\S]*classifyMorningAgenda\(\{[\s\S]*scopeVesselIds:reportScopeIds/,'报告选择必须先与授权范围取交集，并以相同范围分类早会要事与内控');
 assert.match(app,/const vessels=reportDate\?visibleVessels:_selected\.length\?visibleVessels\.filter/,'实时非空选择与授权交集为空时不得回退全部授权船舶；历史快照固定使用其授权范围');
 assert.match(app,/taskReportVesselLabel\(t,vessels\)[\s\S]*taskReportShipTypeLabel\(t,vessels\)/,'跨船报告列必须使用报告专用标签，未选择船不得显示为受限船舶');

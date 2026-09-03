@@ -18,7 +18,10 @@ try{
   assert.equal(scheduled.report.taskCount,2);
   assert.deepEqual(scheduled.report.snapshot.tasks.map(item=>item.id).sort(),['meeting','ordinary']);
   assert.equal(scheduled.report.snapshot.tasks.some(item=>item.isInternalControl),false);
-  const manual=upsertDailyMorningReport(scheduled.data,{at:'2026-08-03T08:30:00+08:00',actorUserId:'owner',source:'manual'});
+  const projectionSnapshot={schemaVersion:2,projectionCapturedAt:'2026-08-03T00:30:00Z',itineraryProjections:{v1:{source:'legacy'}}};
+  const manual=upsertDailyMorningReport(scheduled.data,{at:'2026-08-03T08:30:00+08:00',actorUserId:'owner',source:'manual',itineraryProjectionSnapshot:projectionSnapshot});
+  assert.equal(manual.report.snapshot.schemaVersion,2);
+  assert.equal(manual.report.snapshot.itineraryProjections.v1.source,'legacy');
   assert.equal(manual.data.agendaReports.length,1);
   assert.equal(manual.report.id,scheduled.report.id);
   assert.equal(manual.report.createdAt,scheduled.report.createdAt);
@@ -52,7 +55,7 @@ assert.match(app,/公司層決議案（臨會／專題）/,'移除內控清單�
 assert.match(app,/跨船單船要事/,'移除內控清單不得刪除跨船要事區塊');
 assert.match(morningReportPdf,/document\.title = morningReportPdfDocumentTitle\(reportDate\)/,'早會 PDF 列印前必須設定固定名稱與日期');
 assert.match(morningReportPdf,/document\.title = originalTitle/,'早會 PDF 列印結束後必須恢復網站原標題');
-assert.match(app,/useEffect\(\(\)=>\{setReportPreviewOpen\(false\);setReportPreviewHistoryId\(''\);\},\[currentUserId\]\)/,'identity switches must close historical report previews and clear existence signals');
+assert.match(app,/useEffect\(\(\)=>\{setReportPreviewOpen\(false\);setReportPreviewHistoryId\(''\);setReportPreviewLiveItinerarySnapshot\(null\);\},\[currentUserId\]\)/,'identity switches must close historical report previews and clear existence signals');
 assert.match(app,/onSaveDailyMorning=\{saveDailyMorningHistory\}/);
 assert.match(morningWorkspace,/onSaveDailyMorning:\s*\(at:string\)=>Promise<boolean>/);
 assert.match(morningWorkspace,/await onSaveDailyMorning\(nowIso\(\)\)/);

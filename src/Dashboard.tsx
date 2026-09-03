@@ -19,6 +19,9 @@ import type { VesselAttentionSaveState } from './vesselAttentionSaveQueue';
 import { dashboardVesselCardId } from './dashboardVesselReturn';
 import type { ItineraryMainActor } from './itinerary/itineraryCloud';
 
+import { itineraryOperationalSourceLabel, type ItineraryOperationalFeedRecord } from './itinerary/itineraryOperationalProjection';
+import type { ItineraryOperationalFeed } from './itinerary/useItineraryOperationalProjection';
+
 const ItineraryDashboard = lazy(() => import('./itinerary/ItineraryDashboard'));
 
 const attentionLevelLabel = (level: VesselAttentionLevel) => level === '特別關注' ? level : `${level}關注`;
@@ -28,6 +31,7 @@ const automaticAttentionLevelLabel = (level: VesselAttentionLevel, hasPscWindow:
 interface DashboardProps {
   user: UserAccount;
   itineraryActor: ItineraryMainActor;
+  itineraryOperationalFeed?: ItineraryOperationalFeed;
   users: UserAccount[];
   vessels: Vessel[];
   tasks: TaskItem[];
@@ -55,7 +59,7 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, itineraryActor, users, vessels, tasks, calendarTasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ user, itineraryActor, itineraryOperationalFeed, users, vessels, tasks, calendarTasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [vesselFilters, setVesselFilters] = useState(emptyVesselFilterState);
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
@@ -113,7 +117,10 @@ export default function Dashboard({ user, itineraryActor, users, vessels, tasks,
   const openTasks = tasks.filter(task => taskVesselIds(task).some(id => visibleVesselIds.has(id)) && !taskIsClosedForScope(task,[...visibleVesselIds]));
   const urgentHighCount = openTasks.filter(task => task.priority === '急' || task.priority === '高').length;
   const overdueCount = openTasks.filter(task => (daysDiff(task.expectedDate) ?? 0) < 0).length;
-  const updatedToday = vessels.filter(vessel => taipeiDateKey(vessel.updatedAt || vessel.position.updatedAt) === todayDate()).length;
+  const updatedToday = vessels.filter(vessel => {
+    const sourceUpdatedAt=itineraryOperationalFeed?.records[vessel.id]?.document?.updatedAt||vessel.updatedAt||vessel.position.updatedAt;
+    return taipeiDateKey(sourceUpdatedAt) === todayDate();
+  }).length;
   const toggleMeeting = (id: string) => setSelected(selected.includes(id) ? selected.filter(item => item !== id) : [...selected, id]);
   const cycleSchedule = (vesselId: string, automaticKind: ScheduleKind) => setScheduleByVessel(previous => {
     const current = previous[vesselId] ?? automaticKind;
@@ -137,7 +144,7 @@ export default function Dashboard({ user, itineraryActor, users, vessels, tasks,
       <input className="dashboard-search" value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
       <VesselFilterControls filters={vesselFilters} shipTypes={shipTypes} supervisors={supervisors} onChange={setVesselFilters} showMeeting={canUseMeetings}/>
     </div>
-    {dashboardMode==='itinerary'?<Suspense fallback={<div className="itinerary-empty">正在載入 Itinerary 視圖…</div>}><ItineraryDashboard user={user} actor={itineraryActor} vessels={visible} calendarTaskVessels={vessels} calendarTasks={calendarTasks} selectedVesselIds={itinerarySelected} setSelectedVesselIds={setItinerarySelected}/></Suspense>:<div className="fleet-card-grid">{visible.map(vessel => {
+    {dashboardMode==='itinerary'?<Suspense fallback={<div className="itinerary-empty">正在載入 Itinerary 視圖…</div>}><ItineraryDashboard user={user} actor={itineraryActor} operationalFeed={itineraryOperationalFeed} vessels={visible} calendarTaskVessels={vessels} calendarTasks={calendarTasks} selectedVesselIds={itinerarySelected} setSelectedVesselIds={setItinerarySelected}/></Suspense>:<div className="fleet-card-grid">{visible.map(vessel => {
       const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
       const attentionTasks = vesselAttentionTasks(vesselTasks);
       const abnormalMeetings = abnormalMeetingsForVessel(vessel.id);
@@ -156,6 +163,7 @@ export default function Dashboard({ user, itineraryActor, users, vessels, tasks,
       const selectedForMeeting = selected.includes(vessel.id);
       const attentionSaveState = attentionSaveStates[vessel.id];
       const managerNames = effectiveVesselManagerNames(vessel, users);
+      const itineraryFeedRecord=itineraryOperationalFeed?.records[vessel.id];
       const statusSupplement = [
         vessel.note.statusList.map(status => status === 'drydock/repiar' ? 'drydock/repair' : status).join('、'),
         vessel.note.statusSupplement.trim(),
@@ -163,7 +171,7 @@ export default function Dashboard({ user, itineraryActor, users, vessels, tasks,
       return <article key={vessel.id} id={dashboardVesselCardId(vessel.id)} data-dashboard-vessel-id={vessel.id} className={`ship-card ${selectedForMeeting ? 'selected' : ''} level-${level}`}>
         <div className="ship-card-head">
           <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${dashboardVesselDisplayName(vessel)} 單船詳情`}>{dashboardVesselDisplayName(vessel)}</button></div>
-          <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}<select disabled={!canEdit} className={`priority-pill attention-adjust attention-adjust-select ${level}`} aria-label={`${dashboardVesselDisplayName(vessel)} 關注程度`} title={canEdit?'直接選擇自動或不低於目前自動下限的手動關注度':'目前關注度'} value={selectedManualAttention} onChange={event=>onAdjustAttention(vessel.id,event.target.value as VesselAttentionLevel|'')}><option className={`attention-option ${vesselAttentionClass(attentionResult.automatic)}`} value="">自動：{automaticAttentionLevelLabel(attentionResult.automatic, attentionResult.hasPscWindow)}</option>{VESSEL_ATTENTION_LEVELS.map(option=><option className={`attention-option ${vesselAttentionClass(option)}`} key={option} value={option} disabled={!manualVesselAttentionAllowed(option,attentionResult.automatic)}>手動：{attentionLevelLabel(option)}</option>)}</select></div>
+          <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}{itineraryOperationalFeed&&<span className={`itinerary-source-badge ${itineraryFeedRecord?.status||'loading'}`} title="上一港、下一港、ETA／ETB／ETD 與貨名貨量的資料來源">{itineraryOperationalSourceLabel(itineraryFeedRecord)}</span>}<select disabled={!canEdit} className={`priority-pill attention-adjust attention-adjust-select ${level}`} aria-label={`${dashboardVesselDisplayName(vessel)} 關注程度`} title={canEdit?'直接選擇自動或不低於目前自動下限的手動關注度':'目前關注度'} value={selectedManualAttention} onChange={event=>onAdjustAttention(vessel.id,event.target.value as VesselAttentionLevel|'')}><option className={`attention-option ${vesselAttentionClass(attentionResult.automatic)}`} value="">自動：{automaticAttentionLevelLabel(attentionResult.automatic, attentionResult.hasPscWindow)}</option>{VESSEL_ATTENTION_LEVELS.map(option=><option className={`attention-option ${vesselAttentionClass(option)}`} key={option} value={option} disabled={!manualVesselAttentionAllowed(option,attentionResult.automatic)}>手動：{attentionLevelLabel(option)}</option>)}</select></div>
           <div className="ship-type-supervisor"><span>{vessel.shipType || '-'}</span><i aria-hidden="true">｜</i><span className="ship-manager-label">分管：</span><span className="ship-manager-names">{managerNames.length ? managerNames.map((name,index)=><span className="ship-manager-name" key={`${name}-${index}`}>{index>0&&<>、<wbr/></>}{name}</span>) : '-'}</span></div>
         </div>
         <div className="ship-operation-grid">
