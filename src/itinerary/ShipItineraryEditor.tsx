@@ -117,6 +117,7 @@ function CalculationStartInput({ row, disabled, onPatch }: { row: ItineraryRow; 
     <ItineraryTimeInput inputRef={timeInputRef} value={wall?.time || ''} disabled={disabled || !row.calculationStartTimeZone || !wall?.date} ariaLabel="首列 ETA 起算時間" onChange={time => commit(wall?.date || '', time)} />
     <UtcOffsetSelect value={row.calculationStartTimeZone} emptyLabel="當下時區" ariaLabel="首列 ETA 起算當下時區" disabled={disabled} onChange={value => onPatch(shipCalculationStartTimeZonePatch(row, value))} />
     <button type="button" className="btn ghost small" disabled={disabled || !row.calculationStartTimeZone} onClick={useNow}>使用現在</button>
+    <p className="ship-calculation-anchor-note" role="note">請選擇實際計算值，如台北，則是UTC+8</p>
   </div>;
 }
 

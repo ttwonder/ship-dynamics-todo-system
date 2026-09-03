@@ -1,7 +1,7 @@
 export const ITINERARY_MAIN_FIELD_LABELS = [
   'Voy No.',
   'Next Port & Dock Name',
-  'UTC Offset',
+  'Destination\nUTC Offset',
   'Purpose',
   'B/F or I/F Qty (MT/BBLS)',
   'ETA (LT)',

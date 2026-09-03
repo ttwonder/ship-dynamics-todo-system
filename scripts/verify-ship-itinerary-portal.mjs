@@ -4,6 +4,13 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 
+function firstRenderedHeaderTexts(markup) {
+  const row = markup.match(/<thead><tr>([\s\S]*?)<\/tr><\/thead>/);
+  assert.ok(row, 'rendered table must contain a header row');
+  return [...row[1].matchAll(/<th(?:\s[^>]*)?>([\s\S]*?)<\/th>/g)]
+    .map(match => match[1].replace(/<[^>]+>/g, ''));
+}
+
 const server = await createServer({ root: process.cwd(), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
   const model = await server.ssrLoadModule('/src/itinerary/shipItineraryModel.ts');
@@ -11,7 +18,7 @@ try {
   const layoutPath = 'src/itinerary/itineraryFieldLayout.ts';
   assert.equal(fs.existsSync(layoutPath), true, 'main and ship editors need one shared field layout authority');
   const layout = await server.ssrLoadModule(`/${layoutPath}`);
-  assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Next Port & Dock Name','UTC Offset','Purpose','B/F or I/F Qty (MT/BBLS)','ETA (LT)','ETB (LT)','預計L/D rate (MT/h)','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','Arr ROB\n(Cargo/Fuel/FW)','Dep ROB\n(Cargo/Fuel/FW)','備註信息']);
+  assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Next Port & Dock Name','Destination\nUTC Offset','Purpose','B/F or I/F Qty (MT/BBLS)','ETA (LT)','ETB (LT)','預計L/D rate (MT/h)','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','Arr ROB\n(Cargo/Fuel/FW)','Dep ROB\n(Cargo/Fuel/FW)','備註信息']);
   assert.deepEqual(layout.ITINERARY_PARAMETER_FIELD_LABELS, ['DTG(NM)','預估航速(kn)','剩餘航行時間(h)','預估等待時間(靠泊前)(h)','預計航道航行時間(h)','作業艙號','裝卸貨量(MT)','預計L/D rate (MT/h)','預計作業時間(h)','預估等待/延誤時間(完貨前)(h)','預估等待/延誤時間(完貨後)(h)']);
   assert.deepEqual(layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS, [70,175,96,155,155,246,246,80,246,246,98,98,147,147,175]);
   assert.deepEqual(layout.ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS, [82,82,82,82,82,135,100,82,82,82,82]);
@@ -128,6 +135,14 @@ try {
   assert.doesNotMatch(portal, /useShipPortalRollout|rollout\.enabled|rollout\.loading|Itinerary 尚未開放|正在確認 Itinerary 開放狀態/, 'ship input page must stay open without a rollout gate');
   assert.match(portal, /const demoMode = localShipPortalDemoRequested\(\)/, 'local QA data must remain isolated after rollout removal');
   const editor = fs.readFileSync('src/itinerary/ShipItineraryEditor.tsx', 'utf8');
+  const shipEditorModule = await server.ssrLoadModule('/src/itinerary/ShipItineraryEditor.tsx');
+  const shipEditorMarkup = renderToStaticMarkup(createElement(shipEditorModule.default, {
+    document: blank, readOnly: false, canSave: false, remoteUpdated: false, saving: false,
+    onChange() {}, onSave() {}, onCancel() {}, onClosePreservingDraft() {}, onDiscardDraft() {}, onSyncLatest() {}, onExportDraft() {},
+  }));
+  const shipMainHeaderTexts = firstRenderedHeaderTexts(shipEditorMarkup);
+  assert.equal(shipMainHeaderTexts.length, 17, 'ship main editor must retain # + 15 fields + action');
+  assert.equal(shipMainHeaderTexts[3], 'Destination\nUTC Offset', 'ship editor third data column must render the shared Destination UTC Offset heading');
   const panel = fs.readFileSync('src/itinerary/ItineraryPanel.tsx', 'utf8');
   const officeEditor = fs.readFileSync('src/itinerary/ItineraryEditor.tsx', 'utf8');
   const dateInput = fs.readFileSync('src/itinerary/ItineraryDateInput.tsx', 'utf8');
@@ -157,6 +172,9 @@ try {
   });
   const collapsedBrowse = renderToStaticMarkup(createElement(browseModule.ItineraryBrowseTable, { rows: [browseRow], showMoreParameters: false, ariaLabel: 'collapsed itinerary' }));
   const expandedBrowse = renderToStaticMarkup(createElement(browseModule.ItineraryBrowseTable, { rows: [browseRow], showMoreParameters: true, ariaLabel: 'expanded itinerary' }));
+  const collapsedBrowseHeaderTexts = firstRenderedHeaderTexts(collapsedBrowse);
+  assert.equal(collapsedBrowseHeaderTexts.length, 15, 'shared browse table must retain its 15 main columns');
+  assert.equal(collapsedBrowseHeaderTexts[2], 'Destination\nUTC Offset', 'main and ship browse third column must render the shared Destination UTC Offset heading');
   assert.match(collapsedBrowse, /Arr ROB\n\(Cargo\/Fuel\/FW\)/, 'shared Owner and ship browse header must render Arr ROB on two lines');
   assert.match(collapsedBrowse, /Dep ROB\n\(Cargo\/Fuel\/FW\)/, 'shared Owner and ship browse header must render Dep ROB on two lines');
   assert.match(collapsedBrowse, /備註信息/);
@@ -203,6 +221,17 @@ try {
   assert.match(editor, /使用現在/);
   assert.match(editor, /當下時間＋當下時區/);
   assert.doesNotMatch(editor, /當下時間＋Offset/);
+  const calculationAnchorReminder = '請選擇實際計算值，如台北，則是UTC+8';
+  assert.equal(editor.split(calculationAnchorReminder).length - 1, 1, 'ship editor must show the UTC offset calculation reminder exactly once');
+  const calculationAnchorStart = editor.indexOf('return <div className="ship-calculation-anchor"');
+  const calculationAnchorEnd = editor.indexOf('</div>;\n}', calculationAnchorStart);
+  const calculationAnchorBlock = editor.slice(calculationAnchorStart, calculationAnchorEnd);
+  assert.ok(calculationAnchorBlock.indexOf('>使用現在</button>') < calculationAnchorBlock.indexOf(calculationAnchorReminder), 'UTC offset calculation reminder must sit after the Use Now button in the same calculation anchor');
+  assert.match(calculationAnchorBlock, /<p className="ship-calculation-anchor-note" role="note">/);
+  assert.equal(officeEditor.includes(calculationAnchorReminder), false, 'UTC offset calculation reminder is requested only in the ship-side editor');
+  assert.match(css, /\.ship-calculation-anchor\{[^}]*grid-template-columns:72px 112px 68px 94px 58px minmax\(0,1fr\)/, 'desktop calculation anchor must reserve a flexible sixth cell for the reminder');
+  assert.match(css, /\.ship-calculation-anchor-note\{[^}]*margin:0[^}]*min-width:0[^}]*white-space:normal[^}]*overflow-wrap:anywhere/, 'calculation reminder must prefer one line but wrap safely when space is narrow');
+  assert.match(css, /@media\(max-width:900px\)\{[\s\S]*?\.ship-calculation-anchor-note\{grid-column:1\/-1\}/, 'narrow ship editor must place the reminder below the controls without creating a wider grid');
   assert.match(editor, /role="separator"/);
   assert.match(editor, /onPointerMove=/);
   assert.match(editor, /shipTimeZonePatch/);
