@@ -3,6 +3,7 @@ import { formatRelativeUpdatedAt } from './itineraryTime';
 import type { ItineraryDocument } from './itineraryTypes';
 import { ItineraryBrowseTable, ItineraryMoreParametersButton } from './ItineraryBrowseTable';
 import ItineraryCopyEmailButton from './ItineraryCopyEmailButton';
+import ItineraryVesselMetadata from './ItineraryCurrentTimeZone';
 
 interface ItineraryPanelProps {
   document: ItineraryDocument;
@@ -23,7 +24,7 @@ export default function ItineraryPanel({ document, selected, nowMs, canEdit, onT
     <header className="itinerary-panel-head">
       <label className="itinerary-select"><input type="checkbox" checked={selected} onChange={onToggleSelected}/><span>選取</span></label>
       <div className="itinerary-vessel-heading">
-        <h2>{document.vesselName}</h2>
+        <div className="itinerary-vessel-title-line"><h2>{document.vesselName}</h2><ItineraryVesselMetadata document={document} /></div>
         <p className="itinerary-relative-updated-at">{relativeUpdatedAt}</p>
         {document.updatedActorLabel && <p>更新者｜{document.updatedActorLabel}</p>}
       </div>

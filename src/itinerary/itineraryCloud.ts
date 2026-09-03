@@ -178,10 +178,14 @@ export class PublicItineraryCloudRepository {
     });
   }
   async save(input: ItinerarySaveInput): Promise<ItinerarySaveResult> {
+    const validation = validateItineraryDocument(input.document, { requirePreviousPortName: true });
+    if (validation.ok === false) {
+      return { ok: false, code: 'invalid-document', message: validation.errors.slice(0, 3).map(error => error.message).join('；') };
+    }
     const args = {
-      p_workspace_key: this.config.workspaceKey, p_vessel_id: input.document.vesselId,
+      p_workspace_key: this.config.workspaceKey, p_vessel_id: validation.value.vesselId,
       p_expected_revision: input.expectedRevision, p_operation_id: input.operationId,
-      p_rows: input.document.rows, p_lease_id: input.lease.leaseId,
+      p_rows: validation.value.rows, p_lease_id: input.lease.leaseId,
       p_actor_key: this.actorKey, p_holder_session: input.lease.holderId, p_fencing_token: input.lease.fence,
     };
     try {

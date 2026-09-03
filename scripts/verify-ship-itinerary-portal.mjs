@@ -38,10 +38,12 @@ try {
   const latest = types.createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'v1', vesselName: 'TEST', rowId: 'base-row' });
   latest.revision = 9;
   latest.rows[0].voyageNumber = 'OLD';
+  latest.rows[0].previousPortName = 'BUSAN';
   const blank = model.createShipDraft(latest, 'blank', 'blank-row');
   assert.equal(blank.revision, 9);
   assert.equal(blank.rows.length, 1);
   assert.equal(blank.rows[0].voyageNumber, '');
+  assert.equal(blank.rows[0].previousPortName, '', 'starting from blank must require a new previous-port entry');
   assert.equal(blank.rows[0].arrivalDraftText, 'A:\nF:', 'new rows must prefill Arr Draft as two editable A/F lines');
   assert.equal(blank.rows[0].departureDraftText, 'A:\nF:', 'new rows must prefill Dep Draft as two editable A/F lines');
   assert.equal(blank.rows[0].notesText, '');
@@ -55,6 +57,7 @@ try {
   assert.equal(model.hasShipDraftBusinessContent(noteOnly), true, 'a note-only row is meaningful itinerary content');
   const fromLatest = model.createShipDraft(latest, 'latest');
   assert.equal(fromLatest.rows[0].voyageNumber, 'OLD');
+  assert.equal(fromLatest.rows[0].previousPortName, 'BUSAN');
   assert.notEqual(fromLatest, latest);
 
   const withSecond = model.addShipDraftRow(blank, 'row-2');
@@ -65,10 +68,11 @@ try {
   assert.equal(model.removeShipDraftRow(withSecond, 'row-2').rows.length, 1);
   assert.equal(model.removeShipDraftRow(blank, 'blank-row').rows.length, 1);
   const anchoredRows = model.addShipDraftRow(blank, 'new-first-after-delete');
-  Object.assign(anchoredRows.rows[0], { calculationStartUtc: '2026-09-01T00:00:00Z', calculationStartTimeZone: 'UTC+8' });
+  Object.assign(anchoredRows.rows[0], { previousPortName: 'KEELUNG', portDockName: '  SINGAPORE PSA  ', calculationStartUtc: '2026-09-01T00:00:00Z', calculationStartTimeZone: 'UTC+8' });
   const afterFirstRemoval = model.removeShipDraftRow(anchoredRows, anchoredRows.rows[0].rowId);
   assert.equal(afterFirstRemoval.rows[0].calculationStartUtc, '2026-09-01T00:00:00Z', 'deleting row one must transfer the ETA calculation anchor to the new first row');
   assert.equal(afterFirstRemoval.rows[0].calculationStartTimeZone, 'UTC+8');
+  assert.equal(afterFirstRemoval.rows[0].previousPortName, 'SINGAPORE PSA', 'deleting row one must promote the deleted row port name into previous-port metadata');
   const anchoredThree = model.addShipDraftRow(model.addShipDraftRow(blank, 'anchor-row-2'), 'anchor-row-3');
   Object.assign(anchoredThree.rows[0], { calculationStartUtc: '2026-09-01T00:00:00Z', calculationStartTimeZone: 'UTC+8' });
   const afterLaterRemoval = model.removeShipDraftRow(anchoredThree, 'anchor-row-3');
@@ -132,14 +136,51 @@ try {
   const html = fs.readFileSync('ship-itinerary.html', 'utf8');
   const entry = fs.readFileSync('src/ship-itinerary-main.tsx', 'utf8');
   const portal = fs.readFileSync('src/itinerary/ShipItineraryPortal.tsx', 'utf8');
+  const portalModule = await server.ssrLoadModule('/src/itinerary/ShipItineraryPortal.tsx');
+  let savePrompt = '';
+  assert.equal(portalModule.confirmShipItinerarySave(message => { savePrompt = message; return false; }), false, 'cancel must stop save confirmation');
+  assert.match(savePrompt, /上一港名稱已更新/);
+  assert.match(savePrompt, /報告時間已更新/);
+  assert.match(savePrompt, /其他需要更新的項目已完整更新/);
+  assert.match(savePrompt, /是否繼續保存並同步/);
+  assert.equal(portalModule.confirmShipItinerarySave(() => true), true, 'confirm must allow save continuation');
   assert.doesNotMatch(portal, /useShipPortalRollout|rollout\.enabled|rollout\.loading|Itinerary 尚未開放|正在確認 Itinerary 開放狀態/, 'ship input page must stay open without a rollout gate');
   assert.match(portal, /const demoMode = localShipPortalDemoRequested\(\)/, 'local QA data must remain isolated after rollout removal');
+  const saveConfirmationBlock = portal.slice(portal.indexOf('const saveEditor = async'), portal.indexOf('const exportDocument = async'));
+  const strictValidationIndex = saveConfirmationBlock.indexOf('requirePreviousPortName: true');
+  const confirmationIndex = saveConfirmationBlock.indexOf('if (!confirmShipItinerarySave()) return;');
+  const pendingOperationIndex = saveConfirmationBlock.indexOf('pendingOperationForDocument');
+  const backendSaveIndex = saveConfirmationBlock.indexOf('backend.save');
+  assert.ok(strictValidationIndex >= 0 && confirmationIndex > strictValidationIndex && pendingOperationIndex > confirmationIndex && backendSaveIndex > pendingOperationIndex, 'cancelable confirmation must run after validation and before any pending operation or cloud save');
   const editor = fs.readFileSync('src/itinerary/ShipItineraryEditor.tsx', 'utf8');
   const shipEditorModule = await server.ssrLoadModule('/src/itinerary/ShipItineraryEditor.tsx');
   const shipEditorMarkup = renderToStaticMarkup(createElement(shipEditorModule.default, {
     document: blank, readOnly: false, canSave: false, remoteUpdated: false, saving: false,
     onChange() {}, onSave() {}, onCancel() {}, onClosePreservingDraft() {}, onDiscardDraft() {}, onSyncLatest() {}, onExportDraft() {},
   }));
+  const previousPortInput = shipEditorMarkup.match(/<input[^>]*name="previousPortName"[^>]*>/)?.[0] || '';
+  assert.match(previousPortInput, /required=""/, 'ship editor previous-port input must be required');
+  assert.match(previousPortInput, /aria-invalid="true"/, 'blank previous-port input must be invalid');
+  const legacyDraftWithoutPreviousPort = structuredClone(blank);
+  delete legacyDraftWithoutPreviousPort.rows[0].previousPortName;
+  assert.doesNotThrow(() => renderToStaticMarkup(createElement(shipEditorModule.default, {
+    document: legacyDraftWithoutPreviousPort, readOnly: false, canSave: true, remoteUpdated: false, saving: false,
+    onChange() {}, onSave() {}, onCancel() {}, onClosePreservingDraft() {}, onDiscardDraft() {}, onSyncLatest() {}, onExportDraft() {},
+  })), 'a pre-previous-port IndexedDB draft must remain openable');
+  const businessWithoutPreviousPort = structuredClone(blank);
+  businessWithoutPreviousPort.rows[0].portDockName = 'ULSAN';
+  businessWithoutPreviousPort.rows[0].previousPortName = '   ';
+  const blockedSaveMarkup = renderToStaticMarkup(createElement(shipEditorModule.default, {
+    document: businessWithoutPreviousPort, readOnly: false, canSave: true, remoteUpdated: false, saving: false,
+    onChange() {}, onSave() {}, onCancel() {}, onClosePreservingDraft() {}, onDiscardDraft() {}, onSyncLatest() {}, onExportDraft() {},
+  }));
+  assert.match(blockedSaveMarkup, /<button class="btn primary small" disabled="">保存並同步<\/button>/, 'business rows must remain unsavable while previous port is blank');
+  businessWithoutPreviousPort.rows[0].previousPortName = 'BUSAN';
+  const allowedSaveMarkup = renderToStaticMarkup(createElement(shipEditorModule.default, {
+    document: businessWithoutPreviousPort, readOnly: false, canSave: true, remoteUpdated: false, saving: false,
+    onChange() {}, onSave() {}, onCancel() {}, onClosePreservingDraft() {}, onDiscardDraft() {}, onSyncLatest() {}, onExportDraft() {},
+  }));
+  assert.match(allowedSaveMarkup, /<button class="btn primary small">保存並同步<\/button>/, 'a nonblank previous port must unblock an otherwise valid ship draft');
   const shipMainHeaderTexts = firstRenderedHeaderTexts(shipEditorMarkup);
   assert.equal(shipMainHeaderTexts.length, 17, 'ship main editor must retain # + 15 fields + action');
   assert.equal(shipMainHeaderTexts[3], 'Destination\nUTC Offset', 'ship editor third data column must render the shared Destination UTC Offset heading');

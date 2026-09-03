@@ -86,7 +86,7 @@ function hasDraftContent(value: string): boolean {
 
 function hasItineraryExportContent(row: ItineraryRow): boolean {
   const textValues = [
-    row.voyageNumber, row.portDockName, row.operation, row.cargoQuantityText, row.ldRateText,
+    row.previousPortName || '', row.voyageNumber, row.portDockName, row.operation, row.cargoQuantityText, row.ldRateText,
     row.arrivalRobText, row.departureRobText, row.notesText, row.portTimeZone,
     row.etaTimeZone, row.etbTimeZone, row.etcTimeZone, row.etdTimeZone,
     row.calculationStartTimeZone, row.tanksText,
@@ -405,8 +405,8 @@ export async function buildItineraryWorkbook(documents: ItineraryDocument[], tem
   }
 
   const meta = workbook.addWorksheet(META_SHEET, { state: 'veryHidden' });
-  meta.addRow(['sheetName', 'vesselId', 'vesselName', 'schemaVersion', 'revision', 'updatedAt', 'excelLayoutVersion']);
-  for (const entry of metadata) meta.addRow([entry.sheetName, entry.document.vesselId, entry.document.vesselName, ITINERARY_SCHEMA_VERSION, entry.document.revision, entry.document.updatedAt, EXCEL_LAYOUT_VERSION]);
+  meta.addRow(['sheetName', 'vesselId', 'vesselName', 'schemaVersion', 'revision', 'updatedAt', 'excelLayoutVersion', '', '', 'previousPortName']);
+  for (const entry of metadata) meta.addRow([entry.sheetName, entry.document.vesselId, entry.document.vesselName, ITINERARY_SCHEMA_VERSION, entry.document.revision, entry.document.updatedAt, EXCEL_LAYOUT_VERSION, '', '', entry.document.rows[0]?.previousPortName || '']);
   meta.getCell('H1').value = 'UTC Offset';
   meta.getCell('I1').value = 'Offset Hours';
   UTC_OFFSET_OPTIONS.forEach((label, index) => {
@@ -584,6 +584,7 @@ function resolveSources(sourceRows: ImportedRowSource[], overrides: Record<strin
 
 export function resolveParsedItinerarySheet(sheet: ParsedItinerarySheet, overrides: Record<string, string>): ParsedItinerarySheet {
   const resolved = resolveSources(sheet.sourceRows, overrides);
+  if (resolved.rows[0]) resolved.rows[0].previousPortName = sheet.rows[0]?.previousPortName || '';
   return { ...sheet, rows: resolved.rows, issues: resolved.issues, timeZoneNeeds: resolved.needs };
 }
 
@@ -592,7 +593,7 @@ export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<Parsed
   await workbook.xlsx.load(input as unknown as ExcelJS.Buffer);
   const date1904 = Boolean(workbook.properties.date1904);
   const metaSheet = workbook.getWorksheet(META_SHEET);
-  const metadata = new Map<string, { vesselId: string; vesselName: string; revision: number | null; schemaVersion: number | null; excelLayoutVersion: number }>();
+  const metadata = new Map<string, { vesselId: string; vesselName: string; revision: number | null; schemaVersion: number | null; excelLayoutVersion: number; previousPortName: string }>();
   let schemaVersion: number | null = null;
   if (metaSheet) {
     for (let rowNumber = 2; rowNumber <= metaSheet.rowCount; rowNumber += 1) {
@@ -601,6 +602,7 @@ export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<Parsed
       const item = {
         vesselId: String(row.getCell(2).value || ''), vesselName: String(row.getCell(3).value || ''),
         schemaVersion: numberCell(row.getCell(4)), revision: numberCell(row.getCell(5)), excelLayoutVersion: numberCell(row.getCell(7)) || 1,
+        previousPortName: textCell(row.getCell(10)),
       };
       if (name) metadata.set(name, item);
       if (item.schemaVersion !== null) schemaVersion = item.schemaVersion;
@@ -663,6 +665,7 @@ export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<Parsed
       });
     }
     const resolved = resolveSources(sourceRows, {});
+    if (resolved.rows[0]) resolved.rows[0].previousPortName = meta?.previousPortName || '';
     sheets.push({
       sheetName: worksheet.name, embeddedVesselId: meta?.vesselId || null, embeddedVesselName: meta?.vesselName || null,
       embeddedRevision: meta?.revision ?? null, sourceRows, rows: resolved.rows,

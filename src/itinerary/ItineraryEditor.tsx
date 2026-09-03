@@ -154,7 +154,11 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
     return { ...current, rows: [...current.rows, row] };
   });
   const removeRow = (rowId: string) => updateDraft(current => {
-    if (current.rows.length === 1) return { ...current, rows: [createBlankItineraryRow(current.rows[0].rowId, 0)] };
+    if (current.rows.length === 1) {
+      const replacement = createBlankItineraryRow(current.rows[0].rowId, 0);
+      replacement.previousPortName = current.rows[0]?.previousPortName || '';
+      return { ...current, rows: [replacement] };
+    }
     return removeShipDraftRow(current, rowId);
   });
 

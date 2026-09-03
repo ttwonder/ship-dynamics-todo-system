@@ -54,6 +54,7 @@ export function removeShipDraftRow(document: ItineraryDocument, rowId: string): 
   if (removedFirstRow && remaining[0]) {
     remaining[0] = {
       ...remaining[0],
+      previousPortName: (removedFirstRow.portDockName || '').trim(),
       calculationStartUtc: removedFirstRow.calculationStartUtc,
       calculationStartTimeZone: removedFirstRow.calculationStartTimeZone,
     };
@@ -172,6 +173,10 @@ function rowHasBusinessContent(row: ItineraryRow): boolean {
 
 export function hasShipDraftBusinessContent(document: ItineraryDocument): boolean {
   return document.rows.some(rowHasBusinessContent);
+}
+
+export function hasShipPreviousPortName(document: ItineraryDocument): boolean {
+  return Boolean(document.rows[0]?.previousPortName?.trim());
 }
 
 export function trimTrailingBlankShipRows(document: ItineraryDocument): ItineraryDocument {

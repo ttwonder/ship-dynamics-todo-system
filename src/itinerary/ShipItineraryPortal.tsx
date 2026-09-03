@@ -8,7 +8,7 @@ import { formatItinerarySaveConfirmation, formatRelativeUpdatedAt } from './itin
 import { createEmptyItineraryDocument, createItineraryId, type ItineraryDocument } from './itineraryTypes';
 import { validateItineraryDocument } from './itineraryValidation';
 
-import { createShipDraft, hasShipDraftBusinessContent, trimTrailingBlankShipRows } from './shipItineraryModel';
+import { createShipDraft, hasShipDraftBusinessContent, hasShipPreviousPortName, trimTrailingBlankShipRows } from './shipItineraryModel';
 import { buildItineraryMailto } from './itineraryEmail';
 import { PublicItineraryCloudRepository, type PublicItineraryVessel } from './itineraryCloud';
 import { pendingOperationForDocument } from './itineraryOperation';
@@ -17,6 +17,7 @@ import ShipItineraryEditor from './ShipItineraryEditor';
 import { dashboardVesselDisplayName } from '../vesselDisplay';
 import { ItineraryBrowseTable, ItineraryMoreParametersButton } from './ItineraryBrowseTable';
 import ItineraryCopyEmailButton from './ItineraryCopyEmailButton';
+import ItineraryVesselMetadata from './ItineraryCurrentTimeZone';
 import ShipItineraryBriefDialog from './ShipItineraryBriefDialog';
 
 interface EditorState {
@@ -32,6 +33,26 @@ interface EditorState {
 type PortalNotice =
   | { kind: 'text'; text: string }
   | { kind: 'saved'; updatedAt: string | null };
+
+export const SHIP_ITINERARY_SAVE_CONFIRMATION_MESSAGE = [
+  '請確認以下項目：',
+  '1. 上一港名稱已更新；',
+  '2. 報告時間已更新；',
+  '3. 其他需要更新的項目已完整更新。',
+  '',
+  '是否繼續保存並同步？',
+].join('\n');
+
+export function confirmShipItinerarySave(confirmAction: (message: string) => boolean = message => window.confirm(message)): boolean {
+  return confirmAction(SHIP_ITINERARY_SAVE_CONFIRMATION_MESSAGE);
+}
+
+export function ShipItineraryLatestHeading({ document, nowMs }: { document: ItineraryDocument; nowMs?: number }) {
+  return <div className="ship-latest-heading">
+    <div className="ship-latest-title-line"><h2>{document.vesselName}</h2><ItineraryVesselMetadata document={document} /></div>
+    <span>{formatRelativeUpdatedAt(document.updatedAt, nowMs)}</span>
+  </div>;
+}
 
 function browserId(storage: Storage, key: string, prefix: string): string {
   const existing = storage.getItem(key);
@@ -228,10 +249,12 @@ export default function ShipItineraryPortal() {
 
   const saveEditor = async () => {
     if (!editor || !backend || editor.readOnly || editor.remoteUpdated) return;
+    if (!hasShipPreviousPortName(editor.draft)) { setNotice('請填寫上一港名稱。'); return; }
     if (!hasShipDraftBusinessContent(editor.draft)) { setNotice('請至少填寫一列 Itinerary 資料。'); return; }
     const candidate = trimTrailingBlankShipRows(editor.draft);
-    const validation = validateItineraryDocument(candidate);
+    const validation = validateItineraryDocument(candidate, { requirePreviousPortName: true });
     if (validation.ok === false) { setNotice(validation.errors.slice(0, 3).map(error => error.message).join('；')); return; }
+    if (!confirmShipItinerarySave()) return;
     setSaving(true);
     const pendingOperation = pendingOperationForDocument(validation.value, editor.pendingOperation);
     setEditor(previous => previous ? { ...previous, pendingOperation } : previous);
@@ -302,7 +325,12 @@ export default function ShipItineraryPortal() {
       const sheet = parsed.sheets[0];
       if (sheet.embeddedVesselId && sheet.embeddedVesselId !== editor.draft.vesselId) throw new Error('Excel 內的船舶與目前選擇不一致');
       if (sheet.issues.length) throw new Error(sheet.issues.slice(0, 3).map(issue => issue.message).join('；'));
-      setEditor(previous => previous ? { ...previous, draft: { ...previous.draft, rows: sheet.rows }, dirty: true, pendingOperation: undefined } : previous);
+      setEditor(previous => {
+        if (!previous) return previous;
+        const rows = sheet.rows.map(row => ({ ...row }));
+        if (rows[0] && !rows[0].previousPortName.trim()) rows[0].previousPortName = previous.draft.rows[0]?.previousPortName || '';
+        return { ...previous, draft: { ...previous.draft, rows }, dirty: true, pendingOperation: undefined };
+      });
       setNotice(`已匯入 ${sheet.rows.length} 列，尚未同步；請確認後點「保存並同步」。`);
     } catch (error) {
       setNotice(`匯入失敗：${error instanceof Error ? error.message : '未知錯誤'}`);
@@ -320,7 +348,7 @@ export default function ShipItineraryPortal() {
     {!selectedVesselId && <div className="ship-state-card compact"><b>先選擇船名</b><span>再選擇從空白或最新狀態開始。</span></div>}
     {selectedVesselId && latest && !editor && <section className="ship-latest-card">
       <div className="ship-latest-head">
-        <div><h2>{latest.vesselName}</h2><span>{formatRelativeUpdatedAt(latest.updatedAt)}</span></div>
+        <ShipItineraryLatestHeading document={latest} />
         <div>
           <ItineraryCopyEmailButton document={latest} onNotice={setNotice} />
           <ItineraryMoreParametersButton expanded={showMoreParameters} onToggle={() => setShowMoreParameters(value => !value)} />

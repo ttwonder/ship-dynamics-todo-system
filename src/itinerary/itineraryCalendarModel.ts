@@ -1,6 +1,7 @@
 import { Temporal } from '@js-temporal/polyfill';
-import { isValidItineraryTimeZone, wallTimeToInstant } from './itineraryTime';
-import type { ItineraryDocument, ItineraryRow } from './itineraryTypes';
+import { formatItineraryUtcOffset, instantToWallTime, isValidItineraryTimeZone, wallTimeToInstant } from './itineraryTime';
+import { formatItineraryOperation, resolveItineraryTimeZone } from './itineraryTypes';
+import type { ItineraryDocument, ItineraryRow, ItineraryTimeField } from './itineraryTypes';
 import type { TaskItem } from '../types';
 import type { TaskPlannedCalendarEvent } from '../taskPlannedSchedule';
 
@@ -35,6 +36,41 @@ export interface ItineraryCalendarLane {
   vesselName: string;
   events: ItineraryCalendarLaneEvent[];
   layerCount: number;
+}
+
+function compactTooltipText(value: string): string {
+  const lines = value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  return lines.length ? lines.join('；') : '—';
+}
+
+function formatDestinationTimeZone(row: ItineraryRow): string {
+  const timeZone = row.portTimeZone.trim();
+  if (!timeZone) return '—';
+  const referenceInstant = row.etaUtc || row.etbUtc || row.etcUtc || row.etdUtc;
+  const offset = formatItineraryUtcOffset(timeZone, referenceInstant);
+  if (!offset || offset === timeZone) return timeZone;
+  return `${timeZone}（${offset}）`;
+}
+
+function formatTooltipTime(row: ItineraryRow, field: ItineraryTimeField): string {
+  const instant = row[field];
+  if (!instant) return '—';
+  const timeZone = resolveItineraryTimeZone(row, field);
+  const wall = instantToWallTime(instant, timeZone);
+  const offset = formatItineraryUtcOffset(timeZone, instant);
+  if (!wall.ok || !offset) return '—';
+  return `${wall.date} ${wall.time}（${offset}）`;
+}
+
+export function buildItineraryCalendarEventTitle(vesselName: string, row: ItineraryRow): string {
+  return [
+    `船舶：${compactTooltipText(vesselName)} ｜ 航次：${compactTooltipText(row.voyageNumber)}`,
+    `港口：${compactTooltipText(row.portDockName)} ｜ 預計作業類型：${formatItineraryOperation(row.operation) || '—'} ｜ 目的地時區：${formatDestinationTimeZone(row)}`,
+    `ETA：${formatTooltipTime(row, 'etaUtc')} ｜ ETB：${formatTooltipTime(row, 'etbUtc')}`,
+    `ETC：${formatTooltipTime(row, 'etcUtc')} ｜ ETD：${formatTooltipTime(row, 'etdUtc')}`,
+    `B/F or I/F Qty (MT/BBLS)：${compactTooltipText(row.cargoQuantityText)} ｜ 預計裝卸速度：${compactTooltipText(row.ldRateText)}`,
+    `到港吃水：${compactTooltipText(row.arrivalDraftText)} ｜ 離港吃水：${compactTooltipText(row.departureDraftText)}`,
+  ].join('\n');
 }
 
 export function calendarRangeFromLocalDate(localDate: string, days: number, timeZone: string): ItineraryCalendarRangeResult {

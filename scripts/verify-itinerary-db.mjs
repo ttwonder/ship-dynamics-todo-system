@@ -18,6 +18,9 @@ const officeRoleAccessMigration = await readFile(officeRoleAccessMigrationPath, 
 const mainSessionAccessMigrationPath = 'supabase/migrations/20260902134143_itinerary_main_session_access.sql';
 assert.equal(existsSync(mainSessionAccessMigrationPath), true, 'an additive migration must replace the second Itinerary login with the main AppData actor');
 const mainSessionAccessMigration = await readFile(mainSessionAccessMigrationPath, 'utf8');
+const previousPortMigrationPath = 'supabase/migrations/20260903143000_itinerary_previous_port_name.sql';
+assert.equal(existsSync(previousPortMigrationPath), true, 'an additive migration must persist and validate the ship-entered previous port');
+const previousPortMigration = await readFile(previousPortMigrationPath, 'utf8');
 assert.doesNotMatch(mainSessionAccessMigration, /p_actor_guard|create or replace function public\.sd_itinerary_main_authorize|create or replace function public\.sd_itinerary_main_owner_update_rollout/, 'universal access migration must not retain a dedicated guard or Owner-only rollout API');
 assert.match(mainSessionAccessMigration, /main_enabled\s*=\s*true[\s\S]*ship_portal_enabled\s*=\s*true/, 'both Itinerary entrypoints must be forced open');
 assert.match(mainSessionAccessMigration, /revoke execute on function public\.sd_itinerary_owner_update_rollout\(text,bigint,uuid,boolean,boolean,jsonb\)/, 'historical Owner rollout switch must be disabled');
@@ -25,6 +28,7 @@ const readbackSql = await readFile('supabase/itinerary-readback.sql', 'utf8');
 assert.equal(readbackSql.includes("'workspaceKey'"), false, 'production readback must not expose the full legacy workspace key');
 assert.equal(readbackSql.includes("'workspaceRef'"), true, 'production readback must expose only a masked workspace reference');
 assert.equal(readbackSql.includes("'notes'"), true, 'production readback must prove the optional notes field contract');
+assert.equal(readbackSql.includes("'previousPortName'"), true, 'production readback must prove the previous-port persistence and save-boundary contract');
 const rolloutBootstrapReadbackSql = await readFile('supabase/itinerary-rollout-bootstrap-readback.sql', 'utf8');
 const ids = {
   workspace: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -154,6 +158,8 @@ try {
   await db.exec(itineraryNotesMigration);
   await db.exec(officeRoleAccessMigration);
   await db.exec(mainSessionAccessMigration);
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ previousPortName: 'BUSAN' })])]), false, 'pre-previous-port validator must reject the additive field');
+  await db.exec(previousPortMigration);
   const mainArgumentRows = (await db.query(`
     select proc.proname, proc.proargnames
     from pg_proc proc
@@ -229,6 +235,9 @@ try {
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([row({ portTimeZone: 'Asia/Seoul' })])]), true, 'legacy IANA rows must stay writable during compatibility');
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row()])]), true);
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ notesText: '靠港前請再次確認' })])]), true, 'notes migration must accept bounded text');
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ previousPortName: 'BUSAN' })])]), true, 'first-row previous port must use the existing JSONB payload');
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ previousPortName: 7 })])]), false, 'previous port must remain textual');
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ previousPortName: 'P'.repeat(241) })])]), false, 'previous port must remain bounded');
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ notesText: 7 })])]), false, 'notes must remain textual');
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify([v2Row({ notesText: 'N'.repeat(1001) })])]), false, 'notes must remain bounded');
   const validTwoRowV2 = [
@@ -236,6 +245,9 @@ try {
     v2Row({ rowId: 'v2-row-2', sortOrder: 1, calculationStartUtc: null, calculationStartTimeZone: '' }),
   ];
   assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify(validTwoRowV2)]), true);
+  const invalidLaterPreviousPort = structuredClone(validTwoRowV2);
+  invalidLaterPreviousPort[1].previousPortName = 'WRONG ROW';
+  assert.equal(await scalar('select public.sd_itinerary_rows_valid($1::jsonb)', [JSON.stringify(invalidLaterPreviousPort)]), false, 'previous port must remain first-row metadata');
   const invalidLaterAnchor = structuredClone(validTwoRowV2);
   invalidLaterAnchor[1].calculationStartUtc = '2026-09-01T00:00:00Z';
   invalidLaterAnchor[1].calculationStartTimeZone = 'UTC+8';
@@ -369,8 +381,17 @@ try {
   const locked = await asAnon(() => scalar('select public.sd_itinerary_claim_public_lease($1,$2,$3,$4,$5)', ['default', 'v1', 'public-browser-a', 'public-tab-b', 75]));
   assert.equal(locked.ok, false);
   assert.equal(locked.holderLabel, '另一個使用者');
+  await assert.rejects(
+    () => asAnon(() => scalar('select public.sd_itinerary_save_public($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8,$9::bigint)', ['default', 'v1', 1, nextOperation(), JSON.stringify([v2Row({ previousPortName: '   ', voyageNumber: 'MISSING-PREVIOUS' })]), publicLease.leaseId, 'public-browser-a', 'public-tab-a', publicLease.fencingToken])),
+    /previous-port-required/i,
+  );
+  await assert.rejects(
+    () => asAnon(() => scalar('select public.sd_itinerary_save_public($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8,$9::bigint)', ['default', 'v1', 1, nextOperation(), JSON.stringify([v2Row({ previousPortName: '\t\n', voyageNumber: 'WHITESPACE-PREVIOUS' })]), publicLease.leaseId, 'public-browser-a', 'public-tab-a', publicLease.fencingToken])),
+    /previous-port-required/i,
+  );
+  assert.equal((await asAnon(() => scalar('select public.sd_itinerary_public_load($1,$2)', ['default', 'v1']))).revision, 1, 'rejected whitespace-only previous ports must not consume a revision');
   const publicOp = nextOperation();
-  const publicRows = [v2Row({ voyageNumber: 'PUBLIC-R2' })];
+  const publicRows = [v2Row({ previousPortName: 'BUSAN', voyageNumber: 'PUBLIC-R2' })];
   const publicParams = ['default', 'v1', 1, publicOp, JSON.stringify(publicRows), publicLease.leaseId, 'public-browser-a', 'public-tab-a', publicLease.fencingToken];
   const publicSaved = await asAnon(() => scalar('select public.sd_itinerary_save_public($1,$2,$3::bigint,$4::uuid,$5::jsonb,$6::uuid,$7,$8,$9::bigint)', publicParams));
   assert.equal(Number(publicSaved.revision), 2);
@@ -408,6 +429,7 @@ try {
   await db.exec(itineraryNotesMigration);
   await db.exec(officeRoleAccessMigration);
   await db.exec(mainSessionAccessMigration);
+  await db.exec(previousPortMigration);
   assert.equal(Number(await scalar('select version from public.sd_itinerary_rollout where workspace_id=$1::uuid', [ids.workspace])), 2);
   assert.equal(Number(await scalar("select revision from public.sd_itinerary_documents where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
   assert.equal(Number(await scalar("select count(*)::int from public.sd_itinerary_history where workspace_id=$1::uuid and vessel_id='v1'", [ids.workspace])), 2);
@@ -488,6 +510,13 @@ try {
     acceptsTextNotes: true,
     rejectsNonTextNotes: true,
     rejectsOversizedNotes: true,
+  });
+  assert.deepEqual(readback.previousPortName, {
+    acceptsMissingLegacyField: true,
+    acceptsFirstRowValue: true,
+    rejectsLaterRowValue: true,
+    publicSaveRequiresValue: true,
+    publicSaveRejectsAllWhitespace: true,
   });
   assert.deepEqual(readback.officeRolePermissions, {
     workspaceCount: 1,

@@ -121,6 +121,25 @@ function CalculationStartInput({ row, disabled, onPatch }: { row: ItineraryRow; 
   </div>;
 }
 
+function PreviousPortNameInput({ row, disabled, onPatch }: { row: ItineraryRow; disabled: boolean; onPatch: (patch: Partial<ItineraryRow>) => void }) {
+  const missing = !row.previousPortName?.trim();
+  return <label className={`ship-previous-port-field${missing ? ' missing' : ''}`}>
+    <span>上一港名稱 <em>必填</em></span>
+    <input
+      name="previousPortName"
+      required
+      aria-invalid={missing}
+      aria-describedby={missing ? 'ship-previous-port-requirement' : undefined}
+      maxLength={240}
+      placeholder="請輸入上一港名稱"
+      value={row.previousPortName || ''}
+      disabled={disabled}
+      onChange={event => onPatch({ previousPortName: event.target.value })}
+    />
+    <small id="ship-previous-port-requirement">保存並同步前必須填寫</small>
+  </label>;
+}
+
 function gapMessage(missing: Array<{ rowNumber: number; label: string }>): string {
   const grouped = new Map<number, string[]>();
   missing.forEach(item => grouped.set(item.rowNumber, [...(grouped.get(item.rowNumber) || []), item.label]));
@@ -135,6 +154,8 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
   const calculation = useMemo(() => recalculateItineraryRows(document.rows), [document.rows]);
   const patchRow = (rowId: string, patch: Partial<ItineraryRow>) => onChange(updateShipDraftRow(document, rowId, patch));
   const firstRow = document.rows[0];
+  const previousPortMissing = !firstRow?.previousPortName?.trim();
+  const saveAllowed = canSave && !previousPortMissing;
 
   const switchAllManual = () => {
     if (!window.confirm('切換後，所有 ETA／ETB／ETC／ETD 都改為手動輸入；修改右側參數將不再更新這些時間。確定繼續嗎？')) return;
@@ -178,6 +199,7 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
     {readOnly && !remoteUpdated && <div className="ship-conflict-banner"><b>編輯鎖已失效，畫面已凍結。</b><span>草稿仍保留，不會自動覆蓋雲端。</span></div>}
     <div className="ship-editor-mode-bar">
       {firstRow && <CalculationStartInput row={firstRow} disabled={readOnly} onPatch={patch => patchRow(firstRow.rowId, patch)} />}
+      {firstRow && <PreviousPortNameInput row={firstRow} disabled={readOnly} onPatch={patch => patchRow(firstRow.rowId, patch)} />}
       <div className="ship-editor-mode-actions"><button type="button" className="btn ghost small" disabled={readOnly} onClick={switchAllManual}>全部手動輸入</button><button type="button" className="btn primary small" disabled={readOnly} onClick={calculateAllAutomatic}>一鍵自動計算</button></div>
       {modeMessage && <span className="ship-mode-message" role="status">{modeMessage}</span>}
     </div>
@@ -237,10 +259,10 @@ export default function ShipItineraryEditor({ document, readOnly, canSave, remot
     </div>
     <div className="ship-editor-footer">
       <button type="button" className="btn ghost small" disabled={readOnly} onClick={() => onChange(addShipDraftRow(document))}>＋ 下一行</button>
-      <span className={!canSave || calculation.issues.length ? 'ship-issue' : 'ship-ok'}>{!canSave ? '請至少填寫一列資料' : calculation.issues.length ? `${calculation.issues.length} 個欄位待確認` : '公式檢查正常'}</span>
+      <span className={!saveAllowed || calculation.issues.length ? 'ship-issue' : 'ship-ok'}>{previousPortMissing ? '請填寫上一港名稱' : !canSave ? '請至少填寫一列資料' : calculation.issues.length ? `${calculation.issues.length} 個欄位待確認` : '公式檢查正常'}</span>
       <div className="ship-editor-actions">
         {readOnly ? <><button className="btn ghost small" onClick={onClosePreservingDraft}>關閉（保留草稿）</button><button className="btn red small" onClick={onDiscardDraft}>丟棄草稿</button></> : <button className="btn ghost small" onClick={onCancel}>取消編輯</button>}
-        <button className="btn primary small" disabled={readOnly || saving || remoteUpdated || !canSave} onClick={onSave}>{saving ? '保存中…' : '保存並同步'}</button>
+        <button className="btn primary small" disabled={readOnly || saving || remoteUpdated || !saveAllowed} onClick={onSave}>{saving ? '保存中…' : '保存並同步'}</button>
       </div>
     </div>
   </section>;

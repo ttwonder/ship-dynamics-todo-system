@@ -257,7 +257,9 @@ export default function ItineraryDashboard({ user, actor, vessels, calendarTaskV
         results.push({ sheetName: item.sheet.sheetName, vesselName: displayedCurrent.vesselName, ok: false, message: error instanceof Error ? `取得雲端最新版失敗：${error.message}` : '取得雲端最新版失敗，未覆蓋。' });
         continue;
       }
-      const candidate: ItineraryDocument = { ...current, rows: item.sheet.rows.map(row => ({ ...row })) };
+      const importedRows = item.sheet.rows.map(row => ({ ...row }));
+      if (importedRows[0] && !importedRows[0].previousPortName.trim()) importedRows[0].previousPortName = current.rows[0]?.previousPortName || '';
+      const candidate: ItineraryDocument = { ...current, rows: importedRows };
       const result = await backend.save({ document: candidate, expectedRevision: current.revision, operationId: createItineraryOperationId(), lease: claim.lease, actorLabel: user.name });
       void backend.releaseLease(claim.lease);
       if (result.ok === true) {

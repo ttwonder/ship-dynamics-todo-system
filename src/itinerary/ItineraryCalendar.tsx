@@ -4,7 +4,7 @@ import type { TaskItem } from '../types';
 import { richTextToPlainText } from '../richText';
 import { projectTaskPlannedCalendarEvents } from '../taskPlannedSchedule';
 import { taskProgressForVessel } from '../taskVesselProgress';
-import { buildItineraryCalendarLanes, calendarRangeFromLocalDate } from './itineraryCalendarModel';
+import { buildItineraryCalendarEventTitle, buildItineraryCalendarLanes, calendarRangeFromLocalDate } from './itineraryCalendarModel';
 import { instantToWallTime } from './itineraryTime';
 import { formatItineraryOperation, itineraryOperationSelected } from './itineraryTypes';
 import type { ItineraryDocument } from './itineraryTypes';
@@ -32,7 +32,7 @@ export default function ItineraryCalendar({ documents, tasks = [] }: ItineraryCa
   const [horizontalScroll, setHorizontalScroll] = useState(0);
   const [stickyTop, setStickyTop] = useState(0);
   const calendarScrollRef = useRef<HTMLDivElement>(null);
-  const [fields, setFields] = useState({ voyage: true, port: true, operation: true, times: false });
+  const [fields, setFields] = useState({ voyage: true, port: true, operation: true, times: true });
   const range = useMemo(() => calendarRangeFromLocalDate(startDate, days, timeZone), [startDate, days, timeZone]);
   const taskEvents = useMemo(() => projectTaskPlannedCalendarEvents(
     tasks,
@@ -126,7 +126,7 @@ export default function ItineraryCalendar({ documents, tasks = [] }: ItineraryCa
                   return value.ok ? `${value.date.slice(5)} ${value.time}` : '—';
                 };
                 const timeText = fields.times ? `${localTime(entry.row.etaUtc)} → ${localTime(entry.row.etdUtc)}` : '';
-                return <div className={`itinerary-calendar-event ${itineraryOperationSelected(entry.row.operation, 'unload') && !itineraryOperationSelected(entry.row.operation, 'load') ? 'unloading' : 'loading'}`} key={entry.eventId} style={{ left: `${entry.leftPercent}%`, width: `${entry.widthPercent}%`, top: eventTop }} title={`${entry.vesselName} ${content}`}><b>{content}</b>{timeText && <span>{timeText}</span>}</div>;
+                return <div className={`itinerary-calendar-event ${itineraryOperationSelected(entry.row.operation, 'unload') && !itineraryOperationSelected(entry.row.operation, 'load') ? 'unloading' : 'loading'}`} key={entry.eventId} style={{ left: `${entry.leftPercent}%`, width: `${entry.widthPercent}%`, top: eventTop }} title={buildItineraryCalendarEventTitle(entry.vesselName, entry.row)}><b>{content}</b>{timeText && <span>{timeText}</span>}</div>;
               })}
               {!lane.events.length && <span className="itinerary-calendar-lane-empty">此期間無事件</span>}
             </div>

@@ -13,6 +13,7 @@ try {
 
   const first = createBlankItineraryRow('row-a', 0);
   Object.assign(first, {
+    previousPortName: 'BUSAN',
     voyageNumber: 'V001', portDockName: 'KAOHSIUNG', operation: 'To Load / To Unload / docking / inspection', cargoQuantityText: 'TEST 5000 MT', portTimeZone: 'UTC+8',
     etaUtc: '2026-08-31T08:00:00Z', etaMode: 'auto', etaTimeZone: '', etbTimeZone: 'UTC+9', etcTimeZone: 'UTC+8:45', etdTimeZone: 'UTC-6',
     calculationStartUtc: '2026-08-30T22:00:00Z', calculationStartTimeZone: 'UTC+8', berthWaitHours: 2, channelSailingHours: 1,
@@ -80,6 +81,8 @@ try {
   assert.equal(workbook.worksheets[0].getCell('AD4').value, 'UTC-6');
   assert.equal(workbook.worksheets[0].getCell('AF4').value, 'UTC+8');
   assert.equal(workbook.worksheets[2].getCell('G2').value, 3, 'metadata must identify the notes-aware Excel layout');
+  assert.equal(workbook.worksheets[2].getCell('J1').value, 'previousPortName');
+  assert.equal(workbook.worksheets[2].getCell('J2').value, 'BUSAN', 'hidden metadata must preserve the document previous port');
   const helperExpectations = [
     ['AG4', 'AF4', 8],
     ['AH4', 'IF(AA4="",O4,AA4)', 8],
@@ -211,6 +214,7 @@ try {
   assert.equal(parsed.sheets[0].embeddedVesselId, 'v-alpha');
   assert.equal(parsed.sheets[0].rows.length, 2);
   assert.equal(parsed.sheets[0].rows[0].voyageNumber, 'V001');
+  assert.equal(parsed.sheets[0].rows[0].previousPortName, 'BUSAN', 'Excel round-trip must restore the previous port onto the first row');
   assert.equal(parsed.sheets[0].rows[0].operation, 'To Load / To Unload / docking / inspection');
   assert.equal(parsed.sheets[0].rows[0].notesText, '靠港前請再次確認');
   assert.equal(parsed.sheets[0].rows[1].portTimeZone, 'UTC+5:45');
@@ -225,6 +229,13 @@ try {
   assert.equal(parsed.sheets[0].rows[0].postCompletionDelayHours, 6);
   if (parsed.sheets[0].issues.length) console.error('unexpected_excel_issues=', parsed.sheets[0].issues);
   assert.equal(parsed.sheets[0].issues.length, 0);
+
+  const previousPortOnly = createEmptyItineraryDocument({ workspaceKey: 'qa', vesselId: 'v-previous-only', vesselName: 'TEST PREVIOUS ONLY', rowId: 'row-previous-only' });
+  previousPortOnly.rows[0].previousPortName = 'BUSAN';
+  const previousPortOnlyOutput = await buildItineraryWorkbook([previousPortOnly], template.buffer.slice(template.byteOffset, template.byteOffset + template.byteLength));
+  const parsedPreviousPortOnly = await parseItineraryWorkbook(previousPortOnlyOutput);
+  assert.equal(parsedPreviousPortOnly.sheets[0].rows.length, 1, 'metadata-only previous-port exports must restore their first row');
+  assert.equal(parsedPreviousPortOnly.sheets[0].rows[0].previousPortName, 'BUSAN');
 
   workbook.worksheets[0].getCell('B10').value = '* footer instruction is not an itinerary row';
   const footerBytes = await workbook.xlsx.writeBuffer();

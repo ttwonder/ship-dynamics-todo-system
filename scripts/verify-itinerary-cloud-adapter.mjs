@@ -18,7 +18,7 @@ try {
   const document = types.createEmptyItineraryDocument({ workspaceKey: 'default', vesselId: 'v1', vesselName: 'Vessel One', rowId: 'r1' });
   document.revision = 1;
   document.updatedAt = '2026-08-31T00:00:00Z';
-  document.updatedActorKind = 'office';
+  document.updatedActorKind = 'owner';
   document.updatedActorLabel = 'Owner';
   document.rows[0].voyageNumber = 'V001';
   const serverDocument = { ...structuredClone(document), updatedAt: '2026-08-31T00:00:00+00:00' };
@@ -86,6 +86,18 @@ try {
     throw new Error(`unexpected unknown-outcome RPC ${name}`);
   });
   const unknownRepo = new cloud.PublicItineraryCloudRepository(config, unknownClient, 'public-browser');
+  document.rows[0].previousPortName = '   ';
+  const rejectedMissingPreviousPort = await unknownRepo.save({
+    document,
+    expectedRevision: 1,
+    operationId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    lease: { workspaceKey: 'default', vesselId: 'v1', leaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', leaseToken: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', holderId: 'public-tab', holderLabel: '船端使用者', fence: 9, expiresAt: '2026-08-31T01:00:00Z' },
+    actorLabel: '船端使用者',
+  });
+  assert.equal(rejectedMissingPreviousPort.ok, false);
+  assert.equal(rejectedMissingPreviousPort.code, 'invalid-document');
+  assert.equal(unknownClient.calls.length, 0, 'missing previous port must be rejected before any public save RPC');
+  document.rows[0].previousPortName = 'BUSAN';
   const unknown = await unknownRepo.save({
     document,
     expectedRevision: 1,

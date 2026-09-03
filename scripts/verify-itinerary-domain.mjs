@@ -144,9 +144,29 @@ try {
   assert.equal(document.rows[0].arrivalDraftText, 'A:\nF:');
   assert.equal(document.rows[0].departureDraftText, 'A:\nF:');
   assert.equal(document.rows[0].notesText, '');
+  assert.equal(document.rows[0].previousPortName, '');
   document.rows[0].portDockName = 'PORT';
   document.rows[0].portTimeZone = 'UTC+8';
   assert.deepEqual(validation.validateItineraryDocument(document), { ok: true, value: document });
+  const missingPreviousPort = validation.validateItineraryDocument(document, { requirePreviousPortName: true });
+  assert.equal(missingPreviousPort.ok, false, 'ship-side save validation must reject a missing previous port');
+  assert.ok(missingPreviousPort.errors.some(error => error.path === 'rows[0].previousPortName' && error.code === 'previous-port-required'));
+  const whitespacePreviousPort = structuredClone(document);
+  whitespacePreviousPort.rows[0].previousPortName = '   ';
+  const whitespacePreviousResult = validation.validateItineraryDocument(whitespacePreviousPort, { requirePreviousPortName: true });
+  assert.equal(whitespacePreviousResult.ok, false, 'ship-side save validation must reject a whitespace-only previous port');
+  assert.ok(whitespacePreviousResult.errors.some(error => error.code === 'previous-port-required'));
+  document.rows[0].previousPortName = '  BUSAN  ';
+  const normalizedPreviousPort = validation.validateItineraryDocument(document, { requirePreviousPortName: true });
+  assert.equal(normalizedPreviousPort.ok, true);
+  assert.equal(normalizedPreviousPort.value.rows[0].previousPortName, 'BUSAN', 'saved previous-port names must trim surrounding whitespace');
+  const laterPreviousPort = structuredClone(normalizedPreviousPort.value);
+  const laterRow = types.createBlankItineraryRow('row-later-previous-port', 1);
+  laterRow.previousPortName = 'OSAKA';
+  laterPreviousPort.rows.push(laterRow);
+  const laterPreviousPortResult = validation.validateItineraryDocument(laterPreviousPort);
+  assert.equal(laterPreviousPortResult.ok, false);
+  assert.ok(laterPreviousPortResult.errors.some(error => error.code === 'first-row-only' && error.message === '上一港名稱只可設定於第一行。'));
 
   const legacyOperation = structuredClone(document);
   legacyOperation.rows[0].operation = 'Loading';
@@ -158,10 +178,11 @@ try {
   assert.equal(validation.validateItineraryDocument(combinedOperation).ok, true);
 
   const legacyV1 = structuredClone(document);
-  for (const key of ['etaTimeZone','etbTimeZone','etcTimeZone','etdTimeZone','calculationStartUtc','calculationStartTimeZone','channelSailingHours','preCompletionDelayHours','postCompletionDelayHours']) delete legacyV1.rows[0][key];
+  for (const key of ['previousPortName','etaTimeZone','etbTimeZone','etcTimeZone','etdTimeZone','calculationStartUtc','calculationStartTimeZone','channelSailingHours','preCompletionDelayHours','postCompletionDelayHours']) delete legacyV1.rows[0][key];
   legacyV1.rows[0].departureBufferDays = 0.25;
   const normalizedLegacyV1 = validation.validateItineraryDocument(legacyV1);
   assert.equal(normalizedLegacyV1.ok, true);
+  assert.equal(normalizedLegacyV1.value.rows[0].previousPortName, '', 'legacy rows without a previous port must remain readable');
   assert.equal(normalizedLegacyV1.value.rows[0].notesText, '', 'legacy rows without notes must gain a safe empty default');
   assert.equal(normalizedLegacyV1.value.rows[0].etaTimeZone, '');
   assert.equal(normalizedLegacyV1.value.rows[0].calculationStartUtc, null);

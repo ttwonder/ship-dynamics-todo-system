@@ -13,6 +13,7 @@ export type ItineraryValidationResult =
 
 const stringLimits: Partial<Record<keyof ItineraryRow, number>> = {
   rowId: 120,
+  previousPortName: 240,
   voyageNumber: 80,
   portDockName: 240,
   cargoQuantityText: 1000,
@@ -30,6 +31,10 @@ const stringLimits: Partial<Record<keyof ItineraryRow, number>> = {
   calculationStartTimeZone: 100,
   tanksText: 500,
 };
+
+export interface ItineraryValidationOptions {
+  requirePreviousPortName?: boolean;
+}
 
 const numericLimits: Partial<Record<keyof ItineraryRow, [number, number]>> = {
   oceanDistanceNm: [0, 50_000],
@@ -64,7 +69,7 @@ function validateNullableNumber(errors: ItineraryValidationError[], row: Record<
   if (range && (value < range[0] || value > range[1])) add(errors, `${path}.${String(key)}`, 'number-out-of-range', `數值必須介於 ${range[0]} 至 ${range[1]}。`);
 }
 
-export function validateItineraryDocument(input: unknown): ItineraryValidationResult {
+export function validateItineraryDocument(input: unknown, options: ItineraryValidationOptions = {}): ItineraryValidationResult {
   const errors: ItineraryValidationError[] = [];
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return { ok: false, errors: [{ path: '$', code: 'invalid-document', message: 'Itinerary 文件格式無效。' }] };
@@ -91,6 +96,7 @@ export function validateItineraryDocument(input: unknown): ItineraryValidationRe
       }
       const row = typedRow as unknown as Record<string, unknown>;
       const compatibilityDefaults: Partial<ItineraryRow> = {
+        previousPortName: '',
         etaTimeZone: '', etbTimeZone: '', etcTimeZone: '', etdTimeZone: '',
         calculationStartUtc: null, calculationStartTimeZone: '',
         channelSailingHours: null, preCompletionDelayHours: null,
@@ -102,6 +108,15 @@ export function validateItineraryDocument(input: unknown): ItineraryValidationRe
         if (row[key] === undefined) row[key] = value;
       }
       for (const key of Object.keys(stringLimits) as (keyof ItineraryRow)[]) validateString(errors, row, key, path);
+      if (typeof row.previousPortName === 'string') {
+        typedRow.previousPortName = row.previousPortName.trim();
+        if (index === 0 && options.requirePreviousPortName && !typedRow.previousPortName) {
+          add(errors, `${path}.previousPortName`, 'previous-port-required', '請填寫上一港名稱。');
+        }
+        if (index > 0 && typedRow.previousPortName) {
+          add(errors, `${path}.previousPortName`, 'first-row-only', '上一港名稱只可設定於第一行。');
+        }
+      }
       const rowId = typeof row.rowId === 'string' ? row.rowId : '';
       if (!rowId.trim()) add(errors, `${path}.rowId`, 'missing-row-id', 'rowId 不可空白。');
       else if (rowIds.has(rowId)) add(errors, `${path}.rowId`, 'duplicate-row-id', 'rowId 不可重複。');

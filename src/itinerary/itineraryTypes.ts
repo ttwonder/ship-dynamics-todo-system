@@ -63,6 +63,8 @@ export type ItineraryUpdatedActorKind = 'owner' | 'vessel' | 'demo';
 export interface ItineraryRow {
   rowId: string;
   sortOrder: number;
+  /** Document-level metadata stored on the first sorted row for cloud compatibility. */
+  previousPortName: string;
   voyageNumber: string;
   portDockName: string;
   operation: ItineraryOperation;
@@ -113,6 +115,10 @@ export function resolveItineraryTimeZone(row: ItineraryRow, field: ItineraryTime
   return row[ITINERARY_TIME_ZONE_FIELDS[field]] || row.portTimeZone;
 }
 
+export function firstItineraryRow(document: Pick<ItineraryDocument, 'rows'>): ItineraryRow | null {
+  return [...document.rows].sort((left, right) => left.sortOrder - right.sortOrder || left.rowId.localeCompare(right.rowId))[0] || null;
+}
+
 export interface ItineraryDocument {
   schemaVersion: typeof ITINERARY_SCHEMA_VERSION;
   workspaceKey: string;
@@ -154,6 +160,7 @@ export function createBlankItineraryRow(rowId = createItineraryId('row'), sortOr
   return {
     rowId,
     sortOrder,
+    previousPortName: '',
     voyageNumber: '',
     portDockName: '',
     operation: '',

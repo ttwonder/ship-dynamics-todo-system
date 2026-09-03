@@ -13,6 +13,9 @@
 .itinerary-panel-head{grid-template-columns:auto minmax(0,1fr) auto;gap:6px;padding:4px 7px}
 .itinerary-select{gap:3px;font-size:10px}
 .itinerary-select input{width:14px;height:14px}
+.itinerary-vessel-title-line{gap:5px}
+.itinerary-current-time-zone{padding:1px 5px;font-size:9px}
+.itinerary-current-time-zone b{font-size:9px}
 .itinerary-vessel-heading h2{font-size:13px;line-height:1.05}
 .itinerary-vessel-heading p{margin-top:1px;font-size:9px;line-height:1.05}
 .itinerary-panel-meta{gap:4px;font-size:9px}

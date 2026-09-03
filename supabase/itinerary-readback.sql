@@ -153,6 +153,19 @@ notes_receipt as (
   ) value
   from calculation_v2_fixture
 ),
+previous_port_receipt as (
+  select jsonb_build_object(
+    'acceptsMissingLegacyField', public.sd_itinerary_rows_valid(jsonb_build_array(value)),
+    'acceptsFirstRowValue', public.sd_itinerary_rows_valid(jsonb_build_array(value || jsonb_build_object('previousPortName','BUSAN'))),
+    'rejectsLaterRowValue', not public.sd_itinerary_rows_valid(jsonb_build_array(
+      value || jsonb_build_object('previousPortName','BUSAN'),
+      value || jsonb_build_object('rowId','readback-row-2','sortOrder',1,'calculationStartUtc',null,'calculationStartTimeZone','','previousPortName','WRONG ROW')
+    )),
+    'publicSaveRequiresValue', position('previous-port-required' in pg_get_functiondef('public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)'::regprocedure)) > 0,
+    'publicSaveRejectsAllWhitespace', position('[^[:space:]]' in pg_get_functiondef('public.sd_itinerary_save_public(text,text,bigint,uuid,jsonb,uuid,text,text,bigint)'::regprocedure)) > 0
+  ) value
+  from calculation_v2_fixture
+),
 role_permission_receipt as (
   select jsonb_build_object(
     'workspaceCount', (select count(*) from public.sd_workspaces),
@@ -204,6 +217,7 @@ select jsonb_build_object(
   'purposes', (select value from purpose_receipt),
   'calculationV2', (select value from calculation_v2_receipt),
   'notes', (select value from notes_receipt),
+  'previousPortName', (select value from previous_port_receipt),
   'officeRolePermissions', (select value from role_permission_receipt),
   'vesselNames', (select value from vessel_name_receipt),
   'documentCount', (select count(*) from public.sd_itinerary_documents),

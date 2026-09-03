@@ -9,6 +9,7 @@ export function createDemoItineraryDocument(vessel: Vessel, index: number, nowMs
   const first = document.rows[0];
   const calculationStartUtc = normalizeInstant(new Date(nowMs + index * 45 * 60 * 1000).toISOString()) || '2026-09-01T00:00:00Z';
   Object.assign(first, {
+    previousPortName: vessel.position.lastPort || vessel.position.location || 'PREVIOUS PORT',
     voyageNumber: `V${String(index + 1).padStart(2, '0')}`,
     portDockName: vessel.position.lastPort || vessel.position.location || 'CURRENT PORT',
     operation: vessel.cargo.loadStatus === '非空載' || vessel.cargo.loadStatus === '滿載' ? 'To Unload' : 'To Load',
