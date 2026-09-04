@@ -128,6 +128,34 @@ try {
     error => error instanceof queue.CloudSaveQueueTimeoutError && error.lockedByName === '協作者乙',
   );
 
+  assert.equal(typeof queue.createCloudSaveTurnHeartbeat, 'function', 'legacy fallback must expose a testable turn-validity guard');
+  let rejectRenewal;
+  const renewalFailure = new Error('workspace turn lost during recovery-lock acquisition');
+  const failingHeartbeat = queue.createCloudSaveTurnHeartbeat({
+    renew: () => new Promise((_, reject) => { rejectRenewal = reject; }),
+  });
+  failingHeartbeat.pulse();
+  let guardedWriteCalled = false;
+  const guardedWrite = (async () => {
+    await failingHeartbeat.confirm();
+    guardedWriteCalled = true;
+  })();
+  rejectRenewal(renewalFailure);
+  await assert.rejects(guardedWrite, error => error === renewalFailure);
+  assert.equal(guardedWriteCalled, false, 'lost workspace turn must abort before legacy whole-state CAS');
+  assert.equal(failingHeartbeat.isActive(), false, 'heartbeat failure must remain sticky for the legacy turn');
+  assert.throws(() => failingHeartbeat.assertActive(), error => error === renewalFailure);
+  await failingHeartbeat.stop();
+
+  let successfulRenewals = 0;
+  const healthyHeartbeat = queue.createCloudSaveTurnHeartbeat({
+    renew: async () => { successfulRenewals += 1; return { ok:true, sectionKey:queue.CLOUD_SAVE_QUEUE_SECTION_KEY }; },
+  });
+  await healthyHeartbeat.confirm();
+  assert.equal(successfulRenewals, 1, 'legacy CAS confirmation must perform an awaited renewal immediately before dispatch');
+  assert.equal(healthyHeartbeat.isActive(), true);
+  await healthyHeartbeat.stop();
+
   const app = fs.readFileSync('src/App.tsx', 'utf8');
   const cloud = fs.readFileSync('src/cloud.ts', 'utf8');
   const css = fs.readFileSync('src/styles.css', 'utf8');
@@ -138,10 +166,15 @@ try {
   assert.ok(app.includes('drainCloudSaveQueueUntilStable') && app.includes('heartbeatTimer=window.setInterval(renewSaveTurn'));
   assert.ok(!app.includes('heartbeatMayStillComplete') && app.includes('if(saveTurnOwned){'), '續租已是 update-only 時，逾時後仍必須嘗試 release，讓舊續租無論先後完成都不能留下保存鎖');
   assert.ok(app.includes('visibleBaseline:renderRebase?null:clone(liveData.current)'), '未 render 的 durable handoff 必須記住畫面基線');
-  assert.ok(app.includes("runCloudSaveQueueRpc('取得雲端保存權'") && app.includes('maxWaitMs:3_000'));
-  assert.ok(app.includes('cloudSaveQueueBypassUntil.current=Date.now()+60_000'), '隊列逾時後必須暫時改用 CAS/rebase，避免共享鎖持續阻斷');
-  assert.ok(app.includes("runCloudSaveQueueRpc('清理逾時後才取得的雲端保存權'"), 'deadline 後才取得的保存權必須非阻塞清理');
-  assert.ok(app.includes('CloudSaveQueueRpcTimeoutError') && app.includes('已改用雲端版本檢查安全保存'));
+  const normalBlockSave=app.indexOf("setCloudStatus('正在以原子區塊安全保存到雲端…')");
+  const blockRpcCall=app.indexOf('applyCloudBlockPatchRpc(',normalBlockSave);
+  const unavailableFallback=app.indexOf('if(error instanceof CloudBlockPatchUnavailableError){',blockRpcCall);
+  const legacyTurnCall=app.indexOf('await acquireLegacyCloudSaveTurn();',unavailableFallback);
+  assert.ok(normalBlockSave>=0&&blockRpcCall>normalBlockSave&&unavailableFallback>blockRpcCall&&legacyTurnCall>unavailableFallback, '正常原子區塊保存必須跳過 workspace turn；只有確認 RPC 未部署後才可取得相容 turn');
+  assert.ok(app.includes("runCloudSaveQueueRpc('取得舊版相容保存權'") && app.includes('maxWaitMs:32_000'));
+  assert.ok(!app.includes('maxWaitMs:3_000')&&!app.includes('cloudSaveQueueBypassUntil'), '正常保存不得保留固定三秒等待，也不得在相容 turn 失敗後無鎖降級');
+  assert.ok(app.includes("runCloudSaveQueueRpc('清理逾時後才取得的舊版相容保存權'"), 'deadline 後才取得的相容保存權必須非阻塞清理');
+  assert.ok(app.includes('CloudSaveQueueRpcTimeoutError') && app.includes('舊版相容保存順序無法確認，本次已停止寫入'));
   assert.ok(cloud.includes('request.abortSignal(signal)'), '保存權與釋放 RPC 必須可被逾時中止');
   assert.ok(app.includes("addEventListener('beforeunload'") && app.includes('event.returnValue'));
   assert.ok(app.includes('shouldBlockAppBeforeUnload({')&&app.includes('recoveryNavigation:browserRecoveryNavigationRef.current'), 'App離頁防線必須透過可測helper辨識修復導航');

@@ -112,6 +112,43 @@ export async function runCloudSaveQueueRpc<T>(operationName: string, operation: 
   }
 }
 
+type SaveTurnHeartbeatOptions = {
+  renew: () => Promise<CloudEditingLock>;
+};
+
+export function createCloudSaveTurnHeartbeat(options: SaveTurnHeartbeatOptions) {
+  let stopped = false;
+  let failure: unknown = null;
+  let inFlight: Promise<void> | null = null;
+  const inactiveError = () => failure || (stopped ? new CloudSaveQueueCancelledError() : null);
+  const startRenewal = (): Promise<void> => {
+    const inactive = inactiveError();
+    if (inactive) return Promise.reject(inactive);
+    if (inFlight) return inFlight;
+    const renewal = options.renew().then(lock => {
+      if (!lock.ok) throw new Error(lock.lockedByName ? `雲端保存權已轉交給 ${lock.lockedByName}` : '雲端保存權已失效');
+    });
+    let tracked!: Promise<void>;
+    tracked = renewal
+      .catch(error => { failure = error; throw error; })
+      .finally(() => { if (inFlight === tracked) inFlight = null; });
+    inFlight = tracked;
+    return tracked;
+  };
+  return {
+    pulse() { void startRenewal().catch(() => undefined); },
+    confirm: startRenewal,
+    assertActive() { const inactive = inactiveError(); if (inactive) throw inactive; },
+    isActive: () => !stopped && !failure,
+    failure: () => failure,
+    async stop() {
+      stopped = true;
+      const current = inFlight;
+      if (current) await current.catch(() => undefined);
+    },
+  };
+}
+
 export async function waitForCloudSaveTurn(options: SaveTurnOptions): Promise<{ lock: CloudEditingLock; waited: boolean }> {
   const retryDelayMs = options.retryDelayMs ?? 500;
   const maxWaitMs = options.maxWaitMs ?? 32_000;

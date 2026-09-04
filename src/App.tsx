@@ -61,7 +61,7 @@ import { runDurableCreationHandoff, waitForDurableCreationHandoff, type DurableC
 import { consumeCurrentTaskEditorSession } from './taskEditorSession';
 import { isTaskCreationLockKey, taskCreationLockKey, taskCreationLockMatchesVessel } from './taskCreationLock';
 import { bootstrapFailureHasUnsavedWork, cloudConfigIdentity, cloudWorkspaceIdentity, creationTaskCommitMatches, normalizeStoredCloudWorkspaceIdentity, parseConfirmedCloudBase, parseDurableRevisionFloors, serializeConfirmedCloudBase, serializeDurableRevisionFloors, trustedPersistedBaseForRemote, updateDurableRevisionFloor, withStableCreationAttemptProvenance } from './cloudRecovery';
-import { CLOUD_SAVE_QUEUE_SECTION_KEY, CLOUD_SAVE_QUEUE_TTL_SECONDS, CloudSaveQueueCancelledError, CloudSaveQueueRpcTimeoutError, CloudSaveQueueTimeoutError, createCloudSaveIntentQueue, drainCloudSaveQueueUntilStable, hasUnconfirmedVisibleChanges, runCloudSaveQueueRpc, waitForCloudSaveTurn } from './cloudSaveQueue';
+import { CLOUD_SAVE_QUEUE_SECTION_KEY, CLOUD_SAVE_QUEUE_TTL_SECONDS, CloudSaveQueueCancelledError, CloudSaveQueueRpcTimeoutError, CloudSaveQueueTimeoutError, createCloudSaveIntentQueue, createCloudSaveTurnHeartbeat, drainCloudSaveQueueUntilStable, hasUnconfirmedVisibleChanges, runCloudSaveQueueRpc, waitForCloudSaveTurn } from './cloudSaveQueue';
 import { internalControlCreationLockKey, internalControlEditLockKey, isInternalControlCreationLockKey, isMeetingCreationLockKey, meetingCreationLockKey, meetingEditLockKey } from './exclusiveItemEditLock';
 import { resolveItemEditSession } from './itemEditSession';
 import { buildCloudBlockPatch, CloudBlockPatchConflictError } from './cloudBlockPatch';
@@ -354,7 +354,6 @@ export default function App() {
   const saveToastTimer=useRef<number|null>(null);
   const hasUnsavedWork=useRef(false);
   const browserRecoveryNavigationRef=useRef(false);
-  const cloudSaveQueueBypassUntil=useRef(0);
   const lastCloudRevision = useRef<number>(-1);
   const initialDurableRevisionFloorRegistry=typeof localStorage==='undefined'?{valid:true,floors:new Map<string,number>()}:parseDurableRevisionFloors(localStorage.getItem(CLOUD_REVISION_FLOORS_KEY));
   const durableCloudRevisionFloors=useRef(initialDurableRevisionFloorRegistry.floors);
@@ -732,8 +731,9 @@ export default function App() {
       let lastSavedVisibleBaseline:AppData|null=null;
       let queueLeaseWarning='';
       try {
-        // A save request can arrive while the previous queue lock is being released.
-        // Keep this task alive and acquire a fresh turn until every pending snapshot is drained.
+        // Keep this task alive until every local save intent is drained in FIFO order.
+        // The cross-browser workspace turn is legacy-only; the atomic block RPC owns
+        // canonical serialization, CAS, authorization and lock fencing.
         await drainCloudSaveQueueUntilStable({
           hasPending:()=>pendingCloudData.current.size()>0,
           processPendingBatch:async()=>{
@@ -745,55 +745,48 @@ export default function App() {
           const turnConfig=turnToken.config;
           let saveTurnOwned=false;
           let heartbeatTimer:number|null=null;
-          let heartbeatInFlight:Promise<void>|null=null;
-          let heartbeatFailure:unknown=null;
-          let heartbeatStopped=false;
-          const renewSaveTurn=()=>{
-            if(heartbeatStopped||heartbeatInFlight||heartbeatFailure)return;
-            heartbeatInFlight=runCloudSaveQueueRpc('雲端保存權續租',signal=>renewEditLock(CLOUD_SAVE_QUEUE_SECTION_KEY,saveTurnOwnerId,CLOUD_SAVE_QUEUE_TTL_SECONDS,turnConfig,signal),8_000)
-              .then(lock=>{if(!lock.ok)throw new Error(lock.lockedByName?`雲端保存權已轉交給 ${lock.lockedByName}`:'雲端保存權已失效');})
-              .catch(error=>{heartbeatFailure=error;})
-              .finally(()=>{heartbeatInFlight=null;});
-          };
-          const assertSaveTurnActive=()=>{if(heartbeatFailure)throw heartbeatFailure;};
+          const saveTurnHeartbeat=createCloudSaveTurnHeartbeat({
+            renew:()=>runCloudSaveQueueRpc('雲端保存權續租',signal=>renewEditLock(CLOUD_SAVE_QUEUE_SECTION_KEY,saveTurnOwnerId,CLOUD_SAVE_QUEUE_TTL_SECONDS,turnConfig,signal),8_000),
+          });
+          const renewSaveTurn=()=>saveTurnHeartbeat.pulse();
+          const assertSaveTurnActive=()=>saveTurnHeartbeat.assertActive();
           const stopHeartbeat=async()=>{
-            heartbeatStopped=true;
             if(heartbeatTimer!==null){window.clearInterval(heartbeatTimer);heartbeatTimer=null;}
-            if(heartbeatInFlight)await heartbeatInFlight;
+            await saveTurnHeartbeat.stop();
           };
-          try{
-            setSavePhase('saving');
-            setCloudStatus('正在取得雲端保存順序…');
-            let saveTurn:{waited:boolean}|null=null;
-            if(Date.now()<cloudSaveQueueBypassUntil.current){
-              queueLeaseWarning='保存隊列暫停使用，已改用雲端版本檢查安全保存';
-              setCloudStatus('保存隊列暫停使用，正在使用雲端版本檢查保存…');
-            }else try{
-              saveTurn=await waitForCloudSaveTurn({
-                claim:()=>runCloudSaveQueueRpc('取得雲端保存權',signal=>claimEditLock(CLOUD_SAVE_QUEUE_SECTION_KEY,saveTurnOwnerId,turnRequest.savedBy,CLOUD_SAVE_QUEUE_TTL_SECONDS,turnConfig,signal),3_000),
+          const acquireLegacyCloudSaveTurn=async()=>{
+            if(saveTurnOwned)return;
+            setSavePhase('queued');
+            setCloudStatus('原子區塊 RPC 尚未部署，正在取得舊版相容保存順序…');
+            try{
+              const saveTurn=await waitForCloudSaveTurn({
+                claim:()=>runCloudSaveQueueRpc('取得舊版相容保存權',signal=>claimEditLock(CLOUD_SAVE_QUEUE_SECTION_KEY,saveTurnOwnerId,turnRequest.savedBy,CLOUD_SAVE_QUEUE_TTL_SECONDS,turnConfig,signal),8_000),
                 isCurrent:()=>configIoCoordinator.current.isCurrent(turnToken,getSupabaseConfig()),
                 onWaiting:lock=>{
                   const who=lock.lockedByName?`（${lock.lockedByName} 正在保存）`:'';
-                  setSavePhase('queued');
-                  setCloudStatus(`正在等待前一筆雲端保存完成${who}；你的修改仍保留在此頁`);
-                  showSaveToast('info','已進入保存隊列',`前一筆保存完成後會自動接續${who}，請先不要關閉頁面。`);
+                  setCloudStatus(`正在等待舊版相容保存完成${who}；你的修改仍保留在此頁`);
+                  showSaveToast('info','已進入舊版相容保存隊列',`前一筆保存完成後會自動接續${who}，請先不要關閉頁面。`);
                 },
-                maxWaitMs:3_000,
+                maxWaitMs:32_000,
               });
               saveTurnOwned=true;
               heartbeatTimer=window.setInterval(renewSaveTurn,Math.max(1_000,Math.floor(CLOUD_SAVE_QUEUE_TTL_SECONDS*1_000/3)));
+              setSavePhase('saving');
+              setCloudStatus(saveTurn.waited?'已輪到你，正在以舊版相容方式寫入雲端…':'正在以舊版相容方式寫入雲端…');
             }catch(error){
-              if(!(error instanceof CloudSaveQueueTimeoutError||error instanceof CloudSaveQueueRpcTimeoutError))throw error;
               if(error instanceof CloudSaveQueueTimeoutError&&error.lockAcquired){
-                void runCloudSaveQueueRpc('清理逾時後才取得的雲端保存權',signal=>releaseEditLock(CLOUD_SAVE_QUEUE_SECTION_KEY,saveTurnOwnerId,turnConfig,signal),3_000).catch(()=>undefined);
+                void runCloudSaveQueueRpc('清理逾時後才取得的舊版相容保存權',signal=>releaseEditLock(CLOUD_SAVE_QUEUE_SECTION_KEY,saveTurnOwnerId,turnConfig,signal),3_000).catch(()=>undefined);
               }
-              cloudSaveQueueBypassUntil.current=Date.now()+60_000;
-              queueLeaseWarning='保存隊列暫時無法確認，已改用雲端版本檢查安全保存';
-              setCloudStatus('保存隊列暫時無法確認，正在使用雲端版本檢查保存…');
-              showSaveToast('warning','保存隊列暫時無法確認','系統會以雲端版本檢查避免覆蓋；保存完成前請不要關閉頁面。');
+              if(error instanceof CloudSaveQueueTimeoutError||error instanceof CloudSaveQueueRpcTimeoutError){
+                queueLeaseWarning='舊版相容保存順序無法確認，本次已停止寫入';
+              }
+              throw error;
             }
+          };
+          try{
             setSavePhase('saving');
-            if(saveTurn)setCloudStatus(saveTurn.waited?'已輪到你，正在寫入雲端…':'正在寫入雲端…');
+            setCloudStatus('正在以原子區塊安全保存到雲端…');
+            let legacyWholeStateFallback=false;
             let pendingEntry=pendingCloudData.current.shift();
             while (pendingEntry) {
               const pending=pendingEntry.value;
@@ -826,37 +819,53 @@ export default function App() {
                 const actorGuard=actorStorageAuthorizationGuard(remote,storageRemote,actorUserId);
                 if(!actorGuard)throw new CloudRebaseConflictError(['authorization-domain']);
                 const strictAuthorizationGuard=appDataAuthorizationDomainChanged(remote,candidate)?authorizationDomainGuard(storageRemote):null;
-                try{
-                  const recovery=await runWithCloudSaveRecoveryLocks({
-                    operations,
-                    existingGuards:lockGuards,
-                    createLeaseOwnerId:()=>uid('cloud-save-recovery-lease'),
-                    stillCurrent:()=>isCurrent()&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig())&&hasCurrentCloudIdentity(),
-                    renew:request=>runCloudSaveQueueRpc('續期原子保存協作鎖',signal=>renewEditLock(request.sectionKey,request.leaseOwnerId,75,turnConfig,signal),8_000),
-                    claim:request=>runCloudSaveQueueRpc('取得原子保存恢復鎖',signal=>claimEditLock(request.sectionKey,request.leaseOwnerId,savedBy,75,turnConfig,signal),8_000),
-                    release:request=>runCloudSaveQueueRpc('釋放原子保存恢復鎖',signal=>releaseEditLock(request.sectionKey,request.leaseOwnerId,turnConfig,signal),8_000),
-                    run:guards=>configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
+                const runWithCurrentRecoveryLocks=(run:(guards:CloudBlockLockGuard[])=>Promise<AppData>)=>runWithCloudSaveRecoveryLocks({
+                  operations,
+                  existingGuards:lockGuards,
+                  createLeaseOwnerId:()=>uid('cloud-save-recovery-lease'),
+                  stillCurrent:()=>isCurrent()&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig())&&hasCurrentCloudIdentity()&&(!legacyWholeStateFallback||(saveTurnOwned&&saveTurnHeartbeat.isActive())),
+                  renew:request=>runCloudSaveQueueRpc('續期原子保存協作鎖',signal=>renewEditLock(request.sectionKey,request.leaseOwnerId,75,turnConfig,signal),8_000),
+                  claim:request=>runCloudSaveQueueRpc('取得原子保存恢復鎖',signal=>claimEditLock(request.sectionKey,request.leaseOwnerId,savedBy,75,turnConfig,signal),8_000),
+                  release:request=>runCloudSaveQueueRpc('釋放原子保存恢復鎖',signal=>releaseEditLock(request.sectionKey,request.leaseOwnerId,turnConfig,signal),8_000),
+                  run,
+                });
+                if(!legacyWholeStateFallback){
+                  try{
+                    const recovery=await runWithCurrentRecoveryLocks(guards=>configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
                       '原子區塊保存',
                       signal=>applyCloudBlockPatchRpc(operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,config,signal),
                       12_000,
-                    )),
+                    )));
+                    persisted=recovery.value;
+                    if(recovery.cleanupFailed)queueLeaseWarning='內容已保存，但部分短時恢復鎖將於租期屆滿後自動釋放';
+                  }catch(error){
+                    if(!isCurrent())break;
+                    if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
+                    if(error instanceof CloudBlockPatchUnavailableError){
+                      await acquireLegacyCloudSaveTurn();
+                      legacyWholeStateFallback=true;
+                      queueLeaseWarning='原子區塊 RPC 尚未部署，本次已使用舊版 revision CAS 相容保存';
+                      remote=await configIoCoordinator.current.run(token,getSupabaseConfig,fetchCloudData);
+                      if(!remote)throw new CloudRebaseConflictError(['雲端工作區不存在']);
+                      continue;
+                    }
+                    if(!(error instanceof CloudBlockPatchConflictError))throw error;
+                    if(error.blockKey==='authorization-domain')throw new CloudRebaseConflictError(['authorization-domain']);
+                    if(++rebaseAttempts>3)throw new CloudRebaseConflictError([`區塊 ${error.blockKey} 在短時間內連續變動`]);
+                    remote=await configIoCoordinator.current.run(token,getSupabaseConfig,fetchCloudData);
+                    if(!remote)throw new CloudRebaseConflictError(['雲端工作區不存在']);
+                  }
+                }else{
+                  const recovery=await runWithCurrentRecoveryLocks(async()=>{
+                    if(!saveTurnOwned)throw new CloudSaveQueueCancelledError();
+                    await saveTurnHeartbeat.confirm();
+                    assertSaveTurnActive();
+                    if(!isCurrent()||!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!hasCurrentCloudIdentity())throw new StaleAsyncConfigError();
+                    await configIoCoordinator.current.run(token,getSupabaseConfig,config=>saveCloudData(candidate,remote!.revision,savedBy,config));
+                    return candidate;
                   });
                   persisted=recovery.value;
                   if(recovery.cleanupFailed)queueLeaseWarning='內容已保存，但部分短時恢復鎖將於租期屆滿後自動釋放';
-                }catch(error){
-                  if(!isCurrent())break;
-                  if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
-                  if(error instanceof CloudBlockPatchUnavailableError){
-                    queueLeaseWarning='原子區塊 RPC 尚未部署，本次已使用舊版 revision CAS 相容保存';
-                    await configIoCoordinator.current.run(token,getSupabaseConfig,config=>saveCloudData(candidate,remote!.revision,savedBy,config));
-                    persisted=candidate;
-                    break;
-                  }
-                  if(!(error instanceof CloudBlockPatchConflictError))throw error;
-                  if(error.blockKey==='authorization-domain')throw new CloudRebaseConflictError(['authorization-domain']);
-                  if(++rebaseAttempts>3)throw new CloudRebaseConflictError([`區塊 ${error.blockKey} 在短時間內連續變動`]);
-                  remote=await configIoCoordinator.current.run(token,getSupabaseConfig,fetchCloudData);
-                  if(!remote)throw new CloudRebaseConflictError(['雲端工作區不存在']);
                 }
               }
               if(!persisted||!isCurrent())throw new StaleAsyncConfigError();
@@ -888,6 +897,7 @@ export default function App() {
             }
           }finally{
             await stopHeartbeat();
+            const heartbeatFailure=saveTurnHeartbeat.failure();
             if(heartbeatFailure){
               const detail=heartbeatFailure instanceof Error?heartbeatFailure.message:String(heartbeatFailure);
               queueLeaseWarning=`保存期間隊列續租曾中斷｜${detail}`;

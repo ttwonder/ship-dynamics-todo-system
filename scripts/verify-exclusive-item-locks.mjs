@@ -89,7 +89,7 @@ try {
   const meetings=fs.readFileSync('src/TemporaryMeetings.tsx','utf8');
   const internal=fs.readFileSync('src/InternalControlPage.tsx','utf8');
   assert.ok(cloud.includes('export async function renewEditLock')&&cloud.includes("supabase.rpc('renew_ship_dynamics_edit_lock'"),'cloud client must expose a non-creating renew RPC for heartbeats');
-  const saveHeartbeat=app.slice(app.indexOf('const renewSaveTurn='),app.indexOf('const assertSaveTurnActive='));
+  const saveHeartbeat=app.slice(app.indexOf('const saveTurnHeartbeat='),app.indexOf('const assertSaveTurnActive='));
   const itemHeartbeatStart=app.indexOf('const renewSingleItemLease=');
   const itemHeartbeat=app.slice(itemHeartbeatStart,app.indexOf('\n  useEffect(()=>{',itemHeartbeatStart));
   const batchHeartbeat=app.slice(app.indexOf("runCloudSaveQueueRpc('批量船舶鎖續期'",app.indexOf('const batchLockHeartbeat')),app.indexOf('const rejected=',app.indexOf('const batchLockHeartbeat')));
