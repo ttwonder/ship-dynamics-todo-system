@@ -4,7 +4,8 @@ import fpmcLogo from './assets/fpmc-logo.png';
 import { createInitialData } from './data/seed';
 import type { AgendaReport, AppData, FilterState, InternalControlCase, MorningReportSnapshot, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, sanitizeAppDataForStorage, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
-import { CloudBlockPatchUnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, claimEditLock, cloudStoragePayloadFor, fetchCloudData, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
+import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlockPatchV2UnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, applyCloudBlockPatchV2, claimEditLock, cloudStoragePayloadFor, fetchCloudData, getCloudBlockPatchReceipt, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
+import { CloudBlockPatchConfirmedRefreshError, CloudBlockPatchOutcomeUnknownError, runCloudBlockPatchWithReceipt } from './cloudBlockReceipt';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
 import { mergeConfirmedCloudSnapshot } from './cloudConfirmedMerge';
 import { mayOfferFirstRunInitialization, mayPersistLocalSnapshot, trustedMatchingCloudIdentity } from './cloudBootstrapSafety';
@@ -120,7 +121,7 @@ type CreationDraftRecord={leaseOwnerId:string;task:TaskItem};
 type SavePhase='saved'|'dirty'|'queued'|'saving'|'error';
 type SaveToast={id:number;kind:'success'|'info'|'warning'|'error';title:string;detail:string};
 type CloudBlockLockGuard={section_key:string;locked_by:string};
-type PendingCloudSaveIntent={snapshot:AppData;baseSnapshot:AppData|null;token:ReturnType<ReturnType<typeof createAsyncConfigCoordinator>['begin']>;savedBy:string;actorUserId:string;lockGuards:CloudBlockLockGuard[];isCurrent:()=>boolean;renderRebase:boolean;visibleBaseline:AppData|null};
+type PendingCloudSaveIntent={snapshot:AppData;baseSnapshot:AppData|null;token:ReturnType<ReturnType<typeof createAsyncConfigCoordinator>['begin']>;savedBy:string;actorUserId:string;identityGeneration:number;lockGuards:CloudBlockLockGuard[];isCurrent:()=>boolean;renderRebase:boolean;visibleBaseline:AppData|null};
 
 export function selectCreationDraftForQuarantine(input:{ownerUserId:string;leaseOwnerId:string;currentTask:TaskItem|null;latest?:CreationDraftRecord;attempt?:CreationDraftRecord}){
   const retained=input.latest?.leaseOwnerId===input.leaseOwnerId?input.latest.task:input.attempt?.leaseOwnerId===input.leaseOwnerId?input.attempt.task:input.currentTask;
@@ -720,9 +721,11 @@ export default function App() {
     const requestConfig=getSupabaseConfig();
     if (!requestConfig||!hasCurrentCloudIdentity()) return Promise.reject(new Error('雲端工作區 identity 已變更'));
     const requestToken=configIoCoordinator.current.begin(requestConfig);
+    const requestActorUserId=currentUser?.id||'';
+    const requestIdentityGeneration=identitySessionGeneration.current;
     hasUnsavedWork.current=true;
-    const completion=pendingCloudData.current.enqueue({snapshot,baseSnapshot:confirmedCloudData.current?clone(confirmedCloudData.current):null,token:requestToken,savedBy:currentUser?.name||'unknown',actorUserId:currentUser?.id||'',lockGuards:captureCloudBlockLockGuards(requestConfig),renderRebase,visibleBaseline:renderRebase?null:clone(liveData.current),isCurrent});
-    const validateCompletion=()=>{if(!isCurrent()||!configIoCoordinator.current.isCurrent(requestToken,getSupabaseConfig()))throw new StaleAsyncConfigError();};
+    const completion=pendingCloudData.current.enqueue({snapshot,baseSnapshot:confirmedCloudData.current?clone(confirmedCloudData.current):null,token:requestToken,savedBy:currentUser?.name||'unknown',actorUserId:requestActorUserId,identityGeneration:requestIdentityGeneration,lockGuards:captureCloudBlockLockGuards(requestConfig),renderRebase,visibleBaseline:renderRebase?null:clone(liveData.current),isCurrent});
+    const validateCompletion=()=>{if(!isCurrent()||liveCurrentUserId.current!==requestActorUserId||identitySessionGeneration.current!==requestIdentityGeneration||!configIoCoordinator.current.isCurrent(requestToken,getSupabaseConfig()))throw new StaleAsyncConfigError();};
     if (cloudSaveInFlight.current) return completion.then(validateCompletion);
     const task = (async () => {
       let rebaseAttempts=0;
@@ -791,8 +794,9 @@ export default function App() {
             while (pendingEntry) {
               const pending=pendingEntry.value;
               try{
-              const {snapshot:next,baseSnapshot:base,token,savedBy,actorUserId,lockGuards,isCurrent}=pending;
-              if(!isCurrent())throw new StaleAsyncConfigError();
+              const {snapshot:next,baseSnapshot:base,token,savedBy,actorUserId,identityGeneration,lockGuards,isCurrent}=pending;
+              const pendingActorIsCurrent=()=>identitySessionGeneration.current===identityGeneration&&liveCurrentUserId.current===actorUserId;
+              if(!isCurrent()||!pendingActorIsCurrent())throw new StaleAsyncConfigError();
               if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
               assertSaveTurnActive();
               if (!hasCurrentCloudIdentity()) throw new Error('雲端工作區 identity 已變更');
@@ -804,7 +808,7 @@ export default function App() {
               let persisted:AppData|null=null;
               let mergedRemoteChanges=false;
               while(!persisted){
-                if(!isCurrent())break;
+                if(!isCurrent()||!pendingActorIsCurrent())break;
                 if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!hasCurrentCloudIdentity())throw new StaleAsyncConfigError();
                 assertSaveTurnActive();
                 assertRemoteExtendsDurableHistory(activeCloudIdentity.current,base,remote);
@@ -823,7 +827,7 @@ export default function App() {
                   operations,
                   existingGuards:lockGuards,
                   createLeaseOwnerId:()=>uid('cloud-save-recovery-lease'),
-                  stillCurrent:()=>isCurrent()&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig())&&hasCurrentCloudIdentity()&&(!legacyWholeStateFallback||(saveTurnOwned&&saveTurnHeartbeat.isActive())),
+                  stillCurrent:()=>isCurrent()&&pendingActorIsCurrent()&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig())&&hasCurrentCloudIdentity()&&(!legacyWholeStateFallback||(saveTurnOwned&&saveTurnHeartbeat.isActive())),
                   renew:request=>runCloudSaveQueueRpc('續期原子保存協作鎖',signal=>renewEditLock(request.sectionKey,request.leaseOwnerId,75,turnConfig,signal),8_000),
                   claim:request=>runCloudSaveQueueRpc('取得原子保存恢復鎖',signal=>claimEditLock(request.sectionKey,request.leaseOwnerId,savedBy,75,turnConfig,signal),8_000),
                   release:request=>runCloudSaveQueueRpc('釋放原子保存恢復鎖',signal=>releaseEditLock(request.sectionKey,request.leaseOwnerId,turnConfig,signal),8_000),
@@ -831,15 +835,55 @@ export default function App() {
                 });
                 if(!legacyWholeStateFallback){
                   try{
-                    const recovery=await runWithCurrentRecoveryLocks(guards=>configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
-                      '原子區塊保存',
-                      signal=>applyCloudBlockPatchRpc(operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,config,signal),
-                      12_000,
-                    )));
+                    const operationId=uid('cloud-block-operation');
+                    const recovery=await runWithCurrentRecoveryLocks(async guards=>{
+                      const assertOperationCurrent=()=>{
+                        if(!isCurrent()||!pendingActorIsCurrent()||!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!hasCurrentCloudIdentity())throw new StaleAsyncConfigError();
+                      };
+                      try{
+                        const receipt=await runCloudBlockPatchWithReceipt({
+                          operationId,
+                          submit:id=>configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
+                            'compact 原子區塊保存',
+                            signal=>applyCloudBlockPatchV2(id,operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,config,signal),
+                            12_000,
+                          )),
+                          lookup:id=>configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
+                            '原子保存 receipt 確認',
+                            signal=>getCloudBlockPatchReceipt(id,operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,config,signal),
+                            8_000,
+                          )),
+                          shouldReconcile:error=>!(error instanceof CloudBlockPatchV2UnavailableError||error instanceof CloudBlockPatchRejectedError||error instanceof CloudBlockPatchConflictError||error instanceof StaleAsyncConfigError),
+                          assertCurrent:assertOperationCurrent,
+                        });
+                        assertOperationCurrent();
+                        try{
+                          const authoritative=await configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
+                            '原子保存後權威資料讀回',
+                            signal=>fetchCloudData(config,signal),
+                            12_000,
+                          ));
+                          if(!authoritative||authoritative.revision<receipt.revision)throw new CloudBlockPatchConfirmedRefreshError(receipt);
+                          assertRemoteExtendsDurableHistory(activeCloudIdentity.current,remote,authoritative);
+                          return authoritative;
+                        }catch(error){
+                          if(error instanceof StaleAsyncConfigError||error instanceof CloudBlockPatchConfirmedRefreshError)throw error;
+                          throw new CloudBlockPatchConfirmedRefreshError(receipt);
+                        }
+                      }catch(error){
+                        if(!(error instanceof CloudBlockPatchV2UnavailableError))throw error;
+                        assertOperationCurrent();
+                        return configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
+                          'v1 原子區塊相容保存',
+                          signal=>applyCloudBlockPatchRpc(operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,config,signal),
+                          12_000,
+                        ));
+                      }
+                    });
                     persisted=recovery.value;
                     if(recovery.cleanupFailed)queueLeaseWarning='內容已保存，但部分短時恢復鎖將於租期屆滿後自動釋放';
                   }catch(error){
-                    if(!isCurrent())break;
+                    if(!isCurrent()||!pendingActorIsCurrent())break;
                     if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
                     if(error instanceof CloudBlockPatchUnavailableError){
                       await acquireLegacyCloudSaveTurn();
@@ -860,7 +904,7 @@ export default function App() {
                     if(!saveTurnOwned)throw new CloudSaveQueueCancelledError();
                     await saveTurnHeartbeat.confirm();
                     assertSaveTurnActive();
-                    if(!isCurrent()||!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!hasCurrentCloudIdentity())throw new StaleAsyncConfigError();
+                    if(!isCurrent()||!pendingActorIsCurrent()||!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!hasCurrentCloudIdentity())throw new StaleAsyncConfigError();
                     await configIoCoordinator.current.run(token,getSupabaseConfig,config=>saveCloudData(candidate,remote!.revision,savedBy,config));
                     return candidate;
                   });
@@ -868,7 +912,7 @@ export default function App() {
                   if(recovery.cleanupFailed)queueLeaseWarning='內容已保存，但部分短時恢復鎖將於租期屆滿後自動釋放';
                 }
               }
-              if(!persisted||!isCurrent())throw new StaleAsyncConfigError();
+              if(!persisted||!isCurrent()||!pendingActorIsCurrent())throw new StaleAsyncConfigError();
               if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
               rebaseAttempts=0;
               lastCloudRevision.current = persisted.revision;
@@ -939,7 +983,7 @@ export default function App() {
         }
       } catch (error) {
         pendingCloudData.current.rejectAll(error);
-        if (error instanceof CloudConflictError||error instanceof CloudRebaseConflictError||error instanceof StaleAsyncConfigError) setCloudWriteBlocked(true);
+        if (error instanceof CloudConflictError||error instanceof CloudRebaseConflictError||error instanceof StaleAsyncConfigError||error instanceof CloudBlockPatchOutcomeUnknownError||error instanceof CloudBlockPatchConfirmedRefreshError) setCloudWriteBlocked(true);
         reportCloudSaveFailure(error);
         throw error;
       } finally {

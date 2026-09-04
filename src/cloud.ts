@@ -3,6 +3,7 @@ import type { AppData } from './types';
 import { isPlaceholder, sanitizeAppDataForStorage } from './utils';
 import { normalizeAppData } from './normalize';
 import { CloudBlockPatchConflictError, type CloudBlockPatchOperation } from './cloudBlockPatch';
+import type { CloudBlockCompactReceipt, CloudBlockReceiptStatus } from './cloudBlockReceipt';
 
 export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string }
 export type ResolvedSupabaseConfig = SupabaseConfig & { tableName: string };
@@ -34,6 +35,15 @@ export class CloudConflictError extends Error {
 
 export class CloudBlockPatchUnavailableError extends Error{
   constructor(){super('Supabase 原子區塊保存 RPC 尚未部署');this.name='CloudBlockPatchUnavailableError';}
+}
+
+export class CloudBlockPatchV2UnavailableError extends Error{
+  constructor(){super('Supabase compact receipt RPC 尚未部署');this.name='CloudBlockPatchV2UnavailableError';}
+}
+
+export class CloudBlockPatchRejectedError extends Error{
+  readonly code:string;
+  constructor(code:string){super(`原子區塊保存被拒絕：${code}`);this.name='CloudBlockPatchRejectedError';this.code=code;}
 }
 
 const rawPayloadByNormalized=new WeakMap<AppData,AppData>();
@@ -90,15 +100,16 @@ const lockFromRpc = (value: any, fallbackSectionKey: string): CloudEditingLock =
   expiresAt: value?.expires_at ? String(value.expires_at) : undefined,
 });
 
-export async function fetchCloudData(config?: ResolvedSupabaseConfig | null): Promise<AppData | null> {
+export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, signal?: AbortSignal): Promise<AppData | null> {
   const cfg = config === undefined ? getSupabaseConfig() : config;
   const supabase = getSupabaseClient(cfg);
   if (!supabase || !cfg) return null;
-  const { data, error } = await supabase
+  let request = supabase
     .from(cfg.tableName)
     .select('payload,revision,updated_at,updated_by')
-    .eq('workspace_key', cfg.workspaceKey)
-    .maybeSingle();
+    .eq('workspace_key', cfg.workspaceKey);
+  if(signal)request=request.abortSignal(signal);
+  const { data, error } = await request.maybeSingle();
   if (error) throw error;
   if (!data) return null;
   const sourceRevision = Number.isFinite(data.revision) ? data.revision : 0;
@@ -192,6 +203,93 @@ export async function applyCloudBlockPatch(
   if(typeof data.updated_at==='string'&&data.updated_at)rawPayload.updatedAt=data.updated_at;
   rawPayloadByNormalized.set(normalized,rawPayload);
   return normalized;
+}
+
+const cloudBlockCompactReceiptFromRpc=(value:any,expectedOperationId:string):CloudBlockCompactReceipt=>{
+  const revision=Number(value?.revision);
+  const operationId=String(value?.operation_id||'');
+  const updatedAt=String(value?.updated_at||'');
+  if(value?.ok!==true||value?.status!=='committed'||operationId!==expectedOperationId||!Number.isSafeInteger(revision)||revision<0||!updatedAt){
+    throw new Error('雲端保存 receipt 格式無效');
+  }
+  return{ok:true,status:'committed',operationId,revision,updatedAt,replayed:Boolean(value.replayed)};
+};
+
+const throwCloudBlockRpcRejection=(value:any):never=>{
+  const code=String(value?.code||'invalid-response');
+  const conflictKey=String(value?.conflict_key||code||'unknown');
+  if(code==='block-conflict'||code==='authorization-conflict')throw new CloudBlockPatchConflictError(code==='authorization-conflict'?'authorization-domain':conflictKey);
+  throw new CloudBlockPatchRejectedError(code);
+};
+
+export async function applyCloudBlockPatchV2(
+  operationId:string,
+  operations:readonly CloudBlockPatchOperation[],
+  savedByName:string,
+  actorUserId:string,
+  actorGuard:unknown,
+  authorizationGuard:unknown|null,
+  lockGuards:readonly {section_key:string;locked_by:string}[],
+  config?:ResolvedSupabaseConfig|null,
+  signal?:AbortSignal,
+):Promise<CloudBlockCompactReceipt>{
+  const cfg=config===undefined?getSupabaseConfig():config;
+  const supabase=getSupabaseClient(cfg);
+  if(!supabase||!cfg)throw new Error('尚未配置 Supabase；無法使用 compact 原子區塊保存。');
+  if(!actorUserId)throw new CloudBlockPatchRejectedError('missing-actor');
+  let request=supabase.rpc('apply_ship_dynamics_block_patch_v2',{
+    p_workspace_key:cfg.workspaceKey,
+    p_operation_id:operationId,
+    p_operations:operations,
+    p_saved_by:savedByName,
+    p_actor_user_id:actorUserId,
+    p_actor_guard:actorGuard,
+    p_authorization_guard:authorizationGuard,
+    p_lock_guards:lockGuards,
+  });
+  if(signal)request=request.abortSignal(signal);
+  const{data,error}=await request;
+  if(error){
+    if(String((error as{code?:string}).code||'')==='PGRST202')throw new CloudBlockPatchV2UnavailableError();
+    throw error;
+  }
+  if(data?.ok===false)throwCloudBlockRpcRejection(data);
+  return cloudBlockCompactReceiptFromRpc(data,operationId);
+}
+
+export async function getCloudBlockPatchReceipt(
+  operationId:string,
+  operations:readonly CloudBlockPatchOperation[],
+  savedByName:string,
+  actorUserId:string,
+  actorGuard:unknown,
+  authorizationGuard:unknown|null,
+  lockGuards:readonly {section_key:string;locked_by:string}[],
+  config?:ResolvedSupabaseConfig|null,
+  signal?:AbortSignal,
+):Promise<CloudBlockReceiptStatus>{
+  const cfg=config===undefined?getSupabaseConfig():config;
+  const supabase=getSupabaseClient(cfg);
+  if(!supabase||!cfg)throw new Error('尚未配置 Supabase；無法查詢保存 receipt。');
+  let request=supabase.rpc('get_ship_dynamics_block_patch_receipt',{
+    p_workspace_key:cfg.workspaceKey,
+    p_operation_id:operationId,
+    p_operations:operations,
+    p_saved_by:savedByName,
+    p_actor_user_id:actorUserId,
+    p_actor_guard:actorGuard,
+    p_authorization_guard:authorizationGuard,
+    p_lock_guards:lockGuards,
+  });
+  if(signal)request=request.abortSignal(signal);
+  const{data,error}=await request;
+  if(error){
+    if(String((error as{code?:string}).code||'')==='PGRST202')throw new CloudBlockPatchV2UnavailableError();
+    throw error;
+  }
+  if(data?.status==='missing')return{status:'missing'};
+  if(data?.status==='mismatch')throwCloudBlockRpcRejection(data);
+  return cloudBlockCompactReceiptFromRpc(data,operationId);
 }
 
 export async function claimEditLock(sectionKey: string, lockedBy: string, lockedByName: string, ttlSeconds = 75, config?: ResolvedSupabaseConfig|null, signal?: AbortSignal): Promise<CloudEditingLock> {

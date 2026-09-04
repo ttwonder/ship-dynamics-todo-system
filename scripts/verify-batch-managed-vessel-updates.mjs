@@ -66,7 +66,7 @@ assert.ok(!cancelBranch.includes('flushCloudBeforeBatchRelease')&&!cancelBranch.
 const enqueueStart=app.indexOf('const enqueueCloudSave =');
 const enqueueEnd=app.indexOf('\n  const flushCloudBeforeBatchRelease=',enqueueStart);
 const enqueueBranch=app.slice(enqueueStart,enqueueEnd);
-assert.ok(enqueueBranch.includes('isCurrent:()=>boolean=()=>true')&&enqueueBranch.includes('isCurrent});')&&enqueueBranch.includes('if(!isCurrent())throw new StaleAsyncConfigError()')&&enqueueBranch.includes('if(!isCurrent())break;'), '雲端save queue每個pending snapshot必須攜帶caller operation guard，失效項目不得保存或更新新session');
+assert.ok(enqueueBranch.includes('isCurrent:()=>boolean=()=>true')&&enqueueBranch.includes('isCurrent});')&&enqueueBranch.includes('if(!isCurrent()||!pendingActorIsCurrent())throw new StaleAsyncConfigError()')&&enqueueBranch.includes('if(!isCurrent()||!pendingActorIsCurrent())break;'), '雲端save queue每個pending snapshot必須攜帶caller operation guard及live actor generation，任一失效都不得保存或更新新session');
 assert.ok(app.includes('enqueueCloudSave(snapshot,()=>batchManagedOperationIsCurrent(operation))'), '批量flush必須把不可變operation guard傳入雲端save queue');
 const flushStart=app.indexOf('const flushCloudBeforeBatchRelease=async(operation:BatchManagedOperation)=>');
 const flushEnd=app.indexOf('\n\n  useEffect(() => {',flushStart);
