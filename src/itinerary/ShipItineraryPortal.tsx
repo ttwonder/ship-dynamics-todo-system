@@ -20,6 +20,7 @@ import { ShipItineraryAlternativesBrowse } from './ShipItineraryAlternativesBrow
 import ItineraryCopyEmailButton from './ItineraryCopyEmailButton';
 import ItineraryVesselMetadata from './ItineraryCurrentTimeZone';
 import ShipItineraryBriefDialog from './ShipItineraryBriefDialog';
+import { shipItineraryVesselOptionName, sortShipItineraryVesselsByEnglishName } from './itineraryVesselDisplay';
 
 interface EditorState {
   draft: ItineraryDocument;
@@ -98,6 +99,7 @@ export default function ShipItineraryPortal() {
   const backend = localBackend || cloudBackend;
   const [cloudVessels, setCloudVessels] = useState<PublicItineraryVessel[]>([]);
   const vessels = demoMode ? ITINERARY_DEMO_VESSELS : cloudVessels;
+  const vesselOptions = useMemo(() => sortShipItineraryVesselsByEnglishName(vessels), [vessels]);
   const [selectedVesselId, setSelectedVesselId] = useState('');
   const [latest, setLatest] = useState<ItineraryDocument | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -355,7 +357,7 @@ export default function ShipItineraryPortal() {
   if (!backend) return <main className="ship-portal-shell"><div className="ship-state-card"><h1>船端服務設定不完整</h1><p>目前無法建立受限 Itinerary RPC 連線，未讀取或寫入資料。</p></div></main>;
 
   return <main className="ship-portal-shell">
-    <header className="ship-portal-header"><div>{demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div><div className="ship-vessel-picker"><div className="ship-vessel-picker-label"><button type="button" className="btn ghost small" onClick={() => setBriefOpen(true)}>簡要說明</button><label htmlFor="ship-vessel-select">船名</label></div><select id="ship-vessel-select" value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vessels.map(vessel => <option value={vessel.id} key={vessel.id}>{dashboardVesselDisplayName(vessel)}</option>)}</select></div></header>
+    <header className="ship-portal-header"><div>{demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div><div className="ship-vessel-picker"><div className="ship-vessel-picker-label"><button type="button" className="btn ghost small" onClick={() => setBriefOpen(true)}>簡要說明</button><label htmlFor="ship-vessel-select">船名</label></div><select id="ship-vessel-select" value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vesselOptions.map(vessel => <option value={vessel.id} key={vessel.id}>{shipItineraryVesselOptionName(vessel)}</option>)}</select></div></header>
     {briefOpen && <ShipItineraryBriefDialog onClose={() => setBriefOpen(false)} />}
     {notice && <div className="ship-notice">{notice.kind === 'saved' ? formatItinerarySaveConfirmation(notice.updatedAt, noticeNowMs) : notice.text}</div>}
     {!selectedVesselId && <div className="ship-state-card compact"><b>先選擇船名</b><span>再選擇從空白或最新狀態開始。</span></div>}

@@ -137,6 +137,21 @@ try {
   const entry = fs.readFileSync('src/ship-itinerary-main.tsx', 'utf8');
   const portal = fs.readFileSync('src/itinerary/ShipItineraryPortal.tsx', 'utf8');
   const portalModule = await server.ssrLoadModule('/src/itinerary/ShipItineraryPortal.tsx');
+  const vesselDisplayModule = await server.ssrLoadModule('/src/itinerary/itineraryVesselDisplay.ts');
+  const selectorVessels = [
+    { id: 'amber', name: '安華', shortName: 'SA', fullName: 'FPMC S AMBER' },
+    { id: 'lord', name: '君善', shortName: 'CL', fullName: 'FPMC C LORD' },
+    { id: 'ideal', name: '理善', shortName: 'PI', fullName: 'FPMC P IDEAL' },
+    { id: 'majesty', name: '君輝', shortName: 'BM', fullName: 'FPMC B MAJESTY' },
+  ];
+  assert.equal(vesselDisplayModule.shipItineraryVesselOptionName(selectorVessels[0]), 'FPMC S AMBER 安華', 'ship picker must display English vessel name before Chinese vessel name');
+  assert.equal(vesselDisplayModule.shipItineraryVesselOptionName({ id: 'f25', name: 'F25', shortName: 'F25', fullName: 'FPMC 25' }), 'FPMC 25', 'a non-Chinese alias must not be appended as a duplicate name');
+  assert.deepEqual(
+    vesselDisplayModule.sortShipItineraryVesselsByEnglishName(selectorVessels).map(vessel => vessel.id),
+    ['majesty', 'lord', 'ideal', 'amber'],
+    'ship picker must sort by the complete English vessel name',
+  );
+  assert.deepEqual(selectorVessels.map(vessel => vessel.id), ['amber', 'lord', 'ideal', 'majesty'], 'ship picker sorting must not mutate the cloud vessel array');
   let savePrompt = '';
   assert.equal(portalModule.confirmShipItinerarySave(message => { savePrompt = message; return false; }), false, 'cancel must stop save confirmation');
   assert.match(savePrompt, /上一港名稱已更新/);
@@ -297,6 +312,8 @@ try {
   assert.match(editor, /ITINERARY_MAIN_FIELD_LABELS/);
   assert.match(panel, /ItineraryBrowseTable/);
   assert.match(portal, /dashboardVesselDisplayName/, 'ship selector and headings must use the main dashboard vessel naming rule');
+  assert.match(portal, /sortShipItineraryVesselsByEnglishName/, 'ship selector options must use English-name ordering');
+  assert.match(portal, /shipItineraryVesselOptionName/, 'ship selector options must display English name before Chinese name');
   assert.match(portal, /ItineraryBrowseTable/, 'ship latest view must mount the same browse table as the main dashboard');
   assert.match(panel, /ItineraryMoreParametersButton/, 'main browse must expose the shared more-parameters action');
   assert.match(portal, /ItineraryMoreParametersButton/, 'ship browse must expose the shared more-parameters action');
