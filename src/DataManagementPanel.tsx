@@ -15,12 +15,13 @@ import {
   type ShipDynamicsStorageStats,
 } from './dataManagement';
 import { formatTaipeiDateTime } from './taipeiTime';
+import ItineraryReportDataView from './ItineraryReportDataView';
 
 interface Props {
   currentUser: UserAccount;
 }
 
-type DataView = 'overview' | 'items' | 'history';
+type DataView = 'overview' | 'items' | 'history' | 'itinerary';
 const HISTORY_PAGE_SIZE = 100;
 const MAX_REVISION_PRUNE_BATCH = 100;
 
@@ -207,22 +208,23 @@ export default function DataManagementPanel({ currentUser }: Props) {
     { id: 'overview' as const, icon: '▦', label: '空間總覽', meta: stats ? formatDataBytes(stats.databaseTotalBytes) : '—' },
     { id: 'items' as const, icon: '≡', label: '單項資料用量', meta: stats ? `${stats.items.length} 項` : '—' },
     { id: 'history' as const, icon: '↺', label: '歷史版本清理', meta: stats ? `${stats.revisionHistoryCount} 份` : '—' },
+    { id: 'itinerary' as const, icon: '▤', label: 'Itinerary 日快照', meta: '每日' },
   ];
 
   return <>
     <div className="management-master data-management-master">
       <div className="management-master-heading"><div><h2>數據管理</h2><small>Supabase 用量與安全清理</small></div><button className="btn small ghost" onClick={() => void refresh()} disabled={loading || acting}>{loading ? '讀取中…' : '↻ 刷新空間'}</button></div>
-      <div className="management-list">{nav.map(item => <button key={item.id} className={`management-list-item ${view === item.id ? 'active' : ''}`} onClick={() => setView(item.id)}><span className="management-avatar data">{item.icon}</span><span><b>{item.label}</b><small>{item.id === 'overview' ? '物理量與邏輯量分開' : item.id === 'items' ? '目前正式資料，只供判斷' : '只清理 revision snapshots'}</small></span><em>{item.meta}</em></button>)}</div>
-      <div className="data-management-scope-note"><b>安全邊界</b><span>數據管理不直接刪除待辦、船舶、會議、內控、帳號或操作紀錄。</span></div>
+      <div className="management-list">{nav.map(item => <button key={item.id} className={`management-list-item ${view === item.id ? 'active' : ''}`} onClick={() => setView(item.id)}><span className="management-avatar data">{item.icon}</span><span><b>{item.label}</b><small>{item.id === 'overview' ? '物理量與邏輯量分開' : item.id === 'items' ? '目前正式資料，只供判斷' : item.id === 'history' ? '只清理 revision snapshots' : '只管理每日報告快照'}</small></span><em>{item.meta}</em></button>)}</div>
+      <div className="data-management-scope-note"><b>安全邊界</b><span>數據管理不直接刪除待辦、船舶、正式 Itinerary、備選行程、會議、內控、帳號或操作紀錄。</span></div>
     </div>
 
     <div className="management-detail data-management-detail">
       <div className="management-editor data-management-editor">
-        <div className="management-editor-heading"><div><h2>{view === 'overview' ? 'Supabase 空間使用' : view === 'items' ? '單項資料用量' : '歷史版本選擇性清理'}</h2><p>{view === 'overview' ? '資料庫物理量、目前內容、revision history 與 Storage 分開顯示。' : view === 'items' ? '逐分類及逐筆計算目前 payload 的 JSONB 邏輯量；不等於物理磁碟分攤。' : '由 Owner 人工勾選舊 revision；目前正式 revision 永久保護。'}</p></div>{stats?.generatedAt && <small className="data-management-updated">更新：{formatTaipeiDateTime(stats.generatedAt)}</small>}</div>
+        {view !== 'itinerary' && <div className="management-editor-heading"><div><h2>{view === 'overview' ? 'Supabase 空間使用' : view === 'items' ? '單項資料用量' : '歷史版本選擇性清理'}</h2><p>{view === 'overview' ? '資料庫物理量、目前內容、revision history 與 Storage 分開顯示。' : view === 'items' ? '逐分類及逐筆計算目前 payload 的 JSONB 邏輯量；不等於物理磁碟分攤。' : '由 Owner 人工勾選舊 revision；目前正式 revision 永久保護。'}</p></div>{stats?.generatedAt && <small className="data-management-updated">更新：{formatTaipeiDateTime(stats.generatedAt)}</small>}</div>}
 
         {errorText && <div className="data-management-message error" role="alert">{errorText}</div>}
         {notice && <div className="data-management-message success" role="status">{notice}</div>}
-        {pending && <div className="data-management-pending" role="alert"><div><b>上次刪除結果尚未確認</b><span>操作 {pending.operationId.slice(0, 8)}｜預定刪除 {pending.deleteRevisions.length} 份。系統不會另建刪除操作；請用相同 operation 對帳。</span></div><button className="btn danger" disabled={acting} onClick={() => void performPrune(pending, true)}>{acting ? '對帳中…' : '對帳上次操作'}</button></div>}
+        {pending && view === 'history' && <div className="data-management-pending" role="alert"><div><b>上次刪除結果尚未確認</b><span>操作 {pending.operationId.slice(0, 8)}｜預定刪除 {pending.deleteRevisions.length} 份。系統不會另建刪除操作；請用相同 operation 對帳。</span></div><button className="btn danger" disabled={acting} onClick={() => void performPrune(pending, true)}>{acting ? '對帳中…' : '對帳上次操作'}</button></div>}
 
         {!stats && !loading && !errorText && <div className="management-empty"><b>尚無空間資料</b><span>按「刷新空間」讀取 Supabase。</span></div>}
         {!stats && loading && <div className="management-empty"><b>正在讀取 Supabase</b><span>只讀取用量與 revision metadata，不下載歷史 payload。</span></div>}
@@ -230,6 +232,7 @@ export default function DataManagementPanel({ currentUser }: Props) {
         {stats && view === 'overview' && <Overview stats={stats}/>}
         {stats && view === 'items' && <ItemsView stats={stats} items={filteredItems} query={itemQuery} setQuery={setItemQuery} collection={itemCollection} setCollection={setItemCollection}/>}
         {stats && view === 'history' && <HistoryView stats={stats} owner={owner} pending={Boolean(pending)} acting={acting} pruneProgress={pruneProgress} selected={selectedRevisions} setSelected={setSelectedRevisions} selectedBytes={selectedBytes} onDelete={startPrune}/>}
+        {stats && view === 'itinerary' && <ItineraryReportDataView currentUser={currentUser}/>}
       </div>
     </div>
   </>;
