@@ -119,14 +119,10 @@ const strictDateSet = (value: unknown): string[] | null => {
   const unique = new Set(value);
   return unique.size === value.length ? Array.from(unique).sort() : null;
 };
-const strictPositiveInteger = (value: unknown): number | null => {
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-};
-const strictNonNegativeInteger = (value: unknown): number | null => {
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
-};
+const strictPositiveInteger = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
+const strictNonNegativeInteger = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 const strictSetToken = (value: unknown): string | null => {
   const token = asText(value);
   return /^[0-9a-f]{32}$/.test(token) ? token : null;
@@ -361,10 +357,15 @@ export async function deleteItineraryDailyReports(
   }, resolved, client);
   const operationId = asText(response.operationId);
   const deletedDates = strictDateSet(response.deletedDates);
-  const deletedCount = asNonNegativeInteger(response.deletedCount);
+  const deletedCount = strictNonNegativeInteger(response.deletedCount);
+  const deletedBytes = strictNonNegativeInteger(response.deletedBytes);
+  const remainingReportCount = strictNonNegativeInteger(response.remainingReportCount);
   const remainingSetToken = strictSetToken(response.remainingSetToken);
   if (operationId !== request.operationId
     || !deletedDates
+    || deletedCount === null
+    || deletedBytes === null
+    || remainingReportCount === null
     || !remainingSetToken
     || deletedCount !== deletedDates.length
     || JSON.stringify(deletedDates) !== JSON.stringify(deleteDates)) {
@@ -378,9 +379,9 @@ export async function deleteItineraryDailyReports(
     ok: true,
     operationId,
     deletedCount,
-    deletedBytes: asNonNegativeInteger(response.deletedBytes),
+    deletedBytes,
     deletedDates,
-    remainingReportCount: asNonNegativeInteger(response.remainingReportCount),
+    remainingReportCount,
     remainingSetToken,
   };
 }

@@ -162,6 +162,25 @@ try {
     daily.deleteItineraryDailyReports(pending, config, mismatchedReceiptClient),
     error => error.code === 'INVALID_RESPONSE' && error.definitive === false,
   );
+  const validReceipt = responses.delete_sd_itinerary_daily_reports;
+  for (const malformedCase of [
+    { label:'invalid deleted date', receipt:{ ...validReceipt, deletedDates:['2026-09-04', 'not-a-date'] } },
+    { label:'duplicate deleted date', receipt:{ ...validReceipt, deletedDates:['2026-09-04', '2026-09-04'] } },
+    { label:'string deletedCount', receipt:{ ...validReceipt, deletedCount:'1' } },
+    { label:'string deletedBytes', receipt:{ ...validReceipt, deletedBytes:'1280' } },
+    { label:'fractional deletedBytes', receipt:{ ...validReceipt, deletedBytes:1280.5 } },
+    { label:'string remainingReportCount', receipt:{ ...validReceipt, remainingReportCount:'0' } },
+    { label:'negative remainingReportCount', receipt:{ ...validReceipt, remainingReportCount:-1 } },
+  ]) {
+    const malformedReceiptClient = {
+      rpc() { return { abortSignal: async () => ({ data:malformedCase.receipt, error:null }) }; },
+    };
+    await assert.rejects(
+      daily.deleteItineraryDailyReports(pending, config, malformedReceiptClient),
+      error => error.code === 'INVALID_RESPONSE' && error.definitive === false,
+      malformedCase.label,
+    );
+  }
   daily.clearPendingItineraryDailyReportDelete(config, 'owner-1', storage);
   assert.equal(daily.readPendingItineraryDailyReportDelete(config, 'owner-1', storage), null);
 
