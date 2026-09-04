@@ -3,7 +3,7 @@ import type { ItineraryRow } from './itinerary/itineraryTypes';
 
 export const ITINERARY_DAILY_REPORT_DELETE_BATCH_SIZE = 100;
 const RPC_TIMEOUT_MS = 25_000;
-const PENDING_DELETE_PREFIX = 'ship-dynamics-daily-itinerary-report-delete:v1:';
+const PENDING_DELETE_PREFIX = 'ship-dynamics-daily-itinerary-report-delete:v2:';
 
 export interface ItineraryDailyReportSummary {
   businessDate: string;
@@ -14,6 +14,23 @@ export interface ItineraryDailyReportSummary {
   rowCount: number;
   sourceMaxRevision: number;
   logicalBytes: number;
+}
+
+export interface ItineraryDailyReportPage {
+  items: ItineraryDailyReportSummary[];
+  page: number;
+  pageSize: 30;
+  pageCount: number;
+  total: number;
+  setToken: string;
+}
+
+export interface ItineraryDailyReportLocation {
+  found: boolean;
+  businessDate: string;
+  page: number | null;
+  pageSize: 30;
+  setToken: string;
 }
 
 export interface ItineraryDailyReportVesselSnapshot {
@@ -42,7 +59,7 @@ export interface ItineraryDailyReport extends ItineraryDailyReportSummary {
 export interface ItineraryDailyReportDeleteRequest {
   operationId: string;
   actorUserId: string;
-  expectedDates: string[];
+  expectedSetToken: string;
   deleteDates: string[];
 }
 
@@ -53,10 +70,11 @@ export interface ItineraryDailyReportDeleteResult {
   deletedBytes: number;
   deletedDates: string[];
   remainingReportCount: number;
+  remainingSetToken: string;
 }
 
 export interface PendingItineraryDailyReportDelete extends ItineraryDailyReportDeleteRequest {
-  version: 1;
+  version: 2;
   configIdentity: string;
   workspaceKey: string;
   createdAt: string;
@@ -100,6 +118,18 @@ const strictDateSet = (value: unknown): string[] | null => {
   if (!Array.isArray(value) || !value.length || value.some(item => typeof item !== 'string' || !isBusinessDate(item))) return null;
   const unique = new Set(value);
   return unique.size === value.length ? Array.from(unique).sort() : null;
+};
+const strictPositiveInteger = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+};
+const strictNonNegativeInteger = (value: unknown): number | null => {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+};
+const strictSetToken = (value: unknown): string | null => {
+  const token = asText(value);
+  return /^[0-9a-f]{32}$/.test(token) ? token : null;
 };
 
 function requiredConfig(config?: ResolvedSupabaseConfig | null): ResolvedSupabaseConfig {
@@ -223,18 +253,60 @@ function parseSnapshot(value: unknown, expected: ItineraryDailyReportSummary): I
   };
 }
 
-export async function listItineraryDailyReports(
+export async function listItineraryDailyReportPage(
   actorUserId: string,
+  requestedPage: number,
   config?: ResolvedSupabaseConfig | null,
   client?: ItineraryDailyReportRpcClient | null,
-): Promise<ItineraryDailyReportSummary[]> {
+): Promise<ItineraryDailyReportPage> {
+  if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) {
+    throw new Error('每日 Itinerary 報告頁碼不正確。');
+  }
   const resolved = requiredConfig(config);
   const response = await runRpc('sd_itinerary_daily_report_list', {
     p_workspace_key: resolved.workspaceKey,
     p_actor_user_id: actorUserId,
+    p_page: requestedPage,
+    p_page_size: 30,
   }, resolved, client);
-  return asArray(response.reports).map(parseSummary)
-    .sort((left, right) => right.businessDate.localeCompare(left.businessDate));
+  const page = strictPositiveInteger(response.page);
+  const pageSize = strictPositiveInteger(response.pageSize);
+  const pageCount = strictPositiveInteger(response.pageCount);
+  const total = strictNonNegativeInteger(response.total);
+  const setToken = strictSetToken(response.setToken);
+  const items = asArray(response.reports).map(parseSummary);
+  if (!page || pageSize !== 30 || !pageCount || total === null || !setToken
+    || page > pageCount || items.length > pageSize
+    || (total === 0 && items.length !== 0)
+    || (total > 0 && (page - 1) * pageSize + items.length > total)) {
+    throw new Error('每日 Itinerary 報告分頁格式不正確。');
+  }
+  return { items, page, pageSize:30, pageCount, total, setToken };
+}
+
+export async function locateItineraryDailyReport(
+  businessDate: string,
+  actorUserId: string,
+  config?: ResolvedSupabaseConfig | null,
+  client?: ItineraryDailyReportRpcClient | null,
+): Promise<ItineraryDailyReportLocation> {
+  if (!isBusinessDate(businessDate)) throw new Error('每日 Itinerary 報告日期格式不正確。');
+  const resolved = requiredConfig(config);
+  const response = await runRpc('sd_itinerary_daily_report_locate', {
+    p_workspace_key: resolved.workspaceKey,
+    p_business_date: businessDate,
+    p_actor_user_id: actorUserId,
+    p_page_size: 30,
+  }, resolved, client);
+  const pageSize = strictPositiveInteger(response.pageSize);
+  const setToken = strictSetToken(response.setToken);
+  const found = response.found;
+  const page = found === true ? strictPositiveInteger(response.page) : null;
+  if (response.businessDate !== businessDate || pageSize !== 30 || !setToken
+    || (found !== true && found !== false) || (found === true && !page)) {
+    throw new Error('每日 Itinerary 報告日期定位格式不正確。');
+  }
+  return { found, businessDate, page, pageSize:30, setToken };
 }
 
 export async function loadItineraryDailyReport(
@@ -261,7 +333,7 @@ export async function deleteItineraryDailyReports(
   client?: ItineraryDailyReportRpcClient | null,
 ): Promise<ItineraryDailyReportDeleteResult> {
   const resolved = requiredConfig(config);
-  if (request.version !== 1
+  if (request.version !== 2
     || request.configIdentity !== configIdentity(resolved)
     || request.workspaceKey !== resolved.workspaceKey
     || !request.actorUserId) {
@@ -271,9 +343,9 @@ export async function deleteItineraryDailyReports(
       true,
     );
   }
-  const expectedDates = strictDateSet(request.expectedDates);
   const deleteDates = strictDateSet(request.deleteDates);
-  if (!expectedDates || !deleteDates || deleteDates.some(date => !expectedDates.includes(date))) {
+  const expectedSetToken = strictSetToken(request.expectedSetToken);
+  if (!expectedSetToken || !deleteDates) {
     throw new ItineraryDailyReportRpcError(
       'INVALID_DELETE_ENVELOPE',
       'Daily Itinerary delete dates are invalid or no longer exact.',
@@ -284,14 +356,16 @@ export async function deleteItineraryDailyReports(
     p_workspace_key: resolved.workspaceKey,
     p_actor_user_id: request.actorUserId,
     p_operation_id: request.operationId,
-    p_expected_dates: expectedDates,
+    p_expected_set_token: expectedSetToken,
     p_delete_dates: deleteDates,
   }, resolved, client);
   const operationId = asText(response.operationId);
   const deletedDates = strictDateSet(response.deletedDates);
   const deletedCount = asNonNegativeInteger(response.deletedCount);
+  const remainingSetToken = strictSetToken(response.remainingSetToken);
   if (operationId !== request.operationId
     || !deletedDates
+    || !remainingSetToken
     || deletedCount !== deletedDates.length
     || JSON.stringify(deletedDates) !== JSON.stringify(deleteDates)) {
     throw new ItineraryDailyReportRpcError(
@@ -307,6 +381,7 @@ export async function deleteItineraryDailyReports(
     deletedBytes: asNonNegativeInteger(response.deletedBytes),
     deletedDates,
     remainingReportCount: asNonNegativeInteger(response.remainingReportCount),
+    remainingSetToken,
   };
 }
 
@@ -345,19 +420,19 @@ export function createPendingItineraryDailyReportDelete(
   config: ResolvedSupabaseConfig,
   now = new Date(),
 ): PendingItineraryDailyReportDelete {
-  const expectedDates = strictDateSet(request.expectedDates);
+  const expectedSetToken = strictSetToken(request.expectedSetToken);
   const deleteDates = strictDateSet(request.deleteDates);
-  if (!expectedDates || !deleteDates || deleteDates.some(date => !expectedDates.includes(date))) {
+  if (!expectedSetToken || !deleteDates) {
     throw new ItineraryDailyReportRpcError('INVALID_DELETE_ENVELOPE', 'Invalid Daily Itinerary delete request.', true);
   }
   return {
-    version: 1,
+    version: 2,
     configIdentity: configIdentity(config),
     workspaceKey: config.workspaceKey,
     createdAt: now.toISOString(),
     operationId: request.operationId,
     actorUserId: request.actorUserId,
-    expectedDates,
+    expectedSetToken,
     deleteDates,
   };
 }
@@ -371,25 +446,24 @@ export function readPendingItineraryDailyReportDelete(
     const raw = storage.getItem(pendingKey(config, actorUserId));
     if (!raw) return null;
     const parsed = asObject(JSON.parse(raw));
-    const expectedDates = strictDateSet(parsed.expectedDates);
+    const expectedSetToken = strictSetToken(parsed.expectedSetToken);
     const deleteDates = strictDateSet(parsed.deleteDates);
-    if (!expectedDates || !deleteDates || deleteDates.some(date => !expectedDates.includes(date))) return null;
+    if (!expectedSetToken || !deleteDates) return null;
     const pending: PendingItineraryDailyReportDelete = {
-      version: 1,
+      version: 2,
       configIdentity: asText(parsed.configIdentity),
       workspaceKey: asText(parsed.workspaceKey),
       createdAt: asText(parsed.createdAt),
       operationId: asText(parsed.operationId),
       actorUserId: asText(parsed.actorUserId),
-      expectedDates,
+      expectedSetToken,
       deleteDates,
     };
-    if (parsed.version !== 1
+    if (parsed.version !== 2
       || pending.configIdentity !== configIdentity(config)
       || pending.workspaceKey !== config.workspaceKey
       || pending.actorUserId !== actorUserId
       || !pending.operationId
-      || !pending.expectedDates.length
       || !pending.deleteDates.length) return null;
     return pending;
   } catch {

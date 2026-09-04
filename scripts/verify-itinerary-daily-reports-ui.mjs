@@ -53,11 +53,16 @@ try {
     vesselCount: 39, rowCount: index, sourceMaxRevision: 7, logicalBytes: 1000,
   }));
   const itineraryMarkup = renderToStaticMarkup(React.createElement(histories.ItineraryDailyHistoryPanel, {
-    reports: itineraryReports,
+    pageData: {
+      items: itineraryReports.slice(0, 30), page:1, pageSize:30, pageCount:2, total:31,
+      setToken:'11111111111111111111111111111111',
+    },
     loading: false,
     errorText: '',
     openingDate: '',
     onRefresh: () => {},
+    onPage: () => {},
+    onLocate: async () => true,
     onOpen: () => {},
   }));
   assert.match(itineraryMarkup, /2026年9月4日 Itinerary/);
@@ -114,8 +119,9 @@ try {
   assert.match(app, /<ReportDailyHistories/);
   assert.doesNotMatch(app, /<h2>本次報告內容<\/h2>/, 'the old report-content block must be removed');
   assert.match(app, /每日 Itinerary 每天 09:00/);
-  assert.match(source, /paginateDailyReportHistory\(reports/);
-  assert.match(source, /locateDailyReportDate\(reports/);
+  assert.match(source, /listItineraryDailyReportPage/);
+  assert.match(source, /locateItineraryDailyReport/);
+  assert.match(source, /p_page_size|pageSize:30|pageSize: 30/);
   assert.match(css, /body\.printing-itinerary-daily-report/);
   assert.match(css, /size:A4 landscape|size: A4 landscape/);
   assert.match(css, /\.itinerary-daily-report-vessel\{[^}]*break-inside:avoid-page/);

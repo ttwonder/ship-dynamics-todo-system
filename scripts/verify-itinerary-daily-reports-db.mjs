@@ -58,6 +58,10 @@ try {
       ) actor
       where workspace.workspace_key=p_workspace_key and workspace.is_active
     $$;
+    create function public.sd_itinerary_daily_report_list(text,text)
+    returns jsonb language sql as $$ select '{}'::jsonb $$;
+    create function public.delete_sd_itinerary_daily_reports(text,text,uuid,jsonb,jsonb)
+    returns jsonb language sql as $$ select '{}'::jsonb $$;
   `);
 
   const migration = await readFile(migrationPath, 'utf8');
@@ -65,6 +69,13 @@ try {
     ? `${migration.slice(0, migration.indexOf('create extension if not exists pg_cron'))}\ncommit;`
     : migration;
   await db.exec(executable);
+  const legacyOverloads = await db.query(`
+    select
+      to_regprocedure('public.sd_itinerary_daily_report_list(text,text)') is null as old_list_removed,
+      to_regprocedure('public.delete_sd_itinerary_daily_reports(text,text,uuid,jsonb,jsonb)') is null as old_delete_removed
+  `);
+  assert.equal(legacyOverloads.rows[0].old_list_removed, true);
+  assert.equal(legacyOverloads.rows[0].old_delete_removed, true);
 
   await db.exec(`
     insert into public.sd_workspaces(id,workspace_key,is_active)
@@ -139,7 +150,7 @@ try {
   const adminDeleteResult = await db.query(`
     select public.delete_sd_itinerary_daily_reports(
       'test-workspace','admin-1','11111111-1111-4111-8111-111111111111'::uuid,
-      '["2026-09-04"]'::jsonb,'["2026-09-04"]'::jsonb
+      '${list.setToken}','["2026-09-04"]'::jsonb
     ) as value
   `);
   assert.deepEqual(adminDeleteResult.rows[0].value, { ok: false, error: 'OWNER_REQUIRED' });
@@ -147,18 +158,19 @@ try {
   const deleteResult = await db.query(`
     select public.delete_sd_itinerary_daily_reports(
       'test-workspace','owner-1','22222222-2222-4222-8222-222222222222'::uuid,
-      '["2026-09-04"]'::jsonb,'["2026-09-04"]'::jsonb
+      '${list.setToken}','["2026-09-04"]'::jsonb
     ) as value
   `);
   const deleted = deleteResult.rows[0].value;
   assert.equal(deleted.ok, true);
   assert.equal(deleted.deletedCount, 1);
   assert.deepEqual(deleted.deletedDates, ['2026-09-04']);
+  assert.match(deleted.remainingSetToken, /^[0-9a-f]{32}$/);
 
   const replayDeleteResult = await db.query(`
     select public.delete_sd_itinerary_daily_reports(
       'test-workspace','owner-1','22222222-2222-4222-8222-222222222222'::uuid,
-      '["2026-09-04"]'::jsonb,'["2026-09-04"]'::jsonb
+      '${list.setToken}','["2026-09-04"]'::jsonb
     ) as value
   `);
   assert.deepEqual(replayDeleteResult.rows[0].value, deleted, 'lost-ACK replay must return the durable operation result');
@@ -169,11 +181,14 @@ try {
   assert.match(JSON.stringify(documents.rows[0].rows_payload), /LATER CHANGE/);
 
   await db.query(`select public.sd_generate_daily_itinerary_report('${workspace}'::uuid,'2026-09-03'::date,'2026-09-03T01:00:00Z'::timestamptz)`);
+  const stalePreview = (await db.query(`
+    select public.sd_itinerary_daily_report_list('test-workspace','owner-1',1,30) as value
+  `)).rows[0].value;
   await db.query(`select public.sd_generate_daily_itinerary_report('${workspace}'::uuid,'2026-09-04'::date,'2026-09-04T01:00:00Z'::timestamptz)`);
   const staleDelete = await db.query(`
     select public.delete_sd_itinerary_daily_reports(
       'test-workspace','owner-1','33333333-3333-4333-8333-333333333333'::uuid,
-      '["2026-09-03"]'::jsonb,'["2026-09-03"]'::jsonb
+      '${stalePreview.setToken}','["2026-09-03"]'::jsonb
     ) as value
   `);
   assert.equal(staleDelete.rows[0].value.error, 'REPORT_SET_CHANGED', 'a changed preview set must fail closed with zero deletion');
@@ -183,13 +198,95 @@ try {
     : String(row.business_date).slice(0, 10));
   assert.deepEqual(remainingDates, ['2026-09-03', '2026-09-04']);
 
+  await db.exec(`
+    delete from public.sd_itinerary_daily_reports where workspace_id='${workspace}';
+    insert into public.sd_itinerary_daily_reports(
+      workspace_id,business_date,timezone,generated_at,generated_by,
+      vessel_count,row_count,source_max_revision,snapshot
+    )
+    select
+      '${workspace}', date '2026-09-04' - day_offset, 'Asia/Taipei',
+      '2026-09-04T01:00:00Z'::timestamptz - day_offset * interval '1 day',
+      'scheduled', 2, day_offset, 7,
+      jsonb_build_object(
+        'schemaVersion',1,'businessDate',(date '2026-09-04' - day_offset)::text,
+        'timezone','Asia/Taipei','generatedAt','2026-09-04T01:00:00Z',
+        'vesselCount',2,'rowCount',day_offset,'sourceMaxRevision',7,'vessels','[]'::jsonb
+      )
+    from generate_series(0,64) day_offset;
+  `);
+  const firstPage = (await db.query(`
+    select public.sd_itinerary_daily_report_list('test-workspace','owner-1',1,100) as value
+  `)).rows[0].value;
+  assert.equal(firstPage.page, 1);
+  assert.equal(firstPage.pageSize, 30, 'server must cap pages at 30 even when the caller asks for 100');
+  assert.equal(firstPage.total, 65);
+  assert.equal(firstPage.pageCount, 3);
+  assert.equal(firstPage.reports.length, 30);
+  assert.equal(firstPage.reports[0].businessDate, '2026-09-04');
+  assert.equal(firstPage.reports[29].businessDate, '2026-08-06');
+  assert.equal(typeof firstPage.setToken, 'string');
+  assert.ok(firstPage.setToken.length > 0);
+
+  const thirdPage = (await db.query(`
+    select public.sd_itinerary_daily_report_list('test-workspace','owner-1',3,30) as value
+  `)).rows[0].value;
+  assert.equal(thirdPage.reports.length, 5);
+  assert.equal(thirdPage.reports[0].businessDate, '2026-07-06');
+  assert.equal(thirdPage.reports[4].businessDate, '2026-07-02');
+  assert.equal(thirdPage.setToken, firstPage.setToken, 'all pages of one report set need the same delete token');
+
+  const located = (await db.query(`
+    select public.sd_itinerary_daily_report_locate('test-workspace','2026-08-05'::date,'owner-1',30) as value
+  `)).rows[0].value;
+  assert.deepEqual({ found:located.found, page:located.page }, { found:true, page:2 });
+  const missing = (await db.query(`
+    select public.sd_itinerary_daily_report_locate('test-workspace','2025-01-01'::date,'owner-1',30) as value
+  `)).rows[0].value;
+  assert.equal(missing.found, false, 'a missing date must not jump to a neighbouring report');
+
+  await db.exec(`
+    insert into public.sd_workspaces(id,workspace_key,is_active)
+    values('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','broken-workspace',true);
+    insert into public.sd_vessels(workspace_id,id,name,is_active)
+    values('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','broken-vessel','BROKEN',true);
+    create or replace function public.reject_broken_daily_report()
+    returns trigger language plpgsql as $$
+    begin
+      if new.workspace_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'::uuid then
+        raise exception 'fixture failure';
+      end if;
+      return new;
+    end;
+    $$;
+    create trigger reject_broken_daily_report
+    before insert on public.sd_itinerary_daily_reports
+    for each row execute function public.reject_broken_daily_report();
+  `);
+  const scheduledRun = (await db.query(`
+    select public.ship_dynamics_run_daily_itinerary_reports() as value
+  `)).rows[0].value;
+  assert.equal(scheduledRun.failedCount, 1, 'one broken workspace must be isolated');
+  assert.equal(scheduledRun.createdCount + scheduledRun.existingCount, 1, 'the healthy workspace must still complete');
+  assert.equal(scheduledRun.failures.length, 1);
+  const brokenReports = await db.query(`
+    select count(*)::integer as count from public.sd_itinerary_daily_reports
+    where workspace_id='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  `);
+  assert.equal(brokenReports.rows[0].count, 0);
+
+  const generateDefinition = migration.slice(
+    migration.indexOf('create or replace function public.sd_generate_daily_itinerary_report('),
+    migration.indexOf('create or replace function public.ship_dynamics_run_daily_itinerary_reports()'),
+  );
+  assert.match(generateDefinition, /pg_advisory_xact_lock\(hashtextextended\(p_workspace_id::text \|\| ':daily-itinerary-report'/, 'generation must share the delete set lock');
   assert.match(migration, /'0 1 \* \* \*'/, '09:00 Asia/Taipei scheduler must run every calendar day at 01:00 UTC');
   assert.match(migration, /'Asia\/Taipei'/);
   assert.doesNotMatch(migration, /alternative_plans_payload/, 'scheduled report must not read alternative plans');
   assert.doesNotMatch(migration, /delete\s+from\s+public\.sd_itinerary_documents/i, 'daily-report cleanup must never delete formal documents');
   assert.match(migration, /delete\s+from\s+public\.sd_itinerary_daily_reports/i);
   assert.match(migration, /actor_role is distinct from 'owner'/);
-  assert.match(migration, /current_dates is distinct from normalized_expected/);
+  assert.match(migration, /current_set_token is distinct from p_expected_set_token/);
   assert.match(migration, /revoke all on table public\.sd_itinerary_daily_reports from public, anon, authenticated/);
 
   console.log('itinerary_daily_reports_db=PASS');

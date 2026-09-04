@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AgendaReport } from './types';
 import { formatTaipeiDateTime } from './taipeiTime';
+import { getSupabaseConfig } from './cloud';
 import { locateDailyReportDate, paginateDailyReportHistory } from './dailyReportHistory';
 import {
   itineraryDailyReportErrorMessage,
-  listItineraryDailyReports,
+  listItineraryDailyReportPage,
+  locateItineraryDailyReport,
   loadItineraryDailyReport,
   type ItineraryDailyReport,
+  type ItineraryDailyReportPage,
   type ItineraryDailyReportSummary,
 } from './itineraryDailyReports';
 import ItineraryDailyReportPreview from './ItineraryDailyReportPreview';
@@ -44,6 +47,22 @@ function DateLocator<T extends { businessDate: string }>({ reports, label, onPag
   </div>;
 }
 
+function RemoteDateLocator({ label, loading, onLocate }: { label:string; loading:boolean; onLocate:(date:string)=>Promise<boolean> }) {
+  const [date, setDate] = useState('');
+  const [notice, setNotice] = useState('');
+  const locate = async () => {
+    if (!date) { setNotice('請先選擇日期'); return; }
+    setNotice('');
+    const found = await onLocate(date);
+    setNotice(found ? `已定位 ${date}` : '所選日期沒有保存記錄');
+  };
+  return <div className="daily-report-date-locator">
+    <input type="date" aria-label={label} disabled={loading} value={date} onChange={event => { setDate(event.target.value); setNotice(''); }}/>
+    <button className="btn small ghost" disabled={loading} onClick={() => void locate()}>{loading ? '定位中…' : '定位日期'}</button>
+    {notice && <small role="status">{notice}</small>}
+  </div>;
+}
+
 export function MorningDailyHistoryPanel({ reports, onOpen }: { reports:AgendaReport[]; onOpen:(report:AgendaReport)=>void }) {
   const [page, setPage] = useState(1);
   const dailyReports = useMemo(() => reports.filter((report): report is AgendaReport & { businessDate:string } => /^\d{4}-\d{2}-\d{2}$/.test(report.businessDate || '')), [reports]);
@@ -59,62 +78,94 @@ export function MorningDailyHistoryPanel({ reports, onOpen }: { reports:AgendaRe
   </div>;
 }
 
-export function ItineraryDailyHistoryPanel({ reports, loading, errorText, openingDate, onRefresh, onOpen }: {
-  reports:ItineraryDailyReportSummary[];
+export function ItineraryDailyHistoryPanel({ pageData, loading, errorText, openingDate, onRefresh, onPage, onLocate, onOpen }: {
+  pageData:ItineraryDailyReportPage;
   loading:boolean;
   errorText:string;
   openingDate:string;
   onRefresh:()=>void;
+  onPage:(page:number)=>void;
+  onLocate:(date:string)=>Promise<boolean>;
   onOpen:(report:ItineraryDailyReportSummary)=>void;
 }) {
-  const [page, setPage] = useState(1);
-  const current = useMemo(() => paginateDailyReportHistory(reports, page), [reports, page]);
-  useEffect(() => { if (current.page !== page) setPage(current.page); }, [current.page, page]);
   return <div className="panel daily-report-history-panel itinerary-daily-history-panel">
     <div className="daily-report-history-heading"><div><h2>每日 Itinerary 記錄</h2><small>每天 09:00（台北）自動凍結｜每頁最多 30 天</small></div><button className="btn small ghost" disabled={loading} onClick={onRefresh}>{loading ? '讀取中…' : '↻ 刷新'}</button></div>
-    <DateLocator reports={reports} label="每日 Itinerary 記錄日期" onPage={setPage}/>
+    <RemoteDateLocator label="每日 Itinerary 記錄日期" loading={loading} onLocate={onLocate}/>
     {errorText && <div className="daily-report-history-error" role="alert">{errorText}</div>}
-    {current.items.length ? <div className="daily-report-history-list">{current.items.map(report => <div className="saved-report" key={report.businessDate}>
+    {pageData.items.length ? <div className="daily-report-history-list">{pageData.items.map(report => <div className="saved-report" key={report.businessDate}>
       <div><b>{businessDateLabel(report.businessDate)} Itinerary</b><small>{report.businessDate}｜{formatTaipeiDateTime(report.generatedAt, false)}｜09:00自動｜{report.vesselCount} 艘｜{report.rowCount} 列</small></div>
       <button className="btn small ghost" disabled={Boolean(openingDate)} onClick={() => onOpen(report)}>{openingDate === report.businessDate ? '載入中…' : '檢視橫版 PDF'}</button>
     </div>)}</div> : <div className="empty-state compact">{loading ? '正在讀取每日 Itinerary 記錄…' : '尚無每日 Itinerary 記錄'}</div>}
-    <HistoryPager page={current.page} pageCount={current.pageCount} pageStart={current.pageStart} pageSize={current.items.length} total={current.total} onPage={setPage}/>
+    <HistoryPager page={pageData.page} pageCount={pageData.pageCount} pageStart={(pageData.page - 1) * pageData.pageSize} pageSize={pageData.items.length} total={pageData.total} onPage={onPage}/>
   </div>;
 }
+
+const EMPTY_ITINERARY_PAGE: ItineraryDailyReportPage = {
+  items: [], page:1, pageSize:30, pageCount:1, total:0,
+  setToken:'d41d8cd98f00b204e9800998ecf8427e',
+};
 
 export default function ReportDailyHistories({ actorUserId, morningReports, onOpenMorning }: {
   actorUserId:string;
   morningReports:AgendaReport[];
   onOpenMorning:(report:AgendaReport)=>void;
 }) {
-  const [itineraryReports, setItineraryReports] = useState<ItineraryDailyReportSummary[]>([]);
+  const [pageData, setPageData] = useState<ItineraryDailyReportPage>(EMPTY_ITINERARY_PAGE);
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState('');
   const [openingDate, setOpeningDate] = useState('');
   const [preview, setPreview] = useState<ItineraryDailyReport | null>(null);
   const requestGeneration = useRef(0);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (requestedPage: number) => {
     const generation = ++requestGeneration.current;
     setLoading(true);
     setErrorText('');
     try {
-      const reports = await listItineraryDailyReports(actorUserId);
-      if (requestGeneration.current === generation) setItineraryReports(reports);
+      const next = await listItineraryDailyReportPage(actorUserId, requestedPage, getSupabaseConfig());
+      if (requestGeneration.current === generation) setPageData(next);
+      return requestGeneration.current === generation ? next : null;
     } catch (error) {
       if (requestGeneration.current === generation) setErrorText(itineraryDailyReportErrorMessage(error));
+      return null;
     } finally {
       if (requestGeneration.current === generation) setLoading(false);
     }
   }, [actorUserId]);
 
   useEffect(() => {
-    setItineraryReports([]);
+    setPageData(EMPTY_ITINERARY_PAGE);
     setPreview(null);
     setOpeningDate('');
-    void refresh();
+    void refresh(1);
     return () => { requestGeneration.current += 1; };
   }, [refresh]);
+
+  const locate = async (businessDate: string): Promise<boolean> => {
+    const generation = ++requestGeneration.current;
+    setLoading(true);
+    setErrorText('');
+    try {
+      const config = getSupabaseConfig();
+      const location = await locateItineraryDailyReport(businessDate, actorUserId, config);
+      if (requestGeneration.current !== generation || !location.found || !location.page) return false;
+      const next = await listItineraryDailyReportPage(actorUserId, location.page, config);
+      if (requestGeneration.current !== generation) return false;
+      if (next.setToken !== location.setToken
+        || !next.items.some(report => report.businessDate === businessDate)) {
+        setPageData(next);
+        setErrorText('定位期間每日 Itinerary 記錄已變更，請再定位一次。');
+        return false;
+      }
+      setPageData(next);
+      return true;
+    } catch (error) {
+      if (requestGeneration.current === generation) setErrorText(itineraryDailyReportErrorMessage(error));
+      return false;
+    } finally {
+      if (requestGeneration.current === generation) setLoading(false);
+    }
+  };
 
   const open = async (summary: ItineraryDailyReportSummary) => {
     if (openingDate) return;
@@ -124,7 +175,7 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
       setPreview(await loadItineraryDailyReport(summary.businessDate, actorUserId));
     } catch (error) {
       setErrorText(itineraryDailyReportErrorMessage(error));
-      void refresh();
+      void refresh(pageData.page);
     } finally {
       setOpeningDate('');
     }
@@ -132,7 +183,7 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
 
   return <>
     <div className="grid cols-2 report-daily-history-grid">
-      <ItineraryDailyHistoryPanel reports={itineraryReports} loading={loading} errorText={errorText} openingDate={openingDate} onRefresh={() => void refresh()} onOpen={report => void open(report)}/>
+      <ItineraryDailyHistoryPanel pageData={pageData} loading={loading} errorText={errorText} openingDate={openingDate} onRefresh={() => void refresh(pageData.page)} onPage={page => void refresh(page)} onLocate={locate} onOpen={report => void open(report)}/>
       <MorningDailyHistoryPanel reports={morningReports} onOpen={onOpenMorning}/>
     </div>
     {preview && <ItineraryDailyReportPreview report={preview} close={() => setPreview(null)}/>}
