@@ -28,6 +28,18 @@ const declarationsFor = selector => {
   return declarations;
 };
 
+const route = declarationsFor('.ship-route');
+assert.equal(route['font-size'], '13px', '港口框高度必須以港名字級計算');
+assert.equal(route.height, 'calc(3.75em + 16px)', '港口框必須固定為三行文字加上下內距');
+assert.equal(route['grid-template-columns'], 'minmax(0,1fr) auto minmax(0,1fr)', '兩側港名不得以內容寬度撐開船卡');
+const routeName = declarationsFor('.ship-route b');
+assert.equal(routeName['line-height'], '1.25', '港名三行高度必須對應實際行高');
+assert.equal(routeName['max-height'], '3.75em', '上一港與下一港各自最多顯示三行');
+assert.equal(routeName['overflow-y'], 'auto', '長港名必須可獨立上下捲動查看完整內容');
+assert.equal(routeName['overflow-x'], 'hidden', '港名不得產生橫向捲動');
+assert.equal(routeName['min-width'], '0', '連續長港名必須可在欄內換行');
+assert.equal(routeName['white-space'], 'normal', '短港名與長港名都必須保留正常換行');
+
 const label = declarationsFor('.ship-operation-grid .ship-data-label');
 assert.equal(label.color, '#000', '指定欄位標題必須是黑色');
 assert.ok(Number.parseFloat(label['font-size']) >= 12, '指定欄位標題至少需要12px');
