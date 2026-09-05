@@ -10,6 +10,7 @@ const token = '11111111111111111111111111111111';
 const emptyToken = 'd41d8cd98f00b204e9800998ecf8427e';
 const manualOperationId = '11111111-1111-4111-8111-111111111111';
 const deleteOperationId = '22222222-2222-4222-8222-222222222222';
+const legacyDeleteOperationId = '33333333-3333-4333-8333-333333333333';
 const scheduledReports = Array.from({ length:30 }, (_, index) => ({
   reportId:String(index + 10),
   businessDate:new Date(Date.UTC(2026, 8, 4 - index)).toISOString().slice(0, 10),
@@ -54,6 +55,10 @@ try {
     delete_sd_itinerary_daily_report_records: {
       ok:true, operationId:deleteOperationId, deletedCount:1, deletedBytes:12500,
       deletedReportIds:['2'], remainingReportCount:31, remainingSetToken:emptyToken,
+    },
+    delete_sd_itinerary_daily_reports: {
+      ok:true, operationId:legacyDeleteOperationId, deletedCount:1, deletedBytes:12345,
+      deletedDates:['2026-09-04'], remainingReportCount:30, remainingSetToken:emptyToken,
     },
   };
   const client = {
@@ -162,6 +167,60 @@ try {
       malformedCase.label,
     );
   }
+
+  const legacyPending = {
+    version:2,
+    operationId:legacyDeleteOperationId,
+    actorUserId:'owner-1',
+    workspaceKey:deletePending.workspaceKey,
+    configIdentity:deletePending.configIdentity,
+    expectedSetToken:token,
+    deleteDates:['2026-09-04'],
+    createdAt:'2026-09-04T04:00:00.000Z',
+  };
+  let legacyStorageKey = '';
+  const legacyDiscoveryStorage = {
+    getItem:key => {
+      legacyStorageKey = key;
+      return JSON.stringify(legacyPending);
+    },
+    setItem:() => {},
+    removeItem:() => {},
+  };
+  assert.deepEqual(
+    daily.readPendingLegacyItineraryDailyReportDelete(config, 'owner-1', legacyDiscoveryStorage),
+    legacyPending,
+  );
+  assert.match(legacyStorageKey, /daily-itinerary-report-delete:v2/);
+  memory.set(legacyStorageKey, JSON.stringify(legacyPending));
+  for (const createdAt of ['', 'not-a-timestamp', '2026-09-05 12:00:00']) {
+    const malformedTimestamp = { ...legacyPending, createdAt };
+    const malformedStorage = { getItem:()=>JSON.stringify(malformedTimestamp) };
+    assert.equal(daily.readPendingLegacyItineraryDailyReportDelete(config,'owner-1',malformedStorage), null);
+    const callsBeforeInvalidTimestamp = calls.length;
+    await assert.rejects(
+      daily.reconcileLegacyItineraryDailyReportDelete(malformedTimestamp, config, client),
+      error => error.code === 'INVALID_DELETE_ENVELOPE' && error.definitive === true,
+    );
+    assert.equal(calls.length, callsBeforeInvalidTimestamp);
+  }
+  const legacyDeleted = await daily.reconcileLegacyItineraryDailyReportDelete(legacyPending, config, client);
+  assert.deepEqual(legacyDeleted.deletedDates, ['2026-09-04']);
+  assert.deepEqual(calls.at(-1), {
+    name:'delete_sd_itinerary_daily_reports',
+    params:{
+      p_workspace_key:'workspace-a', p_actor_user_id:'owner-1', p_operation_id:legacyDeleteOperationId,
+      p_expected_set_token:token, p_delete_dates:['2026-09-04'],
+    },
+  });
+  const callsBeforeLegacyContextMismatch = calls.length;
+  await assert.rejects(
+    daily.reconcileLegacyItineraryDailyReportDelete(legacyPending, { ...config, workspaceKey:'workspace-b' }, client),
+    error => error.code === 'DELETE_CONTEXT_CHANGED' && error.definitive === true,
+  );
+  assert.equal(calls.length, callsBeforeLegacyContextMismatch);
+  daily.clearPendingLegacyItineraryDailyReportDelete(config, 'owner-1', storage);
+  assert.equal(memory.has(legacyStorageKey), false);
 
   const wrongManualReceiptClient = { rpc:() => ({ abortSignal:async () => ({ data:{
     ...responses.sd_save_manual_itinerary_report, operationId:'99999999-9999-4999-8999-999999999999',

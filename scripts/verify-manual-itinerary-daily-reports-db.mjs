@@ -5,6 +5,8 @@ import { PGlite } from '@electric-sql/pglite';
 const repo = process.cwd();
 const baselinePath = `${repo}/supabase/migrations/20260904230000_itinerary_daily_reports.sql`;
 const migrationPath = `${repo}/supabase/migrations/20260905200000_manual_itinerary_daily_reports.sql`;
+const compatibilityPatchPath = `${repo}/supabase/migrations/20260905210000_manual_itinerary_legacy_compatibility.sql`;
+const readbackPath = `${repo}/supabase/manual-itinerary-daily-reports-readback.sql`;
 const withoutPgCronTail = sql => {
   const marker = 'create extension if not exists pg_cron';
   return sql.includes(marker) ? `${sql.slice(0, sql.indexOf(marker))}\ncommit;` : sql;
@@ -31,17 +33,31 @@ try {
   await db.exec(baseline);
   const migration = await readFile(migrationPath, 'utf8');
   await db.exec(migration);
-  const hardenedFunctions = [
-    'sd_generate_daily_itinerary_report','sd_save_manual_itinerary_report','sd_itinerary_daily_report_set_token',
-    'sd_itinerary_daily_report_list_v2','sd_itinerary_daily_report_locate_v2','sd_itinerary_daily_report_load_by_id',
-    'sd_itinerary_daily_report_load','delete_sd_itinerary_daily_report_records',
+  const compatibilityPatch = await readFile(compatibilityPatchPath, 'utf8');
+  await db.exec(compatibilityPatch);
+  const hardenedSecurityDefiners = [
+    'sd_build_daily_itinerary_report_snapshot','sd_generate_daily_itinerary_report',
+    'ship_dynamics_run_daily_itinerary_reports','sd_itinerary_daily_report_set_token',
+    'sd_itinerary_daily_report_list','sd_itinerary_daily_report_locate','sd_itinerary_daily_report_load',
+    'delete_sd_itinerary_daily_reports','sd_save_manual_itinerary_report',
+    'sd_itinerary_daily_report_list_v2','sd_itinerary_daily_report_locate_v2',
+    'sd_itinerary_daily_report_load_by_id','delete_sd_itinerary_daily_report_records',
   ];
+  const hardenedCatalogCount = await value(db, `
+    select count(*)::integer as value
+    from pg_proc procedure
+    join pg_namespace namespace on namespace.oid=procedure.pronamespace
+    where namespace.nspname='public'
+      and procedure.prosecdef
+      and procedure.proname in (${hardenedSecurityDefiners.map(name => `'${name}'`).join(',')})
+  `);
+  assert.equal(hardenedCatalogCount, hardenedSecurityDefiners.length, 'the complete daily-report security-definer catalog must survive the upgrade');
   const unsafeSearchPathCount = await value(db, `
     select count(*)::integer as value
     from pg_proc procedure
     join pg_namespace namespace on namespace.oid=procedure.pronamespace
     where namespace.nspname='public'
-      and procedure.proname in (${hardenedFunctions.map(name => `'${name}'`).join(',')})
+      and procedure.proname in (${hardenedSecurityDefiners.map(name => `'${name}'`).join(',')})
       and not ('search_path=""' = any(coalesce(procedure.proconfig,array[]::text[])))
   `);
   assert.equal(unsafeSearchPathCount, 0, 'all new/replaced security-definer entry points must pin an empty search_path');
@@ -98,6 +114,33 @@ try {
   await value(db, `select public.sd_generate_daily_itinerary_report('${workspace}'::uuid,'${first.report.businessDate}'::date,clock_timestamp()) as value`);
   const sameDayCounts = (await db.query(`select generated_by,count(*)::integer as count from public.sd_itinerary_daily_reports where workspace_id='${workspace}' and business_date='${first.report.businessDate}' group by generated_by order by generated_by`)).rows;
   assert.deepEqual(sameDayCounts.map(row => [row.generated_by,row.count]), [['manual',2],['scheduled',1]]);
+
+  const legacyPage = await value(db, `select public.sd_itinerary_daily_report_list('ship-dynamics','owner-1',1,30) as value`);
+  assert.equal(legacyPage.total, 1, 'the deployed old client must see only the one scheduled report');
+  assert.equal(legacyPage.reports.length, 1);
+  assert.equal(legacyPage.reports[0].generatedBy, 'scheduled');
+  const legacyLocation = await value(db, `select public.sd_itinerary_daily_report_locate('ship-dynamics','${first.report.businessDate}'::date,'owner-1',30) as value`);
+  assert.deepEqual({ found:legacyLocation.found, page:legacyLocation.page }, { found:true, page:1 });
+
+  const legacyDeleteOp = '90909090-9090-4090-8090-909090909090';
+  const legacyDeleted = await value(db, `select public.delete_sd_itinerary_daily_reports('ship-dynamics','owner-1','${legacyDeleteOp}'::uuid,'${legacyPage.setToken}','["${first.report.businessDate}"]'::jsonb) as value`);
+  assert.equal(legacyDeleted.ok, true);
+  assert.deepEqual(legacyDeleted.deletedDates, [first.report.businessDate]);
+  assert.equal(await value(db, `select count(*)::integer as value from public.sd_itinerary_daily_reports where workspace_id='${workspace}' and generated_by='manual'`), 2, 'legacy date deletion must not delete manual snapshots');
+  assert.equal(await value(db, `select count(*)::integer as value from public.sd_itinerary_daily_reports where workspace_id='${workspace}' and generated_by='scheduled'`), 0);
+  const legacyManualOnlyPage = await value(db, `select public.sd_itinerary_daily_report_list('ship-dynamics','owner-1',1,30) as value`);
+  assert.equal(legacyManualOnlyPage.total, 0);
+  assert.deepEqual(legacyManualOnlyPage.reports, []);
+  const legacyManualOnlyLocation = await value(db, `select public.sd_itinerary_daily_report_locate('ship-dynamics','${first.report.businessDate}'::date,'owner-1',30) as value`);
+  assert.equal(legacyManualOnlyLocation.found, false);
+  await db.exec(`update public.sd_actors set role='operator' where workspace_id='${workspace}' and user_id='owner-1'`);
+  const demotedLegacyReplay = await value(db, `select public.delete_sd_itinerary_daily_reports('ship-dynamics','owner-1','${legacyDeleteOp}'::uuid,'${legacyPage.setToken}','["${first.report.businessDate}"]'::jsonb) as value`);
+  assert.deepEqual(demotedLegacyReplay, legacyDeleted, 'legacy terminal delete must reconcile before current-role authorization');
+  await db.exec(`update public.sd_actors set role='owner' where workspace_id='${workspace}' and user_id='owner-1'`);
+  const deniedManualOnlyDelete = await value(db, `select public.delete_sd_itinerary_daily_reports('ship-dynamics','owner-1','91919191-9191-4191-8191-919191919191'::uuid,'${legacyManualOnlyPage.setToken}','["${first.report.businessDate}"]'::jsonb) as value`);
+  assert.equal(deniedManualOnlyDelete.error, 'INVALID_PAYLOAD');
+  assert.equal(await value(db, `select count(*)::integer as value from public.sd_itinerary_daily_reports where workspace_id='${workspace}' and generated_by='manual'`), 2);
+  await value(db, `select public.sd_generate_daily_itinerary_report('${workspace}'::uuid,'${first.report.businessDate}'::date,clock_timestamp()) as value`);
 
   const beforeDelete = await value(db, `select public.sd_itinerary_daily_report_list_v2('ship-dynamics','owner-1',1,30) as value`);
   const deleteOp = '44444444-4444-4444-8444-444444444444';
@@ -167,6 +210,42 @@ try {
   const legacyLoad = await value(db, `select public.sd_itinerary_daily_report_load('ship-dynamics','2026-09-05','owner-1') as value`);
   assert.equal(legacyLoad.ok, true);
   assert.equal(legacyLoad.report.generatedBy, 'scheduled');
+
+  const reportIdsBeforeCompositeReplay = (await db.query(`
+    select report_id::text as report_id
+    from public.sd_itinerary_daily_reports
+    where workspace_id='${workspace}'
+    order by report_id
+  `)).rows.map(row => row.report_id);
+  await db.exec(migration);
+  await db.exec(compatibilityPatch);
+  const reportIdsAfterCompositeReplay = (await db.query(`
+    select report_id::text as report_id
+    from public.sd_itinerary_daily_reports
+    where workspace_id='${workspace}'
+    order by report_id
+  `)).rows.map(row => row.report_id);
+  assert.deepEqual(reportIdsAfterCompositeReplay, reportIdsBeforeCompositeReplay, 'the composite rollout must be replay-safe on nonempty data');
+  const replayedLegacyList = await value(db, `select public.sd_itinerary_daily_report_list('ship-dynamics','owner-1',1,30) as value`);
+  assert.equal(replayedLegacyList.total, 31);
+  assert.equal(replayedLegacyList.reports.length, 30);
+  assert.equal(replayedLegacyList.reports.every(report => report.generatedBy === 'scheduled'), true);
+  const unsafeAfterCompositeReplay = await value(db, `
+    select count(*)::integer as value
+    from pg_proc procedure
+    join pg_namespace namespace on namespace.oid=procedure.pronamespace
+    where namespace.nspname='public'
+      and procedure.prosecdef
+      and procedure.proname in (${hardenedSecurityDefiners.map(name => `'${name}'`).join(',')})
+      and not ('search_path=""' = any(coalesce(procedure.proconfig,array[]::text[])))
+  `);
+  assert.equal(unsafeAfterCompositeReplay, 0, 'the compatibility patch must restore empty search paths after a safe composite replay');
+  const readback = await readFile(readbackPath, 'utf8');
+  const readbackResult = await db.query(readback);
+  assert.equal(readbackResult.rows.length, 1);
+  assert.equal(Object.keys(readbackResult.rows[0]).length, 38);
+  const failedReadbackChecks = Object.entries(readbackResult.rows[0]).filter(([,passed]) => passed !== true);
+  assert.deepEqual(failedReadbackChecks, [], `readback checks failed: ${JSON.stringify(failedReadbackChecks)}`);
   assert.match(migration, /generated_by in \('scheduled', 'manual'\)/);
   assert.match(migration, /generated_by = 'scheduled'/);
   assert.doesNotMatch(migration, /alternative_plans_payload[\s\S]*sd_save_manual_itinerary_report/);

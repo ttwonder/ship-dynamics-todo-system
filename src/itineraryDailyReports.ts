@@ -4,6 +4,7 @@ import type { ItineraryRow } from './itinerary/itineraryTypes';
 export const ITINERARY_DAILY_REPORT_DELETE_BATCH_SIZE = 100;
 const RPC_TIMEOUT_MS = 25_000;
 const PENDING_DELETE_PREFIX = 'ship-dynamics-daily-itinerary-report-delete:v3:';
+const PENDING_LEGACY_DELETE_PREFIX = 'ship-dynamics-daily-itinerary-report-delete:v2:';
 const PENDING_MANUAL_SAVE_PREFIX = 'ship-dynamics-daily-itinerary-report-manual-save:v1:';
 const MAX_BIGINT_TEXT = '9223372036854775807';
 
@@ -86,6 +87,27 @@ export interface PendingItineraryDailyReportDelete extends ItineraryDailyReportD
   createdAt: string;
 }
 
+export interface PendingLegacyItineraryDailyReportDelete {
+  version: 2;
+  operationId: string;
+  actorUserId: string;
+  configIdentity: string;
+  workspaceKey: string;
+  expectedSetToken: string;
+  deleteDates: string[];
+  createdAt: string;
+}
+
+export interface LegacyItineraryDailyReportDeleteResult {
+  ok: true;
+  operationId: string;
+  deletedCount: number;
+  deletedBytes: number;
+  deletedDates: string[];
+  remainingReportCount: number;
+  remainingSetToken: string;
+}
+
 export interface ManualItineraryReportSaveRequest {
   operationId: string;
   actorUserId: string;
@@ -154,6 +176,17 @@ const strictReportIdSet = (value: unknown): string[] | null => {
   if (!Array.isArray(value) || !value.length || value.some(item => !isReportId(item))) return null;
   const unique = new Set<string>(value);
   return unique.size === value.length ? Array.from(unique).sort(reportIdCompare) : null;
+};
+const strictDateSet = (value: unknown): string[] | null => {
+  if (!Array.isArray(value) || !value.length
+    || value.some(item => typeof item !== 'string' || !isBusinessDate(item))) return null;
+  const unique = new Set<string>(value);
+  return unique.size === value.length ? Array.from(unique).sort() : null;
+};
+const isCanonicalIsoTimestamp = (value: unknown): value is string => {
+  if (typeof value !== 'string') return false;
+  const instant = new Date(value);
+  return Number.isFinite(instant.getTime()) && instant.toISOString() === value;
 };
 const strictSetToken = (value: unknown): string | null => {
   const token = asText(value);
@@ -494,6 +527,72 @@ export async function deleteItineraryDailyReports(
   };
 }
 
+export async function reconcileLegacyItineraryDailyReportDelete(
+  request: PendingLegacyItineraryDailyReportDelete,
+  config?: ResolvedSupabaseConfig | null,
+  client?: ItineraryDailyReportRpcClient | null,
+): Promise<LegacyItineraryDailyReportDeleteResult> {
+  const resolved = requiredConfig(config);
+  if (request.version !== 2
+    || request.configIdentity !== configIdentity(resolved)
+    || request.workspaceKey !== resolved.workspaceKey
+    || !request.actorUserId) {
+    throw new ItineraryDailyReportRpcError(
+      'DELETE_CONTEXT_CHANGED',
+      'Legacy Daily Itinerary delete context changed before reconciliation.',
+      true,
+    );
+  }
+  const expectedSetToken = strictSetToken(request.expectedSetToken);
+  const deleteDates = strictDateSet(request.deleteDates);
+  if (!isOperationId(request.operationId)
+    || !isCanonicalIsoTimestamp(request.createdAt)
+    || !expectedSetToken
+    || !deleteDates) {
+    throw new ItineraryDailyReportRpcError(
+      'INVALID_DELETE_ENVELOPE',
+      'Legacy Daily Itinerary delete dates are invalid or no longer exact.',
+      true,
+    );
+  }
+  const response = await runRpc('delete_sd_itinerary_daily_reports', {
+    p_workspace_key:resolved.workspaceKey,
+    p_actor_user_id:request.actorUserId,
+    p_operation_id:request.operationId,
+    p_expected_set_token:expectedSetToken,
+    p_delete_dates:deleteDates,
+  }, resolved, client);
+  const operationId = asText(response.operationId);
+  const deletedDates = strictDateSet(response.deletedDates);
+  const deletedCount = strictNonNegativeInteger(response.deletedCount);
+  const deletedBytes = strictNonNegativeInteger(response.deletedBytes);
+  const remainingReportCount = strictNonNegativeInteger(response.remainingReportCount);
+  const remainingSetToken = strictSetToken(response.remainingSetToken);
+  if (operationId !== request.operationId
+    || !deletedDates
+    || deletedCount === null
+    || deletedBytes === null
+    || remainingReportCount === null
+    || !remainingSetToken
+    || deletedCount !== deletedDates.length
+    || JSON.stringify(deletedDates) !== JSON.stringify(deleteDates)) {
+    throw new ItineraryDailyReportRpcError(
+      'INVALID_RESPONSE',
+      'Legacy Daily Itinerary delete receipt did not match the submitted operation.',
+      false,
+    );
+  }
+  return {
+    ok:true,
+    operationId,
+    deletedCount,
+    deletedBytes,
+    deletedDates,
+    remainingReportCount,
+    remainingSetToken,
+  };
+}
+
 export function itineraryDailyReportErrorMessage(error: unknown): string {
   const code = error instanceof ItineraryDailyReportRpcError ? error.code : '';
   const messages: Record<string, string> = {
@@ -659,4 +758,46 @@ export function clearPendingItineraryDailyReportDelete(
   storage: Pick<Storage, 'removeItem'> = window.localStorage,
 ): void {
   storage.removeItem(pendingKey(PENDING_DELETE_PREFIX, config, actorUserId));
+}
+
+export function readPendingLegacyItineraryDailyReportDelete(
+  config: ResolvedSupabaseConfig,
+  actorUserId: string,
+  storage: Pick<Storage, 'getItem'> = window.localStorage,
+): PendingLegacyItineraryDailyReportDelete | null {
+  try {
+    const raw = storage.getItem(pendingKey(PENDING_LEGACY_DELETE_PREFIX, config, actorUserId));
+    if (!raw) return null;
+    const parsed = asObject(JSON.parse(raw));
+    const expectedSetToken = strictSetToken(parsed.expectedSetToken);
+    const deleteDates = strictDateSet(parsed.deleteDates);
+    if (!expectedSetToken || !deleteDates) return null;
+    const pending: PendingLegacyItineraryDailyReportDelete = {
+      version:2,
+      configIdentity:asText(parsed.configIdentity),
+      workspaceKey:asText(parsed.workspaceKey),
+      createdAt:asText(parsed.createdAt),
+      operationId:asText(parsed.operationId),
+      actorUserId:asText(parsed.actorUserId),
+      expectedSetToken,
+      deleteDates,
+    };
+    if (parsed.version !== 2
+      || pending.configIdentity !== configIdentity(config)
+      || pending.workspaceKey !== config.workspaceKey
+      || pending.actorUserId !== actorUserId
+      || !isCanonicalIsoTimestamp(pending.createdAt)
+      || !isOperationId(pending.operationId)) return null;
+    return pending;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingLegacyItineraryDailyReportDelete(
+  config: ResolvedSupabaseConfig,
+  actorUserId: string,
+  storage: Pick<Storage, 'removeItem'> = window.localStorage,
+): void {
+  storage.removeItem(pendingKey(PENDING_LEGACY_DELETE_PREFIX, config, actorUserId));
 }

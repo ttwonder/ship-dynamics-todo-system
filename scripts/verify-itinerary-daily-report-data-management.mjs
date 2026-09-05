@@ -42,6 +42,19 @@ try {
   assert.match(adminMarkup, /管理員可查看；只有 Owner 可刪除/);
   assert.doesNotMatch(adminMarkup, /aria-label="選擇刪除快照 2"/, 'admin must not receive delete checkboxes');
 
+  const legacyPendingMarkup = renderToStaticMarkup(React.createElement(module.ItineraryReportLegacyPendingDeleteNotice, {
+    pending:{
+      version:2, operationId:'33333333-3333-4333-8333-333333333333', actorUserId:'owner-1',
+      configIdentity:'test', workspaceKey:'workspace-a', expectedSetToken:'11111111111111111111111111111111',
+      deleteDates:['2026-09-03','2026-09-04'], createdAt:'2026-09-04T04:00:00.000Z',
+    },
+    acting:false,
+    onReconcile:() => {},
+  }));
+  assert.match(legacyPendingMarkup, /舊版本 Itinerary 快照刪除結果尚未確認/);
+  assert.match(legacyPendingMarkup, /預定刪除 2 個日期/);
+  assert.match(legacyPendingMarkup, /對帳舊版本操作/);
+
   const panelSource = fs.readFileSync('src/DataManagementPanel.tsx', 'utf8');
   const viewSource = fs.readFileSync('src/ItineraryReportDataView.tsx', 'utf8');
   assert.match(panelSource, /type DataView = 'overview' \| 'items' \| 'history' \| 'itinerary'/);
@@ -53,6 +66,10 @@ try {
   assert.match(viewSource, /deleteItineraryDailyReports/);
   assert.match(viewSource, /readPendingItineraryDailyReportDelete/);
   assert.match(viewSource, /clearPendingItineraryDailyReportDelete/);
+  assert.match(viewSource, /readPendingLegacyItineraryDailyReportDelete/);
+  assert.match(viewSource, /reconcileLegacyItineraryDailyReportDelete/);
+  assert.match(viewSource, /clearPendingLegacyItineraryDailyReportDelete/);
+  assert.match(viewSource, /<ItineraryReportLegacyPendingDeleteNotice/);
   assert.match(viewSource, /listItineraryDailyReportPage/);
   assert.match(viewSource, /expectedSetToken/);
   assert.match(viewSource, /deleteReportIds/);

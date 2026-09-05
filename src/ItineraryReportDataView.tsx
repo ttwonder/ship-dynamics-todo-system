@@ -3,6 +3,7 @@ import { getSupabaseConfig } from './cloud';
 import { formatDataBytes } from './dataManagement';
 import {
   clearPendingItineraryDailyReportDelete,
+  clearPendingLegacyItineraryDailyReportDelete,
   createPendingItineraryDailyReportDelete,
   deleteItineraryDailyReports,
   itineraryDailyReportErrorMessage,
@@ -10,10 +11,13 @@ import {
   ItineraryDailyReportRpcError,
   listItineraryDailyReportPage,
   readPendingItineraryDailyReportDelete,
+  readPendingLegacyItineraryDailyReportDelete,
+  reconcileLegacyItineraryDailyReportDelete,
   writePendingItineraryDailyReportDelete,
   type ItineraryDailyReportPage,
   type ItineraryDailyReportSummary,
   type PendingItineraryDailyReportDelete,
+  type PendingLegacyItineraryDailyReportDelete,
 } from './itineraryDailyReports';
 import { formatTaipeiDateTime } from './taipeiTime';
 import type { UserAccount } from './types';
@@ -22,6 +26,14 @@ const reportListLabel = (reports: ItineraryDailyReportSummary[]) => {
   const labels = reports.map(report => `${report.businessDate} ${report.generatedBy === 'scheduled' ? '09:00自動' : '手動'} ${formatTaipeiDateTime(report.generatedAt, false)}`);
   return labels.length <= 10 ? labels.join('、') : `${labels.slice(0, 10).join('、')}，另 ${labels.length - 10} 份`;
 };
+
+export function ItineraryReportLegacyPendingDeleteNotice({ pending, acting, onReconcile }: {
+  pending: PendingLegacyItineraryDailyReportDelete;
+  acting: boolean;
+  onReconcile: () => void;
+}) {
+  return <div className="data-management-pending" role="alert"><div><b>舊版本 Itinerary 快照刪除結果尚未確認</b><span>操作 {pending.operationId.slice(0, 8)}｜預定刪除 {pending.deleteDates.length} 個日期。系統只會用原日期集合及相同 operation 對帳，不會轉成手動快照 ID。</span></div><button className="btn danger" disabled={acting} onClick={onReconcile}>{acting ? '對帳中…' : '對帳舊版本操作'}</button></div>;
+}
 
 export function ItineraryReportDataTable({ pageData, owner, selectedReports, setSelectedReports, acting, pending, onDelete, onPage }: {
   pageData: ItineraryDailyReportPage;
@@ -75,6 +87,7 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
   const [selectedReports, setSelectedReports] = useState<Record<string, ItineraryDailyReportSummary>>({});
   const [selectionSetToken, setSelectionSetToken] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingItineraryDailyReportDelete | null>(null);
+  const [legacyPending, setLegacyPending] = useState<PendingLegacyItineraryDailyReportDelete | null>(null);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState(false);
   const [errorText, setErrorText] = useState('');
@@ -87,7 +100,13 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
     setErrorText('');
     try {
       const config = getSupabaseConfig();
-      if (config) setPending(readPendingItineraryDailyReportDelete(config, currentUser.id));
+      if (config) {
+        setPending(readPendingItineraryDailyReportDelete(config, currentUser.id));
+        setLegacyPending(readPendingLegacyItineraryDailyReportDelete(config, currentUser.id));
+      } else {
+        setPending(null);
+        setLegacyPending(null);
+      }
       const next = await listItineraryDailyReportPage(currentUser.id, requestedPage, config);
       if (requestGeneration.current !== generation) return null;
       setPageData(next);
@@ -105,6 +124,7 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
     setSelectedReports({});
     setSelectionSetToken(null);
     setPending(null);
+    setLegacyPending(null);
     setNotice('');
     void refresh(1);
     return () => { requestGeneration.current += 1; };
@@ -146,8 +166,39 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
     }
   };
 
+  const performLegacyDelete = async (envelope: PendingLegacyItineraryDailyReportDelete) => {
+    const config = getSupabaseConfig();
+    if (!config) { setErrorText('尚未配置 Supabase，無法對帳舊版本每日 Itinerary 刪除。'); return; }
+    setActing(true);
+    setErrorText('');
+    setNotice('');
+    try {
+      const result = await reconcileLegacyItineraryDailyReportDelete(envelope, config);
+      clearPendingLegacyItineraryDailyReportDelete(config, currentUser.id);
+      setLegacyPending(null);
+      setSelectedReports({});
+      setSelectionSetToken(null);
+      setNotice(`舊版本刪除已對帳：${result.deletedCount} 個日期，邏輯量 ${formatDataBytes(result.deletedBytes)}。手動快照與正式 Itinerary 未變更。`);
+      await refresh(pageData.page);
+    } catch (error) {
+      const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive;
+      if (definitive) {
+        clearPendingLegacyItineraryDailyReportDelete(config, currentUser.id);
+        setLegacyPending(null);
+      } else setLegacyPending(envelope);
+      if (definitive && error instanceof ItineraryDailyReportRpcError && error.code === 'REPORT_SET_CHANGED') {
+        setSelectedReports({});
+        setSelectionSetToken(null);
+        await refresh(pageData.page);
+      }
+      setErrorText(itineraryDailyReportErrorMessage(error));
+    } finally {
+      setActing(false);
+    }
+  };
+
   const startDelete = async () => {
-    if (!owner || pending || acting) return;
+    if (!owner || pending || legacyPending || acting) return;
     const chosen = Object.keys(selectedReports).sort();
     if (!chosen.length) { setErrorText('請先人工勾選要刪除的每日 Itinerary 日快照。'); return; }
     const selectedBytes = Object.values(selectedReports).reduce((sum, report) => sum + report.logicalBytes, 0);
@@ -211,7 +262,8 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
     <div className="management-editor-heading"><div><h2>Itinerary 日快照記錄</h2><p>查看09:00自動及人工保存的正式主 Itinerary 快照；只有 Owner 可逐份選擇刪除。</p></div><button className="btn small ghost" disabled={loading || acting} onClick={() => void refresh(pageData.page)}>{loading ? '讀取中…' : '↻ 刷新記錄'}</button></div>
     {errorText && <div className="data-management-message error" role="alert">{errorText}</div>}
     {notice && <div className="data-management-message success" role="status">{notice}</div>}
+    {legacyPending && <ItineraryReportLegacyPendingDeleteNotice pending={legacyPending} acting={acting} onReconcile={() => void performLegacyDelete(legacyPending)}/>}
     {pending && <div className="data-management-pending" role="alert"><div><b>上次 Itinerary 快照刪除結果尚未確認</b><span>操作 {pending.operationId.slice(0, 8)}｜預定刪除 {pending.deleteReportIds.length} 份。系統只會用相同 operation 對帳。</span></div><button className="btn danger" disabled={acting} onClick={() => void performDelete(pending, true)}>{acting ? '對帳中…' : '對帳上次操作'}</button></div>}
-    {loading && !pageData.items.length ? <div className="management-empty"><b>正在讀取每日 Itinerary 記錄</b><span>伺服器每頁只回傳30個日期內的快照時間、方式、船數、行程列數與邏輯量，不下載完整快照。</span></div> : <ItineraryReportDataTable pageData={pageData} owner={owner} selectedReports={selectedReports} setSelectedReports={setSelectedReports} acting={acting} pending={Boolean(pending)} onDelete={() => void startDelete()} onPage={page => void refresh(page)}/>}
+    {loading && !pageData.items.length ? <div className="management-empty"><b>正在讀取每日 Itinerary 記錄</b><span>伺服器每頁只回傳30個日期內的快照時間、方式、船數、行程列數與邏輯量，不下載完整快照。</span></div> : <ItineraryReportDataTable pageData={pageData} owner={owner} selectedReports={selectedReports} setSelectedReports={setSelectedReports} acting={acting} pending={Boolean(pending || legacyPending)} onDelete={() => void startDelete()} onPage={page => void refresh(page)}/>}
   </>;
 }
