@@ -23,6 +23,7 @@ const allRows = async () => (await db.query(`select table_name,body from (
   union all select 'collections',to_jsonb(c) from public.ship_dynamics_record_collections c
   union all select 'records',to_jsonb(r) from public.ship_dynamics_records r
   union all select 'receipts',to_jsonb(r) from public.ship_dynamics_record_receipts r
+  union all select 'read-bases',to_jsonb(r) from public.ship_dynamics_record_read_bases r
 ) state order by table_name,body::text`)).rows;
 const issue = async (fn, request) => call(`select public.${fn}($1,$2,$3::jsonb,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb) as result`, [
   request.workspace ?? workspace, request.id, JSON.stringify(request.operations), request.savedBy ?? savedBy, request.actor ?? actor,

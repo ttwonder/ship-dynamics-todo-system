@@ -127,12 +127,13 @@ const normalizedCloudRead = (payload: Record<string, unknown>, revision: number)
 async function fetchCloudDeltaData(cfg: ResolvedSupabaseConfig, supabase: SupabaseClient, signal?: AbortSignal): Promise<AppData | null> {
   if (cfg.tableName !== 'ship_dynamics_app_state') throw new Error('增量讀回尚未支援此資料表；已停止讀取，未切換工作區。');
   signal?.throwIfAborted();
-  const key = JSON.stringify([cfg.supabaseUrl, cfg.supabaseAnonKey, cfg.tableName, cfg.workspaceKey]);
+  const recordStorage = usesRecordStorage(cfg);
+  const key = JSON.stringify([cfg.supabaseUrl, cfg.supabaseAnonKey, cfg.tableName, cfg.workspaceKey, recordStorage ? 'records-v1' : 'legacy']);
   if (!deltaReadCache || deltaReadCache.key !== key) deltaReadCache = { key, snapshot: null, sequence: 0, publishedSequence: 0 };
   const cache = deltaReadCache;
   const base = cache.snapshot;
   const sequence = ++cache.sequence;
-  let request = supabase.rpc('read_ship_dynamics_delta_v1', {
+  let request = supabase.rpc(recordStorage ? 'read_ship_dynamics_record_delta_v1' : 'read_ship_dynamics_delta_v1', {
     p_workspace_key: cfg.workspaceKey,
     p_base_revision: base?.revision ?? null,
     p_base_token: base?.token ?? null,
@@ -172,6 +173,7 @@ export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, sig
   const supabase = getSupabaseClient(cfg);
   if (!supabase || !cfg) { deltaReadCache = null; return null; }
   if (usesRecordStorage(cfg)) {
+    if (cfg.readMode === 'delta-v1') return fetchCloudDeltaData(cfg, supabase, signal);
     deltaReadCache = null;
     signal?.throwIfAborted();
     let request = supabase.rpc('read_ship_dynamics_records_v1', { p_workspace_key: cfg.workspaceKey });

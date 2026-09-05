@@ -17,6 +17,7 @@ const rows=async()=> (await db.query(`select kind,value from (
  union all select 'collections',to_jsonb(c) from ship_dynamics_record_collections c
  union all select 'records',to_jsonb(r) from ship_dynamics_records r
  union all select 'receipts',to_jsonb(r) from ship_dynamics_record_receipts r
+ union all select 'read-bases',to_jsonb(r) from ship_dynamics_record_read_bases r
 ) state order by kind,value::text`)).rows;
 const check=async(name,fn)=>{await fn();results.push(name);console.log('PASS '+name);};
 let buildPatch, audit, assertAuthorized;

@@ -3,7 +3,7 @@
 export function usesRecordStorage(config: { storageMode?: 'legacy' | 'records-v1'; readMode?: 'snapshot' | 'delta-v1'; tableName: string }): boolean {
   if (config.storageMode && config.storageMode !== 'legacy' && config.storageMode !== 'records-v1') throw new Error('不支援的雲端儲存模式；已停止讀寫。');
   if (config.storageMode !== 'records-v1') return false;
-  if (config.tableName !== 'ship_dynamics_app_state' || (config.readMode && config.readMode !== 'snapshot')) throw new Error('逐筆儲存測試模式與目前設定不相容；未切換權威來源。');
+  if (config.tableName !== 'ship_dynamics_app_state' || (config.readMode && config.readMode !== 'snapshot' && config.readMode !== 'delta-v1')) throw new Error('逐筆儲存測試模式與目前設定不相容；未切換權威來源。');
   return true;
 }
 

@@ -86,7 +86,7 @@ export async function verifyRecordAdapter({ db, vite, payload, workspace, reques
         intercept=()=>response(malformed); await assert.rejects(cloud.fetchCloudData(config));
       }
       const count=requests.length;
-      for(const invalid of [{...config,storageMode:'unknown'},{...config,tableName:'other_table'},{...config,readMode:'delta-v1'}])await assert.rejects(cloud.fetchCloudData(invalid));
+      for(const invalid of [{...config,storageMode:'unknown'},{...config,tableName:'other_table'},{...config,readMode:'unknown'}])await assert.rejects(cloud.fetchCloudData(invalid));
       assert.equal(requests.length,count);
       assert.throws(()=>consumeRecordSnapshot({status:'missing',protocol:'wrong',workspace_key:workspace},workspace));
       assert.equal(await cloud.fetchCloudData({...config,workspaceKey:'missing-workspace'}),null);

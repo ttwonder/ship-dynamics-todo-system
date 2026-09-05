@@ -36,12 +36,28 @@ create table if not exists public.ship_dynamics_record_receipts (
   primary key (workspace_key, operation_id)
 );
 
+-- Read bases contain only root metadata and ordered IDs, never business bodies.
+-- A writer captures its previous committed base after validation, in the same
+-- transaction as row changes. Pruned/missing bases safely require a full read.
+create table if not exists public.ship_dynamics_record_read_bases (
+  workspace_key text not null references public.ship_dynamics_record_workspaces(workspace_key),
+  revision integer not null,
+  token text not null,
+  root jsonb not null,
+  orders jsonb not null,
+  primary key (workspace_key, revision)
+);
+create index if not exists ship_dynamics_records_changed_revision
+  on public.ship_dynamics_records(workspace_key, revision, collection);
+
 alter table public.ship_dynamics_record_workspaces enable row level security;
 alter table public.ship_dynamics_record_collections enable row level security;
 alter table public.ship_dynamics_records enable row level security;
 alter table public.ship_dynamics_record_receipts enable row level security;
+alter table public.ship_dynamics_record_read_bases enable row level security;
 revoke all on public.ship_dynamics_record_workspaces, public.ship_dynamics_record_collections,
-  public.ship_dynamics_records, public.ship_dynamics_record_receipts from public, anon, authenticated;
+  public.ship_dynamics_records, public.ship_dynamics_record_receipts,
+  public.ship_dynamics_record_read_bases from public, anon, authenticated;
 
 -- Privileged, explicit fixture/import input; never reads the legacy table and never
 -- replaces an existing authority. Exact same import is a replay even after edits.
@@ -266,6 +282,11 @@ begin
   saved_at := case when jsonb_array_length(p_operations)=0 then workspace.updated_at else clock_timestamp() end;
   saved_text := to_char(saved_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   next_revision := workspace.revision + case when jsonb_array_length(p_operations)=0 then 0 else 1 end;
+  if jsonb_array_length(p_operations)>0 then
+    insert into public.ship_dynamics_record_read_bases values(p_workspace_key,workspace.revision,
+      md5(jsonb_build_array(p_workspace_key,workspace.import_token,workspace.revision)::text),workspace.root,orders)
+      on conflict(workspace_key,revision) do nothing;
+  end if;
   -- Materialize an originally absent collection only when this transaction touches
   -- it. All order validation is complete before any physical write starts.
   for name,ids in select * from jsonb_each(next_orders) loop

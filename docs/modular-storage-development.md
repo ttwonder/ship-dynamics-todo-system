@@ -124,3 +124,14 @@
 驗證：第三批 23 個雙 SQL workflow 案例、原 record store 16 SQL＋7 adapter、atomic-collaboration 聚合與 internal-control／meeting-reconcile／batch-tasks／batch-internal-control、typecheck／build 通過。建置仍有既有大型 bundle 警告。
 
 後續順序：將 record authority 接上增量讀回與變更游標 → 原 App 保存隊列／同步接線及隔離瀏覽器驗收 → 真 Supabase／切換與回退。不能以本批 local PASS 略過任一項。
+
+## 第四批：逐筆權威的增量同步讀回
+
+- `storageMode: records-v1` 可明確搭配 `readMode: delta-v1`，沿用原 `fetchCloudData`、無改 JSX／CSS／業務函式／正式設定。讀取模式不切換寫入權威，legacy 與 records 游標分開。
+- 新 `read_ship_dynamics_record_delta_v1` 用一個 STABLE statement snapshot，依逐筆 revision 索引取變更 body，以舊／新 ID 順序確認刪除、建立與排序；不讀 legacy workspace/revision，不需要比對兩包業務 JSON。
+- 每次非空提交只另保留舊 root metadata＋ordered IDs 作讀回基準，不複製全部業務 body；該基準與實體、receipt 同交易。基準缺失／token 不符時回傳真實完整快照。這是增量讀回基準，不是完整可還原的歷史備份，不能冒充 cutover rollback。
+- `test:cloud-record-delta`：7 個 SQL＋6 個真實 Supabase JS／封閉 SQL 傳輸案例通過，包含多次離線變更、刪除／短暫建立再刪除、首次 optional collection、設定／伺服器 audit、abort、舊回覆倒灌、權威模式切換與缺 RPC 不降級。
+- 本機 1,000 筆合成 task fixture：初次回覆 1,102,816 bytes；修改一筆 body 的 delta 回覆 862 bytes。此量測沒有加 audit、沒有真網路耗時，不能解讀為一般 UI 保存速度或正式效能比例。
+- 既有 cloud-delta 25 protocol＋18 integration、record-store 16 SQL＋7 adapter、record-workflows 23 案例及 typecheck 通過。rollback 的實際 readback 已加入 read-base 表。
+- 尚未消除初始完整 AppData 重組、完整本機 normalize、小型 workspace revision 鎖與大型 ID 順序／audit order 競爭；read-base retention 也尚未制定。這些資料結構不等同四種耗時的最終驗收。
+- 仍是隔離 development SQL、browser roles 不可用；未啟用正式設定／Realtime，未 Push／部署或更動正式 DB。下一項為原 App 保存／同步流程與隔離試用接線，不以本批通過宣稱整站完成。
