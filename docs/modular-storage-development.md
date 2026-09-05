@@ -144,3 +144,12 @@
 - `test:cloud-record-identity` 6 項通過，其中 3 項執行實際 recovery／App coordinator；另核對原設定來源優先序及同步 wiring。AST 比對 App 全部 19 個最外層 JSX 區塊與 baseline 完全一致；其餘 UI 原始檔不改。
 - atomic-collaboration 聚合、record store 23、record delta 13、cloud delta 43、bootstrap safety、typecheck／build 通過。原「Realtime 禁用」測試依新增接線調整為「僅註冊正確權威，非真 Realtime 證明」。建置保留既有大型 bundle 提醒。
 - 下一項為原 App＋真 SQL 的隔離瀏覽器保存／reload 驗證，以及仍讀 legacy payload 的下游 RPC 相容性；不能把這批身份修正視為已完成完整 UI／報告／資料管理驗收。
+
+## 第六批：原畫面的本機 SQL 保存閉環
+
+- `test:cloud-record-browser` 啟動只綁 loopback 的 Vite＋PGlite service 及全新 headless Chrome profile，使用原 main.tsx → App；沒有瀏覽器正式登入、正式 credentials、遠端 SQL 或正式資料。測試服務資產明示「真實 UI＋測試資料」，CSP 限制外部連線；RPC 白名單以真正 SQL 執行，不製造成功回覆。
+- 四個真瀏覽器核心場景通過：既有進站／Owner 密碼登入；船舶近期動態保存＋一筆 audit／另一船不變／durable 後釋放鎖；重新載入並再開原 editor 看到保存值；未修改取消不新增 revision，鎖亦釋放。legacy workspace 保持空表，沒有大 JSON 鏡像寫入。
+- 測試先抓到合成資料把 Owner 放在只允許 admin/operator 的船舶分派名單，normalize 會剔除而 SQL 正確拒絕未帶 guard 的隱含權限變動；已只修 fixture。產品授權規則、保存函式與 SQL 都未為此放寬。
+- Chromium DOM readiness 與原「同步最新」確認對話框已用實際事件處理；只接受該明確確認文字，其他對話框使 gate 失敗。測試結果及請求時序寫到本機 Temp 獨立 evidence.json；服務與測試 Chrome 於結束後關閉。
+- 明確缺口：此服務還未掛 `sd_itinerary_main_load_many`，因此畫面保留真實 Itinerary 讀取失敗提示；沒有替身掩飾，也不能把 CORE_FLOW_PASS 稱為全站/Itinerary/PDF/真 Realtime 通過。尚未向使用者開啟試用網站。
+- 這一批僅新增 QA 腳本、npm 指令與本文件；產品 bytes 未變，沿用第五批已通過的 typecheck／build及回歸，不重跑不受影響的全套測試。
