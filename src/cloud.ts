@@ -5,8 +5,9 @@ import { normalizeAppData } from './normalize';
 import { CloudBlockPatchConflictError, type CloudBlockPatchOperation } from './cloudBlockPatch';
 import type { CloudBlockCompactReceipt, CloudBlockReceiptStatus } from './cloudBlockReceipt';
 import { consumeCloudDeltaResponse, type CloudDeltaSnapshot } from './cloudDelta';
+import { consumeRecordSnapshot, usesRecordStorage } from './cloudRecords';
 
-export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string; readMode?: 'snapshot' | 'delta-v1' }
+export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string; readMode?: 'snapshot' | 'delta-v1'; storageMode?: 'legacy' | 'records-v1' }
 export type ResolvedSupabaseConfig = SupabaseConfig & { tableName: string };
 export interface CloudEditingLock { ok: boolean; sectionKey: string; lockedBy?: string; lockedByName?: string; expiresAt?: string }
 declare global { interface Window { SHIP_DYNAMICS_SUPABASE_CONFIG?: SupabaseConfig } }
@@ -57,6 +58,7 @@ export function cloudStoragePayloadFor(data:AppData):AppData{
 export function getSupabaseClient(config?: ResolvedSupabaseConfig|null) {
   const cfg = config===undefined?getSupabaseConfig():config;
   if (!cfg) return null;
+  usesRecordStorage(cfg); // Reject unknown/mixed authority modes before any request.
   const key = `${cfg.supabaseUrl}|${cfg.supabaseAnonKey}`;
   if (!client || clientKey !== key) {
     client = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
@@ -78,6 +80,7 @@ export function subscribeToCloudRevision(
   const cfg=config===undefined?getSupabaseConfig():config;
   const supabase=getSupabaseClient(cfg);
   if(!supabase||!cfg)return()=>{};
+  if(usesRecordStorage(cfg)){ onStatus?.('RECORD_STORAGE_REALTIME_NOT_ENABLED'); return()=>{}; }
   const channel=supabase
     .channel(`ship-dynamics-revision-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     .on('postgres_changes',{
@@ -168,6 +171,17 @@ export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, sig
   const cfg = config === undefined ? getSupabaseConfig() : config;
   const supabase = getSupabaseClient(cfg);
   if (!supabase || !cfg) { deltaReadCache = null; return null; }
+  if (usesRecordStorage(cfg)) {
+    deltaReadCache = null;
+    signal?.throwIfAborted();
+    let request = supabase.rpc('read_ship_dynamics_records_v1', { p_workspace_key: cfg.workspaceKey });
+    if (signal) request = request.abortSignal(signal);
+    const { data, error } = await request;
+    signal?.throwIfAborted();
+    if (error) throw error;
+    const snapshot = consumeRecordSnapshot(data, cfg.workspaceKey);
+    return snapshot ? normalizedCloudRead(snapshot.payload, snapshot.revision) : null;
+  }
   if (cfg.readMode === 'delta-v1') return fetchCloudDeltaData(cfg, supabase, signal);
   if (cfg.readMode && cfg.readMode !== 'snapshot') throw new Error('不支援的雲端讀取模式；已停止讀取。');
   deltaReadCache = null;
@@ -194,6 +208,7 @@ export async function saveCloudData(payload: AppData, expectedRevision: number, 
   const cfg = config === undefined ? getSupabaseConfig() : config;
   const supabase = getSupabaseClient(cfg);
   if (!supabase || !cfg) throw new Error('尚未配置 Supabase；資料只保存在此瀏覽器。');
+  if (usesRecordStorage(cfg)) throw new CloudBlockPatchRejectedError('record-full-save-disabled');
   const cleanPayload = sanitizeAppDataForStorage(payload);
   const row = {
     workspace_key: cfg.workspaceKey,
@@ -237,6 +252,7 @@ export async function applyCloudBlockPatch(
   const cfg=config===undefined?getSupabaseConfig():config;
   const supabase=getSupabaseClient(cfg);
   if(!supabase||!cfg)throw new Error('尚未配置 Supabase；無法使用原子區塊保存。');
+  if(usesRecordStorage(cfg))throw new CloudBlockPatchRejectedError('record-v1-fallback-disabled');
   if(!actorUserId)throw new Error('缺少保存者身份；已拒絕原子區塊保存。');
   let request=supabase.rpc('apply_ship_dynamics_block_patch',{
     p_workspace_key:cfg.workspaceKey,
@@ -304,7 +320,7 @@ export async function applyCloudBlockPatchV2(
   const supabase=getSupabaseClient(cfg);
   if(!supabase||!cfg)throw new Error('尚未配置 Supabase；無法使用 compact 原子區塊保存。');
   if(!actorUserId)throw new CloudBlockPatchRejectedError('missing-actor');
-  let request=supabase.rpc('apply_ship_dynamics_block_patch_v2',{
+  let request=supabase.rpc(usesRecordStorage(cfg)?'apply_ship_dynamics_record_patch_v1':'apply_ship_dynamics_block_patch_v2',{
     p_workspace_key:cfg.workspaceKey,
     p_operation_id:operationId,
     p_operations:operations,
@@ -338,7 +354,7 @@ export async function getCloudBlockPatchReceipt(
   const cfg=config===undefined?getSupabaseConfig():config;
   const supabase=getSupabaseClient(cfg);
   if(!supabase||!cfg)throw new Error('尚未配置 Supabase；無法查詢保存 receipt。');
-  let request=supabase.rpc('get_ship_dynamics_block_patch_receipt',{
+  let request=supabase.rpc(usesRecordStorage(cfg)?'get_ship_dynamics_record_receipt_v1':'get_ship_dynamics_block_patch_receipt',{
     p_workspace_key:cfg.workspaceKey,
     p_operation_id:operationId,
     p_operations:operations,

@@ -38,6 +38,26 @@
 
 修正只處理上述範圍可重現的失敗；不開啟無關全量審計。通過適用驗證即提交這批。
 
+## 續作進度（工作分類，不換算工時百分比）
+
+| 工作 | 狀態 |
+|---|---|
+| 隔離／原版保留／增量讀回 | 首批已本機驗證並 commit `d532f2c` |
+| 逐筆權威儲存與原子保存 | 部分完成：逐筆基礎＋船舶 note／原有 audit 的首個切片本機通過；尚非全領域逐筆命令完成 |
+| 完整業務流程接線 | 待完成；船舶、要事、內控、會議、批量、設定、通知及稽核 |
+| 按需讀取／鎖／同步及四種耗時 | 待完成；尚無 hosted 前後效能證據 |
+| 原／新版聯動與下游內容比對 | 待完成；首批舊路徑回歸不等於新寫入路徑驗收 |
+| 隔離真 Supabase 協作驗收 | 待環境與測試，禁止用正式 DB 測試寫入 |
+| 最新資料切換及回退演練 | 待完成；正式操作另行授權 |
+
+### 本批範圍與驗證界線
+
+新增獨立 development-only 逐筆儲存：保留原字串 ID、每筆原 JSON 欄位、陣列順序及根欄位，回讀仍為原 AppData；這是相容的逐筆儲存，不是套用舊 normalized UI，也不宣稱巢狀分船進度／所有欄位都已拆完。原表不雙寫、不搬正式資料；新 RPC 預設撤銷 PUBLIC／anon／authenticated 執行權限，不列入正式 manifest。封閉測試傳輸由本機資料庫 owner 執行；沒有為 browser 角色開啟此候選。
+
+本批必要證據：無損匯入／回讀及 rerun 不覆寫，真 SQL 的單船保存＋audit、其他船不被覆寫、同筆 CAS、有效／錯對象／過期 lease、actor guard、整筆交易失敗零部分提交、同 operation replay／不符拒絕及 lost ACK；真實 client adapter 封閉傳輸整合；型別／build／UI 原始檔不變。其他業務寫入尚未驗收時明確拒絕，不偷偷降級舊全包寫入。
+
+尚未接入正式設定與現行 UI 保存隊列時，不宣稱整個船舶 UI 流程已驗收；本機 SQL 獨立記錄證據不代表真多連線同時不等待。完整按需載入、Realtime、多連線與 hosted 效能留在明列的後續工作。採直接可重現定點驗證，不新增多輪獨立 review；通過本批適用驗證即獨立 commit。
+
 ## 後續仍須完成，不能被此批 PASS 取代
 
 1. 逐業務資料的權威儲存與交易命令，必要聯動保持原子性；不是永久以整包 JSON 作新架構。
@@ -67,3 +87,23 @@
 `npm run test:cloud-delta` 自帶隔離 PGlite 及封閉傳輸，無須任何雲端 key。新增 SQL 位於 `supabase/development/`，未加入現有 migration manifest；本批未更改任何現有設定資產，未自行啟用 `readMode: 'delta-v1'`，程式預設仍走原讀取方式。不要將這個開發候選當成可以立即上線的完整正規化版本。
 
 本批的 SQL 仍從整包權威資料與既有歷史計算差異，因此尚有伺服器 JSON 比對成本；後續改成逐筆權威資料與變更索引後，才移除這個過渡成本。
+
+## 第二批本機驗證紀錄：逐筆儲存首個切片
+
+- `npm run test:cloud-record-store`：16 個 SQL 案例＋7 個真實 Supabase JS adapter／封閉傳輸整合案例，共 23 個通過。
+- 從現有 `saveVesselEditorDraft` 使用的 `applyItineraryOperationalWriteMask`、`applyVesselOperationalDraft`、`withAudit` 形成船舶 note 修改，經原 `buildCloudBlockPatch` 和授權驗證器送到新 SQL；沒有改這些業務函式或 UI callback。
+- 額外在獨立 PGlite 執行原 SQL，用同起始資料／同操作比對新舊結果；只排除兩次獨立提交必然不同的根 `updatedAt`，其餘資料（含 audit 及伺服器網路欄位）一致。這只證明該切片，未冒稱所有聯動等價。
+- 新權威保存只寫相關 vessel／audit 與必要順序及小型 revision／receipt；另一艘船的 value、revision、xmin、ctid 均未改，該資料庫舊 app_state 表仍無資料／無雙寫。對照用舊 SQL 在另一個獨立記憶體資料庫執行。
+- 同筆 stale CAS、有效錯對象／錯 owner／缺漏／過期 lease、失效 actor guard、缺相關 audit、重複操作、整筆 SQL 中途例外回退、原 operation lost-ACK replay、不符 operation 拒絕、無變更 replay、500 筆 audit 保留上限均通過。
+- 錯誤退出碼用故意失敗 sentinel 實測為 `1`；修正 PGlite dispose 可重設先前 `process.exitCode` 的 harness 問題，退出碼在清理後才發布。
+- `test:atomic-collaboration` 聚合及 bootstrap safety、internal-control、internal-control-projection、meeting-reconcile、batch-tasks、batch-internal-control、normalize 均通過。第一批 cloud-delta 的 25＋18 案例亦在本批 adapter bytes 上通過。
+- `typecheck`、`build`、`git diff --check` 通過；56 個 JSX／TSX／CSS 原始檔未改。既有業務函式與原設定資產未改，只有 `cloud.ts` 既有 adapter 增加 opt-in 分支。
+- 工作分支仍為 `development/normalized-storage`，原 `main`／baseline 不变。本批未 Push、merge、部署或操作正式 DB；唯讀來源盤點不是獨立 review PASS。
+
+### 本批仍然不能宣稱完成的部分
+
+`storageMode: 'records-v1'` 只在本機測試設定中啟用，不變更任何既有配置資產。寫入目前只接受已測的既存船舶 note／必要稽核切片；其他業務命令明確拒絕，舊 v1／整包保存不得 fallback。新 RPC 和表維持 browser 角色不可用，因此不是可推送上線的完整版本。
+
+新記錄儲存的讀回目前仍重組完整 AppData，尚未把第一批 delta 協議接上逐筆 change cursor／按需 bootstrap；Realtime 明確未啟用，不訂閱錯誤的舊權威表。仍有小型 workspace revision 鎖與 audit 順序 CAS。上述限制需要後续對應工作解除，不能由資料列沒有互相覆寫就推論真多連線不等待或四種耗時已解決。
+
+完整保存隊列／UI／身份／鎖釋放在新後端下的 E2E、要事↔內控／會議與分船進度、其他權限與批量流程、真 Supabase ACL/PostgREST/Realtime、多連線及 hosted 效能、最新資料切換與回退仍未完成。
