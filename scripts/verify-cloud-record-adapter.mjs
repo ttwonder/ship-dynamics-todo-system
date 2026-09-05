@@ -100,12 +100,20 @@ export async function verifyRecordAdapter({ db, vite, payload, workspace, reques
       const data=await cloud.fetchCloudData(config);data.vessels[0].note.recentDynamics='UNSAVED DRAFT';
       await equalAuthority(await cloud.fetchCloudData(config));
     });
-    await check('adapter: stale CAS remains a typed conflict and Realtime is explicitly not enabled',async()=>{
+    await check('adapter: stale CAS stays typed; feed registration targets row authority (mock transport)',async()=>{
       const stale=await requestFor(payload,'stale-client');
       await assert.rejects(submit(stale),error=>error instanceof CloudBlockPatchConflictError);
-      const statuses=[];const count=requests.length;
-      const stop=cloud.subscribeToCloudRevision(()=>{throw new Error('Must not subscribe to legacy authority');},status=>statuses.push(status),config);
-      assert.deepEqual(statuses,['RECORD_STORAGE_REALTIME_NOT_ENABLED']);stop();assert.equal(requests.length,count);
+      const statuses=[],revisions=[];const count=requests.length;
+      const client=cloud.getSupabaseClient(config),originalChannel=client.channel,originalRemove=client.removeChannel;
+      let registration,emit,removed=false;
+      const channel={on(_event,filter,callback){registration=filter;emit=callback;return channel;},subscribe(callback){callback('SUBSCRIBED');return channel;}};
+      client.channel=()=>channel;client.removeChannel=async value=>{assert.equal(value,channel);removed=true;return 'ok';};
+      try{
+        const stop=cloud.subscribeToCloudRevision(revision=>revisions.push(revision),status=>statuses.push(status),config);
+        assert.equal(registration.table,'ship_dynamics_record_workspaces');assert.equal(registration.filter,`workspace_key=eq.${workspace}`);
+        emit({new:{revision:123}});assert.deepEqual(revisions,[123]);assert.deepEqual(statuses,['SUBSCRIBED']);
+        stop();assert.equal(removed,true);assert.equal(requests.length,count);
+      }finally{client.channel=originalChannel;client.removeChannel=originalRemove;}
     });
   } finally {
     intercept=null;globalThis.window=globals.window;globalThis.localStorage=globals.localStorage;globalThis.fetch=globals.fetch;

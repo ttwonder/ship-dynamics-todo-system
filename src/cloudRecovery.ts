@@ -31,11 +31,11 @@ export function updateDurableRevisionFloor(floors:Map<string,number>,identity:st
 }
 
 export function cloudWorkspaceIdentity(config:ResolvedSupabaseConfig|null|undefined):string{
-  return config?`cloud-workspace-v2:${JSON.stringify([config.supabaseUrl,config.tableName,config.workspaceKey])}`:'';
+  return config?`cloud-workspace-v2:${JSON.stringify([config.supabaseUrl,config.tableName,config.workspaceKey,...(config.storageMode&&config.storageMode!=='legacy'?[config.storageMode]:[])])}`:'';
 }
 
 export function cloudConfigIdentity(config:ResolvedSupabaseConfig|null|undefined):string{
-  return config?`cloud-config-v2:${JSON.stringify([config.supabaseUrl,config.tableName,config.workspaceKey,config.supabaseAnonKey])}`:'';
+  return config?`cloud-config-v2:${JSON.stringify([config.supabaseUrl,config.tableName,config.workspaceKey,config.supabaseAnonKey,...(config.storageMode&&config.storageMode!=='legacy'?[config.storageMode]:[]),...(config.readMode&&config.readMode!=='snapshot'?[config.readMode]:[])])}`:'';
 }
 
 export function normalizeStoredCloudWorkspaceIdentity(storedIdentity:string|null|undefined,config:ResolvedSupabaseConfig|null|undefined):string{
@@ -43,6 +43,7 @@ export function normalizeStoredCloudWorkspaceIdentity(storedIdentity:string|null
   const workspace=cloudWorkspaceIdentity(config);
   if(!stored||!workspace||!config)return stored;
   if(stored===workspace)return workspace;
+  if(config.storageMode&&config.storageMode!=='legacy')return stored;
   const parts=stored.split('|');
   if(parts.length<4)return stored;
   const [legacyUrl,legacyTable,...legacyTail]=parts;

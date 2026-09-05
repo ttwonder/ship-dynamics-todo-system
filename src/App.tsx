@@ -8,6 +8,7 @@ import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlo
 import { CloudBlockPatchConfirmedRefreshError, CloudBlockPatchOutcomeUnknownError, runCloudBlockPatchWithReceipt } from './cloudBlockReceipt';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
 import { mergeConfirmedCloudSnapshot } from './cloudConfirmedMerge';
+// Storage-mode fencing lives in cloudConfigIdentity; UI markup is unchanged.
 import { mayOfferFirstRunInitialization, mayPersistLocalSnapshot, trustedMatchingCloudIdentity } from './cloudBootstrapSafety';
 import ManagementView from './Management';
 import MorningWorkspaceView from './MorningWorkspace';
@@ -150,7 +151,7 @@ export class StaleAsyncConfigError extends Error { constructor(){super('非同�
 export function createAsyncConfigCoordinator() {
   let epoch=0;
   let generation=0;
-  const same=(left:ResolvedSupabaseConfig|null|undefined,right:ResolvedSupabaseConfig|null|undefined)=>Boolean(left&&right&&left.supabaseUrl===right.supabaseUrl&&left.supabaseAnonKey===right.supabaseAnonKey&&left.workspaceKey===right.workspaceKey&&left.tableName===right.tableName);
+  const same=sameCloudConfig;
   return {
     begin(config:ResolvedSupabaseConfig){const snapshot=Object.freeze({...config});return {generation:++generation,epoch,config:snapshot};},
     invalidate(){return ++epoch;},
@@ -223,7 +224,7 @@ function priorityClass(p?: string) { return p === '急' ? 'badge urgent' : p ===
 function fmt(dt?: string) { return formatTaipeiDateTime(dt,false); }
 function savedStatus(label:string, at?:string) { return `${label}｜最新保存 ${formatTaipeiDateTime(at||new Date(),false)}`; }
 export const cloudIdentity=cloudWorkspaceIdentity;
-function sameCloudConfig(left:ResolvedSupabaseConfig|undefined|null,right:ResolvedSupabaseConfig|undefined|null) { return Boolean(left&&right&&left.supabaseUrl===right.supabaseUrl&&left.supabaseAnonKey===right.supabaseAnonKey&&left.workspaceKey===right.workspaceKey&&left.tableName===right.tableName); }
+function sameCloudConfig(left:ResolvedSupabaseConfig|undefined|null,right:ResolvedSupabaseConfig|undefined|null) { return Boolean(left&&right&&cloudConfigIdentity(left)===cloudConfigIdentity(right)); }
 function vesselMatchesUser(v: Vessel, user: UserAccount | null, canViewAll = false) { return !user || canViewAll || v.assignedUserIds.includes(user.id) || user.managedVesselIds.includes(v.id) || hasActiveVesselDelegation(v, user.id); }
 function batchVisibleVesselIds(data: AppData, user: UserAccount) {
   const canViewAll = user.role==='owner'||user.role==='admin'||hasPermission(data.settings.rolePermissions,user,'viewAllVessels');

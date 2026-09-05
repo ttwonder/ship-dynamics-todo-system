@@ -135,3 +135,12 @@
 - 既有 cloud-delta 25 protocol＋18 integration、record-store 16 SQL＋7 adapter、record-workflows 23 案例及 typecheck 通過。rollback 的實際 readback 已加入 read-base 表。
 - 尚未消除初始完整 AppData 重組、完整本機 normalize、小型 workspace revision 鎖與大型 ID 順序／audit order 競爭；read-base retention 也尚未制定。這些資料結構不等同四種耗時的最終驗收。
 - 仍是隔離 development SQL、browser roles 不可用；未啟用正式設定／Realtime，未 Push／部署或更動正式 DB。下一項為原 App 保存／同步流程與隔離試用接線，不以本批通過宣稱整站完成。
+
+## 第五批：原 App 權威身份與同步入口
+
+- 舊 workspace/config identity 保留原字串，records mode 加上獨立權威識別；readMode 變更只切換 I/O generation，不改同權威的 durable revision floor。舊 cache identity 升級不再把 legacy base 承認為 records base。
+- 原 App 的 config coordinator 與 sameCloudConfig 共用此識別，拒絕模式切換前／後才返回的旧保存结果；沒有重寫保存隊列或關閉／放棄草稿。
+- 原 subscribeToCloudRevision 接到正確的 record workspace revision 表，App 沿用原 wakeup／延後同步邏輯；測試替身證明的是註冊目標與回調，尚不證明 hosted publication、RLS 或真 Realtime。
+- `test:cloud-record-identity` 6 項通過，其中 3 項執行實際 recovery／App coordinator；另核對原設定來源優先序及同步 wiring。AST 比對 App 全部 19 個最外層 JSX 區塊與 baseline 完全一致；其餘 UI 原始檔不改。
+- atomic-collaboration 聚合、record store 23、record delta 13、cloud delta 43、bootstrap safety、typecheck／build 通過。原「Realtime 禁用」測試依新增接線調整為「僅註冊正確權威，非真 Realtime 證明」。建置保留既有大型 bundle 提醒。
+- 下一項為原 App＋真 SQL 的隔離瀏覽器保存／reload 驗證，以及仍讀 legacy payload 的下游 RPC 相容性；不能把這批身份修正視為已完成完整 UI／報告／資料管理驗收。

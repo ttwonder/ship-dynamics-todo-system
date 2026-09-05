@@ -72,6 +72,10 @@ export function getSupabaseClient(config?: ResolvedSupabaseConfig|null) {
 
 export function isCloudConfigured() { return !!getSupabaseClient(); }
 
+export function cloudChangeFeedTable(config:ResolvedSupabaseConfig):string {
+  return usesRecordStorage(config)?'ship_dynamics_record_workspaces':config.tableName;
+}
+
 export function subscribeToCloudRevision(
   onRevision:(revision:number)=>void,
   onStatus?:(status:string)=>void,
@@ -80,13 +84,13 @@ export function subscribeToCloudRevision(
   const cfg=config===undefined?getSupabaseConfig():config;
   const supabase=getSupabaseClient(cfg);
   if(!supabase||!cfg)return()=>{};
-  if(usesRecordStorage(cfg)){ onStatus?.('RECORD_STORAGE_REALTIME_NOT_ENABLED'); return()=>{}; }
+  // Subscribe to the selected authority; hosted publication is a separate gate.
   const channel=supabase
     .channel(`ship-dynamics-revision-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     .on('postgres_changes',{
       event:'*',
       schema:'public',
-      table:cfg.tableName,
+      table:cloudChangeFeedTable(cfg),
       filter:`workspace_key=eq.${cfg.workspaceKey}`,
     },payload=>{
       const revision=Number((payload.new as{revision?:unknown}|null)?.revision);
