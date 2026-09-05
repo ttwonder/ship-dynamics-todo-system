@@ -1,6 +1,6 @@
 -- DEVELOPMENT ONLY. Not a deployment migration. No legacy writes or browser grants.
 -- Compatible row JSON is authoritative here; the legacy workspace is never a mirror.
--- First write slice: existing vessel note + original audit side effects only.
+-- Whole original operation envelopes; row bodies are never mirrored to legacy.
 -- A small workspace metadata lock still allocates a commit revision. This is NOT
 -- evidence of independent-connection throughput or the final lock/read design.
 begin;
@@ -136,8 +136,10 @@ declare
   workspace public.ship_dynamics_record_workspaces%rowtype;
   receipt jsonb; auth_payload jsonb; operation jsonb; guard jsonb; current_value jsonb;
   expected_value jsonb; replacement jsonb; ids jsonb; final_ids jsonb; requested_ids jsonb;
-  audit_ids jsonb; next_audit_ids jsonb; key text; seen text[] := array[]::text[];
+  key text; seen text[] := array[]::text[];
   target_id text; name text; vessel_count integer := 0; audit_count integer := 0;
+  names text[] := array['users','vessels','tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs'];
+  orders jsonb; next_orders jsonb; requested_orders jsonb := '{}'::jsonb; next_root jsonb;
   next_revision integer; saved_at timestamptz; saved_text text;
 begin
   if nullif(p_operation_id,'') is null or char_length(p_operation_id)>200 then
@@ -163,6 +165,7 @@ begin
   )),'{}'::jsonb) into auth_payload
   from public.ship_dynamics_record_collections c where c.workspace_key=p_workspace_key and c.collection in ('users','vessels');
   if p_actor_guard is null or public.ship_dynamics_actor_guard(auth_payload,p_actor_user_id) is distinct from p_actor_guard
+    or (public.ship_dynamics_patch_touches_authorization_domain(p_operations) and p_authorization_guard is null)
     or (p_authorization_guard is not null and public.ship_dynamics_authorization_guard(auth_payload) is distinct from p_authorization_guard)
   then return jsonb_build_object('ok',false,'code','authorization-conflict'); end if;
   for guard in select value from jsonb_array_elements(p_lock_guards) order by value ->> 'section_key' loop
@@ -172,20 +175,30 @@ begin
       and section_key=guard ->> 'section_key' and locked_by=guard ->> 'locked_by' and expires_at>clock_timestamp() for share;
     if not found then return jsonb_build_object('ok',false,'code','lock-conflict','conflict_key',guard ->> 'section_key'); end if;
   end loop;
-  select c.ids into audit_ids from public.ship_dynamics_record_collections c where workspace_key=p_workspace_key and collection='auditLogs';
-  next_audit_ids := coalesce(audit_ids,'[]'::jsonb);
+  select coalesce(jsonb_object_agg(collection,c.ids),'{}'::jsonb) into orders
+    from public.ship_dynamics_record_collections c where workspace_key=p_workspace_key;
+  next_orders := orders; next_root := workspace.root;
 
   -- Prevalidate the whole operation graph before any entity, order or receipt write.
   for operation in select value from jsonb_array_elements(p_operations) loop
     name := operation ->> 'collection'; target_id := operation ->> 'entityId';
-    if operation ->> 'kind'='order' and name='auditLogs' then
-      key := 'order:auditLogs';
+    if operation ->> 'kind' in ('order','entity') and (name is null or not (name=any(names))) then
+      return jsonb_build_object('ok',false,'code','invalid-collection'); end if;
+    if operation ->> 'kind'='settings' then
+      key := 'settings';
+      if jsonb_typeof(operation -> 'expected') is distinct from 'object' or jsonb_typeof(operation -> 'value') is distinct from 'object' then
+        return jsonb_build_object('ok',false,'code','invalid-settings-operation'); end if;
+      if workspace.root -> 'settings' is distinct from operation -> 'expected' then
+        return jsonb_build_object('ok',false,'code','block-conflict','conflict_key','settings'); end if;
+      next_root := jsonb_set(next_root,'{settings}',operation -> 'value',true);
+    elsif operation ->> 'kind'='order' then
+      key := 'order:' || name;
       if jsonb_typeof(operation -> 'expectedIds') is distinct from 'array' or jsonb_typeof(operation -> 'valueIds') is distinct from 'array' then
         return jsonb_build_object('ok',false,'code','invalid-order-operation'); end if;
-      if coalesce(audit_ids,'[]'::jsonb) is distinct from operation -> 'expectedIds' then
-        return jsonb_build_object('ok',false,'code','block-conflict','conflict_key','order:auditLogs'); end if;
-      requested_ids := operation -> 'valueIds';
-    elsif operation ->> 'kind'='entity' and name in ('vessels','auditLogs') then
+      if coalesce(orders -> name,'[]'::jsonb) is distinct from operation -> 'expectedIds' then
+        return jsonb_build_object('ok',false,'code','block-conflict','conflict_key',key); end if;
+      requested_orders := jsonb_set(requested_orders,array[name],operation -> 'valueIds',true);
+    elsif operation ->> 'kind'='entity' then
       if nullif(target_id,'') is null or not (operation ? 'expected') or not (operation ? 'value') then
         return jsonb_build_object('ok',false,'code','invalid-entity-operation'); end if;
       key := 'entity:' || name || ':' || target_id;
@@ -197,55 +210,70 @@ begin
       select value into current_value from public.ship_dynamics_records where workspace_key=p_workspace_key and collection=name and ship_dynamics_records.entity_id=target_id for update;
       if current_value is distinct from expected_value then
         return jsonb_build_object('ok',false,'code','block-conflict','conflict_key',name || ':' || target_id); end if;
-      if name='vessels' then
-        if expected_value is null or replacement is null or not public.ship_dynamics_changed_fields_within(expected_value,replacement,array['note','updatedAt','updatedBy']) then
-          return jsonb_build_object('ok',false,'code','unsupported-record-slice'); end if;
+      if name in ('vessels','tasks','internalControlCases','meetings') then
         if not public.ship_dynamics_patch_lock_covers_entity(name,target_id,expected_value,replacement,p_operations,p_lock_guards) then
           return jsonb_build_object('ok',false,'code','lock-conflict','conflict_key',name || ':' || target_id); end if;
-        vessel_count := vessel_count+1;
-      else
+        if name='vessels' and not public.ship_dynamics_patch_lock_covers_entity(name,target_id,expected_value,replacement,p_operations,'[]'::jsonb) then vessel_count := vessel_count+1; end if;
+      end if;
+      if name='auditLogs' then
         -- Existing audit business fields are immutable. Retention deletions remain
         -- caller-authorized by the unchanged frontend authorization validator.
         if expected_value is not null and replacement is not null then
           return jsonb_build_object('ok',false,'code','immutable-audit'); end if;
         if replacement is not null then
-          if replacement ->> 'actorId' is distinct from p_actor_user_id or replacement ->> 'entityType' is distinct from 'vessel'
-            or not exists(select 1 from jsonb_array_elements(p_operations) op where op ->> 'kind'='entity' and op ->> 'collection'='vessels' and op ->> 'entityId'=replacement ->> 'entityId')
+          if replacement ->> 'actorId' is distinct from p_actor_user_id
+            or not exists(select 1 from jsonb_array_elements(p_operations) op where op ->> 'kind'='settings'
+              or (op ->> 'kind' in ('entity','order') and op ->> 'collection' not in ('auditLogs','notifications'))
+              or (op ->> 'kind'='entity' and op ->> 'collection'='notifications' and op #>> '{value,userId}'=p_actor_user_id))
           then return jsonb_build_object('ok',false,'code','unaccompanied-audit'); end if;
-          next_audit_ids := next_audit_ids || jsonb_build_array(target_id); audit_count := audit_count+1;
-        else
-          select coalesce(jsonb_agg(to_jsonb(id) order by ordinal),'[]'::jsonb) into next_audit_ids
-            from jsonb_array_elements_text(next_audit_ids) with ordinality source(id,ordinal) where id<>target_id;
+          audit_count := audit_count+1;
         end if;
       end if;
-    else return jsonb_build_object('ok',false,'code','unsupported-record-slice'); end if;
+      ids := coalesce(next_orders -> name,'[]'::jsonb);
+      if replacement is null then
+        select coalesce(jsonb_agg(to_jsonb(id) order by ordinal),'[]'::jsonb) into ids
+          from jsonb_array_elements_text(ids) with ordinality source(id,ordinal) where id<>target_id;
+      elsif expected_value is null then ids := ids || jsonb_build_array(target_id);
+      end if;
+      next_orders := jsonb_set(next_orders,array[name],ids,true);
+    else return jsonb_build_object('ok',false,'code','invalid-operation-kind'); end if;
     if key=any(seen) then return jsonb_build_object('ok',false,'code','duplicate-operation'); end if;
     seen := array_append(seen,key);
   end loop;
-  if jsonb_array_length(p_operations)>0 and (
-    vessel_count=0 or audit_count=0 or exists (
+  if vessel_count>0 and (
+    audit_count=0 or exists (
       select 1 from jsonb_array_elements(p_operations) vessel_op
       where vessel_op ->> 'kind'='entity' and vessel_op ->> 'collection'='vessels'
+        and not public.ship_dynamics_patch_lock_covers_entity('vessels',vessel_op ->> 'entityId',nullif(vessel_op -> 'expected','null'::jsonb),nullif(vessel_op -> 'value','null'::jsonb),p_operations,'[]'::jsonb)
         and not exists (
           select 1 from jsonb_array_elements(p_operations) audit_op
           where audit_op ->> 'kind'='entity' and audit_op ->> 'collection'='auditLogs'
             and audit_op -> 'expected'='null'::jsonb
+            and audit_op #>> '{value,entityType}'='vessel'
             and audit_op #>> '{value,entityId}'=vessel_op ->> 'entityId'
         )
     )
   ) then
     return jsonb_build_object('ok',false,'code','incomplete-vessel-audit-operation'); end if;
-  if requested_ids is not null then
+  for name,requested_ids in select * from jsonb_each(requested_orders) loop
     if exists(select 1 from jsonb_array_elements(requested_ids) id where jsonb_typeof(id)<>'string') then
       return jsonb_build_object('ok',false,'code','invalid-order-result'); end if;
-    select coalesce(jsonb_agg(to_jsonb(id) order by id),'[]'::jsonb) into final_ids from jsonb_array_elements_text(next_audit_ids) id;
+    select coalesce(jsonb_agg(to_jsonb(id) order by id),'[]'::jsonb) into final_ids from jsonb_array_elements_text(coalesce(next_orders -> name,'[]'::jsonb)) id;
     select coalesce(jsonb_agg(to_jsonb(id) order by id),'[]'::jsonb) into ids from jsonb_array_elements_text(requested_ids) id;
     if ids is distinct from final_ids then return jsonb_build_object('ok',false,'code','invalid-order-result'); end if;
-    next_audit_ids := requested_ids;
-  end if;
+    next_orders := jsonb_set(next_orders,array[name],requested_ids,true);
+  end loop;
   saved_at := case when jsonb_array_length(p_operations)=0 then workspace.updated_at else clock_timestamp() end;
   saved_text := to_char(saved_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   next_revision := workspace.revision + case when jsonb_array_length(p_operations)=0 then 0 else 1 end;
+  -- Materialize an originally absent collection only when this transaction touches
+  -- it. All order validation is complete before any physical write starts.
+  for name,ids in select * from jsonb_each(next_orders) loop
+    if orders -> name is distinct from ids then
+      insert into public.ship_dynamics_record_collections values(p_workspace_key,name,ids)
+        on conflict(workspace_key,collection) do update set ids=excluded.ids;
+    end if;
+  end loop;
   for operation in select value from jsonb_array_elements(p_operations) where value ->> 'kind'='entity' loop
     name := operation ->> 'collection'; target_id := operation ->> 'entityId'; replacement := nullif(operation -> 'value','null'::jsonb);
     if replacement is null then
@@ -260,9 +288,8 @@ begin
     end if;
   end loop;
   if jsonb_array_length(p_operations)>0 then
-    update public.ship_dynamics_record_collections set ids=next_audit_ids where workspace_key=p_workspace_key and collection='auditLogs';
     update public.ship_dynamics_record_workspaces set revision=next_revision,updated_at=saved_at,updated_by=p_saved_by,
-      root=root || jsonb_build_object('revision',next_revision,'updatedAt',saved_text) where workspace_key=p_workspace_key;
+      root=next_root || jsonb_build_object('revision',next_revision,'updatedAt',saved_text) where workspace_key=p_workspace_key;
   end if;
   receipt := jsonb_build_object('ok',true,'status','committed','operation_id',p_operation_id,'revision',next_revision,'updated_at',saved_text,'replayed',false);
   insert into public.ship_dynamics_record_receipts values(p_workspace_key,p_operation_id,

@@ -6,6 +6,8 @@
 - 保留分支：`baseline/pre-normalized-storage`；開發分支：`development/normalized-storage`。
 - 現有 `main` 不合併改造、不 Push、不部署、不修改正式資料庫／設定／瀏覽器儲存。
 - 使用者授權隔離開發及必要本機測試，未授權正式切換。每個驗證完成的階段形成獨立本機 commit。
+- 續作方式：在既定範圍內連續實作、驗證及 commit，不因批次完成而停下要求「繼續」。到正式 SQL、Push／部署、缺必要授權或重大需求／安全取捨時才停。
+- Push 前保留使用者試用關卡：使用者提出時開啟隔離測試網站，明示「真實 UI＋測試資料」，通過後才進入正式推送流程。試用通過不等同已完成正式 DB migration/readback；當前沒有代推或正式 SQL 執行授權。
 - 同一實體工作目錄維持單一寫入者；子代理僅唯讀分析。開發分支不是正式資料庫隔離措施。
 - 可隨時停止；撤回恢復原檔及移除改造專用新增內容，不刪掉既有原檔，不丟棄期間其他獨立修正。
 
@@ -43,7 +45,7 @@
 | 工作 | 狀態 |
 |---|---|
 | 隔離／原版保留／增量讀回 | 首批已本機驗證並 commit `d532f2c` |
-| 逐筆權威儲存與原子保存 | 部分完成：逐筆基礎＋船舶 note／原有 audit 的首個切片本機通過；尚非全領域逐筆命令完成 |
+| 逐筆權威儲存與原子保存 | 部分完成：九類原集合＋設定／順序的完整 patch 交易已接通；第三批要事／內控／會議等雙 SQL 案例通過，巢狀進度仍在 task row |
 | 完整業務流程接線 | 待完成；船舶、要事、內控、會議、批量、設定、通知及稽核 |
 | 按需讀取／鎖／同步及四種耗時 | 待完成；尚無 hosted 前後效能證據 |
 | 原／新版聯動與下游內容比對 | 待完成；首批舊路徑回歸不等於新寫入路徑驗收 |
@@ -107,3 +109,18 @@
 新記錄儲存的讀回目前仍重組完整 AppData，尚未把第一批 delta 協議接上逐筆 change cursor／按需 bootstrap；Realtime 明確未啟用，不訂閱錯誤的舊權威表。仍有小型 workspace revision 鎖與 audit 順序 CAS。上述限制需要後续對應工作解除，不能由資料列沒有互相覆寫就推論真多連線不等待或四種耗時已解決。
 
 完整保存隊列／UI／身份／鎖釋放在新後端下的 E2E、要事↔內控／會議與分船進度、其他權限與批量流程、真 Supabase ACL/PostgREST/Realtime、多連線及 hosted 效能、最新資料切換與回退仍未完成。
+
+## 第三批：原業務完整 patch 交易，畫面和業務函式不動
+
+第二批的「只接受船舶 note」限制由本批擴充，不代表已完成整站 UI 驗收。
+
+- 新 writer 接受與原 `buildCloudBlockPatch` 相同的九類集合、設定、排序。只写涉及的實體 row、發生變動的 ID 順序與小型 root/revision/receipt；不組裝全包業務 JSON 後寫回舊表。
+- actor／授權域 guard、每個受影響業務實體 lease、完整原 row CAS、重複操作及最終 ID 集合，都在寫入前驗證；交易後段例外亦完整回退。新增帳戶連帶船舶分派沿用帳戶 audit，不誤要求每艘再造一筆「快速更新船舶」audit。
+- `test:cloud-record-workflows`：23 個新案例，使用原 mutation／reconciliation／notification／audit／lock-plan helpers，將同一 patch 送至兩個獨立 PGlite 的原 SQL 與新 SQL，比對完整 AppData（只排除根提交時鐘）。涵蓋要事新增、內控新增與雙向修改、完成／重開、取消、撤回同步（含通知／dismissal 清理）、從 case 與 task 刪除的不同結果、會議來源同步、決議完成／重開、分船進度、混合批量、移除會議 item 的封存、指定 case 批刪、設定、帳戶分派、排序、報告與無 audit 的通知已讀。
+- 衝突及 SQL 後段例外驗證實體、順序、revision、receipt 沒有半套寫入；排序不重寫其他實體 body／revision／xmin。角色驗證仍沿用現行 client 的授權層與 SQL guard；沒有偷偷換成舊 normalized Auth 模型。
+- 這些是 SQL／原函式組裝驗證，不是所有 React inline handlers 的 E2E，也不是 hosted PostgREST、真多連線或瀏覽器角色權限證明。整場會議刪除、個別 inline 通知／audit 組裝與所有角色 UI 到 ACK 的完整接線仍須後續驗收。
+- 本批 UI、業務函式、設定資產與正式 manifest 均未改。RPC 仍是 development-only、browser roles 不可執行；正式 DB／Push／部署零操作。
+
+驗證：第三批 23 個雙 SQL workflow 案例、原 record store 16 SQL＋7 adapter、atomic-collaboration 聚合與 internal-control／meeting-reconcile／batch-tasks／batch-internal-control、typecheck／build 通過。建置仍有既有大型 bundle 警告。
+
+後續順序：將 record authority 接上增量讀回與變更游標 → 原 App 保存隊列／同步接線及隔離瀏覽器驗收 → 真 Supabase／切換與回退。不能以本批 local PASS 略過任一項。

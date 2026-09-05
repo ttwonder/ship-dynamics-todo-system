@@ -132,14 +132,14 @@ try {
     await rejectWithoutWrites({ ...request, locks: [{ section_key:'vessel:v1',locked_by:'WRONG' }] },'lock-conflict');
     await lease('v1', "interval '-1 second'"); await rejectWithoutWrites(request,'lock-conflict'); await lease('v1');
   });
-  await check('actor guard and unsupported business slices fail closed, never falling back to the legacy blob', async () => {
+  await check('actor guard and malformed operations fail closed, never falling back to the legacy blob', async () => {
     const request = await requestFor((await read()).payload,'guard-case');
     await rejectWithoutWrites({ ...request,guard:null },'authorization-conflict');
     const stale = clone(request.guard); stale.actor.isActive=false;
     await rejectWithoutWrites({ ...request,guard:stale },'authorization-conflict');
-    const unsupported=clone(request); unsupported.operations[0].value.isActive=false;
-    await rejectWithoutWrites(unsupported,'unsupported-record-slice');
-    await rejectWithoutWrites({ ...request,operations:[{kind:'settings',expected:{},value:{}}] },'unsupported-record-slice');
+    const unsupported=clone(request); unsupported.operations[0].collection='unknown';
+    await rejectWithoutWrites(unsupported,'invalid-collection');
+    await rejectWithoutWrites({ ...request,operations:[{kind:'settings',expected:null,value:{}}] },'invalid-settings-operation');
   });
   await check('the second vessel saves from the latest baseline without overwriting the first', async () => {
     const before=(await read()).payload;
