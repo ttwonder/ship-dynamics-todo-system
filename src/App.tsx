@@ -61,6 +61,7 @@ import { acquireEditLockBundle } from './editLockBundle';
 import { batchMutationSessionIsCurrent, createBatchManagedAuthorization, type BatchManagedAuthorization } from './batchManagedAuthorization';
 import { createLeaseReleaseState, pendingTrackedLeases, registerTrackedLease, releaseTrackedLeases, type TrackedLeaseToken } from './leaseReleaseTracker';
 import { runDurableCreationHandoff, waitForDurableCreationHandoff, type DurableCreationHandoffBarrier } from './durableCreationHandoff';
+import { createDurableRelatedMutationHandoff, relatedMutationFailureMessage, relatedMutationLeaseMatches, type DurableRelatedMutationHandoff } from './durableRelatedMutation';
 import { consumeCurrentTaskEditorSession } from './taskEditorSession';
 import { isTaskCreationLockKey, taskCreationLockKey, taskCreationLockMatchesVessel } from './taskCreationLock';
 import { bootstrapFailureHasUnsavedWork, cloudConfigIdentity, cloudWorkspaceIdentity, creationTaskCommitMatches, normalizeStoredCloudWorkspaceIdentity, parseConfirmedCloudBase, parseDurableRevisionFloors, serializeConfirmedCloudBase, serializeDurableRevisionFloors, trustedPersistedBaseForRemote, updateDurableRevisionFloor, withStableCreationAttemptProvenance } from './cloudRecovery';
@@ -306,6 +307,7 @@ export default function App() {
   const [requestedInternalControlCaseId,setRequestedInternalControlCaseId]=useState('');
   const [taskEditorRequestGeneration,setTaskEditorRequestGeneration]=useState(0);
   const [creationHandoffVersion,setCreationHandoffVersion]=useState(0);
+  const [relatedMutationHandoffVersion,setRelatedMutationHandoffVersion]=useState(0);
   const [taskEditorAuthorizationEpoch, setTaskEditorAuthorizationEpoch] = useState('');
   const [taskProgressVesselId, setTaskProgressVesselId] = useState<string>('');
   const [taskReadOnlyData, setTaskReadOnlyData] = useState<TaskReadOnlyEditorData | null>(null);
@@ -408,6 +410,7 @@ export default function App() {
   const batchLockCoordinator=useRef(createEditLockCoordinator());
   const taskOpenRequests=useRef(createTaskOpenRequestCoordinator());
   const creationHandoffInFlight=useRef<DurableCreationHandoffBarrier|null>(null);
+  const relatedMutationHandoffInFlight=useRef<DurableRelatedMutationHandoff|null>(null);
   const creationAttempts=useRef(new Map<string,{leaseOwnerId:string;task:TaskItem}>());
   const latestCreationDrafts=useRef(new Map<string,{leaseOwnerId:string;task:TaskItem}>());
   const confirmedCreationLeases=useRef(new Set<string>());
@@ -494,6 +497,15 @@ export default function App() {
   },[]);
   const reportCloudSaveFailure=(error:unknown)=>{
     const message=cloudErrorMessage(error);
+    if(error instanceof CloudBlockPatchConfirmedRefreshError||error instanceof CloudBlockPatchOutcomeUnknownError){
+      hasUnsavedWork.current=true;
+      setSavePhase('error');
+      const title=error instanceof CloudBlockPatchConfirmedRefreshError?'雲端已確認保存，畫面更新尚未完成':'保存結果尚未確認';
+      const detail=`${message}；請勿重複操作，先核對目前雲端狀態。`;
+      setCloudStatus(`${title}｜${detail}`);
+      showSaveToast('warning',title,detail);
+      return;
+    }
     const failure=classifyCloudSyncFailure(error);
     if(shouldOfferStaleBrowserRecovery(failure.kind))setStaleBrowserRecoveryOffered(true);
     hasUnsavedWork.current=true;
@@ -1201,11 +1213,22 @@ export default function App() {
       return false;
     }
   };
+  const relatedMutationHandoffMatchesCurrent=(lock:ActiveEditLock|null)=>{
+    const handoff=relatedMutationHandoffInFlight.current;
+    return Boolean(handoff?.pending&&relatedMutationLeaseMatches(handoff.lease,lock)&&handoff.isCurrent());
+  };
   const releaseCurrentEditLock=async () => {
     const lock=activeEditLockRef.current;
     if(!lock)return true;
     const pendingHandoff=creationHandoffInFlight.current;
     await waitForDurableCreationHandoff(pendingHandoff,lock.leaseOwnerId);
+    const candidateHandoff=relatedMutationHandoffInFlight.current;
+    const relatedHandoff=candidateHandoff&&relatedMutationLeaseMatches(candidateHandoff.lease,lock)?candidateHandoff:null;
+    if(relatedHandoff){
+      const releaseAllowed=await relatedHandoff.promise;
+      if(!releaseAllowed&&relatedHandoff.isCurrent())return false;
+    }
+    if(!relatedMutationLeaseMatches(lock,activeEditLockRef.current))return false;
     if(lockCoordinator.current.isCurrent(lock.generation))lockCoordinator.current.invalidate();
     if(lock.status==='blocked'){
       leaseCloudConfigs.current.delete(lock.leaseOwnerId);
@@ -1222,13 +1245,19 @@ export default function App() {
     try{
       await lockCoordinator.current.run(()=>runCloudSaveQueueRpc('釋放多人協作鎖',signal=>releaseEditLock(leaseRecord.sectionKey,lock.leaseOwnerId,leaseRecord.config,signal),8_000));
       leaseCloudConfigs.current.delete(lock.leaseOwnerId);
+      if(!relatedMutationLeaseMatches(lock,activeEditLockRef.current))return true;
       activeEditLockRef.current=null;
       setActiveEditLock(previous=>previous?.leaseOwnerId===lock.leaseOwnerId?null:previous);
-      setCloudStatus('多人協作鎖已釋放');
+      setCloudStatus(relatedHandoff?.confirmed?`${relatedHandoff.label}已由雲端確認`:'多人協作鎖已釋放');
       return true;
     }catch(error:any){
+      if(!relatedMutationLeaseMatches(lock,activeEditLockRef.current))return false;
       setActiveEditLock(previous=>previous?.leaseOwnerId===lock.leaseOwnerId?(previous.status==='error'?previous:{...previous,status:'error'}):previous);
-      setCloudStatus(`協作鎖釋放失敗：${error.message||error}`);
+      if(relatedHandoff?.confirmed){
+        const message=`${relatedHandoff.label}已由雲端確認；協作鎖清理延遲，將於租期屆滿後自動釋放。`;
+        setCloudStatus(message);
+        showSaveToast('warning',`${relatedHandoff.label}已完成，收尾延遲`,message);
+      }else setCloudStatus(`協作鎖釋放失敗：${error.message||error}`);
       return false;
     }
   };
@@ -1732,8 +1761,14 @@ export default function App() {
     ...(canMutateInternalControl?roleVisibleInternalControlCases.map(item=>internalControlEditLockKey(item.id)):[]),
   ]),[canEditBusinessContent,canCreateTasks,canEditMeetings,canMutateInternalControl,currentUser,activeVessels,roleVisibleTasks,roleVisibleMeetings,roleVisibleInternalControlCases,data.settings.rolePermissions,activeEditLock?.sectionKey]);
   const authorizedEditLockKey=[...authorizedEditLockKeys].sort().join('|');
-  liveAuthorizedEditLockKeys.current=authorizedEditLockKeys;
-  useEffect(()=>{if(activeEditLock&&!authorizedEditLockKeys.has(activeEditLock.sectionKey)){if(isTaskCreationLockKey(activeEditLock.sectionKey))quarantineCreationDraftForLock(activeEditLock);releaseCurrentEditLock();}},[authorizedEditLockKey,activeEditLock?.sectionKey]);
+  liveAuthorizedEditLockKeys.current=new Set(authorizedEditLockKeys);
+  // A locally removed item still owns its lease until this exact mutation settles.
+  if(activeEditLock&&relatedMutationHandoffMatchesCurrent(activeEditLock))liveAuthorizedEditLockKeys.current.add(activeEditLock.sectionKey);
+  useEffect(()=>{if(activeEditLock&&!authorizedEditLockKeys.has(activeEditLock.sectionKey)){
+    if(relatedMutationHandoffMatchesCurrent(activeEditLock))return;
+    if(isTaskCreationLockKey(activeEditLock.sectionKey))quarantineCreationDraftForLock(activeEditLock);
+    void releaseCurrentEditLock();
+  }},[authorizedEditLockKey,activeEditLock?.sectionKey,relatedMutationHandoffVersion]);
   const visibleCloudStatus=cloudStatusSectionKey&&(
     cloudStatusAuthorizationEpoch!==authorizationEpoch
     ||!authorizedEditLockKeys.has(cloudStatusSectionKey)
@@ -2266,13 +2301,19 @@ export default function App() {
     if(!requireMutationLease(sectionKey))return false;
     const config=getSupabaseConfig();
     if(!config)return apply();
+    if(relatedMutationHandoffInFlight.current?.pending){alert('前一筆關聯修改仍在確認，請勿重複操作。');return false;}
+    const expectedLease=activeEditLockRef.current;
+    if(!expectedLease)return false;
+    const expectedIdentityGeneration=identitySessionGeneration.current;
     const actorId=currentUser.id;
     const actorName=currentUser.name;
     const expectedAuthorizationEpoch=authorizationEpoch;
     const sessionIsCurrent=()=>Boolean(
       liveCurrentUserId.current===actorId
+      &&identitySessionGeneration.current===expectedIdentityGeneration
       &&liveAuthorizationEpoch.current===expectedAuthorizationEpoch
       &&sameCloudConfig(getSupabaseConfig(),config)
+      &&relatedMutationLeaseMatches(expectedLease,activeEditLockRef.current)
       &&mutationLeaseIsOwned(sectionKey)
     );
     if(!await ensureCloudDurableBeforeLeaseRelease(sectionKey))return false;
@@ -2342,6 +2383,9 @@ export default function App() {
       return settled.every(outcome=>outcome.status==='fulfilled');
     };
     let applied=false;
+    let durableConfirmed=false;
+    const mutationHandoff=createDurableRelatedMutationHandoff(expectedLease,sessionIsCurrent,label);
+    relatedMutationHandoffInFlight.current=mutationHandoff;
     try{
       const base=confirmedCloudData.current;
       const remote=await fetchCloudData(config);
@@ -2366,18 +2410,27 @@ export default function App() {
       await enqueueCloudSave(liveData.current,sessionIsCurrent);
       assertBundleActive();
       if(!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current))throw new Error('雲端尚未確認最新關聯修改');
+      durableConfirmed=true;
       const released=await releaseRelated();
       if(!released)setCloudStatus(`${label}已保存，但部分關聯鎖將於租期屆滿後自動釋放`);
       return true;
     }catch(error:any){
+      const failureMessage=relatedMutationFailureMessage({
+        label,message:cloudErrorMessage(error),applied,
+        confirmed:error instanceof CloudBlockPatchConfirmedRefreshError,
+        definitivelyRejected:error instanceof CloudBlockPatchRejectedError||error instanceof CloudBlockPatchConflictError||error instanceof CloudConflictError||error instanceof CloudRebaseConflictError,
+      });
       if(!applied)await releaseRelated();
       else{
         await stopHeartbeat();
-        setSensitiveCloudStatus(`${label}尚未雲端確認；關聯鎖保持至租期屆滿：${error.message||error}`,sectionKey);
+        setCloudStatus(`${failureMessage}；關聯鎖保持至租期屆滿`);
         window.setTimeout(clearGuards,80_000);
       }
-      alert(`${label}未完成：${error.message||error}`);
+      alert(failureMessage);
       return false;
+    }finally{
+      mutationHandoff.finish(!applied||durableConfirmed,durableConfirmed);
+      if(relatedMutationHandoffInFlight.current===mutationHandoff)setRelatedMutationHandoffVersion(value=>value+1);
     }
   };
   const createInternalCases = async (items: InternalControlCase[], expectedRevision: number, projections: Record<string, InternalControlTaskProjection> = {}) => {
