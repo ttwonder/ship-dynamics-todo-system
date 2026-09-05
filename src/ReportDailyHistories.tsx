@@ -78,42 +78,52 @@ export function MorningDailyHistoryPanel({ reports, onOpen }: { reports:AgendaRe
   </div>;
 }
 
-export function ItineraryDailyHistoryPanel({ pageData, loading, errorText, openingDate, onRefresh, onPage, onLocate, onOpen }: {
+export function ItineraryDailyHistoryPanel({ pageData, loading, errorText, openingReportId, onRefresh, onPage, onLocate, onOpen }: {
   pageData:ItineraryDailyReportPage;
   loading:boolean;
   errorText:string;
-  openingDate:string;
+  openingReportId:string;
   onRefresh:()=>void;
   onPage:(page:number)=>void;
   onLocate:(date:string)=>Promise<boolean>;
   onOpen:(report:ItineraryDailyReportSummary)=>void;
 }) {
+  const dateGroups = pageData.items.reduce<Array<{ businessDate:string; reports:ItineraryDailyReportSummary[] }>>((groups, report) => {
+    const current = groups[groups.length - 1];
+    if (current?.businessDate === report.businessDate) current.reports.push(report);
+    else groups.push({ businessDate:report.businessDate, reports:[report] });
+    return groups;
+  }, []);
   return <div className="panel daily-report-history-panel itinerary-daily-history-panel">
-    <div className="daily-report-history-heading"><div><h2>每日 Itinerary 記錄</h2><small>每天 09:00（台北）自動凍結｜每頁最多 30 天</small></div><button className="btn small ghost" disabled={loading} onClick={onRefresh}>{loading ? '讀取中…' : '↻ 刷新'}</button></div>
+    <div className="daily-report-history-heading"><div><h2>每日 Itinerary 記錄</h2><small>09:00 自動快照＋手動快照｜每頁最多 30 天</small></div><button className="btn small ghost" disabled={loading} onClick={onRefresh}>{loading ? '讀取中…' : '↻ 刷新'}</button></div>
     <RemoteDateLocator label="每日 Itinerary 記錄日期" loading={loading} onLocate={onLocate}/>
     {errorText && <div className="daily-report-history-error" role="alert">{errorText}</div>}
-    {pageData.items.length ? <div className="daily-report-history-list">{pageData.items.map(report => <div className="saved-report" key={report.businessDate}>
-      <div><b>{businessDateLabel(report.businessDate)} Itinerary</b><small>{report.businessDate}｜{formatTaipeiDateTime(report.generatedAt, false)}｜09:00自動｜{report.vesselCount} 艘｜{report.rowCount} 列</small></div>
-      <button className="btn small ghost" disabled={Boolean(openingDate)} onClick={() => onOpen(report)}>{openingDate === report.businessDate ? '載入中…' : '檢視橫版 PDF'}</button>
-    </div>)}</div> : <div className="empty-state compact">{loading ? '正在讀取每日 Itinerary 記錄…' : '尚無每日 Itinerary 記錄'}</div>}
-    <HistoryPager page={pageData.page} pageCount={pageData.pageCount} pageStart={(pageData.page - 1) * pageData.pageSize} pageSize={pageData.items.length} total={pageData.total} onPage={onPage}/>
+    {dateGroups.length ? <div className="daily-report-history-list itinerary-report-date-groups">{dateGroups.map(group => <section className="itinerary-report-date-group" key={group.businessDate}>
+      <div className="itinerary-report-date-heading"><b>{businessDateLabel(group.businessDate)} Itinerary</b><small>{group.reports.length} 份快照</small></div>
+      {group.reports.map(report => <div className="saved-report" key={report.reportId}>
+        <div><b>{report.generatedBy === 'scheduled' ? '09:00 自動快照' : '手動保存快照'}</b><small>{formatTaipeiDateTime(report.generatedAt, false)}｜{report.vesselCount} 艘｜{report.rowCount} 列</small></div>
+        <button className="btn small ghost" disabled={Boolean(openingReportId)} onClick={() => onOpen(report)}>{openingReportId === report.reportId ? '載入中…' : '檢視橫版 PDF'}</button>
+      </div>)}
+    </section>)}</div> : <div className="empty-state compact">{loading ? '正在讀取每日 Itinerary 記錄…' : '尚無每日 Itinerary 記錄'}</div>}
+    <HistoryPager page={pageData.page} pageCount={pageData.pageCount} pageStart={(pageData.page - 1) * pageData.pageSize} pageSize={pageData.pageSize} total={pageData.dateTotal} onPage={onPage}/>
   </div>;
 }
 
 const EMPTY_ITINERARY_PAGE: ItineraryDailyReportPage = {
-  items: [], page:1, pageSize:30, pageCount:1, total:0,
+  items: [], page:1, pageSize:30, pageCount:1, total:0, dateTotal:0, reportTotal:0,
   setToken:'d41d8cd98f00b204e9800998ecf8427e',
 };
 
-export default function ReportDailyHistories({ actorUserId, morningReports, onOpenMorning }: {
+export default function ReportDailyHistories({ actorUserId, morningReports, onOpenMorning, refreshToken = 0 }: {
   actorUserId:string;
   morningReports:AgendaReport[];
   onOpenMorning:(report:AgendaReport)=>void;
+  refreshToken?:number;
 }) {
   const [pageData, setPageData] = useState<ItineraryDailyReportPage>(EMPTY_ITINERARY_PAGE);
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState('');
-  const [openingDate, setOpeningDate] = useState('');
+  const [openingReportId, setOpeningReportId] = useState('');
   const [preview, setPreview] = useState<ItineraryDailyReport | null>(null);
   const requestGeneration = useRef(0);
 
@@ -136,10 +146,10 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
   useEffect(() => {
     setPageData(EMPTY_ITINERARY_PAGE);
     setPreview(null);
-    setOpeningDate('');
+    setOpeningReportId('');
     void refresh(1);
     return () => { requestGeneration.current += 1; };
-  }, [refresh]);
+  }, [refresh, refreshToken]);
 
   const locate = async (businessDate: string): Promise<boolean> => {
     const generation = ++requestGeneration.current;
@@ -168,22 +178,22 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
   };
 
   const open = async (summary: ItineraryDailyReportSummary) => {
-    if (openingDate) return;
-    setOpeningDate(summary.businessDate);
+    if (openingReportId) return;
+    setOpeningReportId(summary.reportId);
     setErrorText('');
     try {
-      setPreview(await loadItineraryDailyReport(summary.businessDate, actorUserId));
+      setPreview(await loadItineraryDailyReport(summary.reportId, actorUserId));
     } catch (error) {
       setErrorText(itineraryDailyReportErrorMessage(error));
       void refresh(pageData.page);
     } finally {
-      setOpeningDate('');
+      setOpeningReportId('');
     }
   };
 
   return <>
     <div className="grid cols-2 report-daily-history-grid">
-      <ItineraryDailyHistoryPanel pageData={pageData} loading={loading} errorText={errorText} openingDate={openingDate} onRefresh={() => void refresh(pageData.page)} onPage={page => void refresh(page)} onLocate={locate} onOpen={report => void open(report)}/>
+      <ItineraryDailyHistoryPanel pageData={pageData} loading={loading} errorText={errorText} openingReportId={openingReportId} onRefresh={() => void refresh(pageData.page)} onPage={page => void refresh(page)} onLocate={locate} onOpen={report => void open(report)}/>
       <MorningDailyHistoryPanel reports={morningReports} onOpen={onOpenMorning}/>
     </div>
     {preview && <ItineraryDailyReportPreview report={preview} close={() => setPreview(null)}/>}

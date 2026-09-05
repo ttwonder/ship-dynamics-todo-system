@@ -14,6 +14,7 @@ const server = await createServer({
 try {
   const histories = await server.ssrLoadModule('/src/ReportDailyHistories.tsx');
   const preview = await server.ssrLoadModule('/src/ItineraryDailyReportPreview.tsx');
+  const pdf = await server.ssrLoadModule('/src/itineraryDailyReportPdf.ts');
 
   const morningReports = Array.from({ length: 31 }, (_, index) => ({
     id: `morning-${index}`,
@@ -48,18 +49,23 @@ try {
   assert.match(morningMarkup, /第 1／2 頁/);
 
   const itineraryReports = Array.from({ length: 31 }, (_, index) => ({
+    reportId: String(index + 10),
     businessDate: new Date(Date.UTC(2026, 8, 4 - index)).toISOString().slice(0, 10),
-    timezone: 'Asia/Taipei', generatedAt: '2026-09-04T01:00:00Z', generatedBy: 'scheduled',
+    timezone: 'Asia/Taipei', generatedAt: '2026-09-04T01:00:00Z', generatedBy: 'scheduled', generatedByActorId:null,
     vesselCount: 39, rowCount: index, sourceMaxRevision: 7, logicalBytes: 1000,
   }));
+  itineraryReports.splice(1, 0, {
+    ...itineraryReports[0], reportId:'2', generatedAt:'2026-09-04T03:15:00Z',
+    generatedBy:'manual', generatedByActorId:'owner-1', rowCount:99,
+  });
   const itineraryMarkup = renderToStaticMarkup(React.createElement(histories.ItineraryDailyHistoryPanel, {
     pageData: {
-      items: itineraryReports.slice(0, 30), page:1, pageSize:30, pageCount:2, total:31,
+      items: itineraryReports.slice(0, 31), page:1, pageSize:30, pageCount:2, total:31, dateTotal:31, reportTotal:32,
       setToken:'11111111111111111111111111111111',
     },
     loading: false,
     errorText: '',
-    openingDate: '',
+    openingReportId: '',
     onRefresh: () => {},
     onPage: () => {},
     onLocate: async () => true,
@@ -70,11 +76,15 @@ try {
   assert.doesNotMatch(itineraryMarkup, /2026年8月5日 Itinerary/, 'Itinerary history page one must stop at 30 dates');
   assert.match(itineraryMarkup, /aria-label="每日 Itinerary 記錄日期"/);
   assert.match(itineraryMarkup, /檢視橫版 PDF/);
+  assert.match(itineraryMarkup, /手動保存/);
+  assert.match(itineraryMarkup, /09:00 自動/);
+  assert.equal((itineraryMarkup.match(/2026年9月4日 Itinerary/g) || []).length, 1, 'same-day snapshots must share one date group');
   assert.match(itineraryMarkup, /第 1／2 頁/);
 
   const report = {
+    reportId:'2',
     businessDate: '2026-09-04', timezone: 'Asia/Taipei', generatedAt: '2026-09-04T01:00:00Z',
-    generatedBy: 'scheduled', vesselCount: 2, rowCount: 1, sourceMaxRevision: 7, logicalBytes: 1000,
+    generatedBy: 'scheduled', generatedByActorId:null, vesselCount: 2, rowCount: 1, sourceMaxRevision: 7, logicalBytes: 1000,
     snapshot: {
       schemaVersion: 1, businessDate: '2026-09-04', timezone: 'Asia/Taipei', generatedAt: '2026-09-04T01:00:00Z',
       vesselCount: 2, rowCount: 1, sourceMaxRevision: 7,
@@ -113,20 +123,37 @@ try {
   assert.doesNotMatch(previewMarkup, /Owner Test|查看者/, 'daily PDF must not vary with the current viewer');
   assert.doesNotMatch(previewMarkup, /alternativePlans|FORBIDDEN ALT/, 'daily PDF must remain formal-only');
 
+  const manualReport = { ...report, reportId:'3', generatedAt:'2026-09-04T03:15:09Z', generatedBy:'manual', generatedByActorId:'owner-1' };
+  const manualPreviewMarkup = renderToStaticMarkup(React.createElement(preview.default, { report:manualReport, close:() => {} }));
+  assert.match(manualPreviewMarkup, /<dt>產生方式<\/dt><dd>手動保存<\/dd>/);
+  assert.doesNotMatch(manualPreviewMarkup, /<dt>產生方式<\/dt><dd>09:00 自動<\/dd>/);
+  assert.match(manualPreviewMarkup, /手動建立/);
+  assert.equal(
+    pdf.itineraryDailyReportPdfTitle('2026-09-04','2026-09-04T03:15:09Z','manual','3'),
+    '每日正式 Itinerary_2026-09-04_111509_手動_R3',
+  );
+
   const app = fs.readFileSync('src/App.tsx', 'utf8');
   const source = fs.readFileSync('src/ReportDailyHistories.tsx', 'utf8');
+  const buttonSource = fs.readFileSync('src/ManualItineraryReportSaveButton.tsx', 'utf8');
   const css = fs.readFileSync('src/styles.css', 'utf8');
   assert.match(app, /<ReportDailyHistories/);
   assert.doesNotMatch(app, /<h2>本次報告內容<\/h2>/, 'the old report-content block must be removed');
   assert.match(app, /每日 Itinerary 每天 09:00/);
+  assert.match(app, /ManualItineraryReportSaveButton/);
+  assert.match(buttonSource, /手動保存目前 Itinerary/);
+  assert.match(app, /itineraryHistoryRefreshToken/);
   assert.match(source, /listItineraryDailyReportPage/);
   assert.match(source, /locateItineraryDailyReport/);
   assert.match(source, /p_page_size|pageSize:30|pageSize: 30/);
   assert.match(css, /body\.printing-itinerary-daily-report/);
   assert.match(css, /size:A4 landscape|size: A4 landscape/);
   assert.match(css, /\.itinerary-daily-report-vessel\{[^}]*break-inside:avoid-page/);
+  assert.match(css, /\.itinerary-report-date-group\{/);
+  assert.match(css, /\.itinerary-daily-report-shell\{width:min\(1720px,100%\)/, 'PDF shell must size against its padded modal parent, not viewport width');
+  assert.match(css, /\.itinerary-daily-report-paper\{width:min\(1580px,100%\);min-width:1180px/, 'desktop PDF metadata must remain inside the modal');
   const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-  assert.equal(packageJson.scripts['test:itinerary-daily-reports'], 'node scripts/verify-daily-report-history-pagination.mjs && node scripts/verify-itinerary-daily-reports-client.mjs && node scripts/verify-itinerary-daily-reports-db.mjs && node scripts/verify-itinerary-daily-reports-ui.mjs && node scripts/verify-itinerary-daily-report-data-management.mjs');
+  assert.equal(packageJson.scripts['test:itinerary-daily-reports'], 'node scripts/verify-daily-report-history-pagination.mjs && node scripts/verify-itinerary-daily-reports-client.mjs && node scripts/verify-itinerary-daily-reports-db.mjs && node scripts/verify-manual-itinerary-daily-reports-db.mjs && node scripts/verify-itinerary-daily-reports-ui.mjs && node scripts/verify-itinerary-daily-report-data-management.mjs && node scripts/verify-manual-itinerary-report-button.mjs');
   assert.match(packageJson.scripts['test:itinerary'], /npm run test:itinerary-daily-reports/);
 
   console.log('itinerary_daily_reports_ui=PASS');

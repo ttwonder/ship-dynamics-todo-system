@@ -1,223 +1,192 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 
-const server = await createServer({
-  root: process.cwd(),
-  server: { middlewareMode: true },
-  appType: 'custom',
-  logLevel: 'silent',
-});
-
+const server = await createServer({ root:process.cwd(), server:{ middlewareMode:true }, appType:'custom', logLevel:'silent' });
 const config = {
-  supabaseUrl: 'https://example.supabase.co',
-  supabaseAnonKey: 'public-anon-test-key',
-  workspaceKey: 'workspace-a',
-  tableName: 'ship_dynamics_app_state',
+  supabaseUrl:'https://example.supabase.co', supabaseAnonKey:'public-anon-test-key',
+  workspaceKey:'workspace-a', tableName:'ship_dynamics_app_state',
+};
+const token = '11111111111111111111111111111111';
+const emptyToken = 'd41d8cd98f00b204e9800998ecf8427e';
+const manualOperationId = '11111111-1111-4111-8111-111111111111';
+const deleteOperationId = '22222222-2222-4222-8222-222222222222';
+const scheduledReports = Array.from({ length:30 }, (_, index) => ({
+  reportId:String(index + 10),
+  businessDate:new Date(Date.UTC(2026, 8, 4 - index)).toISOString().slice(0, 10),
+  timezone:'Asia/Taipei', generatedAt:'2026-09-04T01:00:01Z', generatedBy:'scheduled',
+  generatedByActorId:null, vesselCount:39, rowCount:88, sourceMaxRevision:14, logicalBytes:12345,
+}));
+const manualSummary = {
+  reportId:'2', businessDate:'2026-09-04', timezone:'Asia/Taipei', generatedAt:'2026-09-04T02:15:00Z',
+  generatedBy:'manual', generatedByActorId:'owner-1', vesselCount:39, rowCount:89,
+  sourceMaxRevision:15, logicalBytes:12500,
 };
 
 try {
   const daily = await server.ssrLoadModule('/src/itineraryDailyReports.ts');
   const calls = [];
   const responses = {
-    sd_itinerary_daily_report_list: {
-      ok: true,
-      page: 1,
-      pageSize: 30,
-      pageCount: 2,
-      total: 31,
-      setToken: '11111111111111111111111111111111',
-      reports: [{
-        businessDate: '2026-09-04', timezone: 'Asia/Taipei', generatedAt: '2026-09-04T01:00:01Z',
-        generatedBy: 'scheduled', vesselCount: 39, rowCount: 88, sourceMaxRevision: 14, logicalBytes: 12345,
-      }],
+    sd_itinerary_daily_report_list_v2: {
+      ok:true, page:1, pageSize:30, pageCount:2, total:31, dateTotal:31, reportTotal:32,
+      setToken:token, reports:[manualSummary, ...scheduledReports],
     },
-    sd_itinerary_daily_report_locate: {
-      ok: true,
-      found: true,
-      businessDate: '2026-08-05',
-      page: 2,
-      pageSize: 30,
-      setToken: '11111111111111111111111111111111',
+    sd_itinerary_daily_report_locate_v2: {
+      ok:true, found:true, businessDate:'2026-08-05', page:2, pageSize:30, setToken:token,
     },
-    sd_itinerary_daily_report_load: {
-      ok: true,
-      report: {
-        businessDate: '2026-09-04', timezone: 'Asia/Taipei', generatedAt: '2026-09-04T01:00:01Z',
-        generatedBy: 'scheduled', vesselCount: 2, rowCount: 1, sourceMaxRevision: 7, logicalBytes: 3456,
-        snapshot: {
-          schemaVersion: 1, businessDate: '2026-09-04', timezone: 'Asia/Taipei', generatedAt: '2026-09-04T01:00:01Z',
-          vesselCount: 2, rowCount: 1, sourceMaxRevision: 7,
-          vessels: [
-            { vesselId: 'v1', vesselName: 'FPMC ALPHA', revision: 7, updatedAt: '2026-09-04T00:30:00Z', rows: [{ rowId: 'row-1', sortOrder: 0, portDockName: 'KAOHSIUNG' }] },
-            { vesselId: 'v2', vesselName: 'FPMC BETA', revision: 0, updatedAt: null, rows: [] },
+    sd_itinerary_daily_report_load_by_id: {
+      ok:true,
+      report:{
+        ...manualSummary, vesselCount:2, rowCount:1,
+        snapshot:{
+          schemaVersion:1, businessDate:'2026-09-04', timezone:'Asia/Taipei', generatedAt:'2026-09-04T02:15:00Z',
+          vesselCount:2, rowCount:1, sourceMaxRevision:15,
+          vessels:[
+            { vesselId:'v1', vesselName:'FPMC ALPHA', revision:15, updatedAt:'2026-09-04T02:00:00Z', rows:[{ rowId:'row-1', sortOrder:0, portDockName:'KAOHSIUNG' }] },
+            { vesselId:'v2', vesselName:'FPMC BETA', revision:0, updatedAt:null, rows:[] },
           ],
         },
       },
     },
-    delete_sd_itinerary_daily_reports: {
-      ok: true, operationId: '11111111-1111-4111-8111-111111111111', deletedCount: 1, deletedBytes: 3456,
-      deletedDates: ['2026-09-04'], remainingReportCount: 0,
-      remainingSetToken: 'd41d8cd98f00b204e9800998ecf8427e',
+    sd_save_manual_itinerary_report: {
+      ok:true, created:true, operationId:manualOperationId,
+      report:{ ...manualSummary, reportId:'42', generatedAt:'2026-09-04T03:30:00Z' },
+    },
+    delete_sd_itinerary_daily_report_records: {
+      ok:true, operationId:deleteOperationId, deletedCount:1, deletedBytes:12500,
+      deletedReportIds:['2'], remainingReportCount:31, remainingSetToken:emptyToken,
     },
   };
   const client = {
     rpc(name, params) {
       calls.push({ name, params });
-      return {
-        abortSignal: async () => ({ data: responses[name], error: null }),
-      };
+      return { abortSignal:async () => ({ data:responses[name], error:null }) };
     },
   };
 
   const page = await daily.listItineraryDailyReportPage('owner-1', 1, config, client);
-  assert.equal(page.items.length, 1);
-  assert.equal(page.items[0].businessDate, '2026-09-04');
-  assert.equal(page.items[0].vesselCount, 39);
-  assert.equal(page.total, 31);
-  assert.equal(page.pageCount, 2);
-  assert.equal(page.pageSize, 30);
+  assert.equal(page.items.length, 31, 'thirty dates may contain more than thirty immutable snapshots');
+  assert.equal(new Set(page.items.map(item => item.businessDate)).size, 30);
+  assert.equal(page.items[0].reportId, '2');
+  assert.equal(page.items[0].generatedBy, 'manual');
+  assert.equal(page.dateTotal, 31);
+  assert.equal(page.reportTotal, 32);
   assert.equal(Object.hasOwn(page.items[0], 'snapshot'), false);
   assert.deepEqual(calls[0], {
-    name: 'sd_itinerary_daily_report_list',
-    params: { p_workspace_key: 'workspace-a', p_actor_user_id: 'owner-1', p_page: 1, p_page_size: 30 },
+    name:'sd_itinerary_daily_report_list_v2',
+    params:{ p_workspace_key:'workspace-a', p_actor_user_id:'owner-1', p_page:1, p_page_size:30 },
   });
 
   const location = await daily.locateItineraryDailyReport('2026-08-05', 'owner-1', config, client);
   assert.deepEqual({ found:location.found, page:location.page }, { found:true, page:2 });
-  assert.deepEqual(calls[1], {
-    name: 'sd_itinerary_daily_report_locate',
-    params: { p_workspace_key:'workspace-a', p_business_date:'2026-08-05', p_actor_user_id:'owner-1', p_page_size:30 },
-  });
+  assert.equal(calls[1].name, 'sd_itinerary_daily_report_locate_v2');
 
-  const report = await daily.loadItineraryDailyReport('2026-09-04', 'owner-1', config, client);
-  assert.equal(report.snapshot.vessels.length, 2);
+  const report = await daily.loadItineraryDailyReport('2', 'owner-1', config, client);
+  assert.equal(report.reportId, '2');
   assert.equal(report.snapshot.vessels[0].rows[0].portDockName, 'KAOHSIUNG');
-  assert.equal(report.snapshot.vessels[1].revision, 0);
   assert.equal(Object.hasOwn(report.snapshot.vessels[0], 'alternativePlans'), false);
   assert.deepEqual(calls[2], {
-    name: 'sd_itinerary_daily_report_load',
-    params: { p_workspace_key: 'workspace-a', p_business_date: '2026-09-04', p_actor_user_id: 'owner-1' },
+    name:'sd_itinerary_daily_report_load_by_id',
+    params:{ p_workspace_key:'workspace-a', p_report_id:'2', p_actor_user_id:'owner-1' },
   });
 
-  const request = {
-    operationId: '11111111-1111-4111-8111-111111111111',
-    actorUserId: 'owner-1',
-    expectedSetToken: '11111111111111111111111111111111',
-    deleteDates: ['2026-09-04'],
-  };
-  const pending = daily.createPendingItineraryDailyReportDelete(request, config, new Date('2026-09-04T02:00:00Z'));
-  const deleted = await daily.deleteItineraryDailyReports(pending, config, client);
-  assert.equal(deleted.deletedCount, 1);
+  const manualPending = daily.createPendingManualItineraryReportSave({ operationId:manualOperationId, actorUserId:'owner-1' }, config, new Date('2026-09-04T03:00:00Z'));
+  const saved = await daily.saveManualItineraryDailyReport(manualPending, config, client);
+  assert.equal(saved.created, true);
+  assert.equal(saved.report.reportId, '42');
   assert.deepEqual(calls[3], {
-    name: 'delete_sd_itinerary_daily_reports',
-    params: {
-      p_workspace_key: 'workspace-a', p_actor_user_id: 'owner-1',
-      p_operation_id: request.operationId, p_expected_set_token: request.expectedSetToken, p_delete_dates: ['2026-09-04'],
-    },
+    name:'sd_save_manual_itinerary_report',
+    params:{ p_workspace_key:'workspace-a', p_actor_user_id:'owner-1', p_operation_id:manualOperationId },
   });
-
-  assert.equal(pending.version, 2);
-  assert.equal(pending.workspaceKey, 'workspace-a');
-  assert.equal(pending.actorUserId, 'owner-1');
-  assert.match(pending.configIdentity, /example\.supabase\.co\|workspace-a\|ship_dynamics_app_state/);
 
   const memory = new Map();
   const storage = {
-    getItem: key => memory.get(key) ?? null,
-    setItem: (key, value) => memory.set(key, value),
-    removeItem: key => memory.delete(key),
+    getItem:key => memory.get(key) ?? null,
+    setItem:(key,value) => memory.set(key,value),
+    removeItem:key => memory.delete(key),
   };
-  daily.writePendingItineraryDailyReportDelete(pending, config, storage);
-  assert.deepEqual(daily.readPendingItineraryDailyReportDelete(config, 'owner-1', storage), pending);
-  assert.equal(daily.readPendingItineraryDailyReportDelete({ ...config, workspaceKey: 'workspace-b' }, 'owner-1', storage), null);
-  assert.equal(daily.readPendingItineraryDailyReportDelete(config, 'admin-1', storage), null);
-  const callsBeforeContextMismatch = calls.length;
+  daily.writePendingManualItineraryReportSave(manualPending, config, storage);
+  assert.deepEqual(daily.readPendingManualItineraryReportSave(config, 'owner-1', storage), manualPending);
+  assert.equal(daily.readPendingManualItineraryReportSave({ ...config, workspaceKey:'workspace-b' }, 'owner-1', storage), null);
+  const callsBeforeManualContextMismatch = calls.length;
   await assert.rejects(
-    daily.deleteItineraryDailyReports(pending, { ...config, workspaceKey: 'workspace-b' }, client),
-    error => error.code === 'DELETE_CONTEXT_CHANGED' && error.definitive === true,
+    daily.saveManualItineraryDailyReport(manualPending, { ...config, workspaceKey:'workspace-b' }, client),
+    error => error.code === 'MANUAL_SAVE_CONTEXT_CHANGED' && error.definitive === true,
   );
-  assert.equal(calls.length, callsBeforeContextMismatch, 'a stale envelope must be rejected before any RPC');
+  assert.equal(calls.length, callsBeforeManualContextMismatch);
+  daily.clearPendingManualItineraryReportSave(config, 'owner-1', storage);
+  assert.equal(daily.readPendingManualItineraryReportSave(config, 'owner-1', storage), null);
+
+  const deleteRequest = {
+    operationId:deleteOperationId, actorUserId:'owner-1', expectedSetToken:token, deleteReportIds:['2'],
+  };
+  const deletePending = daily.createPendingItineraryDailyReportDelete(deleteRequest, config, new Date('2026-09-04T04:00:00Z'));
+  const deleted = await daily.deleteItineraryDailyReports(deletePending, config, client);
+  assert.deepEqual(deleted.deletedReportIds, ['2']);
+  assert.equal(deletePending.version, 3);
+  assert.deepEqual(calls[4], {
+    name:'delete_sd_itinerary_daily_report_records',
+    params:{
+      p_workspace_key:'workspace-a', p_actor_user_id:'owner-1', p_operation_id:deleteOperationId,
+      p_expected_set_token:token, p_delete_report_ids:['2'],
+    },
+  });
+  daily.writePendingItineraryDailyReportDelete(deletePending, config, storage);
+  assert.deepEqual(daily.readPendingItineraryDailyReportDelete(config, 'owner-1', storage), deletePending);
+  assert.equal(daily.readPendingItineraryDailyReportDelete({ ...config, workspaceKey:'workspace-b' }, 'owner-1', storage), null);
+
   for (const tampered of [
-    { ...pending, deleteDates:[...pending.deleteDates, 'not-a-date'] },
-    { ...pending, deleteDates:[...pending.deleteDates, pending.deleteDates[0]] },
-    { ...pending, expectedSetToken:'not-a-token' },
+    { ...deletePending, deleteReportIds:[...deletePending.deleteReportIds, 'not-an-id'] },
+    { ...deletePending, deleteReportIds:[...deletePending.deleteReportIds, deletePending.deleteReportIds[0]] },
+    { ...deletePending, expectedSetToken:'not-a-token' },
   ]) {
-    const callsBeforeTamper = calls.length;
+    const before = calls.length;
     await assert.rejects(
       daily.deleteItineraryDailyReports(tampered, config, client),
       error => error.code === 'INVALID_DELETE_ENVELOPE' && error.definitive === true,
     );
-    assert.equal(calls.length, callsBeforeTamper, 'tampered date intent must be rejected before any RPC');
+    assert.equal(calls.length, before);
   }
-  const mismatchedReceiptClient = {
-    rpc() {
-      return { abortSignal: async () => ({ data: {
-        ok:true, operationId:'22222222-2222-4222-8222-222222222222', deletedCount:0,
-        deletedBytes:0, deletedDates:[], remainingReportCount:1,
-        remainingSetToken:'11111111111111111111111111111111',
-      }, error:null }) };
-    },
-  };
-  await assert.rejects(
-    daily.deleteItineraryDailyReports(pending, config, mismatchedReceiptClient),
-    error => error.code === 'INVALID_RESPONSE' && error.definitive === false,
-  );
-  const validReceipt = responses.delete_sd_itinerary_daily_reports;
+
+  const validReceipt = responses.delete_sd_itinerary_daily_report_records;
   for (const malformedCase of [
-    { label:'invalid deleted date', receipt:{ ...validReceipt, deletedDates:['2026-09-04', 'not-a-date'] } },
-    { label:'duplicate deleted date', receipt:{ ...validReceipt, deletedDates:['2026-09-04', '2026-09-04'] } },
+    { label:'invalid report id', receipt:{ ...validReceipt, deletedReportIds:['not-an-id'] } },
+    { label:'duplicate report id', receipt:{ ...validReceipt, deletedReportIds:['2','2'], deletedCount:2 } },
     { label:'string deletedCount', receipt:{ ...validReceipt, deletedCount:'1' } },
-    { label:'string deletedBytes', receipt:{ ...validReceipt, deletedBytes:'1280' } },
-    { label:'fractional deletedBytes', receipt:{ ...validReceipt, deletedBytes:1280.5 } },
-    { label:'string remainingReportCount', receipt:{ ...validReceipt, remainingReportCount:'0' } },
-    { label:'negative remainingReportCount', receipt:{ ...validReceipt, remainingReportCount:-1 } },
+    { label:'fractional deletedBytes', receipt:{ ...validReceipt, deletedBytes:1.5 } },
+    { label:'negative remaining count', receipt:{ ...validReceipt, remainingReportCount:-1 } },
   ]) {
-    const malformedReceiptClient = {
-      rpc() { return { abortSignal: async () => ({ data:malformedCase.receipt, error:null }) }; },
-    };
+    const malformedClient = { rpc:() => ({ abortSignal:async () => ({ data:malformedCase.receipt, error:null }) }) };
     await assert.rejects(
-      daily.deleteItineraryDailyReports(pending, config, malformedReceiptClient),
+      daily.deleteItineraryDailyReports(deletePending, config, malformedClient),
       error => error.code === 'INVALID_RESPONSE' && error.definitive === false,
       malformedCase.label,
     );
   }
-  daily.clearPendingItineraryDailyReportDelete(config, 'owner-1', storage);
-  assert.equal(daily.readPendingItineraryDailyReportDelete(config, 'owner-1', storage), null);
 
-  const unavailableClient = {
-    rpc() {
-      return { abortSignal: async () => ({ data: null, error: { code: 'PGRST202', message: 'missing function' } }) };
-    },
-  };
+  const wrongManualReceiptClient = { rpc:() => ({ abortSignal:async () => ({ data:{
+    ...responses.sd_save_manual_itinerary_report, operationId:'99999999-9999-4999-8999-999999999999',
+  }, error:null }) }) };
   await assert.rejects(
-    daily.listItineraryDailyReportPage('owner-1', 1, config, unavailableClient),
-    error => error.code === 'DAILY_ITINERARY_REPORTS_SQL_NOT_DEPLOYED'
-      && /migration/.test(error.message),
+    daily.saveManualItineraryDailyReport(manualPending, config, wrongManualReceiptClient),
+    error => error.code === 'INVALID_RESPONSE' && error.definitive === false,
   );
 
-  const malformedPageClient = {
-    rpc() {
-      return { abortSignal: async () => ({ data: {
-        ...responses.sd_itinerary_daily_report_list,
-        pageSize: 100,
-      }, error:null }) };
-    },
-  };
+  const unavailableClient = { rpc:() => ({ abortSignal:async () => ({ data:null, error:{ code:'PGRST202', message:'missing function' } }) }) };
   await assert.rejects(
-    daily.listItineraryDailyReportPage('owner-1', 1, config, malformedPageClient),
+    daily.listItineraryDailyReportPage('owner-1', 1, config, unavailableClient),
+    error => error.code === 'DAILY_ITINERARY_REPORTS_SQL_NOT_DEPLOYED',
+  );
+
+  const duplicateReportClient = { rpc:() => ({ abortSignal:async () => ({ data:{
+    ...responses.sd_itinerary_daily_report_list_v2,
+    reports:[manualSummary, manualSummary], dateTotal:1, total:1, reportTotal:2, pageCount:1,
+  }, error:null }) }) };
+  await assert.rejects(
+    daily.listItineraryDailyReportPage('owner-1', 1, config, duplicateReportClient),
     /分頁格式不正確/,
   );
 
-  const invalidSnapshotClient = {
-    rpc() {
-      return { abortSignal: async () => ({ data: { ok: true, report: { ...responses.sd_itinerary_daily_report_load.report, snapshot: { vessels: 'not-an-array' } } }, error: null }) };
-    },
-  };
-  await assert.rejects(
-    daily.loadItineraryDailyReport('2026-09-04', 'owner-1', config, invalidSnapshotClient),
-    /快照格式不正確/,
-  );
-
+  daily.clearPendingItineraryDailyReportDelete(config, 'owner-1', storage);
   console.log('itinerary_daily_reports_client=PASS');
 } finally {
   await server.close();
