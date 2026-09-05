@@ -4,8 +4,9 @@ import { isPlaceholder, sanitizeAppDataForStorage } from './utils';
 import { normalizeAppData } from './normalize';
 import { CloudBlockPatchConflictError, type CloudBlockPatchOperation } from './cloudBlockPatch';
 import type { CloudBlockCompactReceipt, CloudBlockReceiptStatus } from './cloudBlockReceipt';
+import { consumeCloudDeltaResponse, type CloudDeltaSnapshot } from './cloudDelta';
 
-export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string }
+export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string; readMode?: 'snapshot' | 'delta-v1' }
 export type ResolvedSupabaseConfig = SupabaseConfig & { tableName: string };
 export interface CloudEditingLock { ok: boolean; sectionKey: string; lockedBy?: string; lockedByName?: string; expiresAt?: string }
 declare global { interface Window { SHIP_DYNAMICS_SUPABASE_CONFIG?: SupabaseConfig } }
@@ -100,10 +101,76 @@ const lockFromRpc = (value: any, fallbackSectionKey: string): CloudEditingLock =
   expiresAt: value?.expires_at ? String(value.expires_at) : undefined,
 });
 
+type CloudDeltaReadCache = {
+  key: string;
+  snapshot: CloudDeltaSnapshot | null;
+  sequence: number;
+  publishedSequence: number;
+};
+let deltaReadCache: CloudDeltaReadCache | null = null;
+
+const normalizedCloudRead = (payload: Record<string, unknown>, revision: number): AppData => {
+  // Normalize a detached copy; neither the UI nor compatibility normalization may
+  // mutate the exact server snapshot/token used by the next delta request.
+  const rawPayload = jsonClone(payload) as unknown as AppData;
+  const normalized = normalizeAppData(jsonClone(payload));
+  if (!normalized) throw new Error('雲端資料格式不完整，已拒絕載入以避免白頁或資料污染。');
+  normalized.revision = revision;
+  rawPayload.revision = revision;
+  rawPayloadByNormalized.set(normalized, rawPayload);
+  return normalized;
+};
+
+async function fetchCloudDeltaData(cfg: ResolvedSupabaseConfig, supabase: SupabaseClient, signal?: AbortSignal): Promise<AppData | null> {
+  if (cfg.tableName !== 'ship_dynamics_app_state') throw new Error('增量讀回尚未支援此資料表；已停止讀取，未切換工作區。');
+  signal?.throwIfAborted();
+  const key = JSON.stringify([cfg.supabaseUrl, cfg.supabaseAnonKey, cfg.tableName, cfg.workspaceKey]);
+  if (!deltaReadCache || deltaReadCache.key !== key) deltaReadCache = { key, snapshot: null, sequence: 0, publishedSequence: 0 };
+  const cache = deltaReadCache;
+  const base = cache.snapshot;
+  const sequence = ++cache.sequence;
+  let request = supabase.rpc('read_ship_dynamics_delta_v1', {
+    p_workspace_key: cfg.workspaceKey,
+    p_base_revision: base?.revision ?? null,
+    p_base_token: base?.token ?? null,
+  });
+  if (signal) request = request.abortSignal(signal);
+  const { data, error } = await request;
+  signal?.throwIfAborted();
+  if (error) throw error; // Opt-in capability errors are not hidden by a legacy fallback.
+  const next = consumeCloudDeltaResponse(data, cfg.workspaceKey, base);
+  if (!next) {
+    if (deltaReadCache === cache && sequence < cache.publishedSequence && cache.snapshot) {
+      return normalizedCloudRead(cache.snapshot.payload, cache.snapshot.revision);
+    }
+    if (deltaReadCache === cache && sequence >= cache.publishedSequence) {
+      cache.snapshot = null;
+      cache.publishedSequence = sequence;
+    }
+    return null;
+  }
+  // A delayed response must never replace a newer confirmed cache. Requests from
+  // a previous project/workspace can return to their owner but cannot seed this one.
+  if (deltaReadCache === cache && !cache.snapshot && cache.publishedSequence > sequence) return null;
+  const current = deltaReadCache === cache ? cache.snapshot : null;
+  const useCurrent = current && (current.revision > next.revision || (current.revision === next.revision && cache.publishedSequence > sequence));
+  const chosen = useCurrent ? current : next;
+  const normalized = normalizedCloudRead(chosen.payload, chosen.revision);
+  signal?.throwIfAborted();
+  if (deltaReadCache === cache && !useCurrent && sequence >= cache.publishedSequence) {
+    cache.snapshot = next;
+    cache.publishedSequence = sequence;
+  }
+  return normalized;
+}
+
 export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, signal?: AbortSignal): Promise<AppData | null> {
   const cfg = config === undefined ? getSupabaseConfig() : config;
   const supabase = getSupabaseClient(cfg);
-  if (!supabase || !cfg) return null;
+  if (!supabase || !cfg) { deltaReadCache = null; return null; }
+  if (cfg.readMode === 'delta-v1') return fetchCloudDeltaData(cfg, supabase, signal);
+  if (cfg.readMode && cfg.readMode !== 'snapshot') throw new Error('不支援的雲端讀取模式；已停止讀取。');
+  deltaReadCache = null;
   let request = supabase
     .from(cfg.tableName)
     .select('payload,revision,updated_at,updated_by')
