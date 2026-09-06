@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { getSupabaseConfig } from './cloud';
 import { formatTaipeiDateTime } from './taipeiTime';
 import {
+  useItineraryDailyReportContext,
   clearPendingManualItineraryReportSave,
   createPendingManualItineraryReportSave,
   itineraryDailyReportErrorMessage,
@@ -18,14 +19,13 @@ export default function ManualItineraryReportSaveButton({ actorUserId, onSaved }
 }) {
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState<PendingManualItineraryReportSave | null>(null);
-  const actorRef = useRef(actorUserId);
-  actorRef.current = actorUserId;
+  const { identity, capture } = useItineraryDailyReportContext(actorUserId);
 
   useEffect(() => {
     const config = getSupabaseConfig();
     setPending(config ? readPendingManualItineraryReportSave(config, actorUserId) : null);
     setSaving(false);
-  }, [actorUserId]);
+  }, [actorUserId, identity]);
 
   const submit = async () => {
     if (saving) return;
@@ -34,6 +34,8 @@ export default function ManualItineraryReportSaveButton({ actorUserId, onSaved }
       window.alert('尚未配置 Supabase，無法手動保存目前 Itinerary。');
       return;
     }
+    const isCurrent = capture();
+    if (!isCurrent()) return;
     const actorAtSubmit = actorUserId;
     let envelope = pending || readPendingManualItineraryReportSave(config, actorAtSubmit);
     if (!envelope) {
@@ -53,23 +55,25 @@ export default function ManualItineraryReportSaveButton({ actorUserId, onSaved }
     setSaving(true);
     try {
       const result = await saveManualItineraryDailyReport(envelope, config);
+      if (!isCurrent() || readPendingManualItineraryReportSave(config, actorAtSubmit)?.operationId !== envelope.operationId) return;
       clearPendingManualItineraryReportSave(config, actorAtSubmit);
-      if (actorRef.current === actorAtSubmit) {
+      if (isCurrent()) {
         setPending(null);
         onSaved();
         window.alert(`${result.created ? '目前正式 Itinerary 已新增一份手動快照' : '上次手動保存已完成對帳'}。\n保存時間：${formatTaipeiDateTime(result.report.generatedAt)}\n${result.report.vesselCount} 艘｜${result.report.rowCount} 列`);
       }
     } catch (error) {
+      if (!isCurrent()) return;
       const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive;
       if (definitive) clearPendingManualItineraryReportSave(config, actorAtSubmit);
-      if (actorRef.current === actorAtSubmit) {
+      if (isCurrent()) {
         if (definitive) setPending(null);
         else setPending(envelope);
         const suffix = definitive ? '' : '\n結果尚未確認；請按同一按鈕對帳，不會重複新增。';
         window.alert(`${itineraryDailyReportErrorMessage(error)}${suffix}`);
       }
     } finally {
-      if (actorRef.current === actorAtSubmit) setSaving(false);
+      if (isCurrent()) setSaving(false);
     }
   };
 

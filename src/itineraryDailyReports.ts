@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef } from 'react';
 import { getSupabaseClient, getSupabaseConfig, type ResolvedSupabaseConfig } from './cloud';
 import type { ItineraryRow } from './itinerary/itineraryTypes';
 
@@ -141,6 +142,16 @@ export class ItineraryDailyReportRpcError extends Error {
   }
 }
 
+// Explicit capability routing only; a missing record RPC must never probe legacy.
+const RECORD_REPORT_RPCS = {
+  sd_save_manual_itinerary_report: 'sd_itinerary_record_report_save_manual_v1',
+  sd_itinerary_daily_report_list_v2: 'sd_itinerary_record_report_list_v1',
+  sd_itinerary_daily_report_locate_v2: 'sd_itinerary_record_report_locate_v1',
+  sd_itinerary_daily_report_load_by_id: 'sd_itinerary_record_report_load_v1',
+  delete_sd_itinerary_daily_report_records: 'sd_itinerary_record_report_delete_ids_v1',
+  delete_sd_itinerary_daily_reports: 'sd_itinerary_record_report_delete_dates_v1',
+} as const;
+
 type RpcResponse = { data: unknown; error: unknown };
 export type ItineraryDailyReportRpcClient = {
   rpc: (name: string, params: Record<string, unknown>) =>
@@ -207,7 +218,7 @@ function errorText(error: unknown): string {
 }
 
 async function runRpc(
-  name: string,
+  name: keyof typeof RECORD_REPORT_RPCS,
   params: Record<string, unknown>,
   config?: ResolvedSupabaseConfig | null,
   suppliedClient?: ItineraryDailyReportRpcClient | null,
@@ -218,7 +229,7 @@ async function runRpc(
   const controller = new AbortController();
   const timer = globalThis.setTimeout(() => controller.abort(), RPC_TIMEOUT_MS);
   try {
-    const request = client.rpc(name, params);
+    const request = client.rpc(resolved.storageMode === 'records-v1' ? RECORD_REPORT_RPCS[name] : name, params);
     const response = typeof (request as { abortSignal?: unknown }).abortSignal === 'function'
       ? await (request as { abortSignal: (signal: AbortSignal) => Promise<RpcResponse> }).abortSignal(controller.signal)
       : await request as RpcResponse;
@@ -620,7 +631,30 @@ export function itineraryDailyReportErrorMessage(error: unknown): string {
 function configIdentity(config: ResolvedSupabaseConfig): string {
   let origin = config.supabaseUrl.trim().replace(/\/+$/, '');
   try { origin = new URL(config.supabaseUrl).origin; } catch { /* keep normalized input */ }
-  return `${origin}|${config.workspaceKey}|${config.tableName}`;
+  // Durable recovery keeps the historical legacy key, but never crosses actor authority.
+  // Credential rotation does not change the server ledger; credentials stay out of storage.
+  return `${origin}|${config.workspaceKey}|${config.tableName}${config.storageMode === 'records-v1' ? '|records-v1' : ''}`;
+}
+
+// Volatile I/O identity includes the credential and actor; never persist this value.
+export function getItineraryDailyReportCloudIdentity(config = typeof window === 'undefined' ? null : getSupabaseConfig()): string {
+  return config ? JSON.stringify([config.supabaseUrl, config.workspaceKey, config.tableName,
+    config.supabaseAnonKey, config.storageMode ?? 'legacy']) : '';
+}
+
+export function useItineraryDailyReportContext(actorUserId: string, role = '') {
+  const cloudIdentity = getItineraryDailyReportCloudIdentity();
+  const identity = JSON.stringify([cloudIdentity, actorUserId, role]);
+  const context = useRef({ identity, generation: 0 });
+  if (context.current.identity !== identity) context.current = { identity, generation: context.current.generation + 1 };
+  useEffect(() => () => { context.current.generation += 1; }, [identity]);
+  const capture = useCallback(() => {
+    const captured = context.current;
+    const generation = captured.generation;
+    return () => context.current.identity === identity && context.current === captured && context.current.generation === generation
+      && getItineraryDailyReportCloudIdentity() === cloudIdentity;
+  }, [identity, cloudIdentity]);
+  return { identity, capture };
 }
 
 function pendingKey(prefix: string, config: ResolvedSupabaseConfig, actorUserId: string) {

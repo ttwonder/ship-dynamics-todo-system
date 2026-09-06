@@ -4,6 +4,7 @@ import { formatTaipeiDateTime } from './taipeiTime';
 import { getSupabaseConfig } from './cloud';
 import { locateDailyReportDate, paginateDailyReportHistory } from './dailyReportHistory';
 import {
+  useItineraryDailyReportContext,
   itineraryDailyReportErrorMessage,
   listItineraryDailyReportPage,
   locateItineraryDailyReport,
@@ -126,22 +127,25 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
   const [openingReportId, setOpeningReportId] = useState('');
   const [preview, setPreview] = useState<ItineraryDailyReport | null>(null);
   const requestGeneration = useRef(0);
+  const { identity, capture } = useItineraryDailyReportContext(actorUserId);
 
   const refresh = useCallback(async (requestedPage: number) => {
     const generation = ++requestGeneration.current;
+    const isCurrent = capture();
+    if (!isCurrent()) return;
     setLoading(true);
     setErrorText('');
     try {
       const next = await listItineraryDailyReportPage(actorUserId, requestedPage, getSupabaseConfig());
-      if (requestGeneration.current === generation) setPageData(next);
-      return requestGeneration.current === generation ? next : null;
+      if (isCurrent() && requestGeneration.current === generation) setPageData(next);
+      return isCurrent() && requestGeneration.current === generation ? next : null;
     } catch (error) {
-      if (requestGeneration.current === generation) setErrorText(itineraryDailyReportErrorMessage(error));
+      if (isCurrent() && requestGeneration.current === generation) setErrorText(itineraryDailyReportErrorMessage(error));
       return null;
     } finally {
-      if (requestGeneration.current === generation) setLoading(false);
+      if (isCurrent() && requestGeneration.current === generation) setLoading(false);
     }
-  }, [actorUserId]);
+  }, [actorUserId, identity, capture]);
 
   useEffect(() => {
     setPageData(EMPTY_ITINERARY_PAGE);
@@ -153,14 +157,16 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
 
   const locate = async (businessDate: string): Promise<boolean> => {
     const generation = ++requestGeneration.current;
+    const isCurrent = capture();
+    if (!isCurrent()) return false;
     setLoading(true);
     setErrorText('');
     try {
       const config = getSupabaseConfig();
       const location = await locateItineraryDailyReport(businessDate, actorUserId, config);
-      if (requestGeneration.current !== generation || !location.found || !location.page) return false;
+      if (!isCurrent() || requestGeneration.current !== generation || !location.found || !location.page) return false;
       const next = await listItineraryDailyReportPage(actorUserId, location.page, config);
-      if (requestGeneration.current !== generation) return false;
+      if (!isCurrent() || requestGeneration.current !== generation) return false;
       if (next.setToken !== location.setToken
         || !next.items.some(report => report.businessDate === businessDate)) {
         setPageData(next);
@@ -170,24 +176,28 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
       setPageData(next);
       return true;
     } catch (error) {
-      if (requestGeneration.current === generation) setErrorText(itineraryDailyReportErrorMessage(error));
+      if (isCurrent() && requestGeneration.current === generation) setErrorText(itineraryDailyReportErrorMessage(error));
       return false;
     } finally {
-      if (requestGeneration.current === generation) setLoading(false);
+      if (isCurrent() && requestGeneration.current === generation) setLoading(false);
     }
   };
 
   const open = async (summary: ItineraryDailyReportSummary) => {
     if (openingReportId) return;
+    const isCurrent = capture();
+    if (!isCurrent()) return;
     setOpeningReportId(summary.reportId);
     setErrorText('');
     try {
-      setPreview(await loadItineraryDailyReport(summary.reportId, actorUserId));
+      const report = await loadItineraryDailyReport(summary.reportId, actorUserId);
+      if (isCurrent()) setPreview(report);
     } catch (error) {
+      if (!isCurrent()) return;
       setErrorText(itineraryDailyReportErrorMessage(error));
       void refresh(pageData.page);
     } finally {
-      setOpeningReportId('');
+      if (isCurrent()) setOpeningReportId('');
     }
   };
 

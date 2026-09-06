@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { getSupabaseConfig } from './cloud';
 import { formatDataBytes } from './dataManagement';
 import {
+  useItineraryDailyReportContext,
   clearPendingItineraryDailyReportDelete,
   clearPendingLegacyItineraryDailyReportDelete,
   createPendingItineraryDailyReportDelete,
@@ -93,9 +94,12 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
   const [errorText, setErrorText] = useState('');
   const [notice, setNotice] = useState('');
   const requestGeneration = useRef(0);
+  const { identity, capture } = useItineraryDailyReportContext(currentUser.id, currentUser.role);
 
   const refresh = useCallback(async (requestedPage: number) => {
     const generation = ++requestGeneration.current;
+    const isCurrent = capture();
+    if (!isCurrent()) return;
     setLoading(true);
     setErrorText('');
     try {
@@ -108,16 +112,16 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
         setLegacyPending(null);
       }
       const next = await listItineraryDailyReportPage(currentUser.id, requestedPage, config);
-      if (requestGeneration.current !== generation) return null;
+      if (!isCurrent() || requestGeneration.current !== generation) return null;
       setPageData(next);
       return next;
     } catch (error) {
-      if (requestGeneration.current === generation) setErrorText(itineraryDailyReportErrorMessage(error));
+      if (isCurrent() && requestGeneration.current === generation) setErrorText(itineraryDailyReportErrorMessage(error));
       return null;
     } finally {
-      if (requestGeneration.current === generation) setLoading(false);
+      if (isCurrent() && requestGeneration.current === generation) setLoading(false);
     }
-  }, [currentUser.id]);
+  }, [currentUser.id, identity, capture]);
 
   useEffect(() => {
     setPageData(EMPTY_REPORT_PAGE);
@@ -126,6 +130,7 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
     setPending(null);
     setLegacyPending(null);
     setNotice('');
+    setActing(false);
     void refresh(1);
     return () => { requestGeneration.current += 1; };
   }, [refresh]);
@@ -138,11 +143,14 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
   const performDelete = async (envelope: PendingItineraryDailyReportDelete, reconciling: boolean) => {
     const config = getSupabaseConfig();
     if (!config) { setErrorText('尚未配置 Supabase，無法刪除每日 Itinerary 日快照。'); return; }
+    const isCurrent = capture();
+    if (!isCurrent()) return;
     setActing(true);
     setErrorText('');
     setNotice('');
     try {
       const result = await deleteItineraryDailyReports(envelope, config);
+      if (!isCurrent()) return;
       clearPendingItineraryDailyReportDelete(config, currentUser.id);
       setPending(null);
       setSelectedReports({});
@@ -150,6 +158,7 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
       setNotice(`${reconciling ? '上次刪除已對帳' : '每日 Itinerary 日快照已刪除'}：${result.deletedCount} 份，邏輯量 ${formatDataBytes(result.deletedBytes)}。正式 Itinerary 未變更。`);
       await refresh(pageData.page);
     } catch (error) {
+      if (!isCurrent()) return;
       const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive;
       if (definitive) {
         clearPendingItineraryDailyReportDelete(config, currentUser.id);
@@ -160,20 +169,23 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
         setSelectionSetToken(null);
         await refresh(pageData.page);
       }
-      setErrorText(itineraryDailyReportErrorMessage(error));
+      if (isCurrent()) setErrorText(itineraryDailyReportErrorMessage(error));
     } finally {
-      setActing(false);
+      if (isCurrent()) setActing(false);
     }
   };
 
   const performLegacyDelete = async (envelope: PendingLegacyItineraryDailyReportDelete) => {
     const config = getSupabaseConfig();
     if (!config) { setErrorText('尚未配置 Supabase，無法對帳舊版本每日 Itinerary 刪除。'); return; }
+    const isCurrent = capture();
+    if (!isCurrent()) return;
     setActing(true);
     setErrorText('');
     setNotice('');
     try {
       const result = await reconcileLegacyItineraryDailyReportDelete(envelope, config);
+      if (!isCurrent()) return;
       clearPendingLegacyItineraryDailyReportDelete(config, currentUser.id);
       setLegacyPending(null);
       setSelectedReports({});
@@ -181,6 +193,7 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
       setNotice(`舊版本刪除已對帳：${result.deletedCount} 個日期，邏輯量 ${formatDataBytes(result.deletedBytes)}。手動快照與正式 Itinerary 未變更。`);
       await refresh(pageData.page);
     } catch (error) {
+      if (!isCurrent()) return;
       const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive;
       if (definitive) {
         clearPendingLegacyItineraryDailyReportDelete(config, currentUser.id);
@@ -191,9 +204,9 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
         setSelectionSetToken(null);
         await refresh(pageData.page);
       }
-      setErrorText(itineraryDailyReportErrorMessage(error));
+      if (isCurrent()) setErrorText(itineraryDailyReportErrorMessage(error));
     } finally {
-      setActing(false);
+      if (isCurrent()) setActing(false);
     }
   };
 
@@ -218,6 +231,8 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
     let expectedSetToken = selectionSetToken ?? pageData.setToken;
     let completed = 0;
     let deletedBytes = 0;
+    const isCurrent = capture();
+    if (!isCurrent()) return;
     setActing(true);
     setErrorText('');
     setNotice('');
@@ -229,8 +244,9 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
         catch { setErrorText(`已完成 ${completed}／${chosen.length} 份；下一批無法保存對帳資料，因此尚未送出。`); return; }
         setPending(envelope);
         let result;
-        try { result = await deleteItineraryDailyReports(envelope, config); }
+        try { result = await deleteItineraryDailyReports(envelope, config); if (!isCurrent()) return; }
         catch (error) {
+          if (!isCurrent()) return;
           const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive;
           if (definitive) { clearPendingItineraryDailyReportDelete(config, currentUser.id); setPending(null); }
           const prefix = completed ? `已完成 ${completed}／${chosen.length} 份；` : '';
@@ -251,10 +267,11 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
         setNotice(`每日 Itinerary 日快照分批清理中：已完成 ${completed}／${chosen.length} 份。`);
       }
       await refresh(pageData.page);
+      if (!isCurrent()) return;
       setSelectionSetToken(null);
       setNotice(`每日 Itinerary 日快照已刪除：${completed} 份，邏輯量 ${formatDataBytes(deletedBytes)}。正式 Itinerary 未變更。`);
     } finally {
-      setActing(false);
+      if (isCurrent()) setActing(false);
     }
   };
 

@@ -8,7 +8,7 @@
 - 使用者授權隔離開發及必要本機測試，未授權正式切換。每個驗證完成的階段形成獨立本機 commit。
 - 續作方式：在既定範圍內連續實作、驗證及 commit，不因批次完成而停下要求「繼續」。到正式 SQL、Push／部署、缺必要授權或重大需求／安全取捨時才停。
 - Push 前保留使用者試用關卡：使用者提出時開啟隔離測試網站，明示「真實 UI＋測試資料」，通過後才進入正式推送流程。試用通過不等同已完成正式 DB migration/readback；當前沒有代推或正式 SQL 執行授權。
-- 同一實體工作目錄維持單一寫入者；子代理僅唯讀分析。開發分支不是正式資料庫隔離措施。
+- 同一實體工作目錄維持單一寫入者；一般子代理僅唯讀分析。接續實作須明確交接唯一寫入權，父代理暫停 repo 寫入／staging／commit／產品測試，交付或中斷核對後才接回。開發分支不是正式資料庫隔離措施。
 - 可隨時停止；撤回恢復原檔及移除改造專用新增內容，不刪掉既有原檔，不丟棄期間其他獨立修正。
 
 ## 不變條件
@@ -46,9 +46,9 @@
 |---|---|
 | 隔離／原版保留／增量讀回 | 首批已本機驗證並 commit `d532f2c` |
 | 逐筆權威儲存與原子保存 | 部分完成：九類原集合＋設定／順序的完整 patch 交易已接通；第三批要事／內控／會議等雙 SQL 案例通過，巢狀進度仍在 task row |
-| 完整業務流程接線 | 待完成；船舶、要事、內控、會議、批量、設定、通知及稽核 |
+| 完整業務流程接線 | 部分完成：原 App identity／船舶保存、Itinerary 讀寫與報告中心已本機接通；資料管理、排程、全角色跨模組流程仍待驗 |
 | 按需讀取／鎖／同步及四種耗時 | 待完成；尚無 hosted 前後效能證據 |
-| 原／新版聯動與下游內容比對 | 待完成；首批舊路徑回歸不等於新寫入路徑驗收 |
+| 原／新版聯動與下游內容比對 | 部分完成：聯動 SQL、原船舶／Office UI、報告 SQL／adapter／UI 有界證據已具備；不等於整站與 hosted 驗收 |
 | 隔離真 Supabase 協作驗收 | 待環境與測試，禁止用正式 DB 測試寫入 |
 | 最新資料切換及回退演練 | 待完成；正式操作另行授權 |
 
@@ -230,3 +230,33 @@
 只做本機 PGlite owner SQL＋封閉 HTTP，**不是 hosted ACL／PostgREST／Realtime／真多連線或效能驗收**；未做所有 Itinerary import/export、跨登入／跨真正 workspace 的完整草稿恢復 E2E 或整站下游驗收。actor 傳遞沿用原系統，未新增登入／防冒名架構；新 RPC 對 browser roles 仍不可用。報告／資料管理、排程／retention、正式 migration／cutover 保持後續範圍。
 
 採有界直接驗證，未新增獨立 review gate。完成後僅獨立本機 commit；沒有 Push、merge、branch 切換、部署、遠端／正式 SQL、正式設定／服務更動，也未開使用者試用站。
+
+## 八、records-v1 報告中心六 RPC 相容切片（本機）
+
+### 已完成的範圍
+
+- development-only 六個明確 record RPC：manual save、list、locate、load-by-ID、Owner exact-ID delete、scheduled-date-only delete；原 `itineraryDailyReports` adapter 依寫入 authority 選路，缺 capability 不降級 legacy。
+- 原 `sd_itinerary_daily_reports`／operations ledger 與正式 `sd_*` Itinerary authority 不搬家；保存只呼叫現有正式 snapshot builder，不接受 AppData／畫面草稿快照，不混入備選，不雙寫 legacy。
+- actor 取 record store 的 active／role；即使舊 membership／AppData 聲稱 Owner，也不能救回 missing／inactive record actor。合法既有 ID 映射及原 replay-before-role 語意保留。
+- 同日手動與排程報告並存、依不同日期分頁、strict bigint report-ID、set-token CAS、最多 100、相同 operation 對帳、receipt 最後一步失敗全交易 rollback 均有真 SQL 正反證據。日期刪除只動 scheduled，不傷同日 manual／正式行程／備選／history／lease。
+- 三個原 TSX 元件只改非 JSX 的 async seam。mode、key、actor／role、workspace／table identity 與 generation 保護遲到 list／preview／manual／delete 回覆；pending 按 record authority 隔離，既有 legacy pending key 保留。
+
+### 父代理最後實際驗證
+
+證據根：`C:/Users/tuotu/AppData/Local/hermes/cache/record-itinerary-reports-0dd25b1afc/`。`commands.jsonl` 保留每個命令的 exit／log；`verified-results.json` 分層列出案例，不把重複回歸加算成新案例。
+
+- `29-parent-report-matrix-green.log`：**16 個情境**＝12 SQL、2 真 SupabaseJS→SQL、2 adapter。
+- `30-parent-report-browser.log`：**4 個情境**＝2 個原 App「登入→報告中心保存／歷史／預覽／lost-ACK reload 對帳」＋2 個獨立掛載原 DataView 的 Owner 刪除／lost-ACK 對帳。後兩個不是經完整 App 導航進資料管理，不能取代 stats/prune 的接線驗收。底層實際 loopback HTTP→PGlite SQL。
+- 同一 browser runner：**6 個 mounted lifecycle 情境**，使用 controlled repository I/O；不是 SQL 或真多連線。
+- `34-parent-shared-qa-regression.log`：原船舶／Office **8 個 browser 情境**＋4 hook＋4 mounted Dashboard/Editor lifecycle 回歸通過。兩個 stdout label 重複列出的 8 情境不重複計數。
+- 原 `npm run test:itinerary` 聚合（含 daily/manual reports）、typecheck、build 通過；bundle 大於 500 kB 的既有提示保留，不擴切包架構。
+- 全部 56 個 `src` JSX/TSX/CSS 檔核對：相對上批 `571a35d`，53 檔內容未變、3 檔僅非 JSX seam；相對最初 `edd95e9`，50 檔內容未變、6 檔僅非 JSX seam，App 19 個 JSX roots 保留。**只正規化 Windows checkout 的 CRLF/LF；不是宣稱全部工作檔 raw bytes 相同**。所有 JSX 與 CSS 內容相同，未作視覺重設計；此證據也不是整站像素級／mobile／PDF 全驗收。
+- deliberate `--probe-failure-exit` 在 PGlite cleanup 後仍 exit 1，確認失敗不被關閉 DB 誤蓋成成功。
+
+### 中斷與測試失敗的處置
+
+兩個 worker 的 provider connection failure 都是程序中斷，沒有當作產品 RED／完成。父核对存留檔案、既有 logs 與無殘留程序後接回唯一寫入權，不丟棄有效部分、不重建 repo。最後一個 role 負例矩陣在顯式交易內預期拋 SQL error，首個 error 會使後續查詢只收到 `25P02`；用每例 savepoint／rollback-to-savepoint 修 harness，沒有放寬產品 actor guard。JSX 比對另排除已實證的 checkout 行尾差異，不改產品 JSX 以遷就 verifier。
+
+### 明確未完成／未執行
+
+只驗本機 PGlite owner／封閉 HTTP，沒有 hosted PostgREST／browser-role ACL／真多連線／Realtime／正式效能結論。六 RPC 保持私有 invoker，不改 grants／manifest／正式設定。未驗 scheduler 的 record authority、資料管理 stats/prune、retention、最新資料 cutover 與使用者試用。未有獨立 review gate；未 Push、merge、部署或任何遠端／正式 SQL。下一批仍依原 UI 逐流程接續，正式門前停止。
