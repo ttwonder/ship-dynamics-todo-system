@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import {execFileSync} from 'node:child_process';import ts from 'typescript';
+const base='377d0045d6077e2936dce884f5c99e73a0229122',path='src/DataManagementPanel.tsx';
+const original=execFileSync('git',['show',base+':'+path],{encoding:'utf8'}),current=fs.readFileSync(path,'utf8').replace(/\r\n/g,'\n');
+const old="只會 DELETE 所勾選的 <code>ship_dynamics_app_revisions</code> 列；不會改動 <code>ship_dynamics_app_state</code>、目前 Revision、任何正式業務資料、Storage object、Lease 或一般操作紀錄。",newCopy="只會清理所勾選的歷史版本；不會改動目前版本、未勾選的歷史版本或正式業務資料。不會改動 Storage object、Lease 或一般操作紀錄。";
+assert.equal(original.split(old).length,2);assert.equal(current.split(newCopy).length,2,'sole approved warning must be installed');
+const jsx=source=>{const file=ts.createSourceFile(path,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),values=[];const visit=n=>{if(ts.isJsxElement(n)||ts.isJsxSelfClosingElement(n)||ts.isJsxFragment(n)){values.push(n.getText(file));return;}ts.forEachChild(n,visit);};visit(file);return values;};
+assert.deepEqual(jsx(current),jsx(original.replace(old,newCopy)),'EXACT JSX only warning substitution; no whitespace/text broad ignore');
+const paths=execFileSync('git',['ls-tree','-r','--name-only',base,'src'],{encoding:'utf8'}).trim().split('\n').filter(p=>/\.(tsx|jsx|css)$/.test(p)&&p!==path);
+for(const p of paths)assert.equal(fs.readFileSync(p,'utf8').replace(/\r\n/g,'\n'),execFileSync('git',['show',base+':'+p],{encoding:'utf8'}),p+' must be unchanged except checkout CRLF');
+console.log(JSON.stringify({gate:'exact frozen JSX warning allowlist',panelJsxBlocks:jsx(current).length,otherUiFiles:paths.length,allowedReplacement:{old,new:newCopy}}));

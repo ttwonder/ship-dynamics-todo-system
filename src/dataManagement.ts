@@ -167,7 +167,8 @@ function currentConfig(config?: ResolvedSupabaseConfig | null) {
 export function dataManagementConfigIdentity(config: ResolvedSupabaseConfig) {
   let origin = config.supabaseUrl.trim().replace(/\/+$/, '');
   try { origin = new URL(config.supabaseUrl).origin; } catch { /* keep the normalized URL */ }
-  return `${origin}|${config.workspaceKey}|${config.tableName}`;
+  const legacy = `${origin}|${config.workspaceKey}|${config.tableName}`;
+  return config.storageMode === 'records-v1' ? `${legacy}|records-v1` : legacy;
 }
 
 async function runRpc(
@@ -208,7 +209,7 @@ export async function getShipDynamicsStorageStats(
   config?: ResolvedSupabaseConfig | null,
 ): Promise<ShipDynamicsStorageStats> {
   const resolved = currentConfig(config);
-  const response = await runRpc('get_ship_dynamics_storage_stats', {
+  const response = await runRpc(resolved.storageMode === 'records-v1' ? 'get_ship_dynamics_record_storage_stats_v1' : 'get_ship_dynamics_storage_stats', {
     p_workspace_key: resolved.workspaceKey,
     p_actor_user_id: actorUserId,
   }, resolved);
@@ -270,9 +271,13 @@ export async function pruneShipDynamicsRevisionHistory(
   config?: ResolvedSupabaseConfig | null,
 ): Promise<RevisionPruneResult> {
   const resolved = currentConfig(config);
+  if (('configIdentity' in request && request.configIdentity !== dataManagementConfigIdentity(resolved))
+    || ('workspaceKey' in request && request.workspaceKey !== resolved.workspaceKey)) {
+    throw new DataManagementRpcError('IDEMPOTENCY_MISMATCH', 'Pending prune belongs to another storage authority', true);
+  }
   let response: Record<string, unknown>;
   try {
-    response = await runRpc('prune_ship_dynamics_revision_history', {
+    response = await runRpc(resolved.storageMode === 'records-v1' ? 'prune_ship_dynamics_record_revision_history_v1' : 'prune_ship_dynamics_revision_history', {
       p_workspace_key: resolved.workspaceKey,
       p_actor_user_id: request.actorUserId,
       p_operation_id: request.operationId,

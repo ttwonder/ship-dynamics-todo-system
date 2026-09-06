@@ -5,6 +5,7 @@ import {
   clearPendingRevisionPrune,
   createPendingRevisionPrune,
   dataManagementErrorMessage,
+  dataManagementConfigIdentity,
   DataManagementRpcError,
   formatDataBytes,
   getShipDynamicsStorageStats,
@@ -29,6 +30,12 @@ const revisionListLabel = (revisions: number[]) => revisions.length <= 12
   ? revisions.map(revision => `r${revision}`).join('、')
   : `${revisions.slice(0, 12).map(revision => `r${revision}`).join('、')}，另 ${revisions.length - 12} 份`;
 
+// Volatile credential/authority identity is never persisted or displayed.
+function cloudContextIdentity() {
+  const config = getSupabaseConfig();
+  return config ? JSON.stringify([dataManagementConfigIdentity(config), config.supabaseAnonKey]) : '';
+}
+
 export default function DataManagementPanel({ currentUser }: Props) {
   const owner = currentUser.role === 'owner';
   const [view, setView] = useState<DataView>('overview');
@@ -43,8 +50,21 @@ export default function DataManagementPanel({ currentUser }: Props) {
   const [itemQuery, setItemQuery] = useState('');
   const [itemCollection, setItemCollection] = useState('all');
   const requestId = useRef(0);
+  const cloudIdentity = cloudContextIdentity();
+  const identity = JSON.stringify([cloudIdentity, currentUser.id, currentUser.role]);
+  const context = useRef({ identity, generation: 0 });
+  if (context.current.identity !== identity) context.current = { identity, generation: context.current.generation + 1 };
+  useEffect(() => () => { context.current.generation += 1; }, [identity]);
+  const capture = useCallback(() => {
+    const captured = context.current;
+    const generation = captured.generation;
+    return () => context.current === captured && context.current.identity === identity
+      && captured.generation === generation && cloudContextIdentity() === cloudIdentity;
+  }, [identity, cloudIdentity]);
 
   const refresh = useCallback(async () => {
+    const isCurrent = capture();
+    if (!isCurrent()) return;
     const activeRequest = ++requestId.current;
     setLoading(true);
     setErrorText('');
@@ -52,19 +72,20 @@ export default function DataManagementPanel({ currentUser }: Props) {
       const config = getSupabaseConfig();
       if (config) setPending(readPendingRevisionPrune(config, currentUser.id));
       const next = await getShipDynamicsStorageStats(currentUser.id, config);
-      if (activeRequest !== requestId.current) return;
+      if (!isCurrent() || activeRequest !== requestId.current) return;
       setStats(next);
       const available = new Set(next.revisions.filter(row => !row.current).map(row => row.revision));
       setSelectedRevisions(previous => previous.filter(revision => available.has(revision)));
     } catch (error) {
-      if (activeRequest !== requestId.current) return;
+      if (!isCurrent() || activeRequest !== requestId.current) return;
       setErrorText(dataManagementErrorMessage(error));
     } finally {
-      if (activeRequest === requestId.current) setLoading(false);
+      if (isCurrent() && activeRequest === requestId.current) setLoading(false);
     }
-  }, [currentUser.id]);
+  }, [currentUser.id, capture]);
 
   useEffect(() => {
+    setActing(false);
     setStats(null);
     setSelectedRevisions([]);
     setPending(null);
@@ -72,9 +93,11 @@ export default function DataManagementPanel({ currentUser }: Props) {
     setNotice('');
     void refresh();
     return () => { requestId.current += 1; };
-  }, [currentUser.id, refresh]);
+  }, [identity, refresh]);
 
   const performPrune = async (envelope: PendingRevisionPrune, reconciling: boolean) => {
+    const isCurrent = capture();
+    if (!isCurrent() || envelope.actorUserId !== currentUser.id) return;
     const config = getSupabaseConfig();
     if (!config) {
       setErrorText(dataManagementErrorMessage(new DataManagementRpcError('CLOUD_NOT_CONFIGURED', '', true)));
@@ -85,6 +108,7 @@ export default function DataManagementPanel({ currentUser }: Props) {
     setNotice('');
     try {
       const result = await pruneShipDynamicsRevisionHistory(envelope, config);
+      if (!isCurrent()) return;
       clearPendingRevisionPrune(config, currentUser.id);
       setPending(null);
       const reconciled = new Set(envelope.deleteRevisions);
@@ -92,6 +116,7 @@ export default function DataManagementPanel({ currentUser }: Props) {
       setNotice(`${reconciling ? '上次操作已對帳' : '歷史版本已刪除'}：${result.deletedCount} 份，邏輯量 ${formatDataBytes(result.deletedBytes)}。目前正式資料未變更。`);
       await refresh();
     } catch (error) {
+      if (!isCurrent()) return;
       const definitive = error instanceof DataManagementRpcError && error.definitive;
       const message = dataManagementErrorMessage(error);
       if (definitive) {
@@ -103,14 +128,18 @@ export default function DataManagementPanel({ currentUser }: Props) {
       if (definitive && error instanceof DataManagementRpcError && error.code === 'REVISION_SET_CHANGED') {
         await refresh();
       }
-      setErrorText(message);
+      if (isCurrent()) setErrorText(message);
     } finally {
-      setActing(false);
-      setPruneProgress(null);
+      if (isCurrent()) {
+        setActing(false);
+        setPruneProgress(null);
+      }
     }
   };
 
   const startPrune = async () => {
+    const isCurrent = capture();
+    if (!isCurrent()) return;
     if (!owner || !stats || pending || acting) return;
     const chosen = Array.from(new Set(selectedRevisions)).sort((left, right) => left - right);
     if (!chosen.length) {
@@ -133,7 +162,7 @@ export default function DataManagementPanel({ currentUser }: Props) {
       `目前正式 Revision r${stats.currentRevision}、待辦、船舶、會議、內控、操作紀錄與其他正常資料都不會刪除。`,
       '刪除後無法復原；PostgreSQL 物理總量不一定立即縮小。',
     ].join('\n'));
-    if (!confirmed) return;
+    if (!confirmed || !isCurrent()) return;
     const config = getSupabaseConfig();
     if (!config) {
       setErrorText('尚未配置 Supabase，無法刪除雲端歷史版本。');
@@ -148,6 +177,7 @@ export default function DataManagementPanel({ currentUser }: Props) {
     setPruneProgress({ completed: 0, total: chosen.length });
     try {
       for (let index = 0; index < chosen.length; index += MAX_REVISION_PRUNE_BATCH) {
+        if (!isCurrent()) return;
         const batch = chosen.slice(index, index + MAX_REVISION_PRUNE_BATCH);
         const envelope = createPendingRevisionPrune({
           operationId: crypto.randomUUID(),
@@ -165,7 +195,9 @@ export default function DataManagementPanel({ currentUser }: Props) {
         let result;
         try {
           result = await pruneShipDynamicsRevisionHistory(envelope, config);
+          if (!isCurrent()) return;
         } catch (error) {
+          if (!isCurrent()) return;
           const definitive = error instanceof DataManagementRpcError && error.definitive;
           if (definitive) {
             clearPendingRevisionPrune(config, currentUser.id);
@@ -186,10 +218,13 @@ export default function DataManagementPanel({ currentUser }: Props) {
         setNotice(`歷史版本分批清理中：已完成 ${completed}／${chosen.length} 份。`);
       }
       await refresh();
+      if (!isCurrent()) return;
       setNotice(`歷史版本已刪除：${completed} 份，邏輯量 ${formatDataBytes(deletedBytes)}。目前正式資料未變更。`);
     } finally {
-      setActing(false);
-      setPruneProgress(null);
+      if (isCurrent()) {
+        setActing(false);
+        setPruneProgress(null);
+      }
     }
   };
 
@@ -284,6 +319,6 @@ function HistoryView({ stats, owner, pending, acting, pruneProgress, selected, s
     <div className="data-management-retention-head"><div><b>{owner ? `已人工選擇 ${selected.length} 份` : '管理員可查看；只有 Owner 可清理'}</b><span>{owner ? `預估邏輯量 ${formatDataBytes(selectedBytes)}｜可跨頁累積，刪除時每批最多 ${MAX_REVISION_PRUNE_BATCH} 份` : '正式資料與歷史版本均為唯讀'}</span></div>{owner && <><button className="btn small ghost data-management-page-select" title="可跨頁累積；再次點擊只取消目前頁" disabled={!selectablePageRevisions.length || acting || pending} onClick={togglePageSelection}>{pageFullySelected ? '取消當頁全部' : '勾選當頁全部'}</button><button className="btn small ghost" disabled={!selected.length || acting || pending} onClick={() => setSelected([])}>清除選擇</button><button className="btn danger" disabled={!selected.length || acting || pending} onClick={() => void onDelete()}>{acting ? (pruneProgress ? `刪除中 ${pruneProgress.completed}／${pruneProgress.total}` : '處理中…') : `刪除所選 ${selected.length} 份`}</button></>}</div>
     <div className="data-management-history-pagination"><button className="btn small ghost" disabled={page <= 1} onClick={() => setPage(previous => Math.max(1, previous - 1))}>← 上一頁</button><label><span>第</span><select aria-label="歷史版本頁次" value={page} onChange={event => setPage(Number(event.target.value))}>{Array.from({ length: pageCount }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1}</option>)}</select><span>／{pageCount} 頁</span></label><button className="btn small ghost" disabled={page >= pageCount} onClick={() => setPage(previous => Math.min(pageCount, previous + 1))}>下一頁 →</button><em>顯示 {stats.revisions.length ? pageStart + 1 : 0}–{Math.min(pageStart + pageRows.length, stats.revisions.length)}／共 {stats.revisions.length} 份</em></div>
     <div className="data-management-table-wrap history"><table className="data-management-table"><thead><tr><th>選擇</th><th>Revision</th><th>保存時間</th><th>保存者</th><th>單份邏輯量</th><th>保護狀態</th></tr></thead><tbody>{pageRows.map(row => <tr key={row.revision} className={row.current ? 'current' : selected.includes(row.revision) ? 'selected' : ''}><td>{row.current ? <span className="data-management-lock">🔒</span> : <input type="checkbox" aria-label={`選擇刪除 revision ${row.revision}`} disabled={!owner || pending || acting} checked={selected.includes(row.revision)} onChange={() => toggle(row.revision)}/>}</td><td><b>r{row.revision}</b></td><td>{row.savedAt ? formatTaipeiDateTime(row.savedAt) : '未記錄'}</td><td>{row.savedBy || '未記錄'}</td><td>{formatDataBytes(row.logicalBytes)}</td><td>{row.current ? <strong>目前正式版本｜不可刪</strong> : '歷史快照'}</td></tr>)}</tbody></table></div>
-    <div className="data-management-warning danger"><b>刪除範圍</b><p>只會 DELETE 所勾選的 <code>ship_dynamics_app_revisions</code> 列；不會改動 <code>ship_dynamics_app_state</code>、目前 Revision、任何正式業務資料、Storage object、Lease 或一般操作紀錄。送出時會核對完整 revision 集合；預覽後若有新保存，整次 fail closed，不刪除任何版本。</p></div>
+    <div className="data-management-warning danger"><b>刪除範圍</b><p>只會清理所勾選的歷史版本；不會改動目前版本、未勾選的歷史版本或正式業務資料。不會改動 Storage object、Lease 或一般操作紀錄。送出時會核對完整 revision 集合；預覽後若有新保存，整次 fail closed，不刪除任何版本。</p></div>
   </>;
 }

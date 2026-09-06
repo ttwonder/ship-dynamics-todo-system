@@ -13,7 +13,8 @@
 
 ## 不變條件
 
-- 不重建 UI、不切換至現有未掛載的 normalized App，不改 JSX/CSS、導航、密度、操作、PDF 內容及登入方式。
+- 不重建 UI、不切換至現有未掛載的 normalized App；除下列使用者明確批准的單段提示文案例外外，不改 JSX/CSS、導航、密度、操作、PDF 內容及登入方式。
+- 本批唯一文案例外（使用者已確認「允許只改這段提示，繼續實作」）：只修正 `src/DataManagementPanel.tsx` 的「刪除範圍」段落，移除寫死舊資料表的失實說明。新主句為「只會清理所勾選的歷史版本；不會改動目前版本、未勾選的歷史版本或正式業務資料。」原 Storage object／Lease／一般操作紀錄的保護說明，以及完整 revision 集合核對／有新保存時整次拒絕的說明保留。其餘 UI 文案、版面、按鈕、導航、操作及權限均不變；這不是其他 JSX／樣式改動的授權。驗證必須把此唯一替換明列為允許差異，而不是再宣稱所有 JSX 原文完全相同。
 - 沿用現行業務函式；內控↔要事與會議→決議↔待辦為不同關係。必要聯動仍在同一提交內完成。
 - 保存以 server ACK／同 operation committed 為準，未知結果不盲目重送，鎖釋放不繞過保存確認。
 - 不為追求正規化擅自修改權限架構或重新設計整站。
@@ -46,7 +47,7 @@
 |---|---|
 | 隔離／原版保留／增量讀回 | 首批已本機驗證並 commit `d532f2c` |
 | 逐筆權威儲存與原子保存 | 部分完成：九類原集合＋設定／順序的完整 patch 交易已接通；第三批要事／內控／會議等雙 SQL 案例通過，巢狀進度仍在 task row |
-| 完整業務流程接線 | 部分完成：原 App identity／船舶保存、Itinerary 讀寫與報告中心已本機接通；資料管理、排程、全角色跨模組流程仍待驗 |
+| 完整業務流程接線 | 部分完成：原 App identity／船舶保存、Itinerary 讀寫、報告中心與資料管理 stats/prune 已本機接通；排程、全角色跨模組流程仍待驗 |
 | 按需讀取／鎖／同步及四種耗時 | 待完成；尚無 hosted 前後效能證據 |
 | 原／新版聯動與下游內容比對 | 部分完成：聯動 SQL、原船舶／Office UI、報告 SQL／adapter／UI 有界證據已具備；不等於整站與 hosted 驗收 |
 | 隔離真 Supabase 協作驗收 | 待環境與測試，禁止用正式 DB 測試寫入 |
@@ -260,3 +261,15 @@
 ### 明確未完成／未執行
 
 只驗本機 PGlite owner／封閉 HTTP，沒有 hosted PostgREST／browser-role ACL／真多連線／Realtime／正式效能結論。六 RPC 保持私有 invoker，不改 grants／manifest／正式設定。未驗 scheduler 的 record authority、資料管理 stats/prune、retention、最新資料 cutover 與使用者試用。未有獨立 review gate；未 Push、merge、部署或任何遠端／正式 SQL。下一批仍依原 UI 逐流程接續，正式門前停止。
+
+## records-v1 資料管理 stats/prune 閉環（本機）
+
+- 新增獨立 `20260906_appdata_record_data_management.sql`：明確 record stats/prune RPC、私有邏輯計量 helper 與 `ship_dynamics_record_prune_operations` ledger。沿用最後有效原 prune 的參數、Owner／Admin 邊界、完整 revision-set CAS、100 上限及 actor/workspace/request 綁定的 COMMITTED／REJECTED exact replay；不借用 legacy receipt。
+- stats 使用 record current/head、collections/items、版本 root 與有效區間 body。版本邏輯量為 `pg_column_size(root) + pg_column_size(orders) + 該版本可見的 body sizes`；共享 body 在不同邏輯版本各自計入，不等於獨占／可釋放磁碟量。prune 只移除人工選定版本 roots，本批明確不回收共享 body、不清 delta read bases、不建立 retention 政策。較舊版本未存 actor metadata，誠實顯示「未記錄」。
+- `dataManagement.ts` 明確按 storage authority 選路；record pending namespace 獨立，原 legacy key 仍可恢復。帶錯 authority/workspace 的 persisted envelope 在 RPC 前拒絕，未知結果只以同 operation 對帳。
+- 原 `DataManagementPanel` 保留全部 JSX／CSS／導航／控制與原確認操作，只有第 17 行批准的「刪除範圍」原文替換；非 JSX 加入 mode/key/actor/role/workspace generation fencing，遲到回覆與 retained callback 不可清除新 pending 或發布舊結果。
+- 新 `test:cloud-record-data-management`：15 個真 PGlite／SupabaseJS→SQL 情境，以及原 data-management source contract、精確 JSX allowlist。包括矛盾 legacy Owner、current/missing/duplicate、100/101、真新保存後整批拒絕、ACK 丟失重送、錯 operation/actor/workspace/authority、receipt UPDATE 最後失敗全交易回退、rerun 與本機 catalog/role-denial。
+- 新 browser gate：4 個完整原 `main.tsx → App` 的本機 SQL 情境（進站／Owner 登入→管理→數據管理→統計→勾選→原 confirm→清理→讀回；另含 lost ACK→reload→明確對帳）。每次清理逐一重建所有保留歷史，核對 current、正式 Itinerary、legacy、body/read-bases 不變。另有 16 個原 Panel mounted lifecycle 情境，採 controlled deferred transport；後者不冒充 SQL。
+- 有界回歸：history 12、record delta 13；共享 QA 原船舶／Office browser 8＋hook 4＋mounted lifecycle 4。舊 PG CLI data-management DB/scale scripts 未執行，避免讀取 PGHOST；相關安全 oracle 已移至封閉 PGlite。本批無獨立 review gate。
+- 證據：`C:/Users/tuotu/AppData/Local/hermes/cache/record-data-management-complete/`，保留 RED→GREEN／命令退出码／browser readback 與 fingerprint。前一份 `record-data-management-slice/` RED 阻斷收據未覆寫；其中直接呼叫 legacy stats 與舊提示的探針不是新 record RPC 的 GREEN oracle。
+- 仍未驗 hosted Supabase/PostgREST/ACL、真多連線、Realtime、scheduler、retention、cutover、使用者試用與正式效能；未 Push、merge、部署或遠端／正式 SQL。私有 SQL 不加入正式 manifest、不改正式 grants／設定。

@@ -7,14 +7,16 @@ import {installItineraryFixture,seedItineraryFixture,snapshotItineraryAuthority,
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa() {
+export async function createRecordStorageLocalQa({dataManagement=false}={}) {
  const db=new PGlite(),metrics=[];
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
- let origin='',http,vite,loseItineraryAck=false,loseReportAck=false;
+ let origin='',http,vite,loseItineraryAck=false,loseReportAck=false,losePruneAck=false;
  const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:'records-v1',readMode:'delta-v1'});
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
   ...recordWriteArgs,
+  get_ship_dynamics_record_storage_stats_v1:['p_workspace_key','p_actor_user_id'],
+  prune_ship_dynamics_record_revision_history_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_revisions:jsonb','p_delete_revisions:jsonb'],
   sd_itinerary_record_report_save_manual_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid'],
   sd_itinerary_record_report_list_v1:['p_workspace_key','p_actor_user_id','p_page:integer','p_page_size:integer'],
   sd_itinerary_record_report_locate_v1:['p_workspace_key','p_business_date:date','p_actor_user_id','p_page_size:integer'],
@@ -56,6 +58,16 @@ export async function createRecordStorageLocalQa() {
   await db.exec(fs.readFileSync(recordItinerarySql,'utf8'));
   await db.exec(fs.readFileSync(recordItineraryWriteSql,'utf8'));
   for(const file of ['supabase/migrations/20260905200000_manual_itinerary_daily_reports.sql','supabase/migrations/20260905210000_manual_itinerary_legacy_compatibility.sql','supabase/development/20260906_itinerary_record_reports.sql'])await db.exec(fs.readFileSync(file,'utf8'));
+  await db.exec(fs.readFileSync('supabase/development/20260906_appdata_record_data_management.sql','utf8'));
+  if(dataManagement){
+   const {buildCloudBlockPatch}=await vite.ssrLoadModule('/src/cloudBlockPatch.ts');
+   for(let n=2;n<=7;n++){
+    const base=(await db.query('select read_ship_dynamics_records_v1($1) as r',[workspace])).rows[0].r.payload;
+    const next=structuredClone(base);next.vessels.reverse();
+    const result=(await db.query(`select apply_ship_dynamics_record_patch_v1($1,$2,$3::jsonb,'QA OWNER','qa-owner',ship_dynamics_actor_guard($4::jsonb,'qa-owner'),ship_dynamics_authorization_guard($4::jsonb),'[]') r`,[workspace,'qa-history-'+n,JSON.stringify(buildCloudBlockPatch(base,next)),JSON.stringify(base)])).rows[0].r;
+    if(!result.ok)throw new Error('QA history save failed '+JSON.stringify(result));
+   }
+  }
   const itineraryBaseline=await snapshotItineraryAuthority(db);
   const send=(res,status,value)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(value));};
   http=createHttpServer(async(req,res)=>{
@@ -87,6 +99,7 @@ export async function createRecordStorageLocalQa() {
       metrics.push({rpc:name,status:value?.ok===false?value.code:'SQL_OK',operationId:body.p_operation_id,vesselId:body.p_vessel_id,revision:value?.revision,bytes:Buffer.byteLength(JSON.stringify(value??null)),elapsedMs:performance.now()-start});
       if(loseItineraryAck&&name==='sd_itinerary_record_save_v1'){loseItineraryAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic ACK loss after actual SQL commit'});return;}
       if(loseReportAck&&['sd_itinerary_record_report_save_manual_v1','sd_itinerary_record_report_delete_ids_v1'].includes(name)){loseReportAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic report ACK loss after actual SQL commit'});return;}
+      if(losePruneAck&&name==='prune_ship_dynamics_record_revision_history_v1'){losePruneAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic prune ACK loss after actual SQL commit'});return;}
       send(res,200,value);
      }catch(error){metrics.push({rpc:name,status:'SQL_ERROR',code:error.code});send(res,400,{code:error.code||'QA_SQL_ERROR',message:error.message});}
      return;
@@ -96,6 +109,6 @@ export async function createRecordStorageLocalQa() {
   });
   await new Promise((resolve,reject)=>{http.once('error',reject);http.listen(0,'127.0.0.1',resolve);});
   origin=`http://127.0.0.1:${http.address().port}`;
-  return {origin,password,metrics,db,close,loseNextReportAck:()=>{loseReportAck=true;},loseNextItineraryAck:()=>{loseItineraryAck=true;},itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
+  return {origin,password,metrics,db,close,loseNextPruneAck:()=>{losePruneAck=true;},loseNextReportAck:()=>{loseReportAck=true;},loseNextItineraryAck:()=>{loseItineraryAck=true;},itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
  }catch(error){await close();throw error;}
 }
