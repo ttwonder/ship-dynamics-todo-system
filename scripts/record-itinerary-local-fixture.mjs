@@ -2,6 +2,14 @@ import fs from 'node:fs';
 
 // Embedded SQL fixture only; execute the existing migrations, not replacement documents.
 export const recordItinerarySql = 'supabase/development/20260906_itinerary_record_read.sql';
+export const recordItineraryWriteSql = 'supabase/development/20260906_itinerary_record_write.sql';
+export const recordWriteArgs={
+ sd_itinerary_record_claim_lease_v1:['p_workspace_key','p_vessel_id','p_holder_session','p_holder_label','p_ttl_seconds:integer','p_actor_user_id'],
+ sd_itinerary_record_renew_lease_v1:['p_workspace_key','p_vessel_id','p_lease_id:uuid','p_holder_session','p_fencing_token:bigint','p_ttl_seconds:integer','p_actor_user_id'],
+ sd_itinerary_record_release_lease_v1:['p_workspace_key','p_vessel_id','p_lease_id:uuid','p_holder_session','p_fencing_token:bigint','p_actor_user_id'],
+ sd_itinerary_record_save_v1:['p_workspace_key','p_vessel_id','p_expected_revision:bigint','p_operation_id:uuid','p_rows:jsonb','p_lease_id:uuid','p_holder_session','p_fencing_token:bigint','p_actor_label','p_actor_user_id','p_alternative_plans:jsonb'],
+ sd_itinerary_record_operation_status_v1:['p_workspace_key','p_operation_id:uuid','p_actor_user_id'],
+};
 export const itineraryWorkspaceId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 export async function installItineraryFixture(db) {
   await db.exec(`create schema auth;

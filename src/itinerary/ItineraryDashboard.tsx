@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TaskItem, UserAccount, Vessel } from '../types';
+import { getSupabaseConfig } from '../cloud';
+import { cloudConfigIdentity } from '../cloudRecovery';
 import { changedTaskPlannedCalendarEvents, projectTaskPlannedCalendarEvents } from '../taskPlannedSchedule';
 import { createDemoItineraryDocuments } from './itineraryDemoData';
 import { createEmptyItineraryDocument, createItineraryId, createItineraryOperationId, type ItineraryDocument } from './itineraryTypes';
@@ -81,12 +83,22 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
   const localBackend = useMemo(() => demoMode && typeof window !== 'undefined'
     ? new LocalDemoItineraryBackend({ storage: window.localStorage, workspaceKey: 'local-itinerary-demo' })
     : null, [demoMode]);
+  const cloudConfig = typeof window === 'undefined' ? null : getSupabaseConfig();
+  const cloudConfigKey = cloudConfigIdentity(cloudConfig);
   const cloudBackend = useMemo(() => {
     if (demoMode || typeof window === 'undefined') return null;
     if (operationalFeed?.backend) return operationalFeed.backend;
-    try { return new OfficeItineraryCloudRepository(actor); } catch { return null; }
-  }, [demoMode, actor.userId, operationalFeed?.backend]);
+    try { return cloudConfig ? new OfficeItineraryCloudRepository(actor, cloudConfig) : null; } catch { return null; }
+  }, [demoMode, actor.userId, cloudConfigKey, operationalFeed?.backend]);
   const backend = demoMode ? localBackend : cloudBackend;
+  const leaseOwnerKey = JSON.stringify([demoMode, cloudBackend?.config.supabaseUrl, cloudBackend?.config.workspaceKey, actor.userId]);
+  const openGenerationRef = useRef(0);
+  const openIdentity = `${demoMode ? 'demo' : cloudConfigKey}\u0000${actor.userId}`;
+  const openIdentityRef = useRef(openIdentity);
+  if (openIdentityRef.current !== openIdentity) {
+    openIdentityRef.current = openIdentity;
+    openGenerationRef.current += 1;
+  }
   const displayDocuments = useMemo(() => projectItineraryDocumentsForDisplay(documents, vessels), [documents, vessels]);
   const visibleIds = vessels.map(vessel => vessel.id);
   const everyVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedVesselIds.includes(id));
@@ -158,9 +170,10 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
   }, [backend, localBackend, cloudBackend, vessels, clockOrigin]);
 
   useEffect(() => () => {
+    openGenerationRef.current += 1;
     const current = editorRef.current;
     if (current && backend) void backend.releaseLease(current.lease);
-  }, [backend]);
+  }, [leaseOwnerKey]);
 
   const toggleVessel = (id: string) => setSelectedVesselIds(
     selectedVesselIds.includes(id) ? selectedVesselIds.filter(item => item !== id) : [...selectedVesselIds, id],
@@ -176,12 +189,19 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
     if (!vessel) return;
     if (!window.confirm('請盡量以船端修改為主，確定要修改嗎？')) return;
     setNotice('');
+    const generation = openGenerationRef.current;
+    const isCurrent = () => generation === openGenerationRef.current;
     const claim = await backend.claimLease(vesselId, { holderId, holderLabel: user.name }, 75);
+    if (!isCurrent()) {
+      if (claim.ok) void backend.releaseLease(claim.lease);
+      return;
+    }
     if (claim.ok === false) {
       setNotice(`此船 Itinerary 正由 ${claim.holderLabel} 編輯，將於鎖定到期或對方保存／取消後可再開啟。`);
       return;
     }
     const loaded = await backend.loadDocument(vesselId);
+    if (!isCurrent()) { void backend.releaseLease(claim.lease); return; }
     if(loaded)operationalFeed?.publishConfirmed(loaded);
     const latest = resolveItineraryEditorDocument(loaded, displayDocuments[vesselId], vessel);
     if (!latest) {
@@ -191,6 +211,7 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
     }
     const key = itineraryDraftKey(latest.workspaceKey, latest.vesselId, user.id);
     const savedDraft = await readItineraryDraft(key);
+    if (!isCurrent()) { void backend.releaseLease(claim.lease); return; }
     let initialDocument: ItineraryDocument | undefined;
     let initialPendingOperation: ItineraryPendingOperation | undefined;
     if (savedDraft && savedDraft.baseRevision === latest.revision) {
@@ -199,6 +220,7 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
     } else if (savedDraft) {
       setNotice('此瀏覽器有較舊 revision 的草稿；為避免覆蓋較新內容，本次未自動載入，草稿仍保留。');
     }
+    if (!isCurrent()) { void backend.releaseLease(claim.lease); return; }
     setEditor({ document: latest, initialDocument, initialPendingOperation, lease: claim.lease });
   };
 

@@ -5,7 +5,7 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
 
-const output=fs.mkdtempSync(path.join(os.tmpdir(),'ship-record-ui-evidence-'));
+const output=fs.mkdtempSync(path.join(process.env.QA_EVIDENCE_ROOT||os.tmpdir(),'ship-record-ui-evidence-'));
 const profile=path.join(output,'chrome-profile');
 let qa,browser,ws,failure=null,sessionId;
 const pending=new Map(),evidence={label:'真實 UI＋測試資料；本機 PGlite，非 hosted Supabase',scenarios:[],errors:[],blockedExternal:[],metrics:[]};
@@ -42,7 +42,7 @@ try{
   if(message.method==='Runtime.exceptionThrown')evidence.errors.push(message.params.exceptionDetails.exception?.description||message.params.exceptionDetails.text);
   if(message.method==='Page.javascriptDialogOpening'){
    (evidence.dialogs??=[]).push({type:message.params.type,message:message.params.message});
-   const expected=message.params.type==='confirm'&&message.params.message==='同步最新會保留本機修改並嘗試與雲端安全合併；只有本機沒有修改時才直接採用雲端資料。確定繼續？';
+   const expected=message.params.type==='confirm'&&['同步最新會保留本機修改並嘗試與雲端安全合併；只有本機沒有修改時才直接採用雲端資料。確定繼續？','請盡量以船端修改為主，確定要修改嗎？'].includes(message.params.message);
    if(!expected)evidence.errors.push('Unexpected QA dialog: '+message.params.message);
    void call('Page.handleJavaScriptDialog',{accept:expected},message.sessionId).catch(error=>evidence.errors.push(error.message));
   }
@@ -104,12 +104,59 @@ try{
  assert.ok(qa.metrics.filter(m=>m.rpc==='sd_itinerary_record_load_many_v1').every(m=>m.status==='SQL_OK'));
  assert.ok(!qa.metrics.some(m=>m.rpc==='sd_itinerary_main_load_many'));
  assert.deepEqual(evidence.errors,[]);assert.deepEqual(evidence.blockedExternal,[]);
+ // Original Itinerary editor: all interactions below use visible controls, never props/helpers.
+ await qa.db.exec("update sd_itinerary_leases set expires_at=now()-interval '1 second' where vessel_id='qa-v1'");
+ const itineraryBefore=await qa.itinerarySnapshot(),appBefore=await qa.read();
+ await click('切換顯示Itinerary信息');await until(async()=> (await text()).includes('Itinerary 看板'),'original Itinerary dashboard');
+ const formalRead=async()=> (await qa.db.query("select sd_itinerary_document_for_vessel(workspace_id,$1,vessel_id) as doc from sd_itinerary_documents where vessel_id='qa-v1'",['isolated-record-ui-qa'])).rows[0].doc;
+ for(const lostAck of [false,true]){
+  const before=await formalRead(),at=qa.metrics.length,marker=lostAck?'QA ITINERARY RECOVERED':'QA ITINERARY SAVED';
+  await click('手動修改',0,2);await until(()=>evaluate("Boolean(document.querySelector('.itinerary-editor-modal'))"),'original Office claim and document load');
+  await fill('.itinerary-editor-modal input[placeholder="Next Port / Dock"]',marker);
+  if(!lostAck)await until(()=>qa.metrics.slice(at).some(m=>m.rpc==='sd_itinerary_record_renew_lease_v1'&&m.status==='SQL_OK'),'original Editor heartbeat reaches record SQL despite background feed polling',40_000);
+  if(lostAck)qa.loseNextItineraryAck();
+  await click('保存並同步');
+  await until(async()=> (await formalRead()).rows[0].portDockName===marker,'Itinerary actual SQL commit');
+  await until(()=>evaluate("!document.querySelector('.itinerary-editor-modal')"),'original Itinerary save acknowledgement closes editor');
+  await until(()=>qa.metrics.slice(at).some(m=>m.rpc==='sd_itinerary_record_release_lease_v1'&&m.status==='SQL_OK'),'original explicit release request');
+  const saved=await formalRead();assert.equal(saved.revision,before.revision+1);assert.deepEqual(saved.alternativePlans,before.alternativePlans);
+  assert.equal((await qa.db.query("select count(*)::int n from sd_itinerary_leases where vessel_id='qa-v1' and expires_at>now()")).rows[0].n,0);
+  const writes=qa.metrics.slice(at).filter(m=>m.rpc==='sd_itinerary_record_save_v1'&&m.status==='SQL_OK');assert.equal(writes.length,1);
+  assert.equal((await qa.db.query('select count(*)::int n from sd_itinerary_history where operation_id=$1',[writes[0].operationId])).rows[0].n,1);
+  if(lostAck){const status=qa.metrics.slice(at).filter(m=>m.rpc==='sd_itinerary_record_operation_status_v1');assert.equal(status.length,1);assert.equal(status[0].operationId,writes[0].operationId);assert.equal(status[0].status,'SQL_OK');}
+  await click('手動修改',0,2);await until(()=>evaluate("Boolean(document.querySelector('.itinerary-editor-modal'))"),'authoritative Itinerary reopen');
+  assert.equal(await evaluate("document.querySelector('.itinerary-editor-modal input[placeholder=\"Next Port / Dock\"]').value"),marker);
+  fs.writeFileSync(path.join(output,lostAck?'itinerary-recovered.png':'itinerary-saved.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+  await click('取消編輯');await until(()=>evaluate("!document.querySelector('.itinerary-editor-modal')"),'unchanged Itinerary close');
+  evidence.scenarios.push(lostAck?'original Itinerary lost-ACK save recovers same operation via real SQL status, reopens authoritative value and releases':'original Itinerary claim/edit/save/readback/reopen/close/release commits formal and preserves alternatives');
+ }
+ await click('手動修改',0,2);await until(()=>evaluate("Boolean(document.querySelector('.itinerary-editor-modal'))"),'open for lease-loss negative');
+ await fill('.itinerary-editor-modal input[placeholder="Next Port / Dock"]','QA UNSAVED LEASE LOSS');
+ await qa.db.exec("update sd_itinerary_leases set expires_at=now()-interval '1 second' where vessel_id='qa-v1'");
+ const successor=(await qa.db.query("select sd_itinerary_record_claim_lease_v1($1,'qa-v1','successor-tab','ignored',75,'qa-owner') as lease",['isolated-record-ui-qa'])).rows[0].lease;assert.equal(successor.ok,true);
+ const beforeFailure=await qa.itinerarySnapshot();
+ await click('保存並同步');await until(async()=> (await text()).includes('編輯鎖已失效，本次未保存；草稿已保留。'),'visible failure preserves original editor');
+ assert.equal(await evaluate("document.querySelector('.itinerary-editor-modal input[placeholder=\"Next Port / Dock\"]').value"),'QA UNSAVED LEASE LOSS');
+ const draft=await evaluate("import('/src/itinerary/itineraryDraftStore.ts').then(async m=>m.readItineraryDraft(m.itineraryDraftKey('isolated-record-ui-qa','qa-v1','qa-owner')))");assert.equal(draft.document.rows[0].portDockName,'QA UNSAVED LEASE LOSS');
+ assert.deepEqual(await qa.itinerarySnapshot(),beforeFailure,'failed original UI save must not write document/history/ledger or successor lease');
+ await click('關閉（保留草稿）');await until(()=>evaluate("!document.querySelector('.itinerary-editor-modal')"),'explicit preserve-draft close');
+ assert.deepEqual(await qa.itinerarySnapshot(),beforeFailure,'stale close must not release successor lease');
+ evidence.scenarios.push('original UI lost lease rejects save, preserves visible/durable draft, and stale close cannot release successor');
+ const itineraryAfter=await qa.itinerarySnapshot();for(const table of Object.keys(itineraryBefore))if(!['sd_itinerary_documents','sd_itinerary_history','sd_itinerary_operations','sd_itinerary_leases'].includes(table))assert.deepEqual(itineraryAfter[table],itineraryBefore[table],`Itinerary must not mutate ${table}`);
+ assert.deepEqual(await qa.read(),appBefore,'Itinerary must not dual-write record AppData');
+ assert.equal(itineraryAfter.sd_itinerary_history.length,itineraryBefore.sd_itinerary_history.length+2);
+ assert.equal(itineraryAfter.sd_itinerary_operations.length,itineraryBefore.sd_itinerary_operations.length+2);
+ assert.deepEqual(evidence.errors,[]);assert.deepEqual(evidence.blockedExternal,[]);
+ console.log(JSON.stringify({qa:'ITINERARY_WRITE_PASS',output,scenarios:evidence.scenarios}));
  console.log(JSON.stringify({qa:'CORE_FLOW_PASS',output,scenarios:evidence.scenarios,unsupportedRpc:[...new Set(qa.metrics.filter(m=>m.status==='UNSUPPORTED').map(m=>m.rpc))]}));
  }
  await call('Page.navigate',{url:qa.origin+'/__qa/blank'});
  await until(()=>evaluate("location.pathname==='/__qa/blank'&&document.readyState==='complete'"),'isolated hook page');
  evidence.hook=await evaluate("import('/scripts/itinerary-record-hook-probe.mjs').then(m=>m.run())");
  console.log(JSON.stringify({qa:'HOOK_PASS',output,...evidence.hook}));
+ await evaluate("import('/@react-refresh').then(({default:r})=>{r.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;})");
+ evidence.lifecycle=await evaluate("import('/scripts/itinerary-record-lifecycle-probe.mjs').then(m=>m.run())");
+ console.log(JSON.stringify({qa:'LIFECYCLE_PASS',output,...evidence.lifecycle}));
 }catch(error){failure=error;try{evidence.failureText=await text();}catch{};evidence.error=error.message;console.error(JSON.stringify({qa:'FAILED',error:error.message,output,body:evidence.failureText?.slice(0,9000)}));}
 finally{
  evidence.metrics=qa?.metrics||[];
@@ -118,5 +165,7 @@ finally{
  if(browser){try{await until(()=>browser.exitCode!==null,'owned Chrome closed',5000);}catch{browser.kill();}}
  try{if(qa)await qa.close();}catch(error){failure??=error;}
  if(!failure){try{fs.rmSync(profile,{recursive:true,force:true});}catch{}}
+ try{if(qa)await assert.rejects(()=>fetch(qa.origin+'/__qa/health'));assert.ok(!browser||browser.exitCode!==null);evidence.cleanup={httpStopped:true,chromeStopped:true};}catch(error){failure??=error;evidence.cleanup={error:error.message};}
+ fs.writeFileSync(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2));
  if(failure)process.exitCode=1;
 }

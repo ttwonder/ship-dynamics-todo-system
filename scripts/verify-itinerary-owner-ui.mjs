@@ -54,7 +54,9 @@ try {
   assert.match(dashboardSource, /返回船舶卡片/);
   assert.match(dashboardSource, /<ItineraryDashboard[\s\S]*actor=\{itineraryActor\}[\s\S]*vessels=\{visible\}/);
   assert.match(itineraryDashboardSource, /const UNRESTRICTED_ITINERARY_PERMISSIONS[\s\S]*view:\s*true[\s\S]*edit:\s*true[\s\S]*import:\s*true[\s\S]*export:\s*true[\s\S]*calendar:\s*true/);
-  assert.match(itineraryDashboardSource, /new OfficeItineraryCloudRepository\(actor\)/);
+  assert.match(itineraryDashboardSource, /new OfficeItineraryCloudRepository\(actor, cloudConfig\)/);
+    assert.match(itineraryDashboardSource, /cloudConfigIdentity\(cloudConfig\)/);
+    assert.match(itineraryDashboardSource, /\[demoMode, actor.userId, cloudConfigKey, operationalFeed\?\.backend\]/);
   assert.match(itineraryDashboardSource, /backend&&displayMode==='table'/, 'the cloud repository must mount the same production table path as local demo');
   assert.match(itineraryDashboardSource, /displayMode==='table'\?'切換行事曆':'返回 Itinerary'/, 'calendar toggle labels must describe both destinations');
   assert.match(itineraryDashboardSource, /className="btn small itinerary-view-toggle"/, 'calendar toggle must use its prominent semantic class');

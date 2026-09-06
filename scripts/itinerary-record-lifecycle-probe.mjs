@@ -1,0 +1,53 @@
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {flushSync} from 'react-dom';
+import Dashboard from '../src/itinerary/ItineraryDashboard.tsx';
+import {OfficeItineraryCloudRepository as Repo} from '../src/itinerary/itineraryCloud.ts';
+import {createEmptyItineraryDocument} from '../src/itinerary/itineraryTypes.ts';
+import {readItineraryDraft,saveItineraryDraft,itineraryDraftKey,deleteItineraryDraft} from '../src/itinerary/itineraryDraftStore.ts';
+export async function run(){
+ const assert=(x,m)=>{if(!x)throw new Error(m);},tick=()=>new Promise(r=>setTimeout(r,10));
+ const until=async(fn,m)=>{for(let i=0;i<150;i++){if(await fn())return;await tick();}throw new Error(m);};
+ const originals=Object.fromEntries(['loadMany','loadDocument','claimLease','releaseLease','renewLease'].map(k=>[k,Repo.prototype[k]])),oldConfig=window.SHIP_DYNAMICS_SUPABASE_CONFIG,oldConfirm=window.confirm;
+ const calls=[],cases=[],host=document.createElement('div');document.body.append(host);const root=createRoot(host);
+ const cfg={supabaseUrl:location.origin,supabaseAnonKey:'synthetic-lifecycle',workspaceKey:'lifecycle-shared',tableName:'ship_dynamics_app_state',storageMode:'legacy'};
+ const doc=createEmptyItineraryDocument({workspaceKey:cfg.workspaceKey,vesselId:'v1',vesselName:'V1',rowId:'r1'});doc.rows[0].portDockName='BASE';
+ const user={id:'same-user',name:'QA',role:'vessel',isActive:true},vessels=[{id:'v1',name:'V1'}],empty=[];
+ let deferredClaim=null;
+ Repo.prototype.loadMany=async function(){calls.push({action:'load',repo:this});return {v1:doc};};
+ Repo.prototype.loadDocument=async()=>doc;
+ Repo.prototype.claimLease=function(vesselId,actor){calls.push({action:'claim',repo:this});const value={ok:true,lease:{workspaceKey:cfg.workspaceKey,vesselId,leaseId:'test-lease',leaseToken:'test-lease',fence:1,holderId:actor.holderId,holderLabel:'QA',expiresAt:new Date(Date.now()+75000).toISOString()}};return deferredClaim?new Promise(resolve=>{deferredClaim.resolve=()=>resolve(value);}):Promise.resolve(value);};
+ Repo.prototype.renewLease=async lease=>({ok:true,lease});
+ Repo.prototype.releaseLease=async function(lease){calls.push({action:'release',repo:this,lease});return true;};
+ window.confirm=()=>true;
+ const render=config=>{window.SHIP_DYNAMICS_SUPABASE_CONFIG=config;flushSync(()=>root.render(React.createElement(Dashboard,{user,actor:{userId:user.id},vessels,calendarTaskVessels:vessels,calendarTasks:empty,selectedVesselIds:empty,setSelectedVesselIds:()=>{}})));};
+ const click=label=>{const n=[...host.querySelectorAll('button')].find(n=>n.textContent===label);assert(n,'missing '+label);n.click();};
+ try{
+  render(cfg);await until(()=>host.querySelector('.itinerary-panel'),'initial Dashboard');
+  render({...cfg,storageMode:'records-v1'});await until(()=>calls.some(c=>c.action==='load'&&c.repo.config.storageMode==='records-v1'),'Dashboard fallback must refresh backend on mode change: '+JSON.stringify(calls.map(c=>({action:c.action,mode:c.repo.config.storageMode,workspace:c.repo.config.workspaceKey}))));
+  cases.push('Dashboard without feed selects fresh mode-aware backend');
+  click('手動修改');await until(()=>host.querySelector('[role=dialog]'),'real mounted Editor');
+  const input=host.querySelector('input[placeholder="Next Port / Dock"]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(input,'KEEP DRAFT');input.dispatchEvent(new Event('input',{bubbles:true}));
+  const key=itineraryDraftKey(cfg.workspaceKey,'v1',user.id);
+  await until(async()=> (await readItineraryDraft(key))?.document.rows[0].portDockName==='KEEP DRAFT','durable draft');
+  const durable=await readItineraryDraft(key);durable.pendingOperation={id:'11111111-2222-4333-8444-555555555555',signature:'fixture-pending-intent'};await saveItineraryDraft(durable);
+  const count=calls.filter(c=>c.action==='release').length;
+  render({...cfg,storageMode:'legacy',supabaseAnonKey:'rotated-synthetic-lifecycle'});await tick();
+  assert(calls.filter(c=>c.action==='release').length===count,'same formal store mode/key switch prematurely released active editor lease');
+  assert(host.querySelector('input[placeholder="Next Port / Dock"]')===input&&input.value==='KEEP DRAFT','mode/key switch rebuilt or lost original draft');
+  assert((await readItineraryDraft(key))?.document.rows[0].portDockName==='KEEP DRAFT','same formal draft was erased by authority-mode switch');
+  assert(JSON.stringify(await readItineraryDraft(key))===JSON.stringify(durable),'mode/key changed pending envelope');
+  cases.push('mode/key change keeps same editor DOM and shared-store durable draft/pending without release');
+  click('取消編輯');await until(()=>!host.querySelector('[role=dialog]'),'explicit close');
+  deferredClaim={};click('手動修改');await until(()=>deferredClaim.resolve,'pending open claim');
+  render({...cfg,storageMode:'records-v1'});deferredClaim.resolve();await tick();await tick();
+  assert(!host.querySelector('[role=dialog]'),'late old-generation claim opened a stale editor');
+  assert(calls.at(-1).action==='release'&&calls.at(-1).repo.config.storageMode==='legacy','late claim must release via captured backend');
+  cases.push('late old-generation open is fenced and releases only captured lease');
+  deferredClaim=null;click('手動修改');await until(()=>host.querySelector('[role=dialog]'),'fresh generation opens normally');
+  const beforeScope=calls.filter(c=>c.action==='release').length;render({...cfg,workspaceKey:'other-formal-workspace'});await tick();
+  assert(calls.filter(c=>c.action==='release').length===beforeScope+1&&calls.filter(c=>c.action==='release').at(-1).repo.config.workspaceKey===cfg.workspaceKey,'genuine workspace cleanup must use captured original lease owner');
+  cases.push('fresh open works and genuine workspace transition retains captured-owner cleanup');
+  return {layer:'mounted original Dashboard/Editor with controlled repository I/O; not SQL',cases};
+ }catch(error){throw new Error(error.message+' DIAGNOSTIC '+JSON.stringify({calls:calls.map(c=>({action:c.action,mode:c.repo.config.storageMode})),config:window.SHIP_DYNAMICS_SUPABASE_CONFIG?.storageMode,body:host.innerText.slice(0,300)}));}finally{flushSync(()=>root.unmount());host.remove();for(const [k,v]of Object.entries(originals))Repo.prototype[k]=v;window.SHIP_DYNAMICS_SUPABASE_CONFIG=oldConfig;window.confirm=oldConfirm;await deleteItineraryDraft(itineraryDraftKey(cfg.workspaceKey,'v1',user.id));}
+}

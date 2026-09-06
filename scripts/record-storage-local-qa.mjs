@@ -3,17 +3,18 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createServer as createHttpServer} from 'node:http';
 import {createServer as createViteServer} from 'vite';
 import {PGlite} from '@electric-sql/pglite';
-import {installItineraryFixture,seedItineraryFixture,snapshotItineraryAuthority,recordItinerarySql} from './record-itinerary-local-fixture.mjs';
+import {installItineraryFixture,seedItineraryFixture,snapshotItineraryAuthority,recordItinerarySql,recordItineraryWriteSql,recordWriteArgs} from './record-itinerary-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
 export async function createRecordStorageLocalQa() {
  const db=new PGlite(),metrics=[];
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
- let origin='',http,vite;
+ let origin='',http,vite,loseItineraryAck=false;
  const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:'records-v1',readMode:'delta-v1'});
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
+  ...recordWriteArgs,
   sd_itinerary_record_load_many_v1:['p_workspace_key','p_vessel_ids:text[]','p_actor_user_id'],
   read_ship_dynamics_records_v1:['p_workspace_key'],
   read_ship_dynamics_record_delta_v1:['p_workspace_key','p_base_revision:integer','p_base_token'],
@@ -47,6 +48,7 @@ export async function createRecordStorageLocalQa() {
   await installItineraryFixture(db);
   await seedItineraryFixture(db,vite,workspace,initial.vessels);
   await db.exec(fs.readFileSync(recordItinerarySql,'utf8'));
+  await db.exec(fs.readFileSync(recordItineraryWriteSql,'utf8'));
   const itineraryBaseline=await snapshotItineraryAuthority(db);
   const send=(res,status,value)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(value));};
   http=createHttpServer(async(req,res)=>{
@@ -75,7 +77,9 @@ export async function createRecordStorageLocalQa() {
        const differs=(a,b,prefix='')=>{if(a===b)return[];if(a&&b&&typeof a==='object'&&typeof b==='object')return[...new Set([...Object.keys(a),...Object.keys(b)])].flatMap(k=>differs(a[k],b[k],prefix?prefix+'.'+k:k));return[prefix];};
        metrics.push({rpc:name,diagnostic:'GUARD_KEYS_ONLY',actorMismatchKeys:differs(debug.guard,body.p_actor_guard),touchesAuthorization:debug.touches,hasAuthorizationGuard:body.p_authorization_guard!=null,operations:body.p_operations.map(op=>({kind:op.kind,collection:op.collection,entityId:op.entityId}))});
       }
-      metrics.push({rpc:name,status:value?.ok===false?value.code:'SQL_OK',revision:value?.revision,bytes:Buffer.byteLength(JSON.stringify(value??null)),elapsedMs:performance.now()-start});send(res,200,value);
+      metrics.push({rpc:name,status:value?.ok===false?value.code:'SQL_OK',operationId:body.p_operation_id,vesselId:body.p_vessel_id,revision:value?.revision,bytes:Buffer.byteLength(JSON.stringify(value??null)),elapsedMs:performance.now()-start});
+      if(loseItineraryAck&&name==='sd_itinerary_record_save_v1'){loseItineraryAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic ACK loss after actual SQL commit'});return;}
+      send(res,200,value);
      }catch(error){metrics.push({rpc:name,status:'SQL_ERROR',code:error.code});send(res,400,{code:error.code||'QA_SQL_ERROR',message:error.message});}
      return;
     }
@@ -84,6 +88,6 @@ export async function createRecordStorageLocalQa() {
   });
   await new Promise((resolve,reject)=>{http.once('error',reject);http.listen(0,'127.0.0.1',resolve);});
   origin=`http://127.0.0.1:${http.address().port}`;
-  return {origin,password,metrics,db,close,itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
+  return {origin,password,metrics,db,close,loseNextItineraryAck:()=>{loseItineraryAck=true;},itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
  }catch(error){await close();throw error;}
 }

@@ -204,3 +204,29 @@
 本批只關閉原首頁這條 operational read；**不宣稱整個 Itinerary、報告中心或資料管理已完成 records 相容**。Office 正式／備選保存、lease 操作與其他下游讀寫需後續獨立切片；public 船端與原報告 authority 未改。沒有新登入模型、hosted ACL／PostgREST／Realtime／真多連線／效能驗收或正式 cutover。封閉 service 使用 DB owner；既有依賴 SQL 僅在 PGlite fixture 執行，daily report 省略的只有不支援的 cron 註冊，不假造 report／document 函式。
 
 採有界直接驗證，未要求獨立 review PASS。完成獨立本機 commit，未 Push、merge、部署、執行正式／遠端 SQL，也未向使用者開放試用網站。
+
+## 第九批：records-v1 Office Itinerary 完整租約／保存相容切片
+
+本批解除第八批的 Office write unsupported 阻斷；只完成本節列明的切片，不代表報告／資料管理或整站已可切換。
+
+- 新增 development-only `20260906_itinerary_record_write.sql`：五個明確 `sd_itinerary_record_{claim_lease,renew_lease,save,operation_status,release_lease}_v1` wrapper。每個先用目前 record actor，保留原 UUID／metadata 映射和四角色語意；inactive／missing／invalid role 不會被 legacy payload 救活。固定 search_path、security invoker，撤銷 PUBLIC／anon／authenticated 執行權，未列入正式 manifest。
+- 直接沿用最後生效的 `sd_itinerary_save_internal`（含 alternatives）及原 lease core，不改舊 RPC／helper／GUC／schema。正式＋備選、live anchors、單船 lease／fence／holder、CAS、operation receipt 與原 history 保持同交易；保留原 SQL 保存時釋放租約的行為，原 UI 確認後仍呼叫 release。公共船端免登入有效船及同 core 互斥不變，未改公共入口或強制搶鎖。
+- 原 Office adapter 五路均依 storageMode 明確選路，缺能力或失敗不 fallback。實際重現同 operation 不同內容被 catch/status 舊成功 receipt 冒充成功；最小修正為 Office 明確 `operation-mismatch` 直接失敗，不再進 status。records 與 legacy regression 皆驗證；同 actor／workspace 的 exact replay 可跨 mode 讀同一原 ledger，不另建 Itinerary history，也不雙寫任何 AppData。
+- 只改必要非 JSX seam：Dashboard fallback memo 包含 mode／key identity；同正式 workspace／actor 的 mode/key 改變不被當作關閉編輯器，不清除原 draft／pending。真正 workspace／actor cleanup 仍使用 captured backend；延遲 open claim/load/draft continuation 有 generation fence。原 Editor 的 inline renew callback 隨背景 polling 改變，曾令 30 秒 timer 不斷重啟；真瀏覽器 RED 捕捉後改用最新 callback ref，保持原 timer／操作／畫面。
+
+### 本機實際驗證
+
+- `npm run test:itinerary-record-write`：**21 真 SQL＋7 Supabase JS→封閉 SQL 傳輸＝28 PASS**。完整五路、四角色、active 權威、actor/workspace status、stale CAS、錯 fence／holder／actor／有效錯船 lease／expired lease、非法備選、operation mismatch、expired exact replay、ledger 後段例外原子回退、公船與岸端同 lease core 競爭、owner-only ACL／invoker／重套不變均驗證。正常保存逐表比對其他 AppData／report history 及另一船現存 document／lease 的 value、xmin、ctid 不變。
+- 原 `main.tsx → App → Dashboard → ItineraryDashboard/Editor` headless browser：**8 場景 PASS**（原有 5＋Itinerary 正常保存／lost ACK 同 operation status 恢復／失鎖草稿保留）。真正 UI claim、輸入、實際 30 秒 renew、保存、SQL authoritative read、再開看到保存值、取消／釋放均執行。兩次成功各只增一版 document/history/ledger，備選保留；失敗不半寫、不釋放 successor lease。沒有直接呼叫 prop/helper 冒稱 UI 保存。
+- 另 **4 原 hook deferred I/O＋4 mounted Dashboard/Editor controlled I/O**：mode/key 遲到讀取、舊 callback、草稿及 pending 完全保留、延遲 open 清理、真正 workspace cleanup。這些是 React seam，不冒稱 SQL／真多連線。
+- 受影響 record read **16**、record identity **6** 通過；原 `test:itinerary` 聚合全部通過（stdout **23 個 PASS 標記**，不是宣称僅 23 個内部 assertion）。typecheck／build 通過，保留既有 >500 kB bundle 提醒。
+- AST 比對 **56 個 JSX/TSX/CSS**：54 檔完全未改；Dashboard 1 個、Editor 2 個最外層 JSX 原文完全相同；App 19 個 JSX roots 與 baseline 相同。原 labels／導航／密度／CSS／有效業務 helpers 不改，不掛 NormalizedApp。截圖可見原編輯器、Revision 9、`QA ITINERARY RECOVERED` 和「真實 UI＋測試資料」。
+- RED 分別為缺 wrapper `42883`、adapter unsupported、mismatch 被誤回 success、mode memo／誤 release／遲到 open、原頁 heartbeat 被 polling 持續重啟。另有測試層問題（blank page 缺 React refresh preamble、fixture 非標準 tableName、舊 constructor source assertion），只修對應 harness；不把 fixture crash 算產品 RED。
+
+### 證據與仍保留的界線
+
+完整 stdout／exit code：`C:/Users/tuotu/AppData/Local/hermes/cache/record-itinerary-write-59adaf2198/commands.jsonl` 及逐命令 `.log`；分層索引 `verified-results.json`；完整候選 patch／fingerprint／commit readback 亦在同 cache，未覆寫上一批。原 browser 證據：`C:/Users/tuotu/AppData/Local/hermes/cache/record-itinerary-write-59adaf2198/ship-record-ui-evidence-uNwFTg/evidence.json`，截圖 `itinerary-saved.png`、`itinerary-recovered.png`。最終 browser 的 errors／外連／unsupported 都為空，關閉後 loopback health 不再可達、Chrome 已退出。早期兩個 Temp browser 目錄已即時複製進此唯一 cache；最終 gates 直接寫 cache。
+
+只做本機 PGlite owner SQL＋封閉 HTTP，**不是 hosted ACL／PostgREST／Realtime／真多連線或效能驗收**；未做所有 Itinerary import/export、跨登入／跨真正 workspace 的完整草稿恢復 E2E 或整站下游驗收。actor 傳遞沿用原系統，未新增登入／防冒名架構；新 RPC 對 browser roles 仍不可用。報告／資料管理、排程／retention、正式 migration／cutover 保持後續範圍。
+
+採有界直接驗證，未新增獨立 review gate。完成後僅獨立本機 commit；沒有 Push、merge、branch 切換、部署、遠端／正式 SQL、正式設定／服務更動，也未開使用者試用站。

@@ -84,11 +84,10 @@ try {
    const doc=await repo.loadDocument('v1');assert.equal(calls.at(-1),'sd_itinerary_record_load_many_v1');
    assert.equal(doc.revision,7);assert.equal(doc.rows[0].previousPortName,'QA FORMAL BUSAN');assert.deepEqual(doc.alternativePlans,formal.alternativePlans);
  });
- await check('all incompatible Office lease/save methods fail closed with a typed error and zero RPCs',async()=>{
-   const count=calls.length;
-   const unsupported=error=>error.name==='ItineraryRecordWriteUnsupportedError'&&error.code==='record-itinerary-write-unsupported';
-   for(const invoke of [()=>repo.claimLease('v1',{holderId:'tab',holderLabel:'QA'}),()=>repo.renewLease({}),()=>repo.releaseLease({}),()=>repo.save({document:formal})])await assert.rejects(invoke,unsupported);
-   assert.equal(calls.length,count);
+ await check('record read authorization error never retries legacy identity',async()=>{
+   await db.query("update ship_dynamics_records set value=jsonb_set(value,'{isActive}','false') where workspace_key=$1 and collection='users'",[key]);
+   const count=calls.length;await assert.rejects(()=>repo.loadDocument('v1'),/not-authorized/);assert.deepEqual(calls.slice(count),['sd_itinerary_record_load_many_v1']);
+   await db.query("update ship_dynamics_records set value=jsonb_set(value,'{isActive}','true') where workspace_key=$1 and collection='users'",[key]);
  });
  await check('missing new RPC fails closed with one call and no legacy fallback',async()=>{
    missing=true;const count=calls.length;await assert.rejects(()=>repo.loadMany(['v1']),/PGRST202/);assert.deepEqual(calls.slice(count),['sd_itinerary_record_load_many_v1']);missing=false;

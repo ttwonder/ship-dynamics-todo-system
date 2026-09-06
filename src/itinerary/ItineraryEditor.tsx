@@ -81,6 +81,8 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   const [idleWarning, setIdleWarning] = useState(false);
   const draftKey = useMemo(() => itineraryDraftKey(document.workspaceKey, document.vesselId, actorId), [document.workspaceKey, document.vesselId, actorId]);
   const lastActivity = useRef(Date.now());
+  const renewLeaseRef = useRef(onRenewLease);
+  renewLeaseRef.current = onRenewLease;
   const dirtyRef = useRef(dirty);
   const draftRef = useRef(draft);
   const pendingOperationRef = useRef<ItineraryPendingOperation | null>(initialPendingOperation || null);
@@ -112,7 +114,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   useEffect(() => {
     if (readOnly) return;
     const timer = window.setInterval(() => {
-      void onRenewLease(lease).then(result => {
+      void renewLeaseRef.current(lease).then(result => {
         if (result.ok) setLease(result.lease);
         else {
           setReadOnly(true);
@@ -122,7 +124,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
       });
     }, 30_000);
     return () => window.clearInterval(timer);
-  }, [readOnly, lease, onRenewLease, draftKey, actorId, document.revision]);
+  }, [readOnly, lease, draftKey, actorId, document.revision]);
 
   useEffect(() => {
     if (readOnly) return;
