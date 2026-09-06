@@ -50,6 +50,29 @@ create table if not exists public.ship_dynamics_record_read_bases (
 create index if not exists ship_dynamics_records_changed_revision
   on public.ship_dynamics_records(workspace_key, revision, collection);
 
+-- Durable version metadata is separate from disposable delta read bases.
+-- No AppData/body snapshot per commit; only overwritten/deleted rows are archived.
+create table if not exists public.ship_dynamics_record_versions (
+  workspace_key text not null references public.ship_dynamics_record_workspaces(workspace_key),
+  revision integer not null check (revision >= 0),
+  root jsonb not null check (jsonb_typeof(root) = 'object'),
+  orders jsonb not null check (jsonb_typeof(orders) = 'object'),
+  updated_at timestamptz not null,
+  primary key (workspace_key, revision)
+);
+create table if not exists public.ship_dynamics_record_history (
+  workspace_key text not null references public.ship_dynamics_record_workspaces(workspace_key),
+  collection text not null,
+  entity_id text not null check (entity_id <> ''),
+  valid_from_revision integer not null check (valid_from_revision >= 0),
+  valid_to_revision integer not null check (valid_to_revision > valid_from_revision),
+  value jsonb not null check (jsonb_typeof(value) = 'object' and jsonb_typeof(value -> 'id') = 'string' and value ->> 'id' = entity_id),
+  primary key (workspace_key, collection, entity_id, valid_from_revision)
+);
+alter table public.ship_dynamics_record_versions enable row level security;
+alter table public.ship_dynamics_record_history enable row level security;
+revoke all on public.ship_dynamics_record_versions, public.ship_dynamics_record_history from public, anon, authenticated;
+
 alter table public.ship_dynamics_record_workspaces enable row level security;
 alter table public.ship_dynamics_record_collections enable row level security;
 alter table public.ship_dynamics_records enable row level security;
@@ -104,6 +127,10 @@ begin
     insert into public.ship_dynamics_records(workspace_key,collection,entity_id,value,revision)
       select p_workspace_key,name,source.item ->> 'id',source.item,(p_payload ->> 'revision')::integer from jsonb_array_elements(items) source(item);
   end loop;
+  insert into public.ship_dynamics_record_versions
+    select w.workspace_key,w.revision,w.root,
+      (select coalesce(jsonb_object_agg(c.collection,c.ids),'{}'::jsonb) from public.ship_dynamics_record_collections c where c.workspace_key=p_workspace_key),w.updated_at
+    from public.ship_dynamics_record_workspaces w where w.workspace_key=p_workspace_key;
   return jsonb_build_object('ok',true,'replayed',false);
 end;
 $$;
@@ -124,6 +151,52 @@ returns jsonb language sql stable security invoker set search_path = pg_catalog,
       ),'{}'::jsonb))
     from public.ship_dynamics_record_workspaces w where w.workspace_key=p_workspace_key
   ),jsonb_build_object('protocol','ship-dynamics-records-v1','workspace_key',p_workspace_key,'status','missing'));
+$$;
+
+-- Owner-only reconstruction foundation, not a browser/data-management RPC rollout.
+-- Missing metadata never falls back to current state. Every ordered ID must have
+-- exactly one body in [from,to), including deletion/recreation of an identical ID.
+create or replace function public.read_ship_dynamics_record_history_v1(p_workspace_key text,p_revision integer)
+returns jsonb language plpgsql stable security invoker set search_path = pg_catalog, public as $$
+declare
+  v public.ship_dynamics_record_versions%rowtype;
+  payload jsonb; name text; ids jsonb; bodies jsonb; expected_count bigint := 0;
+  active_count bigint; invalid_count bigint;
+begin
+  select * into v from public.ship_dynamics_record_versions where workspace_key=p_workspace_key and revision=p_revision;
+  if not found then
+    return jsonb_build_object('protocol','ship-dynamics-record-history-v1','workspace_key',p_workspace_key,'revision',p_revision,'status','missing');
+  end if;
+  payload := v.root;
+  for name,ids in select * from jsonb_each(v.orders) loop
+    if jsonb_typeof(ids) is distinct from 'array' then raise exception 'record-history-incomplete'; end if;
+    if exists(select 1 from jsonb_array_elements(ids) id where jsonb_typeof(id)<>'string')
+      or (select count(distinct id) from jsonb_array_elements_text(ids) id) <> jsonb_array_length(ids)
+    then raise exception 'record-history-incomplete'; end if;
+    select coalesce(jsonb_agg(matches.body order by requested.ordinal),'[]'::jsonb),
+      count(*) filter (where matches.n<>1) into bodies,invalid_count
+    from jsonb_array_elements_text(ids) with ordinality requested(id,ordinal)
+    cross join lateral (
+      select count(*) as n,jsonb_agg(candidate.value) -> 0 as body from (
+        select r.value from public.ship_dynamics_records r
+          where r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=requested.id and r.revision<=p_revision
+        union all
+        select h.value from public.ship_dynamics_record_history h
+          where h.workspace_key=p_workspace_key and h.collection=name and h.entity_id=requested.id
+            and h.valid_from_revision<=p_revision and p_revision<h.valid_to_revision
+      ) candidate
+    ) matches;
+    if invalid_count<>0 then raise exception 'record-history-incomplete'; end if;
+    expected_count := expected_count + jsonb_array_length(ids);
+    payload := jsonb_set(payload,array[name],bodies,true);
+  end loop;
+  select (select count(*) from public.ship_dynamics_records r where r.workspace_key=p_workspace_key and r.revision<=p_revision)
+    + (select count(*) from public.ship_dynamics_record_history h where h.workspace_key=p_workspace_key
+      and h.valid_from_revision<=p_revision and p_revision<h.valid_to_revision) into active_count;
+  if active_count<>expected_count then raise exception 'record-history-incomplete'; end if;
+  return jsonb_build_object('protocol','ship-dynamics-record-history-v1','workspace_key',p_workspace_key,
+    'revision',v.revision,'updated_at',v.updated_at,'status','snapshot','payload',payload);
+end;
 $$;
 
 create or replace function public.get_ship_dynamics_record_receipt_v1(
@@ -286,6 +359,10 @@ begin
     insert into public.ship_dynamics_record_read_bases values(p_workspace_key,workspace.revision,
       md5(jsonb_build_array(p_workspace_key,workspace.import_token,workspace.revision)::text),workspace.root,orders)
       on conflict(workspace_key,revision) do nothing;
+    -- On an existing development store, capture only the actual current baseline;
+    -- never backfill older read bases whose row bodies were already lost.
+    insert into public.ship_dynamics_record_versions values(p_workspace_key,workspace.revision,workspace.root,orders,workspace.updated_at)
+      on conflict(workspace_key,revision) do nothing;
   end if;
   -- Materialize an originally absent collection only when this transaction touches
   -- it. All order validation is complete before any physical write starts.
@@ -297,6 +374,9 @@ begin
   end loop;
   for operation in select value from jsonb_array_elements(p_operations) where value ->> 'kind'='entity' loop
     name := operation ->> 'collection'; target_id := operation ->> 'entityId'; replacement := nullif(operation -> 'value','null'::jsonb);
+    insert into public.ship_dynamics_record_history(workspace_key,collection,entity_id,valid_from_revision,valid_to_revision,value)
+      select r.workspace_key,r.collection,r.entity_id,r.revision,next_revision,r.value
+      from public.ship_dynamics_records r where r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=target_id;
     if replacement is null then
       delete from public.ship_dynamics_records where workspace_key=p_workspace_key and collection=name and ship_dynamics_records.entity_id=target_id;
     else
@@ -311,6 +391,9 @@ begin
   if jsonb_array_length(p_operations)>0 then
     update public.ship_dynamics_record_workspaces set revision=next_revision,updated_at=saved_at,updated_by=p_saved_by,
       root=next_root || jsonb_build_object('revision',next_revision,'updatedAt',saved_text) where workspace_key=p_workspace_key;
+    insert into public.ship_dynamics_record_versions
+      select w.workspace_key,w.revision,w.root,next_orders,w.updated_at
+      from public.ship_dynamics_record_workspaces w where w.workspace_key=p_workspace_key;
   end if;
   receipt := jsonb_build_object('ok',true,'status','committed','operation_id',p_operation_id,'revision',next_revision,'updated_at',saved_text,'replayed',false);
   insert into public.ship_dynamics_record_receipts values(p_workspace_key,p_operation_id,
@@ -321,6 +404,7 @@ $$;
 
 revoke all on function public.import_ship_dynamics_records_v1(text,jsonb) from public, anon, authenticated;
 revoke all on function public.read_ship_dynamics_records_v1(text) from public, anon, authenticated;
+revoke all on function public.read_ship_dynamics_record_history_v1(text,integer) from public, anon, authenticated;
 revoke all on function public.get_ship_dynamics_record_receipt_v1(text,text,jsonb,text,text,jsonb,jsonb,jsonb) from public, anon, authenticated;
 revoke all on function public.apply_ship_dynamics_record_patch_v1(text,text,jsonb,text,text,jsonb,jsonb,jsonb) from public, anon, authenticated;
 commit;

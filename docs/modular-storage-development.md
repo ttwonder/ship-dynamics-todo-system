@@ -153,3 +153,29 @@
 - Chromium DOM readiness 與原「同步最新」確認對話框已用實際事件處理；只接受該明確確認文字，其他對話框使 gate 失敗。測試結果及請求時序寫到本機 Temp 獨立 evidence.json；服務與測試 Chrome 於結束後關閉。
 - 明確缺口：此服務還未掛 `sd_itinerary_main_load_many`，因此畫面保留真實 Itinerary 讀取失敗提示；沒有替身掩飾，也不能把 CORE_FLOW_PASS 稱為全站/Itinerary/PDF/真 Realtime 通過。尚未向使用者開啟試用網站。
 - 這一批僅新增 QA 腳本、npm 指令與本文件；產品 bytes 未變，沿用第五批已通過的 typecheck／build及回歸，不重跑不受影響的全套測試。
+
+## 第七批：新逐筆版本的完整歷史重組基礎
+
+### 已實作與不變界線
+
+- `supabase/development/20260906_appdata_record_store.sql` 新增私有 `ship_dynamics_record_history`：更新／刪除時只保存受影響 row 的原 body 及 `[valid_from_revision, valid_to_revision)`。當前 row 的 revision 為其現行生命區間起點；同字串 ID 刪除再建立不混淆前後版本。排序／設定不複製無關 body，沒有每次寫入全 AppData snapshot。
+- `ship_dynamics_record_versions` 僅保存每版 root（含設定、revision、updatedAt）及 ordered IDs；與可缺失的 delta `read_bases` 分表。清掉 delta 基準只能觸發真實完整讀回，不可被當作刪除歷史的授權。本批未制定或啟用任何 history retention policy。
+- 私有 STABLE、security invoker 函式 `read_ship_dynamics_record_history_v1(text,integer)` 使用同一 statement snapshot，以當版順序重組原 AppData。每個 ordered ID 須 exactly-one body，另核對完整 active row 數；缺 body／重疊生命區間拋出 `record-history-incomplete`，缺版本 metadata 回傳 `status: missing` 且無 payload，不以當前／legacy 資料偽造歷史。
+- 新匯入保留 import baseline；既有 development store 再套 DDL 不 backfill 已遺失的歷史 body，只在下一次非空提交保留當時實際 current baseline 與新版本。匯入及 operation replay 不增加歷史；body history、versions、read-base、實體、順序、workspace revision 與 receipt 在同一交易提交／回退。
+- 新表啟用 RLS，所有新表／函式撤銷 PUBLIC／anon／authenticated 權限，沒有 browser grant。原 patch／write 授權、lease／CAS 規則未重做；legacy workspace／JSON history 留在原地，不 backfill、不刪除、不雙寫。
+
+### 本機證據
+
+- 新 runner：`node scripts/verify-cloud-record-history.mjs`。先執行 import＋同 row 兩次修改的 tracer test，實際 RED 為缺少歷史重組函式（SQLSTATE `42883`、exit `1`）；實作後 GREEN，最終 **12 項 PASS**，精確重組及比對資料庫所列 **revision 1–12 全部 12 版**，不排除根時鐘或未知欄位。
+- 覆蓋設定及 server-stamped audit、純排序、缺 optional → 首次建立、原內控／要事 helper 聯動、刪除重用原字串 ID、未知 root／row 欄位、未受影響 row 的 body／revision／xmin／ctid 不變。測試資料含空白、前導零及非 UUID 原 ID，未 trim／重編。
+- 後段 receipt trigger 先確認 history 與新 version 已寫入，再故意拋例外；讀回完整 record storage 狀態證明全部回退。lost-ACK 丟棄 ACK 後、lease 過期仍原 operation replay，history／versions 不增加；no-op、DDL／import replay 同樣驗證不增加。缺版本、缺 body、重疊區間均 fail closed，read-base 刪除不影響歷史重組。
+- 同一 workspace 的 legacy authority 放入相同 revision 數字但不同內容，確認與新歷史分離；原 app_state／app_revisions／block_operations 資料及 legacy table columns／RLS／ACL 未改。新 reader／tables 以 anon、authenticated 實際呼叫均 permission denied，並核對 invoker、STABLE、search_path 及 PUBLIC EXECUTE 撤銷。
+- 受影響回歸：`node scripts/verify-cloud-record-store.mjs` **16 SQL＋7 adapter PASS**；`node scripts/verify-cloud-record-delta.mjs` **7 SQL＋6 adapter PASS**；`node scripts/verify-cloud-record-workflows.mjs` **23 PASS**。store／workflow 的 rollback／replay 全表比對已包含兩個新 history objects。
+- 新 runner 的 `--probe-failure-exit` 為故意失敗 sentinel；清理 Vite／PGlite 後才設定 exitCode，必須 exit `1`。真實 RED、GREEN、回歸、hygiene／fingerprint／commit stdout 及 exit code 保存在 repo 外 `C:/Users/tuotu/AppData/Local/Temp/record-history-verification.txt`，不把測試輸出寫入 repo。
+- 本批沒有修改產品 TS／JSX／CSS、業務 helpers、設定資產或正式 manifest。typecheck／build 引用產品前 commit `ac343b5` 已有 PASS，不重跑未受此 SQL-only 產品差異影響的建置。未新增獨立 review gate；只做有界定點驗證。
+
+### 仍未完成，不由此 PASS 取代
+
+這是 development-only、owner SQL 層的可重組基礎，**不是資料管理 UI／回退操作／可上線 RPC 的完成證明**。dataManagement stats/prune 仍讀 legacy app_state 的 users／current revision；legacy history head 與 record history head 是不同權威，不能只憑相同 revision 數字合併或判定同版。尚未改資料管理、Itinerary、RPC 選路、WebSocket、多連線或 retention；原 UI 與 NormalizedApp 掛載不變。
+
+完整歷史讀取仍須重組 AppData；每版 root／ordered IDs 仍有儲存成本。未補齊過往已遺失的逐筆 body，未把旧 JSON 歷史搬入新表，未提供跨權威歷史整合／回退寫入或正式 cutover rollback。沒有 hosted Supabase、真多連線、新 browser／Itinerary／全站驗收或效能量測。本批只做獨立本機 commit；Push、merge、部署、正式／遠端 SQL 皆未執行，正式操作與使用者試用關卡仍保留。
