@@ -90,6 +90,20 @@
 
 收據根目錄：`C:/Users/tuotu/AppData/Local/hermes/cache/record-internal-control-ui-32adc77dae/`，最新 UI 為 `47-ui-final.log` 與 `record-internal-control-browser-t1jtRL/evidence.json`；完整 commands／最終 manifest、full-index patch／raw Git blob archive 隨本機 commit 交付。前期 Windows readiness／native input／等待 async handoff 的 harness 調整超過原訂三輪，屬執行紀律偏差；所有失敗與真正產品 RED 保留，不覆寫成 PASS，不再擴新 review／驗收範圍。
 
+## records-v1 臨會／專題↔決議要事原 UI 有界驗證
+
+本片沿用原 `main.tsx → App → TemporaryMeetingsPage / TaskEditModal`，原進站／人員登入、導航、建立／編輯及操作按鈕觸發真 SupabaseJS → loopback → 私有 PGlite owner SQL。所有會議測試資料由原 UI 建立；復用既有內控 QA fixture 作為矛盾 legacy 權威與未參與資料，不改原 QA 模式、HTTP allowlist、設定、SQL、產品或 JSX。第一條保存 tracer 已成功，不製造產品 RED、不為改而改。
+
+有限必要矩陣：兩決議／兩船只建立兩 task（共同與分船各一）；原 Task editor 進度保存、來源內容／分類／關注／涉船縮放再恢復保持 ID／歷史；共同決議完成／重開只同步 parent item，不自動結整場；v1 完成保 v2、兩船完成才同步 parent item，重開 v1 保 v2 及頂層／整場各自狀態；lost ACK 後原 draft／meeting＋task leases 保留，完全相同 operation envelope 查 committed status 後才釋放；移除來源事項保留已封存、解除關聯的 task 及歷史；原受限 operator 無會議寫入控制、無 foreign meeting、零 patch；新 document 重載、無 trailing debounce、未參與 cases/tasks/vessels/users、正式 Itinerary/history 及 legacy 不變，通知只到原接收者。
+
+可重跑：`node scripts/verify-record-meeting-browser.mjs`（8 原 App＋真 SQL 情境），`node scripts/verify-record-meeting-boundary.mjs`（相對 `bbace3bc022c9296729fd6ba1e427fd29235a6c8` 的 242 source/public/SQL/root 路徑，51 JSX 檔／147 JSX roots 精確保留，CRLF 正規化另述，不作全站視覺驗收）。`QA_EVIDENCE_ROOT` 可指定 repo 外 cache 根目錄；每次獨立 Chrome profile／PGlite，所有失敗與 exit 保留，清理不覆蓋失敗碼。最終原 UI 收據為 `record-meeting-browser-dLemlc/evidence.json`、`14-final-ui.log`，根目錄 `C:/Users/tuotu/AppData/Local/hermes/cache/record-meeting-ui-a138b00038/`。
+
+必要回歸：meeting-reconcile、meeting-vessel-progress、meeting-status-history／scope、related-durable source gate；record workflow 新舊 helper＋SQL 對照 23、store SQL 16＋adapter 7、delta SQL 7＋adapter 6、record history、identity 6；另 typecheck／build／diff／凍結 source、明確 paths staging、完整 full-index binary patch、raw-blob ZIP／extraction 與 commit 身分核對。這些層次不相加冒充 E2E。因本片僅新增 verifier／文件、共用 App／handoff／QA bytes 未變，不重跑無關內控 11＋5、船舶／Office 8＋4＋4 或整站套件。
+
+本輪上述必要回歸、record history 12、typecheck（tsc --noEmit）、build（tsc 及 vite build）、diff／source 邊界均為 exit 0；build 仍有既有大於 500 kB chunk 提示，未改切包。本片未發現產品缺口。harness 修正有三類：初建 `vesselProgress=[]` 是原 helper 的懶建未完成投影，不能誤要求預建兩列（一次）；決議 async transition 要等待 SQL 讀回及原按鈕解除 busy（兩次）；重載必須證明新 document，不能被舊頁身份誤判 ready（一次）。每類未超過三輪，沒有改產品迎合 fixture。使用者本次要求的獨立 reviewer 已另派，固定只讀 `bbace` 快照審上一批內控；不涵蓋本片新 verifier／文件 bytes，不宣稱本片取得獨立 PASS，也不擴永久 review 迴圈。
+
+未驗 hosted ACL／PostgREST／Realtime、真多連線、性能、全手機／PDF、全 batch／督導早會、正式切换及使用者試用；不以本片 PASS 取代。禁止 Push／merge／部署／遠端或正式 SQL／credentials／設定／cron；必要 gate 通過即獨立本機 commit 並交回唯一 writer。
+
 ## 證據標籤
 
 本機測試通過 ≠ 真 Supabase 通過 ≠ 正式環境已切換。讀回負載減少 ≠ 真實網路耗時已改善。UI 原始檔未變 ≠ 已完成所有新後端下的 UI 功能驗收。
