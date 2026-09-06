@@ -107,7 +107,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const selectedCases=selectedListRecords(selectableCases,selectedCaseIds);
   const printCases=subpage==='stats'?filtered:selectedCases;
   const allSelected=selectableCases.length>0&&selectableCases.every(item=>selectedSet.has(item.id));
-  const visibleEditing=Boolean(editing&&editorAuthorizationEpoch===authorizationEpoch&&scopedCases.some(item=>item.id===editing.id));
+  const visibleEditing=Boolean(editing&&editorAuthorizationEpoch===authorizationEpoch&&(scopedCases.some(item=>item.id===editing.id)||activeItemLeaseKey===internalControlEditLockKey(editing.id)));
   const visibleBatch=Boolean(batchOpen&&batchAuthorizationEpoch===authorizationEpoch&&canCreate&&vessels.length);
   const canMutateItem=canEdit||canClose||canDelete;
   const itemLeaseEnforced=activeItemLeaseKey!==undefined;

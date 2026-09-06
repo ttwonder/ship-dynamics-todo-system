@@ -76,6 +76,20 @@
 
 必要 gate：PGlite owner 真 SQL＋SupabaseJS loopback、矛盾 records/legacy fixtures、最後有效原排程差異對照、工作日／台北日界、手動同日／重跑／exact replay、最後寫入失敗整體 rollback、完整 history/delta/audit 與未參與集合不變、至少一條原 App 真 UI 歷史顯示；共用 writer/workflow/history/delta 回歸、typecheck/build/diff 與凍結 UI source。只修本片可重現問題，harness 最多三輪定點修復，無獨立審查迴圈。禁止 cron 註冊／啟用／替換、manifest／預設／雲端設定、雙寫 legacy、督導早會／新報表設計、全站 mobile/PDF、Push／部署／遠端 SQL／使用者試用。PGlite 不證 hosted ACL/PostgREST/Realtime、多連線、真 cron 或正式效能。完整證據置於本片獨立 hermes/cache；驗畢獨立本機 commit 並交回唯一 writer。
 
+## records-v1 內控↔要事原 UI 有界驗證契約
+
+本片由原 main.tsx → App 進站／人員登入、內控清單／BatchCreateModal／CaseEditModal／TaskEditModal 產生命令，真 SupabaseJS → loopback → 私有 PGlite SQL → ACK／完整讀回／釋鎖。先以現行產品 bytes 跑最短 tracer；通過就補必要可重跑驗證，不製造產品 RED。只修可重現非 JSX API/save/identity/lifecycle seam；任何 UI／業務語意改動須停止決策。本片沒有新的文案例外。
+
+必要：新增唯一雙向同步、來源／要事反向更新、兩端結案／重開清 closure；撤回刪 linked task／通知／dismissals 而留 open case，再同步新 ID；取消留普通 task＋closed 歷史 case／unlink；刪 case 刪兩端、刪 task 留 closed case。原授權正例與受限 role/scope 零寫入負例；至少一條原 UI lost ACK／linked CAS 故障及 draft／租約不提前釋放、同 operation status 對帳、ACK 後關閉／重開、無次輪 debounce 覆蓋。fixture 具有未參與 meeting/task/vessel、正式 Itinerary/history、矛盾 legacy users/head 並逐層讀回不變。沿用 SQL workflow/store/history/delta、internal-control／receipt／collaboration 回歸、typecheck/build/diff／精確 JSX/root 邊界；若改共享 QA，重跑原 8 browser＋4 hook＋4 mounted gate。最多三輪有證據的 harness 修正，產品缺口才依最小 RED→GREEN；不開獨立 review 迴圈。
+
+證據保存在新的獨立 hermes/cache/record-internal-control-ui-*，保留每次 exit／失敗收據；本機 commit 後交回唯一 writer。禁止 Push／merge／部署／遠端或正式 SQL／credentials／設定／真 cron／使用者試用；未驗 hosted ACL/PostgREST/Realtime、多連線、性能、全站 mobile/PDF、完整會議三方流程／cutover，不以此片 PASS 取代。
+
+本輪結果：原 UI 最短 tracer 通過後，反向保存實際被 SQL 以 `incomplete-vessel-audit-operation` 拒絕（`05-reverse-red`）；`saveTask` 現只為分類合併確實改變的一週關注船舶補同交易 audit，原分類／燈號語意不改。另 `10-delete-lifecycle-red` 證實 optimistic 刪除會在 ACK 前卸載 child 草稿；僅以相同 entity／lease／actor／epoch／generation 的非 JSX lifecycle gate 保留原 Case/Task editor，確認才按原流程關閉。真 SQL 過期租約拒絕後亦保留草稿；不宣稱失效租約可繼續寫入。
+
+可重跑：`node scripts/verify-record-internal-control-browser.mjs`（11 原 App＋真 SQL 情境、5 原 Page/Modal controlled-I/O mounted 情境），`node scripts/verify-record-internal-control-boundary.mjs`（10 原 App source-executed predicate 情境；對 `c73928d` 的 242 路徑、51 JSX 檔／147 JSX roots 精確比對）。source-executed／controlled-I/O 不當成全 App auth race 或 SQL 證據。SQL store 16＋adapter 7、workflow 23、history 12、record delta SQL 7＋adapter 6、identity 6，以及 internal-control／receipt／collaboration 等適用回歸通過；共用 QA 原 8 browser＋4 hook＋4 mounted 及 report/data-management/morning 既有 gate 另留本輪收據。終端失敗測試頁只在證據保存後由 harness disposal，不冒充正常保存／關閉成功。
+
+收據根目錄：`C:/Users/tuotu/AppData/Local/hermes/cache/record-internal-control-ui-32adc77dae/`，最新 UI 為 `47-ui-final.log` 與 `record-internal-control-browser-t1jtRL/evidence.json`；完整 commands／最終 manifest、full-index patch／raw Git blob archive 隨本機 commit 交付。前期 Windows readiness／native input／等待 async handoff 的 harness 調整超過原訂三輪，屬執行紀律偏差；所有失敗與真正產品 RED 保留，不覆寫成 PASS，不再擴新 review／驗收範圍。
+
 ## 證據標籤
 
 本機測試通過 ≠ 真 Supabase 通過 ≠ 正式環境已切換。讀回負載減少 ≠ 真實網路耗時已改善。UI 原始檔未變 ≠ 已完成所有新後端下的 UI 功能驗收。

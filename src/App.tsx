@@ -1216,7 +1216,7 @@ export default function App() {
   };
   const relatedMutationHandoffMatchesCurrent=(lock:ActiveEditLock|null)=>{
     const handoff=relatedMutationHandoffInFlight.current;
-    return Boolean(handoff?.pending&&relatedMutationLeaseMatches(handoff.lease,lock)&&handoff.isCurrent());
+    return Boolean(handoff&&!handoff.confirmed&&relatedMutationLeaseMatches(handoff.lease,lock)&&handoff.isCurrent());
   };
   const releaseCurrentEditLock=async () => {
     const lock=activeEditLockRef.current;
@@ -2735,9 +2735,15 @@ export default function App() {
       draft.taskDismissals=clearDismissalsForNewTaskAssignments(draft.taskDismissals,creating?undefined:previous,saved,previousAssigneeIds,nextAssigneeIds);
       try{reconcileInternalControlAfterTaskSave(draft,creating?undefined:previous,saved,liveUser,saveAt);}
       catch(error:any){failure=error.message||String(error);return prev;}
-      draft.vessels.filter(item=>taskHasVessel(saved,item.id)).forEach(targetVessel=>{targetVessel.weeklyAttention=mergeAttentionFromCategories(targetVessel.weeklyAttention,saved.categories);});
+      const taskAttentionChangedVesselIds:string[]=[];
+      draft.vessels.filter(item=>taskHasVessel(saved,item.id)).forEach(targetVessel=>{
+        const attention=mergeAttentionFromCategories(targetVessel.weeklyAttention,saved.categories);
+        if(JSON.stringify(attention)!==JSON.stringify(targetVessel.weeklyAttention))taskAttentionChangedVesselIds.push(targetVessel.id);
+        targetVessel.weeklyAttention=attention;
+      });
       draft.notifications=[...notices,...draft.notifications].slice(0,1000);
       let audited=withAudit(draft,liveUser,creating?'新增事項':cancelled?'取消內部管控':'更新事項','task',saved.id,cancelled?'已提醒至 FLOW 系統申報異常':creating?'建立跟進事項':'保存事項變更');
+      for(const vesselId of taskAttentionChangedVesselIds)audited=withAudit(audited,liveUser,'切換一週關注燈','vessel',vesselId,`要事分類同步｜${saved.id}`);
       if(syncedMeeting)audited=withAudit(audited,liveUser,saved.isClosed?'同步完成會議決議待辦':'同步重新開啟會議決議待辦','meeting',syncedMeeting.id,richTextToPlainText(saved.description)||saved.id);
       applied=true;
       return audited;
@@ -4195,7 +4201,9 @@ export default function App() {
     }
   };
   const readOnlyTask=taskEditorAuthorizationEpoch===authorizationEpoch?taskReadOnlyData?.tasks.find(task=>task.id===editingTaskId):undefined;
-  const editingTask=taskEditorAuthorizationEpoch===authorizationEpoch?(readOnlyTask||(creatingTask&&canCreateTasks?selectTasksVisibleToUser([creatingTask],currentUser,taskVisibilityRelationships)[0]:roleVisibleTasks.find(task=>task.id===editingTaskId))):undefined;
+  const retainedRelatedTask=activeEditLock?.sectionKey===`task:${editingTaskId}`&&relatedMutationHandoffMatchesCurrent(activeEditLock)
+    ?confirmedCloudData.current?.tasks.find(task=>task.id===editingTaskId):undefined;
+  const editingTask=taskEditorAuthorizationEpoch===authorizationEpoch?(readOnlyTask||(creatingTask&&canCreateTasks?selectTasksVisibleToUser([creatingTask],currentUser,taskVisibilityRelationships)[0]:roleVisibleTasks.find(task=>task.id===editingTaskId)||retainedRelatedTask)):undefined;
   const taskEditorData=taskReadOnlyData?taskReadOnlyData as unknown as AppData:roleVisibleData;
   const taskEditorVisibleVessels=taskReadOnlyData?taskReadOnlyData.vessels as Vessel[]:activeVessels;
   const taskEditorUser=currentUser;

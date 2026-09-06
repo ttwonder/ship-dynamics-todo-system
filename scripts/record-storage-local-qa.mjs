@@ -9,10 +9,11 @@ import {morningInput,installMorningOracle,seedMorningOracle,schedulerSql} from '
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false}={}) {
+export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false}={}) {
  const db=new PGlite(),metrics=[];
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
  let origin='',http,vite,loseItineraryAck=false,loseReportAck=false,losePruneAck=false;
+ let recordFault=null;
  const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:'records-v1',readMode:'delta-v1'});
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
@@ -54,6 +55,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
   initial.vessels=['qa-v1','qa-v2'].map((id,index)=>({...structuredClone(template),id,name:`QA VESSEL ${index+1}`,nameEn:`QA VESSEL ${index+1}`,isActive:true,assignedUserIds:[],delegateManagers:[]}));
   for(const name of ['tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs'])initial[name]=[];
   if(dailyMorning)morningInput(initial);
+  if(internalControl)await (await import('./record-internal-control-local-fixture.mjs')).internalControlInput(initial,vite);
   const imported=(await db.query('select import_ship_dynamics_records_v1($1,$2::jsonb) as result',[workspace,JSON.stringify(initial)])).rows[0].result;
   if(!imported.ok)throw new Error(`QA import failed: ${imported.code}`);
   await installItineraryFixture(db);
@@ -72,6 +74,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
    }
   }
   if(dailyMorning){await installMorningOracle(db);await seedMorningOracle(db,initial,workspace,{sortedFormal:dailyMorning==='browser'});if(fs.existsSync(schedulerSql))await db.exec(fs.readFileSync(schedulerSql,'utf8'));}
+  if(internalControl)await (await import('./record-internal-control-local-fixture.mjs')).seedInternalControlLegacy(db,workspace,initial);
   const itineraryBaseline=await snapshotItineraryAuthority(db);
   const send=(res,status,value)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(value));};
   http=createHttpServer(async(req,res)=>{
@@ -89,6 +92,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
      const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
      if(body.p_workspace_key!==workspace){send(res,403,{code:'QA_SCOPE_MISMATCH',message:'Only the isolated fixture workspace is accepted'});return;}
      const start=performance.now();
+     if(internalControl&&recordFault?.before&&['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1'].includes(name))await recordFault.before({name,body,db,metrics});
      try{
       const value=await db.transaction(async tx=>{
        await tx.query("select set_config('request.headers',$1,true)",[JSON.stringify({'x-forwarded-for':'192.0.2.30','cf-ipcountry':'TW'})]);
@@ -104,6 +108,10 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
       if(loseItineraryAck&&name==='sd_itinerary_record_save_v1'){loseItineraryAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic ACK loss after actual SQL commit'});return;}
       if(loseReportAck&&['sd_itinerary_record_report_save_manual_v1','sd_itinerary_record_report_delete_ids_v1'].includes(name)){loseReportAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic report ACK loss after actual SQL commit'});return;}
       if(losePruneAck&&name==='prune_ship_dynamics_record_revision_history_v1'){losePruneAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic prune ACK loss after actual SQL commit'});return;}
+      if(internalControl&&recordFault?.after&&['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1'].includes(name)){
+       const drop=await recordFault.after({name,body,value,db,metrics});
+       if(drop){metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic record ACK loss after actual SQL commit'});return;}
+      }
       send(res,200,value);
      }catch(error){metrics.push({rpc:name,status:'SQL_ERROR',code:error.code});send(res,400,{code:error.code||'QA_SQL_ERROR',message:error.message});}
      return;
@@ -113,6 +121,6 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
   });
   await new Promise((resolve,reject)=>{http.once('error',reject);http.listen(0,'127.0.0.1',resolve);});
   origin=`http://127.0.0.1:${http.address().port}`;
-  return {origin,password,metrics,db,close,loseNextPruneAck:()=>{losePruneAck=true;},loseNextReportAck:()=>{loseReportAck=true;},loseNextItineraryAck:()=>{loseItineraryAck=true;},itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
+  return {origin,password,metrics,db,close,setRecordFault:fault=>{if(!internalControl)throw new Error("Record fault hooks require internalControl fixture");recordFault=fault;},loseNextPruneAck:()=>{losePruneAck=true;},loseNextReportAck:()=>{loseReportAck=true;},loseNextItineraryAck:()=>{loseItineraryAck=true;},itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
  }catch(error){await close();throw error;}
 }
