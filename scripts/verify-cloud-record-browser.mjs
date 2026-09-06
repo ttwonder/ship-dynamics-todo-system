@@ -53,6 +53,7 @@ try{
  await call('Page.enable');await call('Runtime.enable');await call('Network.enable');
  await call('Network.setBlockedURLs',{urls:['https://*','http://*.supabase.co/*','http://*.supabase.in/*']});
  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+ if(!process.argv.includes('--hook-only')) {
  await call('Page.navigate',{url:qa.origin});
  await until(async()=> (await text()).includes('請輸入管理者設定的進站密碼。'),'authoritative site gate');
  await fill('input[type="password"]',qa.password);await click('進入系統');
@@ -60,6 +61,11 @@ try{
  await fill('input[type="password"]',qa.password);await click('登入');
  await until(async()=> (await text()).includes('QA OWNER')&&!(await text()).includes('人員登入／切換'),'existing owner homepage');
  evidence.scenarios.push('existing gate and password login use the real App with record authority');
+ await until(()=>qa.metrics.some(m=>m.rpc==='sd_itinerary_record_load_many_v1'),'mounted Itinerary read request');
+ assert.ok(qa.metrics.some(m=>m.rpc==='sd_itinerary_record_load_many_v1'&&m.status==='SQL_OK'),'mounted Itinerary loadMany must execute real SQL, not UNSUPPORTED');
+ await until(async()=> (await text()).includes('QA FORMAL BUSAN')&&(await text()).includes('QA FORMAL KAOHSIUNG'),'real formal Itinerary projection visible on original homepage');
+ assert.doesNotMatch(await text(),/QA ALTERNATIVE MUST NOT PROJECT|Itinerary 營運資訊同步異常|行程讀取失敗|Itinerary 雲端讀取失敗|Internal QA does not implement|sd_itinerary_main_load_many|sd_itinerary_record_load_many_v1/);
+ evidence.scenarios.push('mounted operational read shows actual formal SQL ports, excludes alternative, and has no loadMany error');
  await click('同步最新（安全合併）');
  await until(async()=>!(await text()).includes('身份、權限或船舶範圍已變更，請同步最新資料'),'post-login fresh authority');
  await click('快速更新',0,2);
@@ -78,6 +84,8 @@ try{
  const readsBefore=qa.metrics.filter(m=>m.rpc==='read_ship_dynamics_record_delta_v1').length;
  await call('Page.reload');
  await until(async()=>qa.metrics.filter(m=>m.rpc==='read_ship_dynamics_record_delta_v1').length>readsBefore&&(await text()).includes('QA OWNER'),'reload from authoritative SQL');
+ await until(async()=> (await text()).includes('QA FORMAL BUSAN'),'reload restores formal operational projection');
+ assert.doesNotMatch(await text(),/Itinerary 營運資訊同步異常|行程讀取失敗|Internal QA does not implement/);
  await click('快速更新',0,2);await until(()=>evaluate("Boolean(document.querySelector('[role=dialog]'))"),'reopened persisted editor');
  assert.equal(await evaluate(`(()=>{const field=[...document.querySelectorAll('[role=dialog] .field')].find(n=>n.querySelector('label')?.innerText==='近期／後續動態');return field?.querySelector('textarea')?.value;})()`),marker);
  evidence.scenarios.push('browser reload and reopened real editor display the saved authoritative value');
@@ -91,8 +99,17 @@ try{
  evidence.scenarios.push('unchanged cancel closes without another revision');
  await until(async()=>Number((await qa.db.query("select count(*)::int as n from ship_dynamics_edit_locks where expires_at>now()")).rows[0].n)===0,'cancelled editor releases its lease');
  assert.equal((await qa.db.query('select count(*)::int as n from ship_dynamics_app_state')).rows[0].n,0,'no legacy authority mirror');
+ assert.deepEqual(await qa.itinerarySnapshot(),qa.itineraryBaseline,'vessel save/reload must not change formal sd_* documents, leases, histories or legacy app state');
+ assert.ok(qa.metrics.filter(m=>m.rpc==='sd_itinerary_record_load_many_v1').length>=2,'initial and reload must perform real record Itinerary reads');
+ assert.ok(qa.metrics.filter(m=>m.rpc==='sd_itinerary_record_load_many_v1').every(m=>m.status==='SQL_OK'));
+ assert.ok(!qa.metrics.some(m=>m.rpc==='sd_itinerary_main_load_many'));
  assert.deepEqual(evidence.errors,[]);assert.deepEqual(evidence.blockedExternal,[]);
  console.log(JSON.stringify({qa:'CORE_FLOW_PASS',output,scenarios:evidence.scenarios,unsupportedRpc:[...new Set(qa.metrics.filter(m=>m.status==='UNSUPPORTED').map(m=>m.rpc))]}));
+ }
+ await call('Page.navigate',{url:qa.origin+'/__qa/blank'});
+ await until(()=>evaluate("location.pathname==='/__qa/blank'&&document.readyState==='complete'"),'isolated hook page');
+ evidence.hook=await evaluate("import('/scripts/itinerary-record-hook-probe.mjs').then(m=>m.run())");
+ console.log(JSON.stringify({qa:'HOOK_PASS',output,...evidence.hook}));
 }catch(error){failure=error;try{evidence.failureText=await text();}catch{};evidence.error=error.message;console.error(JSON.stringify({qa:'FAILED',error:error.message,output,body:evidence.failureText?.slice(0,9000)}));}
 finally{
  evidence.metrics=qa?.metrics||[];

@@ -2,6 +2,7 @@ import { getSupabaseClient, getSupabaseConfig, type ResolvedSupabaseConfig } fro
 import type { ItineraryLease, ItineraryLeaseClaimResult, ItineraryLeaseRenewResult, ItinerarySaveInput, ItinerarySaveResult } from './itineraryCollaboration';
 import { normalizeInstant } from './itineraryTime';
 import type { ItineraryDocument } from './itineraryTypes';
+import { usesRecordStorage } from '../cloudRecords';
 import { validateItineraryDocument } from './itineraryValidation';
 import { synchronizeShipAlternativeAnchors } from './shipItineraryModel';
 
@@ -64,6 +65,14 @@ function saveFailure(error: unknown): ItinerarySaveResult {
 
 export interface PublicItineraryVessel { id: string; name: string; shortName: string; fullName: string }
 
+export class ItineraryRecordWriteUnsupportedError extends Error {
+  readonly code = 'record-itinerary-write-unsupported';
+  constructor() {
+    super('records-v1 的 Itinerary Office 寫入／租約尚未相容，已停止；不會降級至舊身份。');
+    this.name = 'ItineraryRecordWriteUnsupportedError';
+  }
+}
+
 export class OfficeItineraryCloudRepository {
   readonly config: ResolvedSupabaseConfig;
   readonly client: ItineraryRpcClient;
@@ -78,9 +87,12 @@ export class OfficeItineraryCloudRepository {
   }
 
   private actorArgs() { return mainActorArgs(this.actor); }
+  private requireLegacyWrite() {
+    if (usesRecordStorage(this.config)) throw new ItineraryRecordWriteUnsupportedError();
+  }
 
   async loadMany(vesselIds: string[]): Promise<Record<string, ItineraryDocument | null>> {
-    const rows = await rpc<Array<Record<string, unknown>>>(this.client, 'sd_itinerary_main_load_many', {
+    const rows = await rpc<Array<Record<string, unknown>>>(this.client, usesRecordStorage(this.config) ? 'sd_itinerary_record_load_many_v1' : 'sd_itinerary_main_load_many', {
       p_workspace_key: this.config.workspaceKey, p_vessel_ids: vesselIds, ...this.actorArgs(),
     });
     return Object.fromEntries(rows.map(row => [String(row.vesselId), parseDocument(row.document)]));
@@ -88,6 +100,7 @@ export class OfficeItineraryCloudRepository {
   async loadDocument(vesselId: string) { return (await this.loadMany([vesselId]))[vesselId] || null; }
 
   async claimLease(vesselId: string, actor: { holderId: string; holderLabel: string }, ttlSeconds = 75): Promise<ItineraryLeaseClaimResult> {
+    this.requireLegacyWrite();
     const value = await rpc<Record<string, unknown>>(this.client, 'sd_itinerary_main_claim_lease', {
       p_workspace_key: this.config.workspaceKey, p_vessel_id: vesselId, p_holder_session: actor.holderId,
       p_holder_label: actor.holderLabel, p_ttl_seconds: ttlSeconds, ...this.actorArgs(),
@@ -98,6 +111,7 @@ export class OfficeItineraryCloudRepository {
   }
 
   async renewLease(lease: ItineraryLease, ttlSeconds = 75): Promise<ItineraryLeaseRenewResult> {
+    this.requireLegacyWrite();
     const value = await rpc<Record<string, unknown>>(this.client, 'sd_itinerary_main_renew_lease', {
       p_workspace_key: this.config.workspaceKey, p_vessel_id: lease.vesselId, p_lease_id: lease.leaseId,
       p_holder_session: lease.holderId, p_fencing_token: lease.fence, p_ttl_seconds: ttlSeconds, ...this.actorArgs(),
@@ -106,6 +120,7 @@ export class OfficeItineraryCloudRepository {
   }
 
   async releaseLease(lease: ItineraryLease): Promise<boolean> {
+    this.requireLegacyWrite();
     return rpc<boolean>(this.client, 'sd_itinerary_main_release_lease', {
       p_workspace_key: this.config.workspaceKey, p_vessel_id: lease.vesselId, p_lease_id: lease.leaseId,
       p_holder_session: lease.holderId, p_fencing_token: lease.fence, ...this.actorArgs(),
@@ -113,6 +128,7 @@ export class OfficeItineraryCloudRepository {
   }
 
   async save(input: ItinerarySaveInput): Promise<ItinerarySaveResult> {
+    this.requireLegacyWrite();
     const synchronizedDocument = synchronizeShipAlternativeAnchors(input.document);
     const args = {
       p_workspace_key: this.config.workspaceKey, p_vessel_id: input.document.vesselId,

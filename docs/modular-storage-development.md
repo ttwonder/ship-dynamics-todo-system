@@ -179,3 +179,28 @@
 這是 development-only、owner SQL 層的可重組基礎，**不是資料管理 UI／回退操作／可上線 RPC 的完成證明**。dataManagement stats/prune 仍讀 legacy app_state 的 users／current revision；legacy history head 與 record history head 是不同權威，不能只憑相同 revision 數字合併或判定同版。尚未改資料管理、Itinerary、RPC 選路、WebSocket、多連線或 retention；原 UI 與 NormalizedApp 掛載不變。
 
 完整歷史讀取仍須重組 AppData；每版 root／ordered IDs 仍有儲存成本。未補齊過往已遺失的逐筆 body，未把旧 JSON 歷史搬入新表，未提供跨權威歷史整合／回退寫入或正式 cutover rollback。沒有 hosted Supabase、真多連線、新 browser／Itinerary／全站驗收或效能量測。本批只做獨立本機 commit；Push、merge、部署、正式／遠端 SQL 皆未執行，正式操作與使用者試用關卡仍保留。
+
+## 第八批：原首頁 Itinerary operational read 的逐筆身份接線
+
+### 本機完成的第一條 read 鏈
+
+- 新 development-only `20260906_itinerary_record_read.sql` 定義明確命名的 `sd_itinerary_record_actor_v1`／`sd_itinerary_record_load_many_v1`，都是 STABLE、security invoker、固定 search_path，撤銷 PUBLIC／anon／authenticated 執行權限；未加入正式 manifest 或 browser grants。
+- `records-v1` 以目前 records users 的 active／四角色裁決。缺失、停用、未知角色直接拒絕，不能由同 workspace 舊 payload 或有效 membership 的角色救活。沿用原 UUID→legacyUserId／actorUuid／actorKey 映射：UUID 路徑保留 membership／profile 的顯示 metadata，非 UUID 路徑從 record user 取得原 name／username／department 欄位。membership 僅作既有身份映射，不能取代 record user 的 active／role。
+- 正式船舶 metadata、active filter、document、revision、alternatives 仍直接呼叫現行 `sd_itinerary_document_for_vessel`，不拿 AppData vessel JSON／draft 拼文件；不覆寫舊 actor／loadMany，不看 record table 存在與否自動切換 legacy 請求。
+- 原 `OfficeItineraryCloudRepository.loadMany`／`loadDocument` 明確依 storageMode 選路，新 RPC 缺失或出錯不 fallback。原 operational hook 使用包含 authority mode、credential key、read mode 的既有 `cloudConfigIdentity`，原 generation／identity guard 因此涵蓋同 URL／workspace 的模式切換及 key rotation。
+- 未相容的 Office claim／renew／release／save 在 records mode 先拋出 typed `ItineraryRecordWriteUnsupportedError`，零 RPC，save 亦不進入 legacy operation-status recovery。這是明確缺口，不是完整 Itinerary 寫入功能。
+
+### 實際驗證及分層
+
+- `npm run test:itinerary-record-read`：**12 SQL＋4 真 Supabase JS adapter／封閉 SQL 傳輸案例＝16 PASS**。同 workspace record Vessel／legacy Owner／membership Owner、四角色、UUID metadata、inactive／missing／invalid actor、空列表仍先授權、缺新 RPC、Office 寫入封鎖、真正正式／備選內容一致均驗證。SQL 安裝／重套與讀回前後，所有 fixture `sd_*` 表及 legacy app_state 的 value／xmin／ctid 完全一致，包含有資料的正式 document history、有效 lease、daily report history。
+- `npm run test:cloud-record-browser`：**5 原畫面情境 PASS**（原進站與 Owner 登入、真正 SQL 正式行程投影、船舶保存＋audit＋ACK 後釋鎖、reload 再開 editor、無修改取消釋鎖）。原首頁與 reload 均沒有 loadMany／行程讀取錯誤，正式上下港和貨物可見、備選不投影；UNSUPPORTED RPC 清單為空。原船舶保存不改任何正式 `sd_*` 資料／lease／report history，舊 app_state 仍空，Owner fixture 仍不放入 assignedUserIds。
+- 同 runner 另在獨立 blank page 執行 **4 真 React hook／deferred repository I/O 案例 PASS**：舊 mode 成功遲到、舊 callback、舊 mode 例外遲到、同 mode key rotation。此層刻意控制 Promise 時序，不冒充 SQL／hosted；原 App browser gate 則每次 read 確實經 HTTP→PGlite SQL。這些共 **25 個分層情境**，不是 25 個 hosted／全站情境。
+- RED→GREEN 分別捕捉 SQL 缺 actor `42883`、client 選到舊 RPC、Office claim 仍呼叫舊 RPC、同 workspace mode 切換未發新讀取、原 browser 新 RPC UNSUPPORTED。fixture 修正只涉及 PGlite 不支援 cron registration、DB actor_kind 的 office／public 值、ETA 必須帶 offset，未放寬產品驗證。早期 Temp 收據在交付前消失，因此重新重現 RED、還原候選並重跑 GREEN／回歸，以下只列重新持久保存的證據。
+- 原 `test:itinerary` 聚合、record identity **6**、record store **23**、record delta **13**、record history **12** 均 PASS；typecheck／build PASS，保留既有 >500 kB bundle 警告。與前 HEAD 比對 **56 個 JSX／TSX／CSS 檔完全不變**；原 App **19 個 JSX roots** 與 baseline 相等。沒有改 props、label、導航或掛載 NormalizedApp。
+- stdout／exit code、RED／GREEN／回歸與 commit fingerprint：`C:/Users/tuotu/AppData/Local/Temp/record-itinerary-delivery-74419431/verification.txt`。原 browser 證據與截圖：`C:/Users/tuotu/AppData/Local/Temp/record-itinerary-delivery-74419431/browser-evidence.json`、`C:/Users/tuotu/AppData/Local/Temp/record-itinerary-delivery-74419431/browser-home.png`。證據都在 repo 外，未覆寫先前 record-history 證據。
+
+### 未完成與授權邊界
+
+本批只關閉原首頁這條 operational read；**不宣稱整個 Itinerary、報告中心或資料管理已完成 records 相容**。Office 正式／備選保存、lease 操作與其他下游讀寫需後續獨立切片；public 船端與原報告 authority 未改。沒有新登入模型、hosted ACL／PostgREST／Realtime／真多連線／效能驗收或正式 cutover。封閉 service 使用 DB owner；既有依賴 SQL 僅在 PGlite fixture 執行，daily report 省略的只有不支援的 cron 註冊，不假造 report／document 函式。
+
+採有界直接驗證，未要求獨立 review PASS。完成獨立本機 commit，未 Push、merge、部署、執行正式／遠端 SQL，也未向使用者開放試用網站。

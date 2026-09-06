@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabaseConfig } from '../cloud';
+import { cloudConfigIdentity } from '../cloudRecovery';
 import { OfficeItineraryCloudRepository, type ItineraryMainActor } from './itineraryCloud';
 import type { ItineraryDocument } from './itineraryTypes';
 import {
@@ -38,7 +39,7 @@ export function useItineraryOperationalProjection({ actor, vesselIds, enabled }:
   const vesselKey = uniqueVesselIds(vesselIds).join('\u0000');
   const ids = useMemo(() => vesselKey ? vesselKey.split('\u0000') : [], [vesselKey]);
   const config = typeof window === 'undefined' ? null : getSupabaseConfig();
-  const configKey = config ? `${config.supabaseUrl}\u0000${config.workspaceKey}\u0000${config.tableName}` : '';
+  const configKey = cloudConfigIdentity(config);
   const identityKey=`${enabled?'enabled':'disabled'}\u0000${actor?.userId||''}\u0000${configKey}\u0000${vesselKey}`;
   const identityVersionRef=useRef({key:identityKey,version:0});
   if(identityVersionRef.current.key!==identityKey){

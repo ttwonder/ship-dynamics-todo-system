@@ -3,6 +3,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createServer as createHttpServer} from 'node:http';
 import {createServer as createViteServer} from 'vite';
 import {PGlite} from '@electric-sql/pglite';
+import {installItineraryFixture,seedItineraryFixture,snapshotItineraryAuthority,recordItinerarySql} from './record-itinerary-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
@@ -13,6 +14,7 @@ export async function createRecordStorageLocalQa() {
  const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:'records-v1',readMode:'delta-v1'});
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
+  sd_itinerary_record_load_many_v1:['p_workspace_key','p_vessel_ids:text[]','p_actor_user_id'],
   read_ship_dynamics_records_v1:['p_workspace_key'],
   read_ship_dynamics_record_delta_v1:['p_workspace_key','p_base_revision:integer','p_base_token'],
   apply_ship_dynamics_record_patch_v1:requestArgs,
@@ -42,6 +44,10 @@ export async function createRecordStorageLocalQa() {
   for(const name of ['tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs'])initial[name]=[];
   const imported=(await db.query('select import_ship_dynamics_records_v1($1,$2::jsonb) as result',[workspace,JSON.stringify(initial)])).rows[0].result;
   if(!imported.ok)throw new Error(`QA import failed: ${imported.code}`);
+  await installItineraryFixture(db);
+  await seedItineraryFixture(db,vite,workspace,initial.vessels);
+  await db.exec(fs.readFileSync(recordItinerarySql,'utf8'));
+  const itineraryBaseline=await snapshotItineraryAuthority(db);
   const send=(res,status,value)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(value));};
   http=createHttpServer(async(req,res)=>{
    try{
@@ -49,6 +55,7 @@ export async function createRecordStorageLocalQa() {
     const url=new URL(req.url,origin||'http://127.0.0.1');
     // Prevent a default config asset from ever reaching this local fixture.
     if(url.pathname.endsWith('/supabase-config.js')){res.setHeader('Content-Type','application/javascript');res.setHeader('Cache-Control','no-store');res.end(`window.SHIP_DYNAMICS_SUPABASE_CONFIG=${JSON.stringify(config())};`);return;}
+    if(url.pathname==='/__qa/blank'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><html><body></body></html>');return;}
     if(url.pathname==='/__qa/health'){send(res,200,{ready:true,kind:'REAL_UI_SYNTHETIC_DATA_LOCAL_PGLITE'});return;}
     if(url.pathname.startsWith('/rest/v1/')){
      const name=url.pathname.slice('/rest/v1/rpc/'.length),args=rpcArgs[name];
@@ -77,6 +84,6 @@ export async function createRecordStorageLocalQa() {
   });
   await new Promise((resolve,reject)=>{http.once('error',reject);http.listen(0,'127.0.0.1',resolve);});
   origin=`http://127.0.0.1:${http.address().port}`;
-  return {origin,password,metrics,db,close,read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
+  return {origin,password,metrics,db,close,itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
  }catch(error){await close();throw error;}
 }
