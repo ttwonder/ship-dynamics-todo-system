@@ -13,8 +13,9 @@
 
 ## 不變條件
 
-- 不重建 UI、不切換至現有未掛載的 normalized App；除下列使用者明確批准的單段提示文案例外外，不改 JSX/CSS、導航、密度、操作、PDF 內容及登入方式。
-- 本批唯一文案例外（使用者已確認「允許只改這段提示，繼續實作」）：只修正 `src/DataManagementPanel.tsx` 的「刪除範圍」段落，移除寫死舊資料表的失實說明。新主句為「只會清理所勾選的歷史版本；不會改動目前版本、未勾選的歷史版本或正式業務資料。」原 Storage object／Lease／一般操作紀錄的保護說明，以及完整 revision 集合核對／有新保存時整次拒絕的說明保留。其餘 UI 文案、版面、按鈕、導航、操作及權限均不變；這不是其他 JSX／樣式改動的授權。驗證必須把此唯一替換明列為允許差異，而不是再宣稱所有 JSX 原文完全相同。
+- 不重建 UI、不切換至現有未掛載的 normalized App；除下列已批准文案例外外，保留可見版面、文字、控制項、導航、密度、操作方式、PDF 內容及登入方式。使用者最新明確授權：「可以，只改內部邏輯，畫面不變」「後面如果是類似修改，請直接進行，不需要問我的意見了」。因此不可見內部邏輯與元件傳參（包括 JSX props／回調／身份與權限版本）可在既定業務範圍內直接修改，不再因 JSX 字節變動反覆請示；這不是可見 UI／文案／權限政策／業務語意變更或 Push／正式 SQL／部署授權。
+- 當前 ListPanel 修復可在「待辦總表／已結案」兩個呼叫點傳入真正的身份／權限版本及必要生命週期上下文；不以 exportedBy 顯示姓名代替身份、不改原可見操作。驗證須逐片明列不可見 props 的精確允許差異，核對其未進入 DOM 或改變版面／文字／操作；其餘 JSX／CSS 保留，不再錯稱含此差異的所有 JSX 原文相同。下文歷史「非 JSX／全部 roots 相同」只記當時切片證據，不限制此後已授權的內部傳參修改。
+- 本批唯一文案例外（使用者已確認「允許只改這段提示，繼續實作」）：只修正 `src/DataManagementPanel.tsx` 的「刪除範圍」段落，移除寫死舊資料表的失實說明。新主句為「只會清理所勾選的歷史版本；不會改動目前版本、未勾選的歷史版本或正式業務資料。」原 Storage object／Lease／一般操作紀錄的保護說明，以及完整 revision 集合核對／有新保存時整次拒絕的說明保留。其餘 UI 文案、版面、按鈕、導航、操作及權限均不變；這不是其他可見 UI／樣式改動的授權，也不限制上列另已批准的不可見內部傳參。驗證必須把此唯一文案替換明列為允許差異，而不是再宣稱所有 JSX 原文完全相同。
 - 沿用現行業務函式；內控↔要事與會議→決議↔待辦為不同關係。必要聯動仍在同一提交內完成。
 - 保存以 server ACK／同 operation committed 為準，未知結果不盲目重送，鎖釋放不繞過保存確認。
 - 不為追求正規化擅自修改權限架構或重新設計整站。
@@ -353,3 +354,14 @@
 - Harness 失敗均留收據：最初缺 core-domain 依賴不是產品 RED；browser fixture 的 fullName、連續 sortOrder／上一港只可首行修正未動 validator；一次 business PASS 後 Chrome cleanup true exit 1 不計完整 PASS，修為判斷 exit/signal 並只清自身 process tree。最終原 App／全部 src／JSX／CSS／登入／main entry／設定與正式 migrations 完全未改，未做全站像素/mobile/PDF 驗收。
 - 唯一證據根：`C:/Users/tuotu/AppData/Local/hermes/cache/record-daily-morning-scheduler-3f2b6734d2/`。`commands.jsonl`／逐命令 log、scheduler-results、browser evidence/screenshots、完整 binary/full-index patch、raw-blob ZIP/extraction、候選及 commit/final receipts 同根保存，不覆寫前片。
 - 本片只本機實作、驗證、獨立 commit；沒有獨立 review gate，skill reference 不是審查 PASS。未 Push／merge／部署／遠端 SQL／真 cron／使用者試用。仍不證 hosted ACL/PostgREST/Realtime、多連線、正式效能／排程啟用；正式切換仍須另行授權。
+
+### ListPanel 批量完成／刪除：ACK 與精確身份（2026-09-06）
+
+- 延續既有 tracer 與完成／刪除兩條真 SQL desired RED，不重開已完成的內控批量建立片。原證據完整複製至 `C:/Users/tuotu/AppData/Local/hermes/cache/listpanel-resume-20260906/prior-evidence/`；續作 `01-desired-red` 再現完成 selection 3→0。修復後在 held committed receipt 期間分別保留 3／2 筆選擇及完整關聯鎖；僅同 operation ACK 後清選擇、釋鎖。
+- 本片唯一 JSX 允許差異：`src/App.tsx` 的兩個 `ListPanel`（`tasks={filteredTasks}`／`filters={filters}` 與 `tasks={closedTasks}`／`filters={closedFilters}`）各增加 **`batchContext={listBatchContext}`**。沒有傳到 WorkCenter 或 DOM。其值含 exact actor ID、既有 authorization epoch、session generation、config identity／既有 coordinator epoch、tab／view generation、role permissions；不是 exportedBy 姓名，也沒有 hidden global registry。
+- ListPanel 僅保留這次選擇的讀取投影。身份／scope／filter／view 變更令舊投影失效，正常篩選仍保留目前結果內的選擇；同 actor ABA、config ABA、view ABA、unmount 與使用者新選擇均 fencing late callback。無選擇／無權限／pending 重按不 dispatch；reject／unknown 不自行當作成功清除。實際寫入沿用 App 最新資料、parent linkage、權限、CAS 與鎖驗證。
+- 延遲 ACK 暴露另一個真產品 RED：同一 mixed batch snapshot 被 debounce 再排入 queue，第一筆已 committed 後第二筆在 `rebaseDisjointAppData` 出現 linked dependency conflict。`02`／`03`／`04` 收據保留；只把該 exact task/mixed snapshot 納入既有 WeakSet（不 suppress 後續其他 snapshot），沒有放寬 merge／SQL／通知／dismissal 語義。
+- 原 UI 回歸 runner `node scripts/verify-record-list-batch-browser.mjs` 與 `--delete-probe` 分別 6／7 個有界 checks：登入、同來源 common＋per-vessel 兩決議／兩船、select-all/cancel、empty/filter、confirm decline、mixed completion、closed delete、同 envelope receipt、reload、未參與 rows／正式 Itinerary／history／legacy 不變、無 trailing patch；各自還測一次 exact linked-parent lease fault，整批 SQL storage 零部分提交、保選擇、不提前 release。已結案 IC linked task 原刪除 guard 整批拒絕、零 patch、保選擇並回滾已取得鎖，沒有弱化。分船 task 仍可 PDF 勾選但不能整體批量完成。
+- 證據層分開：`record-list-batch-lifecycle-probe.mjs` 為原 ListPanel **33 mounted controlled-callback cases**，不冒稱 SQL；`verify-record-list-batch-lifecycle.mjs` 直接執行原 App declarations＋真 config coordinator，**16 個 planning／acquired-fetch 身份矩陣 cases**，不冒稱完整登入。B1 原 UI／真 SQL 回歸 11 checks，含原 30 秒 renewal 與 lease-expiry timer；另 5 個原 editor mounted probes。沒有再開 review。
+- 精確 UI 邊界 runner 只移除上述兩個 named prop/value 後比較；242 source/public/SQL paths、51 TSX files、147 JSX roots，其餘完全不變；4 個 mutation negatives 必須拒絕 total/closed label、wrong context value、另一個 ListPanel data prop。舊內控 boundary 只接納同一精確 allowlist，不豁免整個 App。曾因 prop 位置觸發舊 positional source assertion，以及一次未提交接線誤擴至 WorkCenter，均保留診斷並在本片修正；不是放寬 UI contract。
+- 完整命令、exit、first RED→GREEN、適用／不適用 gate、最終 path list／tree／commit、binary full-index patch、raw Git blobs ZIP／extraction 比對、owned QA cleanup 收據集中於上述續作 cache。只本機 commit；未 Push／merge／部署／遠端 SQL／真 cron／正式試用；未驗 hosted／Realtime／真多連線／性能／全手機 PDF。共享 QA 與 SQL 未改，不重跑全共享 8 browser＋4 hook＋4 mounted 或全 store/history/delta。
