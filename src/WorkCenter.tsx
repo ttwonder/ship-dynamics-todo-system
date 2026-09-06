@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import type { AppData, TaskItem, TaskPriority, UserAccount, Vessel } from './types';
+import { useEffect, useRef, useState } from 'react';
+import type { AppData, InternalControlCase, TaskItem, TaskPriority, UserAccount, Vessel } from './types';
 import { taskHasVessel, taskVesselIds, taskVesselLabel } from './taskVesselScope';
 import { taskSourceLabel } from './taskWorkflow';
 import { vesselDisplayName } from './vesselDisplay';
@@ -9,7 +9,7 @@ import { richTextToPlainText } from './richText';
 import { sanitizeTaskSelection } from './batchTaskActions';
 import { taskProjectedProgressForScope, taskVesselProgressSummary, usesPerVesselProgress } from './taskVesselProgress';
 import { unreadTaskUpdateCounts } from './workCenterNotifications';
-import { selectUserWorkCenterInternalCases, selectUserWorkCenterTasks } from './workCenterScope';
+import { selectUserWorkCenterInternalCases, selectUserWorkCenterTasks, taskBelongsToUserWorkCenter } from './workCenterScope';
 import { compareCreatedNewestFirst } from './recordSorting';
 import VesselListFilter from './VesselListFilter';
 import { selectedListRecords } from './selectedListExport';
@@ -25,9 +25,11 @@ import { formatTaipeiDateTime } from './taipeiTime';
 type TaskSort='created-desc'|'priority'|'due-asc'|'due-desc'|'updated-desc'|'vessel-asc'|'vessel-desc';
 const priorityRank:Record<TaskPriority,number>={'急':0,'高':1,'中':2,'低':3};
 
-type Props={data:AppData;user:UserAccount;vessels:Vessel[];onOpenTask:(task:TaskItem)=>void;onOpenInternalControl:(internalControlCaseId?:string)=>void;onOpenVessel:(vesselId:string)=>void;markAllRead:()=>void|Promise<void>;canComplete:boolean;canDelete:boolean;canPrint:boolean;onPrint:()=>void;onBatchComplete:(taskIds:string[],internalControlCaseIds?:string[])=>boolean|Promise<boolean>;onDismiss:(taskIds:string[],internalControlCaseIds?:string[])=>boolean|Promise<boolean>;onBatchDelete:(taskIds:string[],internalControlCaseIds?:string[])=>boolean|Promise<boolean>};
+type Props={batchContext?:{identity:string;isCurrent:()=>boolean};data:AppData;user:UserAccount;vessels:Vessel[];onOpenTask:(task:TaskItem)=>void;onOpenInternalControl:(internalControlCaseId?:string)=>void;onOpenVessel:(vesselId:string)=>void;markAllRead:()=>void|Promise<void>;canComplete:boolean;canDelete:boolean;canPrint:boolean;onPrint:()=>void;onBatchComplete:(taskIds:string[],internalControlCaseIds?:string[])=>boolean|Promise<boolean>;onDismiss:(taskIds:string[],internalControlCaseIds?:string[])=>boolean|Promise<boolean>;onBatchDelete:(taskIds:string[],internalControlCaseIds?:string[])=>boolean|Promise<boolean>};
 
-export default function WorkCenter({data,user,vessels,onOpenTask,onOpenInternalControl,onOpenVessel,markAllRead,canComplete,canDelete,canPrint,onPrint,onBatchComplete,onDismiss,onBatchDelete}:Props){
+export default function WorkCenter({batchContext:providedBatchContext,data,user,vessels,onOpenTask,onOpenInternalControl,onOpenVessel,markAllRead,canComplete,canDelete,canPrint,onPrint,onBatchComplete,onDismiss,onBatchDelete}:Props){
+  // The original App supplies exact session/config/view context; older unmounted callers remain compatible.
+  const batchContext=providedBatchContext||{identity:JSON.stringify([user.id,user.role,user.isActive,user.managedVesselIds]),isCurrent:()=>true};
   const [taskQuery,setTaskQuery]=useState('');
   const [taskVesselMode,setTaskVesselMode]=useState<VesselListFilterMode>('all');
   const [selectedTaskVesselIds,setSelectedTaskVesselIds]=useState<string[]>([]);
@@ -40,8 +42,20 @@ export default function WorkCenter({data,user,vessels,onOpenTask,onOpenInternalC
   // `vessels` is already permission-filtered by App. Owner/admin users can see all
   // authorized vessels even when their personal managedVesselIds list is empty.
   const visibleVesselIds=new Set(vessels.map(vessel=>vessel.id));
-  const allTasks=selectUserWorkCenterTasks(data,user,vessels);
-  const allInternalCases=selectUserWorkCenterInternalCases(data,user,vessels);
+  const selectionVersion=useRef(0);
+  const batchSelection=useRef<{context:string;tasks:TaskItem[];cases:InternalControlCase[];pending:boolean}|null>(null);
+  const contextKey=JSON.stringify([batchContext.identity,taskQuery,taskVesselMode,selectedTaskVesselIds,taskPriority,taskSource,taskSort,vessels.map(v=>v.id).sort(),canComplete,canDelete]);
+  const liveContext=useRef(contextKey);
+  const mounted=useRef(true);
+  if(liveContext.current!==contextKey){liveContext.current=contextKey;batchSelection.current=null;selectionVersion.current+=1;}
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;batchSelection.current=null;selectionVersion.current+=1;};},[]);
+  useEffect(()=>{setSelectedIds([]);setSelectedInternalCaseIds([]);},[batchContext.identity]);
+  // Read-only selection projection. App commands still validate live rows, scope and SQL ACK.
+  const retained=batchContext.isCurrent()&&batchSelection.current?.context===contextKey?batchSelection.current:null;
+  const retainedTasks=(retained?.tasks||[]).filter(t=>selectedIds.includes(t.id)&&taskVesselIds(t).some(id=>visibleVesselIds.has(id))&&taskBelongsToUserWorkCenter(data.tasks.find(n=>n.id===t.id)||t,user,vessels,data.meetings));
+  const retainedCases=(retained?.cases||[]).filter(c=>selectedInternalCaseIds.includes(c.id)&&selectUserWorkCenterInternalCases({internalControlCases:[{...(data.internalControlCases.find(n=>n.id===c.id)||c),isClosed:false}],taskDismissals:[]},user,vessels).length>0);
+  const allTasks=[...selectUserWorkCenterTasks(data,user,vessels).filter(t=>!retainedTasks.some(n=>n.id===t.id)),...retainedTasks];
+  const allInternalCases=[...selectUserWorkCenterInternalCases(data,user,vessels).filter(c=>!retainedCases.some(n=>n.id===c.id)),...retainedCases];
   const managedVesselIds=managedListVesselIds(user,vessels);
   const vesselSelection={mode:taskVesselMode,vesselIds:selectedTaskVesselIds};
   const query=taskQuery.trim().toLowerCase();
@@ -87,6 +101,7 @@ export default function WorkCenter({data,user,vessels,onOpenTask,onOpenInternalC
   const selectableTasks=filteredTasks;
   const selectableTaskIds=new Set(selectableTasks.map(task=>task.id));
   const selectableInternalCases=filteredInternalCases;
+  const selectableKey=JSON.stringify([selectableTasks.map(t=>t.id),selectableInternalCases.map(c=>c.id)]);
   useEffect(()=>{
     const next=sanitizeListVesselIds(selectedTaskVesselIds,vessels);
     if(next.length!==selectedTaskVesselIds.length||next.some((id,index)=>id!==selectedTaskVesselIds[index]))setSelectedTaskVesselIds(next);
@@ -95,7 +110,7 @@ export default function WorkCenter({data,user,vessels,onOpenTask,onOpenInternalC
     setSelectedIds(previous=>{const next=sanitizeTaskSelection(previous,selectableTasks);return next.length===previous.length&&next.every((id,index)=>id===previous[index])?previous:next;});
     setSelectedInternalCaseIds(previous=>{const visibleIds=new Set(selectableInternalCases.map(item=>item.id));const next=previous.filter(id=>visibleIds.has(id));return next.length===previous.length&&next.every((id,index)=>id===previous[index])?previous:next;});
     setPage(1);
-  },[data.tasks,data.internalControlCases,data.taskDismissals,taskQuery,taskVesselMode,selectedTaskVesselIds,taskPriority,taskSource,taskSort,user.id,vessels]);
+  },[data.tasks,data.internalControlCases,data.taskDismissals,taskQuery,taskVesselMode,selectedTaskVesselIds,taskPriority,taskSource,taskSort,user.id,vessels,selectableKey,contextKey]);
   const paged=paginateItems(workRows,page,10);
 
   const selectedSet=new Set(selectedIds);
@@ -109,15 +124,32 @@ export default function WorkCenter({data,user,vessels,onOpenTask,onOpenInternalC
   const completeSelectionCount=completableSelectedTasks.length+selectedInternalCases.length;
   const selectableCount=selectableTasks.length+selectableInternalCases.length;
   const allSelected=selectableCount>0&&selectableTasks.every(task=>selectedSet.has(task.id))&&selectableInternalCases.every(item=>selectedInternalSet.has(item.id));
-  const toggleAll=()=>{setSelectedIds(allSelected?[]:selectableTasks.map(task=>task.id));setSelectedInternalCaseIds(allSelected?[]:selectableInternalCases.map(item=>item.id));};
-  const toggleOne=(id:string)=>setSelectedIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);
-  const toggleInternalCase=(id:string)=>setSelectedInternalCaseIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);
-  const completeSelected=async()=>{if(await onBatchComplete(completableSelectedTasks.map(task=>task.id),selectedInternalCases.map(item=>item.id))){setSelectedIds([]);setSelectedInternalCaseIds([]);}};
-  const dismissSelected=async()=>{
-    if(!selectionCount||!confirm(`確定從你的「我的待辦」移除所選 ${selectionCount} 筆？共用待辦與內控原始資料仍會保留，其他負責人不受影響。`))return;
-    if(await onDismiss(selectedTasks.map(task=>task.id),selectedInternalCases.map(item=>item.id))){setSelectedIds([]);setSelectedInternalCaseIds([]);}
+  const toggleAll=()=>{selectionVersion.current+=1;setSelectedIds(allSelected?[]:selectableTasks.map(task=>task.id));setSelectedInternalCaseIds(allSelected?[]:selectableInternalCases.map(item=>item.id));};
+  const toggleOne=(id:string)=>{selectionVersion.current+=1;setSelectedIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);};
+  const toggleInternalCase=(id:string)=>{selectionVersion.current+=1;setSelectedInternalCaseIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);};
+  const runSelected=async(tasks:TaskItem[],allowed:boolean,submit:Props['onDismiss'])=>{
+    if(!allowed||(!tasks.length&&!selectedInternalCases.length)||!batchContext.isCurrent()||batchSelection.current?.pending)return;
+    const selection={context:contextKey,tasks:[...selectedTasks],cases:[...selectedInternalCases],pending:true};
+    const version=selectionVersion.current;
+    batchSelection.current=selection;
+    setSelectedIds(previous=>[...previous]);
+    try{
+      const committed=await submit(tasks.map(t=>t.id),selectedInternalCases.map(c=>c.id));
+      if(!mounted.current||!batchContext.isCurrent()||liveContext.current!==contextKey||batchSelection.current!==selection)return;
+      selection.pending=false;
+      if(committed){batchSelection.current=null;if(selectionVersion.current===version){setSelectedIds([]);setSelectedInternalCaseIds([]);}else setSelectedIds(previous=>[...previous]);}
+    }catch{
+      // Unknown/rejected callbacks cannot discard the user's selection.
+      if(mounted.current&&batchContext.isCurrent()&&liveContext.current===contextKey&&batchSelection.current===selection)selection.pending=false;
+    }
   };
-  const deleteSelected=async()=>{if(await onBatchDelete(selectedTasks.map(task=>task.id),selectedInternalCases.map(item=>item.id))){setSelectedIds([]);setSelectedInternalCaseIds([]);}};
+  const completeSelected=()=>runSelected(completableSelectedTasks,canComplete,onBatchComplete);
+  const dismissSelected=async()=>{
+    if(batchSelection.current?.pending||!batchContext.isCurrent())return;
+    if(!selectionCount||!confirm(`確定從你的「我的待辦」移除所選 ${selectionCount} 筆？共用待辦與內控原始資料仍會保留，其他負責人不受影響。`))return;
+    await runSelected(selectedTasks,true,onDismiss);
+  };
+  const deleteSelected=()=>runSelected(selectedTasks,canDelete,onBatchDelete);
   const visibleTaskIds=new Set(allTasks.map(task=>task.id));
   const unreadByTask=unreadTaskUpdateCounts(data.notifications.filter(notice=>Boolean(notice.taskId&&visibleTaskIds.has(notice.taskId))),user.id);
   const unreadTaskCount=Object.keys(unreadByTask).length;

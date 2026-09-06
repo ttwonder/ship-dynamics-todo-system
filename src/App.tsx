@@ -3401,7 +3401,7 @@ export default function App() {
     const actorId=currentUser?.id||'';
     const actorName=currentUser?.name||'';
     const expectedAuthorizationEpoch=authorizationEpoch;
-    const listOrigin=(tab==='total'||tab==='closed')?listBatchContext:null;
+    const listOrigin=(tab==='total'||tab==='closed'||tab==='work')?listBatchContext:null;
     const sessionIsCurrent=()=>Boolean(actorId&&liveCurrentUserId.current===actorId&&liveAuthorizationEpoch.current===expectedAuthorizationEpoch&&sameCloudConfig(getSupabaseConfig(),config)&&(!listOrigin||listOrigin.isCurrent()));
     try{
       const confirmed=confirmedCloudData.current;
@@ -3741,6 +3741,7 @@ export default function App() {
   };
 
   const dismissFromMyWorkCenter = async (taskIds: string[], internalControlCaseIds: string[] = []) => {
+    if(!listBatchContext.isCurrent())return false;
     if(!currentUser){alert('目前沒有有效登入身份');return false;}
     const uniqueTaskIds=[...new Set(taskIds)];
     const uniqueCaseIds=[...new Set(internalControlCaseIds)];
@@ -3772,7 +3773,7 @@ export default function App() {
       return true;
     }
     const requestUserId=actor.id;
-    const isCurrent=()=>liveCurrentUserId.current===requestUserId&&sameCloudConfig(requestConfig,getSupabaseConfig());
+    const isCurrent=()=>listBatchContext.isCurrent()&&liveCurrentUserId.current===requestUserId&&sameCloudConfig(requestConfig,getSupabaseConfig());
     if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
     try{
       await enqueueCloudSave(candidate,isCurrent,false);
@@ -3785,7 +3786,7 @@ export default function App() {
       saveLocal(next);
       return true;
     }catch(error){
-      alert(`從我的待辦移除失敗：${error instanceof Error?error.message:String(error)}。共用資料與目前清單均未被刪除。`);
+      if(isCurrent())alert(`從我的待辦移除失敗：${error instanceof Error?error.message:String(error)}。共用資料與目前清單均未被刪除。`);
       return false;
     }
   };
@@ -4615,7 +4616,7 @@ export default function App() {
         onOpenInternalControl={caseId=>{if(caseId)setRequestedInternalControlCaseId(caseId);navigateToTab('internalControl');}}
         onOpenVessel={openVesselEditor}
         onBatchComplete={batchCompleteTasks}
-        onDismiss={dismissFromMyWorkCenter}
+        onDismiss={dismissFromMyWorkCenter} batchContext={listBatchContext}
         onBatchDelete={(taskIds,caseIds)=>batchDeleteTasks(taskIds,caseIds,true)}
         canComplete={canCloseTasks&&currentUser.role!=='vessel'}
         canDelete={canDeleteTasks}
