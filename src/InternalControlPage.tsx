@@ -83,9 +83,16 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const [selectedCaseIds,setSelectedCaseIds]=useState<string[]>([]);
   const [batchClosing,setBatchClosing]=useState(false);
   const [batchDeleting,setBatchDeleting]=useState(false);
+  // A list mutation can optimistically remove/close its rows before its ACK.
+  // Retain only this selection's read projection; all writes still use App's
+  // live authorization, relation, CAS and lease checks, never these old rows.
+  const batchSelection=useRef<{epoch:string;userId:string;cases:InternalControlCase[]}|null>(null);
   const handledRequestedCaseId=useRef('');
   const visibleVesselIds = useMemo(() => new Set(vessels.map(vessel => vessel.id)), [vessels]);
-  const scopedCases = data.internalControlCases.filter(item => visibleVesselIds.has(item.vesselId));
+  const retainedBatch=batchSelection.current?.epoch===authorizationEpoch&&batchSelection.current.userId===user.id?batchSelection.current:null;
+  const retainedCases=retainedBatch?.cases.filter(item=>selectedCaseIds.includes(item.id))||[];
+  const retainedIds=new Set(retainedCases.map(item=>item.id));
+  const scopedCases = [...data.internalControlCases.filter(item=>!retainedIds.has(item.id)),...retainedCases].filter(item => visibleVesselIds.has(item.vesselId));
   const managedVesselIds=managedInternalControlVesselIds(user,vessels);
   const vesselSelection={mode:filters.ownerMode,vesselIds:filters.vesselIds};
   const vesselFilteredCases=scopedCases.filter(item=>matchesListVesselSelection([item.vesselId],vesselSelection,managedVesselIds,user.id));
@@ -135,7 +142,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
       return next.length===previous.length&&next.every((id,index)=>id===previous[index])?previous:next;
     });
   },[selectableCaseIdsKey]);
-  useEffect(()=>{setEditing(null);setEditingTaskSyncVersion(null);setBatchOpen(false);setEditorAuthorizationEpoch('');setBatchAuthorizationEpoch('');},[authorizationEpoch]);
+  useEffect(()=>{batchSelection.current=null;setSelectedCaseIds([]);setBatchClosing(false);setBatchDeleting(false);setEditing(null);setEditingTaskSyncVersion(null);setBatchOpen(false);setEditorAuthorizationEpoch('');setBatchAuthorizationEpoch('');},[authorizationEpoch,user.id]);
   useEffect(() => {
     setFilters(previous => {
       const defaultSelection=defaultInternalControlVesselSelection(user,vessels);
@@ -197,19 +204,23 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
     setEditing(null);
     setEditingTaskSyncVersion(null);
   };
-  const toggleAllCases=()=>setSelectedCaseIds(allSelected?[]:selectableCases.map(item=>item.id));
+  const toggleAllCases=()=>{batchSelection.current=null;setSelectedCaseIds(allSelected?[]:selectableCases.map(item=>item.id));};
   const toggleCase=(id:string)=>setSelectedCaseIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);
   const closeSelectedCases=async()=>{
     if(batchClosing||batchDeleting||subpage!=='open'||!selectedCases.length)return;
+    const attempt={epoch:authorizationEpoch,userId:user.id,cases:selectedCases};
+    batchSelection.current=attempt;
     setBatchClosing(true);
-    try{if(await onBatchClose(selectedCases.map(item=>item.id)))setSelectedCaseIds([]);}
-    finally{setBatchClosing(false);}
+    try{if(await onBatchClose(selectedCases.map(item=>item.id))&&batchSelection.current===attempt){batchSelection.current=null;setSelectedCaseIds([]);}}
+    finally{if(batchSelection.current===attempt||batchSelection.current===null)setBatchClosing(false);}
   };
   const deleteSelectedCases=async()=>{
     if(batchClosing||batchDeleting||!selectedCases.length)return;
+    const attempt={epoch:authorizationEpoch,userId:user.id,cases:selectedCases};
+    batchSelection.current=attempt;
     setBatchDeleting(true);
-    try{if(await onBatchDelete(selectedCases.map(item=>item.id)))setSelectedCaseIds([]);}
-    finally{setBatchDeleting(false);}
+    try{if(await onBatchDelete(selectedCases.map(item=>item.id))&&batchSelection.current===attempt){batchSelection.current=null;setSelectedCaseIds([]);}}
+    finally{if(batchSelection.current===attempt||batchSelection.current===null)setBatchDeleting(false);}
   };
   const changeSubpage=(next:Subpage)=>{
     setSubpage(next);

@@ -121,6 +121,21 @@
 
 證據根目錄：`C:/Users/tuotu/AppData/Local/hermes/cache/related-draft-b1-2f8c3f3c/worker/`。終點為明確 paths staged、raw-blob exact tree 候選；不 commit，由父安排 B1-only 獨立複核後再決定。未重跑未變 SQL store/history/delta 全套；未驗 hosted ACL/PostgREST/Realtime、多連線、性能、全手機/PDF、部署或使用者試用。無 Push／merge／部署／遠端/正式 SQL／production browser／cron／新模組。
 
+## records-v1 原內控批量閉環（本機）
+
+本片基線 `8b614ac7ded143e7673b751e8beaa961afe1c4b2`；只原內控清單／BatchCreateModal 的批量新增→同步或不聯動→跨船勾選→批量結案／刪除。原登入及 `main.tsx → App`、JSX/CSS、文案、導航、PDF、權限矩陣、helpers、SQL／正式設定不改；不是首頁船卡批量、混合待辦選擇或分船會議批量。共用船舶是每次原新增 modal 的規則，跨船資料由兩次原 UI 批次建立；原新增列沒有產品筆數上限，不套用報告／prune 的 100 限制。
+
+- 第一條原 UI＋真 SupabaseJS→loopback→私有 PGlite tracer 已在未改產品上 PASS（`01-tracer`）：兩列各自為案件，同步列只建立一筆唯一雙向 task，不同步列不建 task。
+- 產品 RED `03-selection-desired-red`：批量結案 lost ACK 尚待同 operation status 時，原 Page optimistic 清單先把「已選 4」清為 0。只在原 Page 非 JSX seam 保留該次 selection 的讀取投影；仍依 exact actor／authorization epoch 及目前 vessel scope 限制。原 callback confirmed 才清選擇，false 保留，身份／scope 負控及 late callback 不恢復舊選擇；此投影不作寫入依據。
+- `04-selection-green`／`05-batch-diagnostic` 另證實原批量顯式保存與 900ms debounce 重複入列，第一筆 committed 後尾隨保存被 `dependency:internal-control`／`dependency:internal-control-task` 攔下。App 僅對「無 taskIds、確有內控選擇」的兩個批量 command 精確 snapshot 加 WeakSet，排除同 snapshot 的自動 debounce；顯式保存、一般新 snapshot、mixed／分船命令及原 rebase／actor／CAS／lease guards 均不改。兩缺口一起在 `06-batch-green` 轉 GREEN。
+- 可重跑 `node scripts/verify-record-batch-internal-control-browser.mjs`，可用 `--tracer-only`；`QA_EVIDENCE_ROOT` 指定 repo 外根。最終 `10-full-matrix`：8 條完整原 App／真 SQL 情境，另 8 條原 Page mounted controlled-callback 情境，兩層不相加冒稱 16 條 SQL E2E。含兩船／多列同步與獨立案件、原 create/cancel／confirm decline 零 patch、跨船兩端結案與原 closure/status/audit、lost ACK 保同 DOM 草稿及 selection／全鎖、same-envelope status 確認才釋放、closed-list 刪 selected roots／linked tasks、operator 原授權新增／結案正例與 foreign scope／delete 控制負例、新 document reload／零尾隨 patch、未選 records／正式 Itinerary/history／legacy 不變。
+- 刪除副作用以原 `deleteInternalControlCase` 核對：不同於撤回同步，它保留既有 notification 與 taskDismissal；QA 以非空 fixture 明確驗證保留，不自行改成清除。前兩次 QA 錯誤預期保存在 `07`／`08`，不是產品 RED。`09` 的 catalog regex 漏了 `ship_dynamics_records`，只改 QA identifier allowlist；各類 harness 修正未超過三輪。
+- 真 SQL fault：只讓整批其中一筆 linked task 的 exact-owner lease 過期，原整批 delete 回傳 `lock-conflict`；records／orders／history／版本／receipt 全表不变，selection 在 callback 後保留、零提前 release／零自動補保存。失敗測試頁的 teardown 不是正常業務 ACK／關閉成功，也不宣稱失效租約可新寫入。
+- `11`–`40` 共 30 個適用 gate 命令全 exit 0：batch helpers 2、record workflows 23／store 16 SQL＋7 adapter／history 12／delta 7 SQL＋6 adapter／identity 6；B1 原 source-composed continuity、related durable、receipt client/adapter/App、task-delete、authorization/rebase／lock plan/recovery／queue／session exit、internal-control runtime/projection；另 B1 原內控 UI 11＋mounted 5（實 client renewal／expiry）、船舶／Office 原 UI 8＋hook 4＋mounted 4、meeting 原 UI 8。typecheck、Vite production build、diff PASS；保留既有 >500kB chunk 提示。
+- `node scripts/verify-record-batch-internal-control-boundary.mjs` 對基線 242 source/public/SQL/root 路徑核對，51 JSX 檔／147 roots 原文相同；只有 App／InternalControlPage 非 JSX seam 允許差異。Windows working bytes 與 Git clean-filtered bytes 分記；不冒稱整站視覺／mobile／PDF 驗收。舊 B1 review receipt 不當本片 PASS，未新增獨立 review。
+
+證據根 `C:/Users/tuotu/AppData/Local/hermes/cache/record-batch-internal-control-32a7e5159c/`；逐命令 log／exit、`record-batch-internal-control-browser-GokRK9/evidence.json`、raw-blob archive／exact extraction、完整 binary/full-index patch 及 commit readback 都保存在 repo 外。本片驗畢獨立本機 commit，交回唯一 writer。無 Push／merge／部署／遠端 SQL／正式 browserstorage／credentials／真 cron／使用者試用；未驗 hosted ACL/PostgREST/Realtime、多連線、性能、全手機/PDF、整站流程、cutover。
+
 ## 證據標籤
 
 本機測試通過 ≠ 真 Supabase 通過 ≠ 正式環境已切換。讀回負載減少 ≠ 真實網路耗時已改善。UI 原始檔未變 ≠ 已完成所有新後端下的 UI 功能驗收。

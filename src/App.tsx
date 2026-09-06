@@ -368,6 +368,7 @@ export default function App() {
   const confirmedCloudData = useRef<AppData | null>(null);
   const liveData = useRef(data);
   const vesselAttentionDirectSaveSnapshots=useRef(new WeakSet<AppData>());
+  const internalControlBatchDirectSaveSnapshots=useRef(new WeakSet<AppData>());
   const liveCreatingTaskId=useRef('');
   liveCreatingTaskId.current=creatingTask?.id||'';
   const activeCloudIdentity = useRef('');
@@ -1126,7 +1127,7 @@ export default function App() {
     if(!hasUnconfirmedContent)return;
     hasUnsavedWork.current=true;
     clearStaleSaveSuccessToast();
-    if(directAttentionSave)return;
+    if(directAttentionSave||internalControlBatchDirectSaveSnapshots.current.has(data))return;
     if(cloudWriteBlocked||cloudSyncing||cloudSyncInFlight.current){
       setSavePhase(cloudWriteBlocked?'error':'dirty');
       return;
@@ -3567,6 +3568,7 @@ export default function App() {
         liveSelectedTasks.forEach(task=>{ draft=withAudit(draft,liveUser,'批量完成事項','task',task.id,richTextToPlainText(task.description)||task.id); });
         liveSelectedTasks.filter(task=>task.sourceMeetingId).forEach(task=>{ draft=withAudit(draft,liveUser,'同步完成會議決議待辦','meeting',task.sourceMeetingId!,richTextToPlainText(task.description)||task.id); });
         liveSelectedInternalCases.forEach(item=>{ draft=withAudit(draft,liveUser,'批量結案內控異常','internal-control',item.id,richTextToPlainText(item.description)||item.id); });
+        if(!uniqueIds.length&&liveSelectedInternalCases.length)internalControlBatchDirectSaveSnapshots.current.add(draft);
         applied=true;
         return draft;
       }));
@@ -3891,6 +3893,7 @@ export default function App() {
       });
       liveSelection.tasks.forEach(task=>{ draft=withAudit(draft,liveUser,'批量刪除事項','task',task.id,richTextToPlainText(task.description)||task.id); });
       liveSelectedInternalCases.forEach(item=>{ draft=withAudit(draft,liveUser,'批量刪除內控異常','internal-control',item.id,richTextToPlainText(item.description)||item.id); });
+      if(!uniqueIds.length&&liveSelectedInternalCases.length)internalControlBatchDirectSaveSnapshots.current.add(draft);
       applied=true;
       return draft;
     }));
