@@ -37,7 +37,9 @@ const morningWorkspace=fs.readFileSync('src/MorningWorkspace.tsx','utf8');
 const projection=fs.readFileSync('src/normalizedProjection.ts','utf8');
 const sql=fs.readFileSync('supabase/migrations/20260806093000_daily_morning_reports.sql','utf8');
 assert.match(app,/手動保存今日早會/);
-assert.match(app,/檢視當日快照/);
+// History controls moved to the mounted child; source checks are not browser proof.
+assert.match(app,/<ReportDailyHistories\b/);
+assert.match(fs.readFileSync('src/ReportDailyHistories.tsx','utf8'),/檢視當日快照/);
 assert.match(app,/reportPreviewSnapshot\.tasks/);
 assert.match(app,/reportPreviewMeetingIds[\s\S]*reportPreviewSnapshot\.meetings\.filter\(meeting=>reportPreviewMeetingIds\.has\(meeting\.id\)\)/,'history preview data must retain only meetings referenced by already-authorized snapshot tasks');
 assert.match(app,/reportPreviewAuthorizedVessels=data\.vessels\.filter\(vessel=>vesselMatchesUser\(vessel,currentUser,canViewAllVessels\)\)/,'frozen history authorization must include currently authorized inactive snapshot vessels without including unauthorized vessels');

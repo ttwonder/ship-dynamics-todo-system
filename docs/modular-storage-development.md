@@ -70,6 +70,12 @@
 5. 隔離的真 Supabase 驗證；正式站資料未用於本機測試。
 6. 使用者另行批准的切換方案：取切換當時最新資料、完整核對、切換及可執行回退；不得用開發初期副本覆蓋正式資料。
 
+## records 普通早會 server 排程切片：有界施工契約
+
+本片只做明確 workspace、私有 development-only 早會排程入口：record 船／task／meeting／user 權威 → 同交易 report、append-only audit、逐筆 history／delta／receipt → 原 App 早會歷史讀回。先裝實際 schema 及最後有效 builder／scheduler 做真 SQL RED；不借 Owner session 呼叫 browser patch。保留台北星期一至五、原排程每次重跑更新同日報告、保留既有 manual source／created metadata 但重新取排程 snapshot 的語意；原手動 cutoff/window/internalControlCases 與排程不同，兩者明確隔離、不改手動函式。正式 Itinerary 六組值與 revision/首行 pin 仍來自正式 documents，draft/alternative 不參與。
+
+必要 gate：PGlite owner 真 SQL＋SupabaseJS loopback、矛盾 records/legacy fixtures、最後有效原排程差異對照、工作日／台北日界、手動同日／重跑／exact replay、最後寫入失敗整體 rollback、完整 history/delta/audit 與未參與集合不變、至少一條原 App 真 UI 歷史顯示；共用 writer/workflow/history/delta 回歸、typecheck/build/diff 與凍結 UI source。只修本片可重現問題，harness 最多三輪定點修復，無獨立審查迴圈。禁止 cron 註冊／啟用／替換、manifest／預設／雲端設定、雙寫 legacy、督導早會／新報表設計、全站 mobile/PDF、Push／部署／遠端 SQL／使用者試用。PGlite 不證 hosted ACL/PostgREST/Realtime、多連線、真 cron 或正式效能。完整證據置於本片獨立 hermes/cache；驗畢獨立本機 commit 並交回唯一 writer。
+
 ## 證據標籤
 
 本機測試通過 ≠ 真 Supabase 通過 ≠ 正式環境已切換。讀回負載減少 ≠ 真實網路耗時已改善。UI 原始檔未變 ≠ 已完成所有新後端下的 UI 功能驗收。
@@ -273,3 +279,17 @@
 - 有界回歸：history 12、record delta 13；共享 QA 原船舶／Office browser 8＋hook 4＋mounted lifecycle 4。舊 PG CLI data-management DB/scale scripts 未執行，避免讀取 PGHOST；相關安全 oracle 已移至封閉 PGlite。本批無獨立 review gate。
 - 證據：`C:/Users/tuotu/AppData/Local/hermes/cache/record-data-management-complete/`，保留 RED→GREEN／命令退出码／browser readback 與 fingerprint。前一份 `record-data-management-slice/` RED 阻斷收據未覆寫；其中直接呼叫 legacy stats 與舊提示的探針不是新 record RPC 的 GREEN oracle。
 - 仍未驗 hosted Supabase/PostgREST/ACL、真多連線、Realtime、scheduler、retention、cutover、使用者試用與正式效能；未 Push、merge、部署或遠端／正式 SQL。私有 SQL 不加入正式 manifest、不改正式 grants／設定。
+
+## records-v1 普通早會 server 排程閉環（本機完成）
+
+- 最後有效定義：`20260806093000_daily_morning_reports.sql` 的 scheduler／publisher，`20260903230000_itinerary_daily_morning_projection.sql` 的 builder；實際 DDL 查得 `sd_vessels.id`／document `vessel_id` 為 text、revision 為 bigint。先原樣執行非空正式 builder pin，再捕捉新入口缺失 SQLSTATE 42883／true exit 1。
+- 新 `supabase/development/20260906_record_daily_morning_scheduler.sql` 提供私有 invoker builder＋`run_ship_dynamics_record_daily_morning_v1(workspace_key,operation_id,captured_at)`。固定 clock 是隔離 owner-side 入口參數，不是 browser capability；真 cron 及 clock/工作區選定仍留正式 cutover 關卡，不加入 manifest／HTTP allowlist／預設設定。新 RPC/helper 對 PUBLIC／anon／authenticated 撤權。
+- record 船、task、meeting、active Owner eligibility／attribution 為權威。Owner 不是假登入 session，audit 明示 `actorRole: system`。保留原始 record row 欄位（不使用舊 normalized 扁平投影覆寫 records），正式六組營運值仍直接 pin `sd_itinerary_documents`；fallback 的 `source: legacy` 標記只表示用 snapshot 中 record vessel 的整組資料，不查舊 appstate。
+- 抽出既有 writer 的私有 materialization tail，共用 current／changed-row history／version／delta read-base／receipt 同交易；原 browser patch 的 actor/CAS/lease/order/audit 驗證仍在原 caller，未放寬。scheduler 只生成 report＋追加 audit，不清理其他集合／歷史、不雙寫 `sd_saved_reports`、`sd_audit_events` 或舊 AppData。
+- 原 SQL schedule 與手動本來不同，已保留隔離：schedule 取全部合資格未結案 task，包含其舊規則允許的 future／無 meeting 的 temporary task；meeting 可因只關聯 inactive 船的 open task 而被保存。manual 有 cutoff/window、internalControlCases，且重存保留已凍結內容。schedule 同日不同 operation 重跑會更新 snapshot／追加 audit，保留既有 manual source／created metadata，但不保留手動 cutoff 內容；同 operation＋clock 只回原 receipt，即使現在 owner inactive 仍可 exact replay，不重新生成。週末／缺 active record Owner 為零寫入 skip，未建立 skip ledger。
+- `node scripts/verify-record-daily-morning-scheduler.mjs`：13 個有界情境＝12 SQL＋1 真 SupabaseJS loopback（真 read/delta，scheduler HTTP 404 拒絕）。含最後有效原 scheduler 僅換名稱／clock 的同起始 transaction oracle、矛盾 legacy head99／records head1、task/meeting/owner、五個台北日界、正式首行排序與六組 pin、備選負例、同日手動／重跑／lost ACK、完整 1–5 五版 history、receipt 最後注入失敗全表 rollback、未參與列 body/revision/xmin/ctid 不變及 ACL denial／重套。deliberate failure sentinel 在 cleanup 後仍 exit 1。
+- `node scripts/verify-record-daily-morning-browser.mjs`：2 個原 `main.tsx → App` 真 SQL 情境：原登入→報告中心空歷史→owner-side job→原「同步最新」經 SupabaseJS/delta 顯示 09:00自動歷史；原「檢視當日快照」顯示 record task／正式上下港及貨物→reload 保留。真 itineraryDraftStore 草稿与 alternative 不參與且前後不變；沒有匯出／列印 PDF。最後 errors／外連／unsupported 空，HTTP/Chrome cleanup 通過。
+- 回歸：record workflows 23、store 16 SQL＋7 adapter、history 12、delta 7 SQL＋6 adapter；共享原船舶／Office browser 8＋hook 4＋mounted lifecycle 4。既有 morning-history 與 manual-cutoff runner 通過；前者過時 source assertion 仍在 App 找已移到 `ReportDailyHistories` 的按鈕，只修 harness 定位並保留其 source-test 標籤。typecheck/build/diff 通過，僅既有 >500 kB bundle 提醒。
+- Harness 失敗均留收據：最初缺 core-domain 依賴不是產品 RED；browser fixture 的 fullName、連續 sortOrder／上一港只可首行修正未動 validator；一次 business PASS 後 Chrome cleanup true exit 1 不計完整 PASS，修為判斷 exit/signal 並只清自身 process tree。最終原 App／全部 src／JSX／CSS／登入／main entry／設定與正式 migrations 完全未改，未做全站像素/mobile/PDF 驗收。
+- 唯一證據根：`C:/Users/tuotu/AppData/Local/hermes/cache/record-daily-morning-scheduler-3f2b6734d2/`。`commands.jsonl`／逐命令 log、scheduler-results、browser evidence/screenshots、完整 binary/full-index patch、raw-blob ZIP/extraction、候選及 commit/final receipts 同根保存，不覆寫前片。
+- 本片只本機實作、驗證、獨立 commit；沒有獨立 review gate，skill reference 不是審查 PASS。未 Push／merge／部署／遠端 SQL／真 cron／使用者試用。仍不證 hosted ACL/PostgREST/Realtime、多連線、正式效能／排程啟用；正式切換仍須另行授權。

@@ -5,9 +5,11 @@ import {createServer as createViteServer} from 'vite';
 import {PGlite} from '@electric-sql/pglite';
 import {installItineraryFixture,seedItineraryFixture,snapshotItineraryAuthority,recordItinerarySql,recordItineraryWriteSql,recordWriteArgs} from './record-itinerary-local-fixture.mjs';
 
+import {morningInput,installMorningOracle,seedMorningOracle,schedulerSql} from './record-daily-morning-local-fixture.mjs';
+
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({dataManagement=false}={}) {
+export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false}={}) {
  const db=new PGlite(),metrics=[];
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
  let origin='',http,vite,loseItineraryAck=false,loseReportAck=false,losePruneAck=false;
@@ -51,6 +53,7 @@ export async function createRecordStorageLocalQa({dataManagement=false}={}) {
   const template=structuredClone(initial.vessels[0]);
   initial.vessels=['qa-v1','qa-v2'].map((id,index)=>({...structuredClone(template),id,name:`QA VESSEL ${index+1}`,nameEn:`QA VESSEL ${index+1}`,isActive:true,assignedUserIds:[],delegateManagers:[]}));
   for(const name of ['tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs'])initial[name]=[];
+  if(dailyMorning)morningInput(initial);
   const imported=(await db.query('select import_ship_dynamics_records_v1($1,$2::jsonb) as result',[workspace,JSON.stringify(initial)])).rows[0].result;
   if(!imported.ok)throw new Error(`QA import failed: ${imported.code}`);
   await installItineraryFixture(db);
@@ -68,6 +71,7 @@ export async function createRecordStorageLocalQa({dataManagement=false}={}) {
     if(!result.ok)throw new Error('QA history save failed '+JSON.stringify(result));
    }
   }
+  if(dailyMorning){await installMorningOracle(db);await seedMorningOracle(db,initial,workspace,{sortedFormal:dailyMorning==='browser'});if(fs.existsSync(schedulerSql))await db.exec(fs.readFileSync(schedulerSql,'utf8'));}
   const itineraryBaseline=await snapshotItineraryAuthority(db);
   const send=(res,status,value)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(value));};
   http=createHttpServer(async(req,res)=>{

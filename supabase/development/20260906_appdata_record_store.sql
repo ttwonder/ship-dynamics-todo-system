@@ -216,6 +216,73 @@ begin
 end;
 $$;
 
+-- Private materialization core. Callers MUST lock the workspace and validate their
+-- complete command before calling. No actor impersonation or authorization here:
+-- browser patch validates actor/CAS/leases; server jobs construct their own rows.
+create or replace function public.ship_dynamics_record_commit_validated_v1(
+  p_workspace_key text,p_operations jsonb,p_next_root jsonb,p_next_orders jsonb,
+  p_saved_by text,p_operation_id text,p_signature jsonb
+)
+returns jsonb language plpgsql security invoker set search_path = pg_catalog, public as $$
+declare
+  workspace public.ship_dynamics_record_workspaces%rowtype;
+  orders jsonb; name text; ids jsonb; operation jsonb; target_id text; replacement jsonb;
+  saved_at timestamptz; saved_text text; next_revision integer; receipt jsonb;
+begin
+  select * into strict workspace from public.ship_dynamics_record_workspaces where workspace_key=p_workspace_key for update;
+  select coalesce(jsonb_object_agg(collection,c.ids),'{}'::jsonb) into orders
+    from public.ship_dynamics_record_collections c where workspace_key=p_workspace_key;
+  saved_at := case when jsonb_array_length(p_operations)=0 then workspace.updated_at else clock_timestamp() end;
+  saved_text := to_char(saved_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  next_revision := workspace.revision + case when jsonb_array_length(p_operations)=0 then 0 else 1 end;
+  if jsonb_array_length(p_operations)>0 then
+    insert into public.ship_dynamics_record_read_bases values(p_workspace_key,workspace.revision,
+      md5(jsonb_build_array(p_workspace_key,workspace.import_token,workspace.revision)::text),workspace.root,orders)
+      on conflict(workspace_key,revision) do nothing;
+    -- On an existing development store, capture only the actual current baseline;
+    -- never backfill older read bases whose row bodies were already lost.
+    insert into public.ship_dynamics_record_versions values(p_workspace_key,workspace.revision,workspace.root,orders,workspace.updated_at)
+      on conflict(workspace_key,revision) do nothing;
+  end if;
+  -- Materialize an originally absent collection only when this transaction touches
+  -- it. All order validation is complete before any physical write starts.
+  for name,ids in select * from jsonb_each(p_next_orders) loop
+    if orders -> name is distinct from ids then
+      insert into public.ship_dynamics_record_collections values(p_workspace_key,name,ids)
+        on conflict(workspace_key,collection) do update set ids=excluded.ids;
+    end if;
+  end loop;
+  for operation in select value from jsonb_array_elements(p_operations) where value ->> 'kind'='entity' loop
+    name := operation ->> 'collection'; target_id := operation ->> 'entityId'; replacement := nullif(operation -> 'value','null'::jsonb);
+    insert into public.ship_dynamics_record_history(workspace_key,collection,entity_id,valid_from_revision,valid_to_revision,value)
+      select r.workspace_key,r.collection,r.entity_id,r.revision,next_revision,r.value
+      from public.ship_dynamics_records r where r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=target_id;
+    if replacement is null then
+      delete from public.ship_dynamics_records where workspace_key=p_workspace_key and collection=name and ship_dynamics_records.entity_id=target_id;
+    else
+      if name='auditLogs' then
+        replacement := (replacement-'ipAddress'-'ipCountryCode') || jsonb_strip_nulls(jsonb_build_object(
+          'ipAddress',public.ship_dynamics_request_client_ip(),'ipCountryCode',public.ship_dynamics_request_country_code()));
+      end if;
+      insert into public.ship_dynamics_records(workspace_key,collection,entity_id,value,revision) values(p_workspace_key,name,target_id,replacement,next_revision)
+        on conflict (workspace_key,collection,entity_id) do update set value=excluded.value,revision=excluded.revision;
+    end if;
+  end loop;
+  if jsonb_array_length(p_operations)>0 then
+    update public.ship_dynamics_record_workspaces set revision=next_revision,updated_at=saved_at,updated_by=p_saved_by,
+      root=p_next_root || jsonb_build_object('revision',next_revision,'updatedAt',saved_text) where workspace_key=p_workspace_key;
+    insert into public.ship_dynamics_record_versions
+      select w.workspace_key,w.revision,w.root,p_next_orders,w.updated_at
+      from public.ship_dynamics_record_workspaces w where w.workspace_key=p_workspace_key;
+  end if;
+  receipt := jsonb_build_object('ok',true,'status','committed','operation_id',p_operation_id,'revision',next_revision,'updated_at',saved_text,'replayed',false);
+  insert into public.ship_dynamics_record_receipts values(p_workspace_key,p_operation_id,
+    p_signature,receipt);
+  return receipt;
+end;
+$$;
+revoke all on function public.ship_dynamics_record_commit_validated_v1(text,jsonb,jsonb,jsonb,text,text,jsonb) from public,anon,authenticated;
+
 create or replace function public.apply_ship_dynamics_record_patch_v1(
   p_workspace_key text,p_operation_id text,p_operations jsonb,p_saved_by text,
   p_actor_user_id text,p_actor_guard jsonb,p_authorization_guard jsonb,p_lock_guards jsonb
@@ -352,53 +419,9 @@ begin
     if ids is distinct from final_ids then return jsonb_build_object('ok',false,'code','invalid-order-result'); end if;
     next_orders := jsonb_set(next_orders,array[name],requested_ids,true);
   end loop;
-  saved_at := case when jsonb_array_length(p_operations)=0 then workspace.updated_at else clock_timestamp() end;
-  saved_text := to_char(saved_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
-  next_revision := workspace.revision + case when jsonb_array_length(p_operations)=0 then 0 else 1 end;
-  if jsonb_array_length(p_operations)>0 then
-    insert into public.ship_dynamics_record_read_bases values(p_workspace_key,workspace.revision,
-      md5(jsonb_build_array(p_workspace_key,workspace.import_token,workspace.revision)::text),workspace.root,orders)
-      on conflict(workspace_key,revision) do nothing;
-    -- On an existing development store, capture only the actual current baseline;
-    -- never backfill older read bases whose row bodies were already lost.
-    insert into public.ship_dynamics_record_versions values(p_workspace_key,workspace.revision,workspace.root,orders,workspace.updated_at)
-      on conflict(workspace_key,revision) do nothing;
-  end if;
-  -- Materialize an originally absent collection only when this transaction touches
-  -- it. All order validation is complete before any physical write starts.
-  for name,ids in select * from jsonb_each(next_orders) loop
-    if orders -> name is distinct from ids then
-      insert into public.ship_dynamics_record_collections values(p_workspace_key,name,ids)
-        on conflict(workspace_key,collection) do update set ids=excluded.ids;
-    end if;
-  end loop;
-  for operation in select value from jsonb_array_elements(p_operations) where value ->> 'kind'='entity' loop
-    name := operation ->> 'collection'; target_id := operation ->> 'entityId'; replacement := nullif(operation -> 'value','null'::jsonb);
-    insert into public.ship_dynamics_record_history(workspace_key,collection,entity_id,valid_from_revision,valid_to_revision,value)
-      select r.workspace_key,r.collection,r.entity_id,r.revision,next_revision,r.value
-      from public.ship_dynamics_records r where r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=target_id;
-    if replacement is null then
-      delete from public.ship_dynamics_records where workspace_key=p_workspace_key and collection=name and ship_dynamics_records.entity_id=target_id;
-    else
-      if name='auditLogs' then
-        replacement := (replacement-'ipAddress'-'ipCountryCode') || jsonb_strip_nulls(jsonb_build_object(
-          'ipAddress',public.ship_dynamics_request_client_ip(),'ipCountryCode',public.ship_dynamics_request_country_code()));
-      end if;
-      insert into public.ship_dynamics_records(workspace_key,collection,entity_id,value,revision) values(p_workspace_key,name,target_id,replacement,next_revision)
-        on conflict (workspace_key,collection,entity_id) do update set value=excluded.value,revision=excluded.revision;
-    end if;
-  end loop;
-  if jsonb_array_length(p_operations)>0 then
-    update public.ship_dynamics_record_workspaces set revision=next_revision,updated_at=saved_at,updated_by=p_saved_by,
-      root=next_root || jsonb_build_object('revision',next_revision,'updatedAt',saved_text) where workspace_key=p_workspace_key;
-    insert into public.ship_dynamics_record_versions
-      select w.workspace_key,w.revision,w.root,next_orders,w.updated_at
-      from public.ship_dynamics_record_workspaces w where w.workspace_key=p_workspace_key;
-  end if;
-  receipt := jsonb_build_object('ok',true,'status','committed','operation_id',p_operation_id,'revision',next_revision,'updated_at',saved_text,'replayed',false);
-  insert into public.ship_dynamics_record_receipts values(p_workspace_key,p_operation_id,
-    jsonb_build_array(p_operations,p_saved_by,p_actor_user_id,p_actor_guard,p_authorization_guard,p_lock_guards),receipt);
-  return receipt;
+  return public.ship_dynamics_record_commit_validated_v1(
+    p_workspace_key,p_operations,next_root,next_orders,p_saved_by,p_operation_id,
+    jsonb_build_array(p_operations,p_saved_by,p_actor_user_id,p_actor_guard,p_authorization_guard,p_lock_guards));
 end;
 $$;
 
