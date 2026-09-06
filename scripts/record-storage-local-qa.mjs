@@ -92,7 +92,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
      const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
      if(body.p_workspace_key!==workspace){send(res,403,{code:'QA_SCOPE_MISMATCH',message:'Only the isolated fixture workspace is accepted'});return;}
      const start=performance.now();
-     if(internalControl&&recordFault?.before&&['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1'].includes(name))await recordFault.before({name,body,db,metrics});
+     if(internalControl&&recordFault?.before&&['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1','renew_ship_dynamics_edit_lock'].includes(name))await recordFault.before({name,body,db,metrics});
      try{
       const value=await db.transaction(async tx=>{
        await tx.query("select set_config('request.headers',$1,true)",[JSON.stringify({'x-forwarded-for':'192.0.2.30','cf-ipcountry':'TW'})]);

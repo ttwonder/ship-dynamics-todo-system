@@ -104,6 +104,23 @@
 
 未驗 hosted ACL／PostgREST／Realtime、真多連線、性能、全手機／PDF、全 batch／督導早會、正式切换及使用者試用；不以本片 PASS 取代。禁止 Push／merge／部署／遠端或正式 SQL／credentials／設定／cron；必要 gate 通過即獨立本機 commit 並交回唯一 writer。
 
+## B1：原 Case/Task 草稿與 client 租約能力分離（待獨立複核候選）
+
+本輪只修獨立 review B1，基線 `ed4775ddb2073ae37d918827c62578c460038384`。`scripts/verify-related-draft-continuity.mjs` 先在原產品執行 upstream renewal／expiry＋原 renderer，desired assertion 真 exit 1（`02-desired-red.log`），不是「重現 bug 成功」的 exit 0。另原 Case 已完成 lease cleanup 後的明確 Close 補 `36-close-red.log` → `37-close-green.log`。
+
+產品僅非 JSX seam：handoff 的 exact entity／opaque owner／actor／identity generation／authorization epoch／coordinator generation／config continuity 與寫入能力分離；Case/Task 失租保持同一原 editor 為唯讀，不清 request generation、換成最新雲端 editor 或提前 release。Case 使用 exact-handoff、原權限過濾的唯讀投影維持原 Page/Modal，不偽造 `activeItemLeaseKey`；component-local draft 沒有被投影重建。規劃、補鎖及每次 submit 仍須真寫權，已送出的原 operation 可以只讀 receipt 對帳；global retry 也不得在保留的失租草稿上建立新 mutation。明確拒絕後的原 Cancel/Close 可安全重讀、處置並清鎖；unknown 不能當作 rejected 或成功來放行。單次直接 caller 檢查涵蓋 releaseCurrent／releaseExclusive、requireMutation、notice close、renewal loss/error、expiry、授權刪項 observer；未重設全站 lifecycle。
+
+實際證據分層（不能相加成 E2E）：
+- Source-composed：16 個 Case/Task × pending/settled × transport error／明確 loss／deadline／late renewal；每格執行原 release／mutation producer 與 renderer，exact 身份、live actor/epoch/generation/config 負控；另 2 個原 App submit/lookup＋真 receipt coordinator controlled cases，以及無鎖 Close／錯 entity 控制。
+- 原 App → SupabaseJS → loopback → 私有真 PGlite：原內控 11；原 Page/Modal controlled-I/O mounted 5；既有 source predicates 10。`QA_RELATED_DRAFT_B1=1 node scripts/verify-record-internal-control-browser.mjs` 增強其中兩條：Case 原 30 秒續租 timer 真失敗時保持同 DOM/草稿且 fieldset disabled，原 operation committed receipt 核實後才正常關閉/release；Task 已被真 SQL 拒絕後，以 controlled scheduler 將 primary 30 秒 interval 延至 100 秒（未修改 SQL/RPC 回應），等待原 client expiry timer 真觸發，仍同 DOM/唯讀草稿、新寫與提前 release 0，再由原「關閉」明確處置。這不是僅 server 過期或等 250ms 的證據。
+- 最新 B1 UI：`38-final-b1-ui.log`、`record-internal-control-browser-XQvZpV/evidence.json`；Task rejection 後實等 59,387ms 才見 client expiry 唯讀；same-node、draft、SQL readback、operation/release 順序和截圖均留存。
+- 適用回歸：related durable／session exit、task-delete 14、creation／exclusive lease／vessel continuity／bundle／lock plan／recovery、receipt App/client/adapter、save-intent queue／feedback、internal-control runtime/projection、bootstrap/fast-path；meeting 原 UI 8、船舶/Office 原 UI 8＋hook 4＋mounted 4，全部最後 exit 0。`verified-gates.json` 記逐命令/exit/耗時；typecheck、Vite production build、diff gate exit 0，保留既有 >500kB chunk 提示。
+- 精確 source boundary：242 路徑／51 JSX 檔／147 roots；本輪無 JSX/CSS、入口、導航、文案、元件位置、SQL 或雲端設定變更。
+
+舊 verifier 三個 source 字串因實際 seam 改變而更新：per-intent 多了獨立 `canSubmit`、Case visibility 經 exact retained projection、related enqueue 明確傳 identity/read-only recovery 與 write-capability predicates。task-delete controlled-I/O 的 expiry 情境是「已合法 dispatch 後延遲 committed ACK」，所以現在允許確認成功；同 user ABA／epoch／config／coordinator stale 仍不得成功，新增 coordinator 負控，沒有把新寫入失鎖改成合法。兩次 browser harness 失敗為 CDP 回傳 DOM object chain、fieldset 子 textarea 應檢查 `matches(':disabled')` 而非自身 `.disabled`；修正沒有改產品 UI。另錯命令 `verify-cloud-save-intents.mjs` 的 MODULE_NOT_FOUND 已更正為 manifest 中 `verify-cloud-save-intent-queue.mjs`。所有早期失敗保留。
+
+證據根目錄：`C:/Users/tuotu/AppData/Local/hermes/cache/related-draft-b1-2f8c3f3c/worker/`。終點為明確 paths staged、raw-blob exact tree 候選；不 commit，由父安排 B1-only 獨立複核後再決定。未重跑未變 SQL store/history/delta 全套；未驗 hosted ACL/PostgREST/Realtime、多連線、性能、全手機/PDF、部署或使用者試用。無 Push／merge／部署／遠端/正式 SQL／production browser／cron／新模組。
+
 ## 證據標籤
 
 本機測試通過 ≠ 真 Supabase 通過 ≠ 正式環境已切換。讀回負載減少 ≠ 真實網路耗時已改善。UI 原始檔未變 ≠ 已完成所有新後端下的 UI 功能驗收。

@@ -7,6 +7,7 @@ import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
 
 const output=fs.mkdtempSync(path.join(process.env.QA_EVIDENCE_ROOT||os.tmpdir(),'record-internal-control-browser-'));
 const profile=path.join(output,'chrome-profile');
+const b1=process.env.QA_RELATED_DRAFT_B1==='1';
 let qa,browser,ws,failure=null,sessionId,releaseHeldReceipt,expectDeleteRejection=false;
 const pending=new Map(),evidence={label:'真實 UI＋測試資料；本機 PGlite，非 hosted Supabase',scenarios:[],errors:[],blockedExternal:[],metrics:[]};
 let id=0;
@@ -144,11 +145,19 @@ try{
  });
  await check('lost ACK preserves original editor draft and leases until same-operation SQL status confirms',async()=>{
   await openCase('QA REVERSE UPDATE');await fillNode(field('事項內容 *','textarea'),'QA LOST ACK RECOVERED');
-  let dropped=false,lookup=false,submitted;
+  let dropped=false,lookup=false,submitted,renewalFailed=false;
+  if(b1){await evaluate(`void(window.__qaDraftNode=(${field('事項內容 *','textarea')}))`);await wait(27_000);}
   const held=new Promise(resolve=>{releaseHeldReceipt=resolve;});
   const start=qa.metrics.length,before=await qa.read();
-  qa.setRecordFault({before:async({name,body})=>{if(name==='get_ship_dynamics_record_receipt_v1'&&dropped){lookup=true;assert.equal(body.p_operation_id,submitted.p_operation_id);assert.deepEqual(body,submitted);await held;}},after:async({name,body,value})=>{if(name==='apply_ship_dynamics_record_patch_v1'&&!dropped){assert.equal(value.ok,true);dropped=true;submitted=structuredClone(body);return true;}return false;}});
+  qa.setRecordFault({before:async({name,body})=>{if(b1&&name==='renew_ship_dynamics_edit_lock'&&body.p_section_key==='internal-control:'+mainId&&dropped){renewalFailed=true;throw new Error('QA primary renewal transport failure');}if(name==='get_ship_dynamics_record_receipt_v1'&&dropped){lookup=true;assert.equal(body.p_operation_id,submitted.p_operation_id);assert.deepEqual(body,submitted);await held;}},after:async({name,body,value})=>{if(name==='apply_ship_dynamics_record_patch_v1'&&!dropped){assert.equal(value.ok,true);dropped=true;submitted=structuredClone(body);return true;}return false;}});
   await click('保存更新');await until(()=>lookup,'same operation status after lost ACK');
+  if(b1){
+    await until(()=>renewalFailed,'real 30-second client renewal fails during same-operation status',7000);
+    await until(()=>evaluate('window.__qaDraftNode.matches(":disabled")'),'original Case draft becomes read-only');
+    assert.equal(await evaluate(`window.__qaDraftNode===(${field('事項內容 *','textarea')})`),true,'same Case DOM/editor instance');
+    evidence.b1Case={sameNode:true,readonly:true,clientRenewalObserved:true,clock:'real 30-second timer',operationId:submitted.p_operation_id};
+    await screen('b1-case-renewal-error-readonly');
+  }
   assert.equal(await evaluate(`(${field('事項內容 *','textarea')}).value`),'QA LOST ACK RECOVERED');
   assert.ok((await leases()).some(l=>l.section_key==='internal-control:'+mainId));assert.ok((await leases()).some(l=>l.section_key.startsWith('task:')));
   assert.equal(qa.metrics.slice(start).filter(m=>m.rpc==='release_ship_dynamics_edit_lock').length,0);
@@ -202,14 +211,26 @@ try{
  });
  await check('expired original task lease rejects deletion atomically and preserves draft after failure callback',async()=>{
   await click('切換/退出');await until(async()=>(await text()).includes('人員登入／切換'),'Owner switch for terminal failure branch');await select(`document.querySelector('[aria-label="登入人員"]')`,'qa-owner');await fill('input[type="password"]',qa.password);await click('登入');await until(async()=>(await text()).includes('QA OWNER｜Owner'),'Owner record identity');await click('內控異常');await until(async()=>(await text()).includes('QA OPERATOR ALLOWED'),'failure branch case');await until(async()=>(await text()).includes('已安全保存'),'Owner settled');
+  if(b1)await evaluate("window.__qaSetInterval=window.setInterval;window.setInterval=(callback,ms,...args)=>window.__qaSetInterval(callback,ms===30000?100000:ms,...args)");
   await openCase('QA OPERATOR ALLOWED','要事');await fillRich('事項內容','QA REJECTED DELETE DRAFT');
+  if(b1)await evaluate("window.__qaDraftNode=document.querySelector('[aria-label=事項內容][contenteditable]');window.setInterval=window.__qaSetInterval");
   const before=await snapshot('before-rejected-delete'),start=qa.metrics.length;let injected=false;
   qa.setRecordFault({before:async({name,body})=>{if(name==='apply_ship_dynamics_record_patch_v1'&&!injected){injected=true;const guard=body.p_lock_guards.find(g=>g.section_key.startsWith('task:'));assert.ok(guard);await qa.db.query("update ship_dynamics_edit_locks set expires_at=now()-interval '1 second' where workspace_key='isolated-record-ui-qa' and section_key=$1 and locked_by=$2",[guard.section_key,guard.locked_by]);}}});
   expectDeleteRejection=true;await click('刪除待辦');await until(()=>evidence.expectedDeleteRejection,'original rejected delete alert');await wait(250);
   assert.equal(await evaluate(`document.querySelector('[contenteditable="true"][aria-label="事項內容"]')?.innerText`),'QA REJECTED DELETE DRAFT','definitively rejected delete must preserve child draft after handoff finishes');
+  if(b1){
+    const began=Date.now();
+    await until(()=>evaluate('window.__qaDraftNode.isConnected&&window.__qaDraftNode.contentEditable===\"false\"'),'actual client validated deadline with delayed primary renewal',90_000);
+    assert.equal(await evaluate("window.__qaDraftNode===document.querySelector('[aria-label=事項內容][contenteditable]')"),true,'same Task DOM/editor instance after expiry');
+    assert.equal(await evaluate('window.__qaDraftNode.innerText'),'QA REJECTED DELETE DRAFT');
+    assert.equal(await evaluate("[...document.querySelectorAll('.edit-modal button')].filter(n=>!n.disabled&&['保存變更','刪除待辦'].includes(n.innerText.trim())).length"),0);
+    evidence.b1Task={sameNode:true,readonly:true,waitedAfterRejectionMs:Date.now()-began,clock:'real original expiry timer; primary 30s interval delayed to 100s by controlled scheduler only',server:'actual SQL expired exact owner; no response replacement'};
+    await screen('b1-task-client-expiry-readonly');
+  }
   const after=await snapshot('rejected-delete-readback');assert.deepEqual(after,before,'expired-lease SQL must not change any records, revision, audit or notices');
   const events=qa.metrics.slice(start);assert.ok(events.some(m=>m.rpc==='apply_ship_dynamics_record_patch_v1'&&m.status!=='SQL_OK'));assert.equal(events.filter(m=>m.rpc==='apply_ship_dynamics_record_patch_v1'&&m.status==='SQL_OK').length,0);assert.equal(events.filter(m=>m.rpc==='release_ship_dynamics_edit_lock').length,0);
   evidence.rejectedDelete={layer:'full original App + actual SQL; owner-side lease expiry injection',draftRetained:true,recordsUnchanged:true,noPrematureRelease:true,statuses:events.filter(m=>m.rpc==='apply_ship_dynamics_record_patch_v1').map(m=>m.status)};await screen('rejected-delete-draft-retained');qa.setRecordFault(null);expectDeleteRejection=false;
+  if(b1){await click('關閉');await until(async()=>!await evaluate("Boolean(document.querySelector('.modal-backdrop'))")&&(await leases()).length===0,'explicit rejected-draft disposition closes and cleans leases');assert.deepEqual(await qa.read(),before);evidence.b1Task.explicitClose=true;}
  });
  await call('Page.navigate',{url:qa.origin+'/__qa/blank'});
  await until(()=>evaluate("location.pathname==='/__qa/blank'&&document.readyState==='complete'"),'isolated mounted lifecycle page');

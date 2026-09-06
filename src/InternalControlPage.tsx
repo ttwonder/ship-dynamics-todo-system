@@ -193,7 +193,7 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
     void openCase(item);
   },[requestedCaseId]);
   const closeEditor=async()=>{
-    if(editing&&canMutateItem&&activeItemLeaseKey===internalControlEditLockKey(editing.id)&&releaseItemLease&&!await releaseItemLease(internalControlEditLockKey(editing.id)))return;
+    if(editing&&canMutateItem&&releaseItemLease&&!await releaseItemLease(internalControlEditLockKey(editing.id)))return;
     setEditing(null);
     setEditingTaskSyncVersion(null);
   };

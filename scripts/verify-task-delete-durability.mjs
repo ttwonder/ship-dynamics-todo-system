@@ -67,7 +67,9 @@ try{
       env.authorizedEditLockKeys=new Set(env.liveData.current.tasks.map(task=>'task:'+task.id));
       env.missingEffect();
     };
-    env.enqueueCloudSave=async(snapshot,isCurrent)=>{
+    env.enqueueCloudSave=async(snapshot,isCurrent,_renderRebase,canSubmit=isCurrent)=>{
+      // Dispatch was authorized before the deferred ACK; expiry cannot revoke an actual commit.
+      if(!canSubmit())throw new runtime.StaleAsyncConfigError();
       events.push('save-start');
       await gate.promise;
       if(failSave)throw saveError||new Error('transport outcome unknown');
@@ -89,6 +91,7 @@ try{
     if(invalidate==='authorization')env.liveAuthorizationEpoch.current='revoked';
     if(invalidate==='config')config={...config,workspaceKey:'other'};
     if(invalidate==='expiry')lock.validatedUntilMs=Date.now()-1;
+    if(invalidate==='coordinator')generation+=1;
     const pendingRelease=explicitRelease?env.release():null;
     if(pendingRelease){await tick();assert.equal(events.includes('release'),false,'explicit close must await the same durable mutation');}
     let successor;
@@ -104,7 +107,7 @@ try{
     gate.resolve();
     const outcome=await result;await tick();
     if(pendingRelease)await pendingRelease;
-    if(failSave||changeIdentity||invalidate){
+    if(failSave||changeIdentity||(invalidate&&invalidate!=='expiry')){
       assert.equal(outcome,false,'unconfirmed or stale context cannot be reported as success');
       assert.equal(events.includes('cloud-confirmed'),false);
       assert.equal(alerts.length,1);
@@ -128,7 +131,7 @@ try{
   await runScenario({failRelease:true});
   await runScenario({failSave:true});
   await runScenario({changeIdentity:true});
-  for(const invalidate of ['same-user-ABA','authorization','config','expiry'])await runScenario({invalidate});
+  for(const invalidate of ['same-user-ABA','authorization','config','coordinator','expiry'])await runScenario({invalidate});
   await runScenario({wrongSuccessor:true});
   await runScenario({explicitRelease:true});
   await runScenario({deleteItem:false});
