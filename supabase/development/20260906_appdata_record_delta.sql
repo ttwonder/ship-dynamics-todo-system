@@ -38,12 +38,12 @@ begin
     if before_ids is null then
       -- The existing consumer intentionally rejects entity deltas against a
       -- missing array. Materialize only this newly introduced collection.
-      select coalesce(jsonb_agg(r.value order by ids.ordinal),'[]'::jsonb) into upserts
+      select coalesce(jsonb_agg(public.ship_dynamics_record_hydrate_v1(r.workspace_key,r.collection,r.entity_id,r.value,r.task_progress_meta,r.revision) order by ids.ordinal),'[]'::jsonb) into upserts
         from jsonb_array_elements_text(after_ids) with ordinality ids(id,ordinal)
         join public.ship_dynamics_records r on r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=ids.id;
       sets := jsonb_set(sets,array[name],upserts,true); continue;
     end if;
-    select coalesce(jsonb_agg(r.value order by r.entity_id),'[]'::jsonb) into upserts
+    select coalesce(jsonb_agg(public.ship_dynamics_record_hydrate_v1(r.workspace_key,r.collection,r.entity_id,r.value,r.task_progress_meta,r.revision) order by r.entity_id),'[]'::jsonb) into upserts
       from public.ship_dynamics_records r where r.workspace_key=p_workspace_key and r.revision>p_base_revision and r.collection=name;
     select coalesce(jsonb_agg(id order by id),'[]'::jsonb) into deleted_ids
       from jsonb_array_elements_text(before_ids) id where not (after_ids ? id);

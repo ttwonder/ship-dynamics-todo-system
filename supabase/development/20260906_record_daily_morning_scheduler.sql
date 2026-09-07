@@ -20,8 +20,9 @@ begin
     and r.value -> 'isActive' is distinct from 'false'::jsonb;
 
   select coalesce(jsonb_agg(t.value order by t.entity_id),'[]'::jsonb) into v_tasks
-  from public.ship_dynamics_records t
-  where t.workspace_key=p_workspace_key and t.collection='tasks'
+  from (select r.entity_id,public.ship_dynamics_record_hydrate_v1(r.workspace_key,r.collection,r.entity_id,r.value,r.task_progress_meta,r.revision) value
+    from public.ship_dynamics_records r where r.workspace_key=p_workspace_key and r.collection='tasks') t
+  where true
     and t.value -> 'isInternalControl' is distinct from 'true'::jsonb
     and t.value -> 'isClosed' is distinct from 'true'::jsonb
     and exists (

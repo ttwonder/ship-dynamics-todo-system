@@ -82,13 +82,141 @@ revoke all on public.ship_dynamics_record_workspaces, public.ship_dynamics_recor
   public.ship_dynamics_records, public.ship_dynamics_record_receipts,
   public.ship_dynamics_record_read_bases from public, anon, authenticated;
 
+-- Internal storage metadata never occupies a user JSON key. NULL is an
+-- unconverted legacy body (also used by non-task records), not an absent field.
+alter table public.ship_dynamics_records add column if not exists task_progress_meta jsonb;
+alter table public.ship_dynamics_record_history add column if not exists task_progress_meta jsonb;
+create table if not exists public.ship_dynamics_record_task_progress (
+  workspace_key text not null references public.ship_dynamics_record_workspaces(workspace_key),
+  task_id text not null,
+  entry_id text not null,
+  value jsonb not null,
+  revision integer not null check (revision>=0),
+  primary key(workspace_key,task_id,entry_id)
+);
+create table if not exists public.ship_dynamics_record_task_progress_history (
+  workspace_key text not null references public.ship_dynamics_record_workspaces(workspace_key),
+  task_id text not null,
+  entry_id text not null,
+  value jsonb not null,
+  valid_from_revision integer not null check (valid_from_revision>=0),
+  valid_to_revision integer not null check (valid_to_revision>valid_from_revision),
+  primary key(workspace_key,task_id,entry_id,valid_from_revision)
+);
+alter table public.ship_dynamics_record_task_progress enable row level security;
+alter table public.ship_dynamics_record_task_progress_history enable row level security;
+revoke all on public.ship_dynamics_record_task_progress,public.ship_dynamics_record_task_progress_history from public,anon,authenticated;
+
+create or replace function public.ship_dynamics_record_hydrate_v1(
+  p_workspace text,p_collection text,p_id text,p_body jsonb,p_meta jsonb,p_revision integer
+) returns jsonb language plpgsql stable security invoker set search_path=pg_catalog,public as $$
+declare ids jsonb; bodies jsonb; invalid bigint;
+begin
+  if p_meta is null then return p_body; end if;
+  if p_collection<>'tasks' or p_body ? 'vesselProgress' then raise exception 'record-progress-incomplete'; end if;
+  if p_meta=jsonb_build_object('kind','absent') then return p_body; end if;
+  if p_meta ->> 'kind'='literal' and p_meta ? 'value' and jsonb_typeof(p_meta -> 'value')<>'array'
+    and p_meta=jsonb_build_object('kind','literal','value',p_meta -> 'value') then
+    return p_body || jsonb_build_object('vesselProgress',p_meta -> 'value');
+  end if;
+  ids := p_meta -> 'ids';
+  if p_meta ->> 'kind' is distinct from 'array' or jsonb_typeof(ids) is distinct from 'array'
+    or p_meta<>jsonb_build_object('kind','array','ids',ids) then raise exception 'record-progress-incomplete'; end if;
+  if exists(select 1 from jsonb_array_elements(ids) id where jsonb_typeof(id)<>'string' or id='""'::jsonb)
+    or (select count(distinct id) from jsonb_array_elements_text(ids) id)<>jsonb_array_length(ids)
+    then raise exception 'record-progress-incomplete'; end if;
+  select coalesce(jsonb_agg(m.body order by i.ordinal),'[]'::jsonb),count(*) filter(where m.n<>1)
+    into bodies,invalid
+  from jsonb_array_elements_text(ids) with ordinality i(id,ordinal)
+  cross join lateral (
+    select count(*) n,jsonb_agg(c.value) -> 0 body from (
+      select r.value from public.ship_dynamics_record_task_progress r
+        where r.workspace_key=p_workspace and r.task_id=p_id and r.entry_id=i.id and r.revision<=p_revision
+      union all
+      select h.value from public.ship_dynamics_record_task_progress_history h
+        where h.workspace_key=p_workspace and h.task_id=p_id and h.entry_id=i.id
+          and h.valid_from_revision<=p_revision and p_revision<h.valid_to_revision
+    ) c
+  ) m;
+  if invalid<>0 then raise exception 'record-progress-incomplete'; end if;
+  return p_body || jsonb_build_object('vesselProgress',bodies);
+end;
+$$;
+
+-- Caller owns workspace/complete-task CAS and leases. entry_id is ONLY a
+-- physical slot, not a vessel identity or a new business scope epoch.
+create or replace function public.ship_dynamics_record_progress_write_v1(
+  p_workspace text,p_task text,p_value jsonb,p_revision integer,p_valid_to integer default null
+) returns jsonb language plpgsql security invoker set search_path=pg_catalog,public as $$
+declare
+  items jsonb := '[]'::jsonb; slots jsonb := '{}'::jsonb; used text[] := array[]::text[];
+  ids jsonb := '[]'::jsonb; item jsonb; ordinal bigint; slot text; vessel jsonb; old_row record;
+  meta jsonb;
+begin
+  if p_value is null or not (p_value ? 'vesselProgress') then meta:=jsonb_build_object('kind','absent');
+  elsif jsonb_typeof(p_value -> 'vesselProgress')<>'array' then
+    meta:=jsonb_build_object('kind','literal','value',p_value -> 'vesselProgress');
+  else
+    items:=p_value -> 'vesselProgress';
+    if p_valid_to is not null then
+      -- Upgrade an existing historical body with its exact original interval.
+      -- No guesses from disposable read bases or the current business scope.
+      for item in select value from jsonb_array_elements(items) loop
+        slot:=gen_random_uuid()::text; ids:=ids || jsonb_build_array(slot);
+        insert into public.ship_dynamics_record_task_progress_history values(p_workspace,p_task,slot,item,p_revision,p_valid_to);
+      end loop;
+      return jsonb_build_object('kind','array','ids',ids);
+    end if;
+    -- Reserve ALL exact raw matches before considering changed entries. This
+    -- preserves duplicate/unknown/literal entries and their original order.
+    for item,ordinal in select * from jsonb_array_elements(items) with ordinality loop
+      select r.entry_id into slot from public.ship_dynamics_record_task_progress r
+        where r.workspace_key=p_workspace and r.task_id=p_task and r.value=item and not(r.entry_id=any(used))
+        order by r.entry_id limit 1;
+      if slot is not null then
+        slots:=jsonb_set(slots,array[ordinal::text],to_jsonb(slot)); used:=array_append(used,slot);
+      end if;
+    end loop;
+    for item,ordinal in select * from jsonb_array_elements(items) with ordinality loop
+      slot:=slots ->> ordinal::text; vessel:=item -> 'vesselId';
+      if slot is null and jsonb_typeof(vessel)='string' and vessel<>'""'::jsonb
+        and (select count(*) from jsonb_array_elements(items) x where x -> 'vesselId'=vessel)=1
+        and (select count(*) from public.ship_dynamics_record_task_progress r where r.workspace_key=p_workspace and r.task_id=p_task and r.value -> 'vesselId'=vessel)=1 then
+        select r.entry_id into slot from public.ship_dynamics_record_task_progress r
+          where r.workspace_key=p_workspace and r.task_id=p_task and r.value -> 'vesselId'=vessel and not(r.entry_id=any(used));
+      end if;
+      if slot is null then slot:=gen_random_uuid()::text; end if;
+      used:=array_append(used,slot); ids:=ids || jsonb_build_array(slot);
+      select * into old_row from public.ship_dynamics_record_task_progress r
+        where r.workspace_key=p_workspace and r.task_id=p_task and r.entry_id=slot;
+      if not found then
+        insert into public.ship_dynamics_record_task_progress values(p_workspace,p_task,slot,item,p_revision);
+      elsif old_row.value is distinct from item then
+        insert into public.ship_dynamics_record_task_progress_history values(p_workspace,p_task,slot,old_row.value,old_row.revision,p_revision);
+        update public.ship_dynamics_record_task_progress set value=item,revision=p_revision
+          where workspace_key=p_workspace and task_id=p_task and entry_id=slot;
+      end if;
+    end loop;
+    meta:=jsonb_build_object('kind','array','ids',ids);
+  end if;
+  if p_valid_to is not null then return meta; end if;
+  insert into public.ship_dynamics_record_task_progress_history
+    select r.workspace_key,r.task_id,r.entry_id,r.value,r.revision,p_revision
+    from public.ship_dynamics_record_task_progress r where r.workspace_key=p_workspace and r.task_id=p_task and not(ids ? r.entry_id);
+  delete from public.ship_dynamics_record_task_progress where workspace_key=p_workspace and task_id=p_task and not(ids ? entry_id);
+  return meta;
+end;
+$$;
+revoke all on function public.ship_dynamics_record_hydrate_v1(text,text,text,jsonb,jsonb,integer) from public,anon,authenticated;
+revoke all on function public.ship_dynamics_record_progress_write_v1(text,text,jsonb,integer,integer) from public,anon,authenticated;
+
 -- Privileged, explicit fixture/import input; never reads the legacy table and never
 -- replaces an existing authority. Exact same import is a replay even after edits.
 create or replace function public.import_ship_dynamics_records_v1(p_workspace_key text, p_payload jsonb)
 returns jsonb language plpgsql security invoker set search_path = pg_catalog, public as $$
 declare
   names text[] := array['users','vessels','tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs'];
-  name text; items jsonb; item jsonb; ids jsonb; token text; previous text;
+  name text; items jsonb; item jsonb; ids jsonb; token text; previous text; meta jsonb;
 begin
   if nullif(p_workspace_key,'') is null or jsonb_typeof(p_payload) is distinct from 'object'
     or jsonb_typeof(p_payload -> 'revision') is distinct from 'number'
@@ -124,8 +252,12 @@ begin
     select coalesce(jsonb_agg(source.item -> 'id' order by ordinal),'[]'::jsonb) into ids
       from jsonb_array_elements(items) with ordinality source(item,ordinal);
     insert into public.ship_dynamics_record_collections values(p_workspace_key,name,ids);
-    insert into public.ship_dynamics_records(workspace_key,collection,entity_id,value,revision)
-      select p_workspace_key,name,source.item ->> 'id',source.item,(p_payload ->> 'revision')::integer from jsonb_array_elements(items) source(item);
+    for item in select value from jsonb_array_elements(items) loop
+      meta:=null;
+      if name='tasks' then meta:=public.ship_dynamics_record_progress_write_v1(p_workspace_key,item ->> 'id',item,(p_payload ->> 'revision')::integer); end if;
+      insert into public.ship_dynamics_records(workspace_key,collection,entity_id,value,revision,task_progress_meta)
+        values(p_workspace_key,name,item ->> 'id',case when name='tasks' then item-'vesselProgress' else item end,(p_payload ->> 'revision')::integer,meta);
+    end loop;
   end loop;
   insert into public.ship_dynamics_record_versions
     select w.workspace_key,w.revision,w.root,
@@ -144,7 +276,7 @@ returns jsonb language sql stable security invoker set search_path = pg_catalog,
       'status','snapshot','revision',w.revision,'updated_at',w.updated_at,
       'payload',w.root || coalesce((
         select jsonb_object_agg(c.collection,(
-          select coalesce(jsonb_agg(r.value order by requested.ordinal),'[]'::jsonb)
+          select coalesce(jsonb_agg(public.ship_dynamics_record_hydrate_v1(r.workspace_key,r.collection,r.entity_id,r.value,r.task_progress_meta,r.revision) order by requested.ordinal),'[]'::jsonb)
           from jsonb_array_elements_text(c.ids) with ordinality requested(id,ordinal)
           join public.ship_dynamics_records r on r.workspace_key=c.workspace_key and r.collection=c.collection and r.entity_id=requested.id
         )) from public.ship_dynamics_record_collections c where c.workspace_key=w.workspace_key
@@ -178,10 +310,10 @@ begin
     from jsonb_array_elements_text(ids) with ordinality requested(id,ordinal)
     cross join lateral (
       select count(*) as n,jsonb_agg(candidate.value) -> 0 as body from (
-        select r.value from public.ship_dynamics_records r
+        select public.ship_dynamics_record_hydrate_v1(r.workspace_key,r.collection,r.entity_id,r.value,r.task_progress_meta,p_revision) value from public.ship_dynamics_records r
           where r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=requested.id and r.revision<=p_revision
         union all
-        select h.value from public.ship_dynamics_record_history h
+        select public.ship_dynamics_record_hydrate_v1(h.workspace_key,h.collection,h.entity_id,h.value,h.task_progress_meta,p_revision) value from public.ship_dynamics_record_history h
           where h.workspace_key=p_workspace_key and h.collection=name and h.entity_id=requested.id
             and h.valid_from_revision<=p_revision and p_revision<h.valid_to_revision
       ) candidate
@@ -227,7 +359,7 @@ returns jsonb language plpgsql security invoker set search_path = pg_catalog, pu
 declare
   workspace public.ship_dynamics_record_workspaces%rowtype;
   orders jsonb; name text; ids jsonb; operation jsonb; target_id text; replacement jsonb;
-  saved_at timestamptz; saved_text text; next_revision integer; receipt jsonb;
+  saved_at timestamptz; saved_text text; next_revision integer; receipt jsonb; meta jsonb;
 begin
   select * into strict workspace from public.ship_dynamics_record_workspaces where workspace_key=p_workspace_key for update;
   select coalesce(jsonb_object_agg(collection,c.ids),'{}'::jsonb) into orders
@@ -254,9 +386,11 @@ begin
   end loop;
   for operation in select value from jsonb_array_elements(p_operations) where value ->> 'kind'='entity' loop
     name := operation ->> 'collection'; target_id := operation ->> 'entityId'; replacement := nullif(operation -> 'value','null'::jsonb);
-    insert into public.ship_dynamics_record_history(workspace_key,collection,entity_id,valid_from_revision,valid_to_revision,value)
-      select r.workspace_key,r.collection,r.entity_id,r.revision,next_revision,r.value
+    insert into public.ship_dynamics_record_history(workspace_key,collection,entity_id,valid_from_revision,valid_to_revision,value,task_progress_meta)
+      select r.workspace_key,r.collection,r.entity_id,r.revision,next_revision,r.value,r.task_progress_meta
       from public.ship_dynamics_records r where r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=target_id;
+    meta:=null;
+    if name='tasks' then meta:=public.ship_dynamics_record_progress_write_v1(p_workspace_key,target_id,replacement,next_revision); end if;
     if replacement is null then
       delete from public.ship_dynamics_records where workspace_key=p_workspace_key and collection=name and ship_dynamics_records.entity_id=target_id;
     else
@@ -264,8 +398,9 @@ begin
         replacement := (replacement-'ipAddress'-'ipCountryCode') || jsonb_strip_nulls(jsonb_build_object(
           'ipAddress',public.ship_dynamics_request_client_ip(),'ipCountryCode',public.ship_dynamics_request_country_code()));
       end if;
-      insert into public.ship_dynamics_records(workspace_key,collection,entity_id,value,revision) values(p_workspace_key,name,target_id,replacement,next_revision)
-        on conflict (workspace_key,collection,entity_id) do update set value=excluded.value,revision=excluded.revision;
+      insert into public.ship_dynamics_records(workspace_key,collection,entity_id,value,revision,task_progress_meta)
+        values(p_workspace_key,name,target_id,case when name='tasks' then replacement-'vesselProgress' else replacement end,next_revision,meta)
+        on conflict (workspace_key,collection,entity_id) do update set value=excluded.value,revision=excluded.revision,task_progress_meta=excluded.task_progress_meta;
     end if;
   end loop;
   if jsonb_array_length(p_operations)>0 then
@@ -363,7 +498,8 @@ begin
       if (expected_value is not null and (jsonb_typeof(expected_value) is distinct from 'object' or jsonb_typeof(expected_value -> 'id') is distinct from 'string' or expected_value ->> 'id' is distinct from target_id))
         or (replacement is not null and (jsonb_typeof(replacement) is distinct from 'object' or jsonb_typeof(replacement -> 'id') is distinct from 'string' or replacement ->> 'id' is distinct from target_id))
       then return jsonb_build_object('ok',false,'code','invalid-entity-id'); end if;
-      select value into current_value from public.ship_dynamics_records where workspace_key=p_workspace_key and collection=name and ship_dynamics_records.entity_id=target_id for update;
+      select public.ship_dynamics_record_hydrate_v1(r.workspace_key,r.collection,r.entity_id,r.value,r.task_progress_meta,r.revision) into current_value
+        from public.ship_dynamics_records r where r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=target_id for update;
       if current_value is distinct from expected_value then
         return jsonb_build_object('ok',false,'code','block-conflict','conflict_key',name || ':' || target_id); end if;
       if name in ('vessels','tasks','internalControlCases','meetings') then
@@ -430,4 +566,69 @@ revoke all on function public.read_ship_dynamics_records_v1(text) from public, a
 revoke all on function public.read_ship_dynamics_record_history_v1(text,integer) from public, anon, authenticated;
 revoke all on function public.get_ship_dynamics_record_receipt_v1(text,text,jsonb,text,text,jsonb,jsonb,jsonb) from public, anon, authenticated;
 revoke all on function public.apply_ship_dynamics_record_patch_v1(text,text,jsonb,text,text,jsonb,jsonb,jsonb) from public, anon, authenticated;
+
+-- Atomic, reentrant DEVELOPMENT upgrade. Run only with local synthetic data.
+-- Existing revision/import tokens/receipt signatures/results are never updated.
+-- NULL-metadata historical intervals get fresh private slots; sharing between
+-- old versions is not guessed. Subsequent writes reuse unchanged current leaves.
+do $$
+declare row record; version record; before_versions jsonb:='[]'::jsonb; before_current jsonb:='[]'::jsonb;
+  meta jsonb; observed jsonb; idx integer:=0; boundary integer;
+begin
+  lock table public.ship_dynamics_record_workspaces,public.ship_dynamics_records,
+    public.ship_dynamics_record_history,public.ship_dynamics_record_task_progress,
+    public.ship_dynamics_record_task_progress_history in share row exclusive mode;
+  if exists(
+    with spans as (
+      select workspace_key,entity_id,revision f,null::integer t from public.ship_dynamics_records where collection='tasks'
+      union all select workspace_key,entity_id,valid_from_revision,valid_to_revision from public.ship_dynamics_record_history where collection='tasks'
+    ) select 1 from spans a join spans b on a.workspace_key=b.workspace_key and a.entity_id=b.entity_id
+      and a.f<b.f and int8range(a.f,a.t,'[)') && int8range(b.f,b.t,'[)')
+  ) or exists(select 1 from public.ship_dynamics_records r join public.ship_dynamics_record_history h
+    on r.workspace_key=h.workspace_key and r.collection=h.collection and r.entity_id=h.entity_id and r.revision=h.valid_from_revision
+    where r.collection='tasks') then raise exception 'record-progress-overlap'; end if;
+  for version in select workspace_key,revision from public.ship_dynamics_record_versions order by workspace_key,revision loop
+    before_versions:=before_versions || jsonb_build_array(public.read_ship_dynamics_record_history_v1(version.workspace_key,version.revision));
+  end loop;
+  for row in select workspace_key from public.ship_dynamics_record_workspaces order by workspace_key loop
+    before_current:=before_current || jsonb_build_array(public.read_ship_dynamics_records_v1(row.workspace_key));
+  end loop;
+  for row in select * from public.ship_dynamics_record_history where collection='tasks' and task_progress_meta is null order by workspace_key,entity_id,valid_from_revision loop
+    meta:=public.ship_dynamics_record_progress_write_v1(row.workspace_key,row.entity_id,row.value,row.valid_from_revision,row.valid_to_revision);
+    update public.ship_dynamics_record_history set value=row.value-'vesselProgress',task_progress_meta=meta
+      where workspace_key=row.workspace_key and collection='tasks' and entity_id=row.entity_id and valid_from_revision=row.valid_from_revision;
+  end loop;
+  for row in select * from public.ship_dynamics_records where collection='tasks' and task_progress_meta is null order by workspace_key,entity_id loop
+    if exists(select 1 from public.ship_dynamics_record_task_progress p where p.workspace_key=row.workspace_key and p.task_id=row.entity_id)
+      then raise exception 'record-progress-incomplete'; end if;
+    meta:=public.ship_dynamics_record_progress_write_v1(row.workspace_key,row.entity_id,row.value,row.revision);
+    update public.ship_dynamics_records set value=row.value-'vesselProgress',task_progress_meta=meta
+      where workspace_key=row.workspace_key and collection='tasks' and entity_id=row.entity_id;
+  end loop;
+  -- Check each body's whole interval at every leaf boundary, including versions
+  -- whose root has been pruned. Missing, overlapping or cross-workspace refs fail.
+  for row in
+    select workspace_key,collection,entity_id,value,task_progress_meta,revision f,null::integer t from public.ship_dynamics_records where collection='tasks'
+    union all select workspace_key,collection,entity_id,value,task_progress_meta,valid_from_revision,valid_to_revision from public.ship_dynamics_record_history where collection='tasks'
+  loop
+    for boundary in
+      select row.f union select p.revision from public.ship_dynamics_record_task_progress p where p.workspace_key=row.workspace_key and p.task_id=row.entity_id and p.revision>=row.f and (row.t is null or p.revision<row.t)
+      union select h.valid_from_revision from public.ship_dynamics_record_task_progress_history h where h.workspace_key=row.workspace_key and h.task_id=row.entity_id and h.valid_from_revision>=row.f and (row.t is null or h.valid_from_revision<row.t)
+      union select h.valid_to_revision from public.ship_dynamics_record_task_progress_history h where h.workspace_key=row.workspace_key and h.task_id=row.entity_id and h.valid_to_revision>=row.f and (row.t is null or h.valid_to_revision<row.t)
+    loop
+      perform public.ship_dynamics_record_hydrate_v1(row.workspace_key,row.collection,row.entity_id,row.value,row.task_progress_meta,boundary);
+    end loop;
+  end loop;
+  for version in select workspace_key,revision from public.ship_dynamics_record_versions order by workspace_key,revision loop
+    observed:=public.read_ship_dynamics_record_history_v1(version.workspace_key,version.revision);
+    if observed is distinct from before_versions -> idx then raise exception 'record-progress-upgrade-mismatch'; end if;
+    idx:=idx+1;
+  end loop;
+  idx:=0;
+  for row in select workspace_key from public.ship_dynamics_record_workspaces order by workspace_key loop
+    if public.read_ship_dynamics_records_v1(row.workspace_key) is distinct from before_current -> idx then raise exception 'record-progress-upgrade-mismatch'; end if;
+    idx:=idx+1;
+  end loop;
+end;
+$$;
 commit;

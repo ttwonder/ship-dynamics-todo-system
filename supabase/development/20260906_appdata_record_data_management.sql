@@ -26,9 +26,9 @@ returns table(revision integer, saved_at timestamptz, logical_bytes bigint)
 language sql stable security invoker set search_path = pg_catalog, public as $$
   select v.revision, v.updated_at,
     (pg_column_size(v.root)::bigint + pg_column_size(v.orders)
-      + coalesce((select sum(pg_column_size(r.value)::bigint) from public.ship_dynamics_records r
+      + coalesce((select sum(pg_column_size(public.ship_dynamics_record_hydrate_v1(r.workspace_key,r.collection,r.entity_id,r.value,r.task_progress_meta,v.revision))::bigint) from public.ship_dynamics_records r
         where r.workspace_key=v.workspace_key and r.revision<=v.revision),0)
-      + coalesce((select sum(pg_column_size(h.value)::bigint) from public.ship_dynamics_record_history h
+      + coalesce((select sum(pg_column_size(public.ship_dynamics_record_hydrate_v1(h.workspace_key,h.collection,h.entity_id,h.value,h.task_progress_meta,v.revision))::bigint) from public.ship_dynamics_record_history h
         where h.workspace_key=v.workspace_key and h.valid_from_revision<=v.revision
           and v.revision<h.valid_to_revision),0))::bigint
   from public.ship_dynamics_record_versions v where v.workspace_key=p_workspace_key

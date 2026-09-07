@@ -21,8 +21,10 @@ const state = async () => (await db.query(`select kind,value from (
   union all select 'read-bases',to_jsonb(t) from ship_dynamics_record_read_bases t
   union all select 'versions',to_jsonb(t) from ship_dynamics_record_versions t
   union all select 'history',to_jsonb(t) from ship_dynamics_record_history t
+  union all select 'task-progress',to_jsonb(t) from public.ship_dynamics_record_task_progress t
+  union all select 'task-progress-history',to_jsonb(t) from public.ship_dynamics_record_task_progress_history t
 ) s order by kind,value::text`)).rows;
-const archive = async () => (await state()).filter(row => ['versions', 'history'].includes(row.kind));
+const archive = async () => (await state()).filter(row => ['versions', 'history', 'task-progress-history'].includes(row.kind));
 const rollbackProbe = async fn => { await db.exec('begin'); try { await fn(); } finally { await db.exec('rollback'); } };
 const check = async (name, fn) => { await fn(); results.push(name); console.log('PASS ' + name); };
 const verifyAll = async () => {
@@ -176,7 +178,7 @@ try {
       await assert.rejects(history(1), /record-history-incomplete/);
     });
     await rollbackProbe(async () => {
-      await db.query('insert into ship_dynamics_record_history select workspace_key,collection,entity_id,0,2,value from ship_dynamics_record_history where workspace_key=$1 and entity_id=$2 and valid_from_revision=1', [key, taskId]);
+      await db.query('insert into ship_dynamics_record_history(workspace_key,collection,entity_id,valid_from_revision,valid_to_revision,value,task_progress_meta) select workspace_key,collection,entity_id,0,2,value,task_progress_meta from ship_dynamics_record_history where workspace_key=$1 and entity_id=$2 and valid_from_revision=1', [key, taskId]);
       await assert.rejects(history(1), /record-history-incomplete/);
     });
     await verifyAll();

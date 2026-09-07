@@ -21,8 +21,10 @@ const state = async () => (await db.query(`select kind,value from (
   union all select 'read-bases',to_jsonb(t) from ship_dynamics_record_read_bases t
   union all select 'versions',to_jsonb(t) from ship_dynamics_record_versions t
   union all select 'history',to_jsonb(t) from ship_dynamics_record_history t
+  union all select 'task-progress',to_jsonb(t) from public.ship_dynamics_record_task_progress t
+  union all select 'task-progress-history',to_jsonb(t) from public.ship_dynamics_record_task_progress_history t
 ) s order by kind,value::text`)).rows;
-const archive = async () => (await state()).filter(row => ['versions', 'history'].includes(row.kind));
+const archive = async () => (await state()).filter(row => ['versions', 'history', 'task-progress-history'].includes(row.kind));
 const rollbackProbe = async fn => { await db.exec('begin'); try { await fn(); } finally { await db.exec('rollback'); } };
 const check = async (name, fn) => { await fn(); results.push(name); console.log('PASS ' + name); };
 const verifyAll = async () => {
@@ -91,7 +93,7 @@ try {
   const stats=()=>query('select get_ship_dynamics_record_storage_stats_v1($1,$2) as result',[key,actor]);
   const prune=(expected,selected,operation=crypto.randomUUID(),who=actor,workspace=key)=>query('select prune_ship_dynamics_record_revision_history_v1($1,$2,$3::uuid,$4::jsonb,$5::jsonb) as result',[workspace,who,operation,JSON.stringify(expected),JSON.stringify(selected)]);
   const all=()=>[...snapshots.keys()].sort((a,b)=>a-b);
-  const untouchedTables=['ship_dynamics_record_workspaces','ship_dynamics_record_collections','ship_dynamics_records','ship_dynamics_record_history','ship_dynamics_record_read_bases','ship_dynamics_record_receipts','ship_dynamics_app_state','ship_dynamics_app_revisions','ship_dynamics_data_management_operations','ship_dynamics_edit_locks'];
+  const untouchedTables=['ship_dynamics_record_workspaces','ship_dynamics_record_collections','ship_dynamics_records','ship_dynamics_record_history','ship_dynamics_record_task_progress','ship_dynamics_record_task_progress_history','ship_dynamics_record_read_bases','ship_dynamics_record_receipts','ship_dynamics_app_state','ship_dynamics_app_revisions','ship_dynamics_data_management_operations','ship_dynamics_edit_locks'];
   const rows=async table=>(await db.query(`select to_jsonb(t) value from ${table} t order by to_jsonb(t)::text`)).rows;
   const frozen=async()=>Object.fromEntries(await Promise.all(untouchedTables.map(async table=>[table,await rows(table)])));
   const whole=async()=>({...await frozen(),versions:await rows('ship_dynamics_record_versions'),ledger:await rows('ship_dynamics_record_prune_operations')});
@@ -134,7 +136,7 @@ try {
     await rollbackProbe(async()=>{
       await db.query('delete from ship_dynamics_record_versions where workspace_key=$1 and revision=4',[key]);
       assert.deepEqual(await prune(expected,[2],op),result);
-      await db.query("insert into ship_dynamics_records select workspace_key,collection,'other-owner',value||'{\"id\":\"other-owner\"}',revision from ship_dynamics_records where workspace_key=$1 and collection='users' and entity_id=$2",[key,actor]);
+      await db.query("insert into ship_dynamics_records(workspace_key,collection,entity_id,value,revision) select workspace_key,collection,'other-owner',value||'{\"id\":\"other-owner\"}',revision from ship_dynamics_records where workspace_key=$1 and collection='users' and entity_id=$2",[key,actor]);
       assert.equal((await prune(expected,[2],op,'other-owner')).error,'IDEMPOTENCY_MISMATCH');
       const other={...await full(),revision:1};await query('select import_ship_dynamics_records_v1($1,$2::jsonb) as result',['other-workspace',JSON.stringify(other)]);
       assert.equal((await prune(expected,[2],op,actor,'other-workspace')).error,'IDEMPOTENCY_MISMATCH');

@@ -65,7 +65,7 @@ try{
  const appBefore=await qa.read(),formalBefore=await qa.itinerarySnapshot();
  const history=async n=>(await qa.db.query('select read_ship_dynamics_record_history_v1($1,$2) result',['isolated-record-ui-qa',n])).rows[0].result;
  const snapshots=new Map();for(let n=1;n<=7;n++)snapshots.set(n,await history(n));
- const frozenTables=['ship_dynamics_record_workspaces','ship_dynamics_record_collections','ship_dynamics_records','ship_dynamics_record_history','ship_dynamics_record_read_bases','ship_dynamics_record_receipts','ship_dynamics_app_state','ship_dynamics_app_revisions'];
+ const frozenTables=['ship_dynamics_record_workspaces','ship_dynamics_record_collections','ship_dynamics_records','ship_dynamics_record_history','ship_dynamics_record_task_progress','ship_dynamics_record_task_progress_history','ship_dynamics_record_read_bases','ship_dynamics_record_receipts','ship_dynamics_app_state','ship_dynamics_app_revisions'];
  const frozen=async()=>Object.fromEntries(await Promise.all(frozenTables.map(async table=>[table,(await qa.db.query(`select to_jsonb(t) value from ${table} t order by to_jsonb(t)::text`)).rows])));
  const before=await frozen();assert.match(await text(),/只會清理所勾選的歷史版本；不會改動目前版本、未勾選的歷史版本或正式業務資料。/);
  assert.equal(await evaluate("document.querySelectorAll('input[aria-label=\"選擇刪除 revision 7\"]').length"),0);

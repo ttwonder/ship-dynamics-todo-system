@@ -149,8 +149,11 @@ try{
   const one=await current(),p1=one.distributed.vesselProgress.find(p=>p.vesselId==='qa-v1');assert.equal(p1.isClosed,true);assert.equal(p1.status,'QA V1 DONE');assert.deepEqual(one.distributed.vesselProgress.find(p=>p.vesselId==='qa-v2'),before.distributed.vesselProgress.find(p=>p.vesselId==='qa-v2'));assert.deepEqual(overall(one.distributed),overall(before.distributed));assert.equal(one.m.taskItems[1].isClosed,false);assert.deepEqual(one.m,before.m);
   await openTask(1,'qa-v2');await fillRich('單船目前狀態','QA V2 DONE');await click('標記結案');await click('保存變更');await finishEditor();
   const both=await current();assert.deepEqual(both.distributed.vesselProgress.find(p=>p.vesselId==='qa-v1'),p1);assert.equal(both.m.taskItems[1].isClosed,true);assert.equal(both.m.status,before.m.status);assert.deepEqual(overall(both.distributed),overall(before.distributed));
+  const bTuple=async()=>(await qa.db.query("select value,revision,entry_id,tableoid::text,xmin::text,ctid::text from ship_dynamics_record_task_progress where workspace_key='isolated-record-ui-qa' and task_id=$1 and value->>'vesselId'='qa-v2'",[distributedId])).rows;
+  const bBefore=await bTuple();assert.equal(bBefore.length,1,'B is physically stored in a leaf');
   await openTask(1,'qa-v1');await click('重新開啟');await click('保存變更');await finishEditor();
   const reopened=await current();assert.equal(reopened.m.taskItems[1].isClosed,false);assert.equal(reopened.m.status,before.m.status);assert.deepEqual(reopened.distributed.vesselProgress.find(p=>p.vesselId==='qa-v2'),both.distributed.vesselProgress.find(p=>p.vesselId==='qa-v2'));const p=reopened.distributed.vesselProgress.find(p=>p.vesselId==='qa-v1');assert.equal(p.isClosed,false);assert.equal(p.closedDate,undefined);assert.deepEqual(p.statusLogs,p1.statusLogs);assert.deepEqual(reopened.common,before.common);await snapshot('member-reopened');
+  assert.deepEqual(await bTuple(),bBefore,'original UI A save must not rewrite closed B leaf');evidence.memberPhysical={before:bBefore,after:await bTuple()};
  });
  await check('meeting lost ACK retains draft and exact leases; same-operation status confirms once before release',async()=>{
   await editMeeting();await fillRich('召開緣由','QA LOST ACK REASON');await fillRich('待辦事項 1','QA ACK SOURCE');
