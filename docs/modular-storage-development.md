@@ -137,6 +137,20 @@
 
 證據根 `C:/Users/tuotu/AppData/Local/hermes/cache/record-batch-internal-control-32a7e5159c/`；逐命令 log／exit、`record-batch-internal-control-browser-GokRK9/evidence.json`、raw-blob archive／exact extraction、完整 binary/full-index patch 及 commit readback 都保存在 repo 外。本片驗畢獨立本機 commit，交回唯一 writer。無 Push／merge／部署／遠端 SQL／正式 browserstorage／credentials／真 cron／使用者試用；未驗 hosted ACL/PostgREST/Realtime、多連線、性能、全手機/PDF、整站流程、cutover。
 
+## records-v1 原船卡批量船舶有界切片
+
+本片基線 `1878acdb7cb9c6b82b0a0b66cb6b1dd3a75ce777`；唯一 writer，原 main.tsx→App→Dashboard→BatchManagedVesselModal，真實 UI＋測試資料／SupabaseJS→loopback→私有 PGlite。先跑原產品 tracer；通過只新增 QA/docs，真產品 RED 才最小內部修正，不改可見 UI／權限政策。必要：人工選兩船留第三船、bundle 後 refresh、獨立備註／動態／允許欄位、一次原子交易與原 audit/notifications 語意、正常取消零保存／只釋本次鎖、lost ACK exact immutable receipt／ACK 前同草稿鎖保留／ACK 後原關閉、後段 SQL 拒絕零部分保存與原重試、新 document 重載／正式 Itinerary 唯讀投影和 write mask／未選業務與矛盾 legacy 不變。低層原 guard 負控與原 UI SQL 分層，不冒充全角色 Auth E2E。
+
+適用 gate：新 tracer/full/reject、batch-managed 原 source/runtime/SSR、batch lease/receipt/Itinerary write mask 相關回歸、typecheck/build、精確 source/UI/SQL 邊界、diff；QA-only 不盲重跑共享 App 未變的已閉合單船／Office／通知原 UI 或全 normalized/DB scripts。每類 harness 問題最多三次；保留每次 command/exit/log，禁止新 review／Push／merge／部署／遠端 SQL／正式設定與 browser storage／provider 重啟。通過即明確 paths staging、完整 patch/raw blob archive/extraction、獨立本機 commit。
+
+本輪結果：原產品 tracer `03-tracer` 首次完整 PASS；最終 bytes 的 `09-final-tracer`、`12-final-held-ack-retry`、`13-final-reject` 分別跑 4／5／5 個情境，以穩定 scenario ID 去重是 **6 個原 UI＋真 SQL 情境**，不是 14 個獨立 E2E。兩船人工備註／近期動態與允許的目前位置只在保存時寫入一次交易；每船各一筆原 audit、notifications 不新增，第三船及其他業務 records 的 value/revision/xmin/ctid 不變。正式 sd_*（包含 documents／rows／history／alternatives）及矛盾 legacy 物理快照不變。後段拒絕在 vessel writes 已進入後才拋錯（不回退 sequence 作探針），records／orders／versions／history／receipt 全部回滾；原草稿及 locks 保留，移除私有故障後按原重試成功。lost ACK 的同 operation／完整 immutable envelope receipt 送達前，保留同 modal node／两船草稿與 locks，ACK 後才原關閉及釋放；新 document 重載重新開啟读回且無尾隨保存。
+
+可重跑：`node scripts/verify-record-batch-vessel-browser.mjs --tracer-only`、不帶參數的 held-ACK 模式、`--reject`；`QA_EVIDENCE_ROOT` 指定 repo 外目錄。原 `verify-batch-managed-vessel-updates.mjs` 的 source/runtime/SSR 及新增 14 個穩定 ID 的原 session/lease 低層 guard 正負控通過，含 exact actor／epoch／session／config／opaque token 與 wrong-entity／owner／generation／record／expiry；不冒充全 App Auth E2E。原 admin 權限撤銷 epoch 及人工 exact selection runtime 檢查保留，不把 Owner 加入僅 admin/operator 的經管人欄位。bundle、record store 16 SQL＋7 adapter、receipt client／adapter／App、typecheck（tsc --noEmit）、build（npm run build）與 diff 全部最新 exit 0；build 仍有既有 >500 kB 提示。boundary 對基線 242 source/public/SQL/root 路徑、51 JSX 檔／147 roots 精確保留；產品／共用 QA／SQL 零修改，所以不重跑無關既有 UI 流程。
+
+保留失敗：`01` 是 CDP DOM 回傳序列化，改用 void；`02` 是新 fixture 誤加未屬正式 Vessel 的 nameEn，移除該 QA 欄位；`06` 是舊 source assertion 沒跟上既有 queue 的 canSubmit 參數，只更新 QA 並保留全部 guards；`10` 是瀏覽器啟動前 loopback health fetch 失敗，metrics／scenarios 皆空、清理成功且無殘留程序，相同 bytes 單次重跑 `12` 通過，根因未確定，不能稱產品或外網 FAIL。每類未超過三輪，沒有真產品 RED→GREEN、沒有為製造產品 diff 而修改。證據根：`C:/Users/tuotu/AppData/Local/hermes/cache/record-batch-vessel-1878acdb/`，逐 command/exit/log、最終 scenario manifest、完整 Git patch／raw-blob archive／extraction／commit receipt 均置 repo 外；本片未新派 review。
+
+後續另驗：批量→＋新增要事完整往返、9 船跨頁／全角色、全手機／PDF、hosted ACL/PostgREST/Realtime／多連線／效能與正式切換，不以本片取代整站驗收。
+
 ## 證據標籤
 
 本機測試通過 ≠ 真 Supabase 通過 ≠ 正式環境已切換。讀回負載減少 ≠ 真實網路耗時已改善。UI 原始檔未變 ≠ 已完成所有新後端下的 UI 功能驗收。

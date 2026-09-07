@@ -66,7 +66,7 @@ assert.ok(!cancelBranch.includes('flushCloudBeforeBatchRelease')&&!cancelBranch.
 const enqueueStart=app.indexOf('const enqueueCloudSave =');
 const enqueueEnd=app.indexOf('\n  const flushCloudBeforeBatchRelease=',enqueueStart);
 const enqueueBranch=app.slice(enqueueStart,enqueueEnd);
-assert.ok(enqueueBranch.includes('isCurrent:()=>boolean=()=>true')&&enqueueBranch.includes('isCurrent});')&&enqueueBranch.includes('if(!isCurrent()||!pendingActorIsCurrent())throw new StaleAsyncConfigError()')&&enqueueBranch.includes('if(!isCurrent()||!pendingActorIsCurrent())break;'), '雲端save queue每個pending snapshot必須攜帶caller operation guard及live actor generation，任一失效都不得保存或更新新session');
+assert.ok(enqueueBranch.includes('isCurrent:()=>boolean=()=>true')&&enqueueBranch.includes('canSubmit:()=>boolean=isCurrent')&&enqueueBranch.includes('isCurrent,canSubmit});')&&enqueueBranch.includes('if(!isCurrent()||!pendingActorIsCurrent())throw new StaleAsyncConfigError()')&&enqueueBranch.includes('if(!isCurrent()||!pendingActorIsCurrent())break;'), '雲端save queue每個pending snapshot必須攜帶caller operation guard及live actor generation，任一失效都不得保存或更新新session');
 assert.ok(app.includes('enqueueCloudSave(snapshot,()=>batchManagedOperationIsCurrent(operation))'), '批量flush必須把不可變operation guard傳入雲端save queue');
 const flushStart=app.indexOf('const flushCloudBeforeBatchRelease=async(operation:BatchManagedOperation)=>');
 const flushEnd=app.indexOf('\n\n  useEffect(() => {',flushStart);
@@ -213,6 +213,31 @@ try {
   currentCloudIdentity = 'https://cloud.example|app_state|workspace|anon';
   assert.equal(batchMutationSessionIsCurrent({ renderedAuthorization:localAuthorization, currentAuthorization, currentSession, liveAuthorizationEpoch:liveEpoch, liveUserId, currentCloudIdentity }), false, '本機 session 開啟後若雲端配置出現，mutation 必須立即 fail closed');
   assert.equal(Object.isFrozen(localAuthorization), true, '批量 session authorization token 必須不可變');
+  // Executed original low-level guards, not original-UI Auth E2E.
+  const guardScenarios=[];
+  const guardCheck=(id,actual,expected)=>{assert.equal(actual,expected,id);guardScenarios.push(id);};
+  const auth=createBatchManagedAuthorization({session:9,authorizationEpoch:'exact-epoch',userId:'exact-actor',cloudIdentity:'exact-config'});
+  const current={renderedAuthorization:auth,currentAuthorization:auth,currentSession:9,liveAuthorizationEpoch:'exact-epoch',liveUserId:'exact-actor',currentCloudIdentity:'exact-config'};
+  guardCheck('batch-session-current',batchMutationSessionIsCurrent(current),true);
+  for(const [id,delta] of [
+    ['actor',{liveUserId:'other-actor'}],['permission-epoch',{liveAuthorizationEpoch:'revoked-epoch'}],
+    ['session',{currentSession:10}],['config',{currentCloudIdentity:'other-config'}],
+    ['same-value-foreign-token',{currentAuthorization:{...auth}}],
+  ])guardCheck('batch-session-reject-'+id,batchMutationSessionIsCurrent({...current,...delta}),false);
+  const {editLockAllowsMutation}=await server.ssrLoadModule('/src/editLockCoordinator.ts');
+  const owned={status:'owned',sectionKey:'vessel:exact',ownerUserId:'exact-actor',authorizationEpoch:'exact-epoch',validatedUntilMs:200};
+  guardCheck('batch-lease-current',editLockAllowsMutation(owned,'vessel:exact','exact-actor','exact-epoch',true,true,100),true);
+  for(const [id,lock,actor,epoch,generation,record,now] of [
+    ['valid-wrong-entity',{...owned,sectionKey:'vessel:other'},'exact-actor','exact-epoch',true,true,100],
+    ['wrong-owner',owned,'other-actor','exact-epoch',true,true,100],
+    ['revoked-epoch',owned,'exact-actor','other-epoch',true,true,100],
+    ['stale-generation',owned,'exact-actor','exact-epoch',false,true,100],
+    ['missing-record',owned,'exact-actor','exact-epoch',true,false,100],
+    ['expired',owned,'exact-actor','exact-epoch',true,true,200],
+    ['missing-lease',null,'exact-actor','exact-epoch',true,true,100],
+  ])guardCheck('batch-lease-reject-'+id,editLockAllowsMutation(lock,'vessel:exact',actor,epoch,generation,record,now),false);
+  assert.equal(new Set(guardScenarios).size,guardScenarios.length);
+  console.log(JSON.stringify({layer:'original low-level session/lease guards',scenarios:guardScenarios,count:guardScenarios.length}));
 } finally {
   await server.close();
 }
