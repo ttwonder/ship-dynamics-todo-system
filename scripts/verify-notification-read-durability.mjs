@@ -34,6 +34,17 @@ try{
   assert.doesNotThrow(()=>auth.assertActorAuthorizedForCloudBlockPatch(base,patch.buildCloudBlockPatch(base,explicitRead),actor.id));
   assert.equal(receipts.markOwnNotificationsRead(explicitRead,actor.id,readAt),explicitRead,'marking an already-read set must be a no-op');
 
+  // Original identity switch can fence a committed read ACK. Synchronizing the
+  // already-converged content must use server metadata, not invent revision + 1.
+  const committedRead={...structuredClone(explicitRead),updatedAt:'2026-08-07T01:01:01.000Z'};
+  const recoveredRead=rebase.prepareCloudSyncSnapshot(base,explicitRead,committedRead,base.revision,'2026-08-07T01:02:00.000Z',other.id);
+  assert.deepEqual(recoveredRead,committedRead,'committed notification recovery must publish the complete remote snapshot');
+  assert.notEqual(recoveredRead,committedRead,'recovery must not expose the remote cache object');
+  assert.equal(patch.buildCloudBlockPatch(committedRead,recoveredRead).length,0,'converged recovery emits no trailing patch');
+  assert.throws(()=>rebase.prepareCloudSyncSnapshot(base,explicitRead,{...committedRead,revision:base.revision-1},base.revision,readAt,other.id),rebase.CloudRebaseConflictError,'convergence must not bypass rollback protection');
+  assert.throws(()=>rebase.prepareCloudSyncSnapshot(base,explicitRead,{...committedRead,revision:base.revision},base.revision,readAt,other.id),rebase.CloudRebaseConflictError,'same-revision divergent authority stays rejected');
+
+
   const legacy=structuredClone(base);
   legacy.notifications[0].readAt=readAt;
   legacy.auditLogs.unshift({

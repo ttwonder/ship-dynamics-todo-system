@@ -439,7 +439,8 @@ export function prepareCloudSyncSnapshot(base: AppData | null, local: AppData, r
   if(base&&(remote.revision<base.revision||(remote.revision===base.revision&&!appDataContentEqual(base,remote))))throw new CloudRebaseConflictError(['缺少可信的雲端合併基線']);
   if (base && base.revision <= expectedRevision && base.revision <= remote.revision && local.revision >= base.revision) {
     if (appDataContentEqual(local, base)) return clone(remote);
-    return rebaseDisjointAppData(base,local,remote,at,actorUserId);
+    const prepared=rebaseDisjointAppData(base,local,remote,at,actorUserId);
+    return appDataContentEqual(prepared,remote)?clone(remote):prepared;
   }
   if (appDataContentEqual(local, remote)) return clone(remote);
   throw new CloudRebaseConflictError(['缺少可信的雲端合併基線']);
