@@ -101,3 +101,39 @@ Request bytes 為收到 HTTP body 的 UTF-8 bytes；response bytes 為真 SQL �
 PGlite owner 是單一 serialized executor；另一個合法 client 是順序執行真 RPC，不是獨立 PostgreSQL 連線競爭。沒有真 lock wait、hosted PostgREST/ACL/Realtime、production network、手機/PDF/Excel 或全站效能證據。沒有 Push／merge／部署／正式 SQL、正式 config/storage、cron 或新 review；此片完成後交回唯一 writer，不啟動下一片。
 
 驗證：新 script 真 run／syntax、共享 QA default 回歸、完整 protected source/build-input boundary、diff／raw-blob archive extraction、explicit stage／本機 commit。src/build inputs 沒變，沿用 8bec 的 `task-progress-partition-ece55206/11-type-build.log`（tsc --noEmit、tsc+Vite build 成功，既有 >500kB chunk 提示保留）與該片 parent `receipt.json` 的 commit/tree 綁定；沒有重跑全產品套件或把 reuse 寫成新執行。
+
+## 單船 exact-base freshness 實作（基於 2f64c708，本機未部署）
+
+只在 `openVesselEditor → refreshAfterItemLease` opt-in。`fetchCloudData` 預設仍回傳新物化的完整 AppData；空 delta 快路重用的也是完整 confirmed，不是 vessel 局部資料。必須同 cache generation、完整 config key、合法 protocol/workspace/base revision/base token/revision/payload token、root set/deleted 與 collections 全空，並通過原 response sequence/missing/abort precedence。
+
+private raw snapshot 與 normalized JSON proof 用 WeakMap 綁定，但每次重用都重新比對完整 normalized JSON；同 revision/token 不足以授權。原 UI 中已有另一筆完整讀回會產生不同 raw object，因此不同 raw instance 還須完整 JSON 等值才可重用。caller clone、caller 修改、同 token 卻不同 raw、cache/config ABA 都不能冒充權威。沒有改 dirty drain、history floor、存在/權限檢查、lease generation、confirmed localStorage、完整 CAS 或 publication。
+
+### 證據與失敗處置
+
+證據根：`C:/Users/tuotu/AppData/Local/hermes/cache/vessel-freshness-2f64c708/`；每個命令 `.json/.log` 保留 exit、產品 input SHA 與原輸出。
+
+- `01-red`：完整資料與原 unauthorized/local-dirty 先通過，嚴格 nochange 的完整 JSON materializations 實際 **3 != 0**，不是缺 helper 或毫秒門檻 RED。最小 GREEN `02` 為0。
+- 真原 UI 初次 `04/05` 仍是3；CDP Boolean proof 定位為 **完整私有 raw 被另一筆 read detach，內容/normalized integrity 不變但 object identity 不同**。補完整 raw 等值驗證後 `07-ui-green`：nochange=0、changed=3、held-old/newer=6；後者含競爭的完整讀回。原 UI沒有提前開 editor，latest peer值完整發布。不是只證 standalone helper。
+- Controlled `15-exact-final` **39 cases**；原 App 實際 declarations＋原 session/coordinator，controlled I/O 的 `10b-lifecycle` **15 cases**，涵蓋 actor/lease/config generation、dirty drain/inflight draft、authority/deletion/rollback/history/abort；不是15筆SQL UI案例。
+- `12-protocol` 25；`13-integration` 真 SupabaseJS＋private legacy SQL 18；`14-record-adapter` **7 record SQL＋9 adapter**，其中新增 exact nochange／合法 peer change／held-old-newer 3例。各層不相加成 E2E 總數。
+- `16-exclusive`、`17-lease`、`18-history-rebase`、`20-type-final`、`21-build` 通過；Vite 原 >500kB chunk 提示保留。
+- `22b-boundary-final`：完整原 protected path set、除三個產品檔以外 clean-filtered 原 bytes，另固定原 benchmark/fixture/shared SQL harness，合計251個 byte checks；App 僅精確三個不可見 substitution，沒有整 App 豁免。旧 QA-only 251 all-unchanged gate 本片刻意不適用。
+- `19-record-identity` 前5個 runtime/identity checks 通過，但最後對 `baseline/pre-normalized-storage` 的全 JSX assertion 因**本片前已有的 batchContext props**失敗；未改此舊 gate、未聲稱整支PASS。本片與 2f64c708 的 exact App boundary 通過，這是歷史 gate 不適用而非本片 UI 修改。
+- Harness 保留兩個獨立失敗：`08-benchmark` medium Chrome WebSocket handshake 非101（完成small，整批不納入聚合）；`10-lifecycle` VM缺exports。修正VM環境及原封不動重跑benchmark成功；不是產品錯誤或重寫量尺。`22` orchestration timeout 無成功receipt，獨立 `22b` 重跑成功。
+
+### 固定父 baseline 對照（僅本機觀察）
+
+父：`record-performance-8becb4a4/parent-run/record-performance-sMCJuB`；本片採用唯一完整成功 `runs/record-performance-HSqQ62`。原 `verify-record-performance-browser.mjs`、fixture與共享SQL harness bytes不變。1 workflow × 2 sizes × 3次、2 cold / **26 phase rows / 10 groups**，由 `benchmark-comparison.json` 程式聚合 min/median/max；medium仍12船、80task、640members、3840logs、1,437,281 bytes。
+
+| warm phase | small 父→本片 median ms | medium 父→本片 median ms |
+|---|---:|---:|
+| editor-open | 68.30 → 70.20 | 270.30 → 259.90 |
+| save-ack-visible | 99.10 → 97.10 | 361.50 → 383.90 |
+| committed-ACK→release readback | 63.01 → 53.92 | 172.32 → 174.86 |
+| sync-visible | 72.80 → 72.60 | 312.60 → 358.10 |
+
+medium editor min/median/max：父266.70/270.30/305.50，本片218.00/259.90/313.20 ms。medium save本片372.10/383.90/542.20，sync338.00/358.10/366.70 ms。release RPC medium HTTP/SQL median父4.45/0.97，本片4.00/0.88 ms。cold單樣本父small777.82/medium1705.34、本片724.58/885.00 ms，仍是完整 cold讀取，不能稱cold on-demand改善。
+
+**確定的效果是此入口嚴格空 delta不再做三次完整物化；未證明穩定端到端加速。** medium editor中位數略低但區間重疊，small editor沒有改善，medium save/sync反而較高；完整 integrity序列化、其他caller建立proof及原dirty/history/storage/React成本仍存在。沒有p95、正式效能保證或唯一瓶頸斷言；不是hosted或多連線lockwait證據。完整payload/assertions未刪，release與保存時間仍重疊，不能相加。
+
+本片只允許本機commit，沒有新增review、Push/merge/部署、正式SQL/config、workspace lock改造、cold按需、Task/Meeting/Batch fastpath或Excel/PDF/全站測試。重跑用上列同名 scripts；UI為 `node scripts/verify-vessel-freshness-browser.mjs`，效能為原 `node scripts/verify-record-performance-browser.mjs`。唯一writer驗畢交回，不啟動下一片。

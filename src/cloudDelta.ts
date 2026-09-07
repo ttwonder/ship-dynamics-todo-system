@@ -36,6 +36,7 @@ export function consumeCloudDeltaResponse(
   response: unknown,
   workspaceKey: string,
   base: CloudDeltaSnapshot | null = null,
+  reuseExactUnchangedBase = false,
 ): CloudDeltaSnapshot | null {
   const input = record(response);
   if (input.protocol !== 'ship-dynamics-delta-v1' || input.workspace_key !== workspaceKey) return fail();
@@ -53,6 +54,10 @@ export function consumeCloudDeltaResponse(
   const touched = new Set([...Object.keys(replacements), ...removedKeys]);
   if (touched.size !== Object.keys(replacements).length + removedKeys.length) return fail();
   if (!Array.isArray(input.collections)) return fail();
+  // Internal opt-in only: no new revision/token, root field or collection change.
+  // The adapter must also prove private raw provenance and caller integrity.
+  if (reuseExactUnchangedBase && input.revision === base.revision && input.payload_token === base.token
+    && touched.size === 0 && input.collections.length === 0) return base;
   const payload = clone(base.payload);
   for (const key of removedKeys) delete payload[key];
   for (const [key, value] of Object.entries(replacements)) put(payload, key, clone(value));

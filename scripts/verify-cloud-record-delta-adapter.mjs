@@ -28,6 +28,24 @@ export async function verifyRecordDeltaAdapter({db,vite,check,save,full,key}) {
    const revision=data.revision;data.tasks[0].description='未保存草稿';
    await assertCurrent(await cloud.fetchCloudData(config));assert.equal(requests.at(-1).body.p_base_revision,revision);
   });
+  await check('freshness SQL adapter: exact nochange returns complete verified base without materialization',async()=>{
+   const base=await cloud.fetchCloudData(config);let count=0;const parse=JSON.parse;
+   JSON.parse=function(...args){const value=parse(...args);if(value?.vessels&&value?.tasks&&value?.settings)count++;return value;};
+   let read;try{read=await cloud.fetchCloudData(config,undefined,base);}finally{JSON.parse=parse;}
+   assert.equal(count,0);assert.equal(read,base);await assertCurrent(read);
+  });
+  await check('freshness SQL adapter: changed peer task returns complete raw and normalized snapshot',async()=>{
+   const base=await cloud.fetchCloudData(config);
+   await save('freshness-peer',draft=>{draft.tasks.find(t=>t.id==='task-0').description='freshness peer';},['task:task-0']);
+   const read=await cloud.fetchCloudData(config,undefined,base);assert.notEqual(read,base);await assertCurrent(read);assert.equal(read.tasks.find(t=>t.id==='task-0').description,'freshness peer');
+  });
+  await check('freshness SQL adapter: held unchanged cannot replace newer full publication',async()=>{
+   const base=await cloud.fetchCloudData(config),started=deferred(),release=deferred();
+   intercept=async request=>{const data=await run(request);started.resolve();await release.promise;return response(data);};
+   const old=cloud.fetchCloudData(config,undefined,base);await started.promise;
+   await save('freshness-peer-race',draft=>{draft.tasks.find(t=>t.id==='task-0').description='freshness newest';},['task:task-0']);
+   await assertCurrent(await cloud.fetchCloudData(config));release.resolve();const read=await old;assert.notEqual(read,base);await assertCurrent(read);assert.equal(read.tasks.find(t=>t.id==='task-0').description,'freshness newest');
+  });
   await check('delta adapter: actual save delta publishes all authoritative fields',async()=>{
    await save('adapter-row-update',draft=>{draft.tasks.find(t=>t.id==='task-0').description='adapter saved';},['task:task-0']);
    await assertCurrent(await cloud.fetchCloudData(config));assert.ok(requests.at(-1).body.p_base_token);

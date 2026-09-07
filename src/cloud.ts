@@ -115,6 +115,9 @@ type CloudDeltaReadCache = {
   publishedSequence: number;
 };
 let deltaReadCache: CloudDeltaReadCache | null = null;
+// A WeakMap hit alone is NOT integrity: callers can edit normalized AppData.
+// Bind the full normalized JSON to the private raw snapshot and cache generation.
+const freshnessBases = new WeakMap<AppData, { cache: CloudDeltaReadCache; snapshot: CloudDeltaSnapshot; json: string }>();
 
 const normalizedCloudRead = (payload: Record<string, unknown>, revision: number): AppData => {
   // Normalize a detached copy; neither the UI nor compatibility normalization may
@@ -128,7 +131,7 @@ const normalizedCloudRead = (payload: Record<string, unknown>, revision: number)
   return normalized;
 };
 
-async function fetchCloudDeltaData(cfg: ResolvedSupabaseConfig, supabase: SupabaseClient, signal?: AbortSignal): Promise<AppData | null> {
+async function fetchCloudDeltaData(cfg: ResolvedSupabaseConfig, supabase: SupabaseClient, signal?: AbortSignal, confirmedForFreshness?: AppData): Promise<AppData | null> {
   if (cfg.tableName !== 'ship_dynamics_app_state') throw new Error('增量讀回尚未支援此資料表；已停止讀取，未切換工作區。');
   signal?.throwIfAborted();
   const recordStorage = usesRecordStorage(cfg);
@@ -146,7 +149,15 @@ async function fetchCloudDeltaData(cfg: ResolvedSupabaseConfig, supabase: Supaba
   const { data, error } = await request;
   signal?.throwIfAborted();
   if (error) throw error; // Opt-in capability errors are not hidden by a legacy fallback.
-  const next = consumeCloudDeltaResponse(data, cfg.workspaceKey, base);
+  const proof = confirmedForFreshness && freshnessBases.get(confirmedForFreshness);
+  const reusable = !!(proof && deltaReadCache === cache && proof.cache === cache
+    && base && cache.snapshot === base && sequence >= cache.publishedSequence
+    && proof.snapshot.revision === base.revision && proof.snapshot.token === base.token
+    && JSON.stringify(confirmedForFreshness) === proof.json
+    // An intervening complete read may have detached the same raw base again.
+    // Prove full raw equality, never infer it from revision/token or object ID.
+    && (proof.snapshot === base || JSON.stringify(proof.snapshot.payload) === JSON.stringify(base.payload)));
+  const next = consumeCloudDeltaResponse(data, cfg.workspaceKey, base, reusable);
   if (!next) {
     if (deltaReadCache === cache && sequence < cache.publishedSequence && cache.snapshot) {
       return normalizedCloudRead(cache.snapshot.payload, cache.snapshot.revision);
@@ -163,7 +174,10 @@ async function fetchCloudDeltaData(cfg: ResolvedSupabaseConfig, supabase: Supaba
   const current = deltaReadCache === cache ? cache.snapshot : null;
   const useCurrent = current && (current.revision > next.revision || (current.revision === next.revision && cache.publishedSequence > sequence));
   const chosen = useCurrent ? current : next;
-  const normalized = normalizedCloudRead(chosen.payload, chosen.revision);
+  // All response ordering rules above still run before reusing a complete model.
+  const unchanged = reusable && next === base && !useCurrent;
+  const normalized = unchanged ? confirmedForFreshness! : normalizedCloudRead(chosen.payload, chosen.revision);
+  if (!unchanged) freshnessBases.set(normalized, { cache, snapshot: chosen, json: JSON.stringify(normalized) });
   signal?.throwIfAborted();
   if (deltaReadCache === cache && !useCurrent && sequence >= cache.publishedSequence) {
     cache.snapshot = next;
@@ -172,12 +186,14 @@ async function fetchCloudDeltaData(cfg: ResolvedSupabaseConfig, supabase: Supaba
   return normalized;
 }
 
-export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, signal?: AbortSignal): Promise<AppData | null> {
+/** The third argument is reserved for the single-vessel editor freshness check.
+ * Default callers still receive newly materialized complete authoritative AppData. */
+export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, signal?: AbortSignal, confirmedForFreshness?: AppData): Promise<AppData | null> {
   const cfg = config === undefined ? getSupabaseConfig() : config;
   const supabase = getSupabaseClient(cfg);
   if (!supabase || !cfg) { deltaReadCache = null; return null; }
   if (usesRecordStorage(cfg)) {
-    if (cfg.readMode === 'delta-v1') return fetchCloudDeltaData(cfg, supabase, signal);
+    if (cfg.readMode === 'delta-v1') return fetchCloudDeltaData(cfg, supabase, signal, confirmedForFreshness);
     deltaReadCache = null;
     signal?.throwIfAborted();
     let request = supabase.rpc('read_ship_dynamics_records_v1', { p_workspace_key: cfg.workspaceKey });
@@ -188,7 +204,7 @@ export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, sig
     const snapshot = consumeRecordSnapshot(data, cfg.workspaceKey);
     return snapshot ? normalizedCloudRead(snapshot.payload, snapshot.revision) : null;
   }
-  if (cfg.readMode === 'delta-v1') return fetchCloudDeltaData(cfg, supabase, signal);
+  if (cfg.readMode === 'delta-v1') return fetchCloudDeltaData(cfg, supabase, signal, confirmedForFreshness);
   if (cfg.readMode && cfg.readMode !== 'snapshot') throw new Error('不支援的雲端讀取模式；已停止讀取。');
   deltaReadCache = null;
   let request = supabase

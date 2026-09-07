@@ -1841,7 +1841,7 @@ export default function App() {
     if(sectionKey.startsWith('internal-control:'))return snapshot.internalControlCases.some(item=>internalControlEditLockKey(item.id)===sectionKey);
     return false;
   };
-  const refreshAfterItemLease=async(sectionKey:string):Promise<AppData|null>=>{
+  const refreshAfterItemLease=async(sectionKey:string,vesselFreshness=false):Promise<AppData|null>=>{
     const claimedLock=activeEditLockRef.current;
     if(!claimedLock||claimedLock.sectionKey!==sectionKey||claimedLock.status!=='owned')return null;
     const leaseConfig=getSupabaseConfig();
@@ -1855,7 +1855,7 @@ export default function App() {
       const confirmed=confirmedCloudData.current;
       if(!confirmed)throw new Error('沒有可驗證的已保存雲端基線');
       const token=configIoCoordinator.current.begin(leaseConfig);
-      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,fetchCloudData);
+      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
       if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!claimStillCurrent())return null;
       if(!remote)throw new Error('雲端工作區尚未建立，不能開啟多人單項編輯');
       assertRemoteExtendsDurableHistory(cloudWorkspaceIdentity(leaseConfig),confirmed,remote);
@@ -2190,7 +2190,7 @@ export default function App() {
     if(!canEditBusinessContent||!activeVessels.some(item=>item.id===vessel.id))return alert('目前身份無權編輯此船舶');
     const sectionKey=`vessel:${id}`;
     if (await claimEditingLock(sectionKey, `船舶｜${vesselDisplayName(vessel)}`)!=='owned')return;
-    const snapshot=await refreshAfterItemLease(sectionKey);
+    const snapshot=await refreshAfterItemLease(sectionKey,true);
     if(snapshot?.vessels.some(item=>item.id===id))setEditingVesselId(id);
   };
   const openTaskReadOnly = async (taskId:string, reason:string, requestGeneration:number, requestedVesselId='', requestConfig:ResolvedSupabaseConfig|null=null):Promise<TaskOpenResult> => {
