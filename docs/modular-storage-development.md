@@ -326,6 +326,18 @@
 
 採有界直接驗證，未新增獨立 review gate。完成後僅獨立本機 commit；沒有 Push、merge、branch 切換、部署、遠端／正式 SQL、正式設定／服務更動，也未開使用者試用站。
 
+### 岸端 Excel 原入口有界往返補充驗收（QA-only）
+
+- 基線 `609695ddf0f014afa922c84d96fc463959ab8bd9`；只補本節原 `main.tsx → App → ItineraryDashboard` 的 Excel 匯出／匯入接線證據。沒有產品 RED，所以沒有改任何產品 logic、JSX、CSS、SQL、模板、package 或共享 QA 預設；原可見 UI、角色／權限、逐船交易、正式／備選及 fixed-offset helper 全部保留，不改成跨船原子交易。
+- 新增 `scripts/verify-itinerary-record-excel-browser.mjs` 與 scoped `record-itinerary-excel-local-fixture.mjs`；復用原 loopback HTTP／PGlite migration fixture、原登入及 CDP native controls。三艘 fixture 船中，原看板明確只選第一／二艘；Chrome 真正下載原按鈕產生的 `.xlsx`，再修改該實檔並由原 file input 進預覽，不呼叫 React props 或替換產品 importer。
+- **6 個穩定原 UI／本機 SQL scenario IDs**：`excel-export-selected-formal`、`excel-preview-cancel-zero-save`、`excel-selected-apply-per-vessel-ack`、`excel-held-lost-ack-status`、`excel-lease-contention-partial-results`、`excel-new-document-reexport`。tracer 與完整模式的前兩個重疊不重算。預覽取消零 claim/save、全業務表 value/xmin/ctid 不變；預覽只勾第一船時只保存第一船，第二及第三船不動。
+- 第一船真 SQL commit 後暫扣 save 回應，原預覽仍「覆蓋中…」、勾選及取消控件 disabled，尚無匯入成功結果；釋出 ACK 才顯示單船 Revision 8。另用真有效 competing lease 擋第一船、第二船獨立保存；丟掉第二船 ACK 後暫扣原 operation-status request，原 UI 不提前給結果，再以**同一 operation ID** 的真 SQL status 確證。結果分別是第一船「正由 … 編輯，未覆蓋」、第二船「已覆蓋，Revision 8」，不是整批成功或整批回退。每艘成功各只新增一個 revision/history/operation，既存 append-only rows 完全保留；競爭船的 document/history/lease value/xmin/ctid 亦不受該批改動。
+- 新 document 重載經原 SQL read，原看板顯示保存港口，再按原匯出按鈕下載。ExcelJS＋獨立 openpyxl/ZIP 解析原匯出、有效匯入檔及重匯出三個實檔：兩個可見工作表＋veryHidden metadata、37 欄、原欄位與船名、L/U 多選、UTC 儲存／`UTC+5:45` 本地 05:45 顯示、revision 7→8、原 blank previousPort 補目前首列值均吻合。正式備選不進岸端工作表且保存前後不變；第三船、所有其他 AppData／legacy／report 資料不變，無 AppData 雙寫或 legacy fallback。
+- 受影響回歸：原 Excel helper、Owner source contract、record-write **28**（21 SQL＋7 SupabaseJS→SQL）、record-read **16**（12 SQL＋4 adapter）、session exit、既有 exact boundary、typecheck、production build 通過。本片沒有新 mounted controlled-callback cases；source gate、SQL/adapter 回歸與 6 個完整 UI 場景分層，不相加冒稱 E2E。source boundary 相對本片基線 **244** 個 product paths 無差異，另起始 SHA-256 核 **180** 個 raw 工作檔完全不變；沿用上一片精確 allowlist 的 **242 paths／51 TSX／147 JSX roots** 亦通過。無產品改動，因此不重跑全站／全 store-history-delta／已關閉 editor 長 heartbeat。
+- Harness 歷史保留：`01` 船名預期漏掉原 fullName 組合，改由真畫面 heading 核匯出／結果名稱；`03` 預期含毫秒但原 Temporal importer 回傳等值無毫秒 UTC 字串，只修 QA 預期。另修 scope snapshot 對 operation table 使用原 `target_key='vessel:'+id`（不是不存在的 vessel_id）。獨立 reader 的 `14`／`15` 是兩個 Python interpreter 缺 openpyxl，不是產品 RED；`uv run --no-project --with openpyxl` 隔離執行後 `16` 通過，未改 repo dependencies。全部 exit 1 舊 log 未覆寫；build 只有既有 >500 kB chunk 提示。
+- 收據根：`C:/Users/tuotu/AppData/Local/hermes/cache/record-itinerary-excel-609695dd/`。完整 UI 最終 `17-excel-full-final-label.log`／`record-itinerary-excel-YDes1N/evidence.json`（第三輪只把 scoped 測試標籤逐字改為「真實 UI＋測試資料｜本機 SQL，非正式環境」，產品碼不動；獨立 reader 核前次 `04` 的同產品實檔），包含 screenshot、實際 xlsx、SQL snapshots、RPC operation IDs、無外連／errors／UNSUPPORTED 及 HTTP/Chrome cleanup；逐命令 `.receipt.json`／`.log`、`verified-results.json`、full-index patch、raw tree ZIP/extraction 及 commit 綁定收據都在 repo 外。可重跑：`QA_EVIDENCE_ROOT=<既存私有目錄> node scripts/verify-itinerary-record-excel-browser.mjs`，`--tracer-only` 只跑無寫入的匯出／取消。
+- 此為私有 PGlite DB owner＋原 UI＋合成資料，不證 hosted ACL/PostgREST/Realtime、多連線、所有 workbook／native Microsoft Excel 開檔、全角色／9 船／public 船端／手機/PDF 或跨登入未知結果恢復。既有 AppData「已安全保存」橫幅不是本片匯入 ACK oracle；以原匯入 modal 的 pending/results 與 SQL receipt 判定。沒有新增可見控件或業務規則、無新 review，必要驗證後僅本機獨立 commit；無 Push／merge／部署／正式 SQL／真 cron／正式設定或 browser storage 修改。
+
 ## 八、records-v1 報告中心六 RPC 相容切片（本機）
 
 ### 已完成的範圍
