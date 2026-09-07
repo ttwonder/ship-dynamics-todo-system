@@ -6,10 +6,11 @@ import {PGlite} from '@electric-sql/pglite';
 import {installItineraryFixture,seedItineraryFixture,snapshotItineraryAuthority,recordItinerarySql,recordItineraryWriteSql,recordWriteArgs} from './record-itinerary-local-fixture.mjs';
 
 import {morningInput,installMorningOracle,seedMorningOracle,schedulerSql} from './record-daily-morning-local-fixture.mjs';
+import {shipExcelRpcArgs} from './ship-itinerary-excel-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false}={}) {
+export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false}={}) {
  const db=new PGlite(),metrics=[];
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
  let origin='',http,vite,loseItineraryAck=false,loseReportAck=false,losePruneAck=false;
@@ -17,6 +18,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
  const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:'records-v1',readMode:'delta-v1'});
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
+  ...(shipExcel?shipExcelRpcArgs:{}),
   ...recordWriteArgs,
   get_ship_dynamics_record_storage_stats_v1:['p_workspace_key','p_actor_user_id'],
   prune_ship_dynamics_record_revision_history_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_revisions:jsonb','p_delete_revisions:jsonb'],
@@ -95,6 +97,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
      if(internalControl&&recordFault?.before&&['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1','renew_ship_dynamics_edit_lock'].includes(name))await recordFault.before({name,body,db,metrics});
      try{
       const value=await db.transaction(async tx=>{
+       if(shipExcel&&Object.hasOwn(shipExcelRpcArgs,name))await tx.exec('set local role anon');
        await tx.query("select set_config('request.headers',$1,true)",[JSON.stringify({'x-forwarded-for':'192.0.2.30','cf-ipcountry':'TW'})]);
        const params=args.map(arg=>{const[key,type]=arg.split(':');if(body[key]==null)return null;return type==='jsonb'?JSON.stringify(body[key]):body[key];});
        return (await tx.query(`select public.${name}(${args.map((arg,index)=>`$${index+1}::${arg.split(':')[1]||'text'}`).join(',')}) as result`,params)).rows[0].result;
@@ -105,7 +108,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
        metrics.push({rpc:name,diagnostic:'GUARD_KEYS_ONLY',actorMismatchKeys:differs(debug.guard,body.p_actor_guard),touchesAuthorization:debug.touches,hasAuthorizationGuard:body.p_authorization_guard!=null,operations:body.p_operations.map(op=>({kind:op.kind,collection:op.collection,entityId:op.entityId}))});
       }
       metrics.push({rpc:name,status:value?.ok===false?value.code:'SQL_OK',operationId:body.p_operation_id,vesselId:body.p_vessel_id,revision:value?.revision,bytes:Buffer.byteLength(JSON.stringify(value??null)),elapsedMs:performance.now()-start});
-      if(loseItineraryAck&&name==='sd_itinerary_record_save_v1'){loseItineraryAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic ACK loss after actual SQL commit'});return;}
+      if(loseItineraryAck&&(name==='sd_itinerary_record_save_v1'||(shipExcel&&name==='sd_itinerary_save_public'))){loseItineraryAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic ACK loss after actual SQL commit'});return;}
       if(loseReportAck&&['sd_itinerary_record_report_save_manual_v1','sd_itinerary_record_report_delete_ids_v1'].includes(name)){loseReportAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic report ACK loss after actual SQL commit'});return;}
       if(losePruneAck&&name==='prune_ship_dynamics_record_revision_history_v1'){losePruneAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic prune ACK loss after actual SQL commit'});return;}
       if(internalControl&&recordFault?.after&&['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1'].includes(name)){
