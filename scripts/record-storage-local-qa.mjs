@@ -10,7 +10,8 @@ import {shipExcelRpcArgs} from './ship-itinerary-excel-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false}={}) {
+export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,preparePerformanceFixture=null}={}) {
+ if(preparePerformanceFixture&&!performanceTrace)throw new Error('Performance fixture requires explicit performanceTrace');
  const db=new PGlite(),metrics=[];
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
  let origin='',http,vite,loseItineraryAck=false,loseReportAck=false,losePruneAck=false;
@@ -58,6 +59,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
   for(const name of ['tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs'])initial[name]=[];
   if(dailyMorning)morningInput(initial);
   if(internalControl)await (await import('./record-internal-control-local-fixture.mjs')).internalControlInput(initial,vite);
+  if(preparePerformanceFixture)await preparePerformanceFixture(initial,vite);
   const imported=(await db.query('select import_ship_dynamics_records_v1($1,$2::jsonb) as result',[workspace,JSON.stringify(initial)])).rows[0].result;
   if(!imported.ok)throw new Error(`QA import failed: ${imported.code}`);
   await installItineraryFixture(db);
@@ -94,20 +96,26 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
      const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
      if(body.p_workspace_key!==workspace){send(res,403,{code:'QA_SCOPE_MISMATCH',message:'Only the isolated fixture workspace is accepted'});return;}
      const start=performance.now();
+     // Opt-in measurements only. Never persist request bodies, keys or credentials.
+     const trace=performanceTrace?{requestBytes:length,requestStartedMs:performance.timeOrigin+start,baseRevision:body.p_base_revision??null}:null;
      if(internalControl&&recordFault?.before&&['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1','renew_ship_dynamics_edit_lock'].includes(name))await recordFault.before({name,body,db,metrics});
      try{
       const value=await db.transaction(async tx=>{
+       if(trace)trace.sqlStartedMs=performance.timeOrigin+performance.now();
        if(shipExcel&&Object.hasOwn(shipExcelRpcArgs,name))await tx.exec('set local role anon');
        await tx.query("select set_config('request.headers',$1,true)",[JSON.stringify({'x-forwarded-for':'192.0.2.30','cf-ipcountry':'TW'})]);
        const params=args.map(arg=>{const[key,type]=arg.split(':');if(body[key]==null)return null;return type==='jsonb'?JSON.stringify(body[key]):body[key];});
-       return (await tx.query(`select public.${name}(${args.map((arg,index)=>`$${index+1}::${arg.split(':')[1]||'text'}`).join(',')}) as result`,params)).rows[0].result;
+       const result=(await tx.query(`select public.${name}(${args.map((arg,index)=>`$${index+1}::${arg.split(':')[1]||'text'}`).join(',')}) as result`,params)).rows[0].result;
+       if(trace)trace.sqlEndedMs=performance.timeOrigin+performance.now();
+       return result;
       });
+      if(trace){trace.transactionEndedMs=performance.timeOrigin+performance.now();trace.sqlMs=trace.sqlEndedMs-trace.sqlStartedMs;trace.responseKind=value?.status??null;trace.responseBytes=Buffer.byteLength(JSON.stringify(value??null));}
       if(value?.code==='authorization-conflict'){
        const debug=(await db.query(`select ship_dynamics_actor_guard((read_ship_dynamics_records_v1($1))->'payload',$2) as guard,ship_dynamics_patch_touches_authorization_domain($3::jsonb) as touches`,[workspace,body.p_actor_user_id,JSON.stringify(body.p_operations)])).rows[0];
        const differs=(a,b,prefix='')=>{if(a===b)return[];if(a&&b&&typeof a==='object'&&typeof b==='object')return[...new Set([...Object.keys(a),...Object.keys(b)])].flatMap(k=>differs(a[k],b[k],prefix?prefix+'.'+k:k));return[prefix];};
        metrics.push({rpc:name,diagnostic:'GUARD_KEYS_ONLY',actorMismatchKeys:differs(debug.guard,body.p_actor_guard),touchesAuthorization:debug.touches,hasAuthorizationGuard:body.p_authorization_guard!=null,operations:body.p_operations.map(op=>({kind:op.kind,collection:op.collection,entityId:op.entityId}))});
       }
-      metrics.push({rpc:name,status:value?.ok===false?value.code:'SQL_OK',operationId:body.p_operation_id,vesselId:body.p_vessel_id,revision:value?.revision,bytes:Buffer.byteLength(JSON.stringify(value??null)),elapsedMs:performance.now()-start});
+      metrics.push({rpc:name,status:value?.ok===false?value.code:'SQL_OK',operationId:body.p_operation_id,vesselId:body.p_vessel_id,revision:value?.revision,bytes:Buffer.byteLength(JSON.stringify(value??null)),elapsedMs:performance.now()-start,...(trace?{trace}:{})});
       if(loseItineraryAck&&(name==='sd_itinerary_record_save_v1'||(shipExcel&&name==='sd_itinerary_save_public'))){loseItineraryAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic ACK loss after actual SQL commit'});return;}
       if(loseReportAck&&['sd_itinerary_record_report_save_manual_v1','sd_itinerary_record_report_delete_ids_v1'].includes(name)){loseReportAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic report ACK loss after actual SQL commit'});return;}
       if(losePruneAck&&name==='prune_ship_dynamics_record_revision_history_v1'){losePruneAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic prune ACK loss after actual SQL commit'});return;}

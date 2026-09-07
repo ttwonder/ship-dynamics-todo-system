@@ -47,9 +47,9 @@
 | 工作 | 狀態 |
 |---|---|
 | 隔離／原版保留／增量讀回 | 首批已本機驗證並 commit `d532f2c` |
-| 逐筆權威儲存與原子保存 | 部分完成：九類原集合＋設定／順序的完整 patch 交易已接通；第三批要事／內控／會議等雙 SQL 案例通過，巢狀進度仍在 task row |
+| 逐筆權威儲存與原子保存 | 部分完成：九類原集合＋設定／順序的完整 patch 交易已接通；`8becb4a4` 已將 task.vesselProgress 物理拆分，完整 task CAS／transport 保留；見 [物理拆分紀錄](task-progress-physical-storage.md) |
 | 完整業務流程接線 | 部分完成：原 App identity／船舶保存、Itinerary 讀寫、報告中心與資料管理 stats/prune 已本機接通；排程、全角色跨模組流程仍待驗 |
-| 按需讀取／鎖／同步及四種耗時 | 待完成；尚無 hosted 前後效能證據 |
+| 按需讀取／鎖／同步及四種耗時 | 已有 [原 App＋私有 SQL 本機 baseline](record-performance-baseline.md)：兩尺寸各三次完整船舶流程＋各一次冷首讀；按需初始讀取／縮鎖尚未實作，仍無 hosted 前後效能證據 |
 | 原／新版聯動與下游內容比對 | 部分完成：聯動 SQL、原船舶／Office UI、報告 SQL／adapter／UI 有界證據已具備；不等於整站與 hosted 驗收 |
 | 隔離真 Supabase 協作驗收 | 待環境與測試，禁止用正式 DB 測試寫入 |
 | 最新資料切換及回退演練 | 待完成；正式操作另行授權 |
