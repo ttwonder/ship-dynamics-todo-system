@@ -1,0 +1,54 @@
+[
+  [
+    "type TaskReturnDestination={vesselId:string;batchManaged:boolean};",
+    "type BatchTaskReturnContext=Readonly<{vesselIds:readonly string[];userId:string;identityGeneration:number;authorizationEpoch:string;cloudIdentity:string;batchSession:number}>;\ntype TaskReturnDestination={vesselId:string;batchManaged:boolean;batchContext?:BatchTaskReturnContext};"
+  ],
+  [
+    "returnToBatchManaged = false):Promise<boolean>",
+    "returnToBatchManaged = false, batchContext?:BatchTaskReturnContext):Promise<boolean>"
+  ],
+  [
+    "    if (!requireLogin()) return false;\n    if(getSupabaseConfig()&&cloudWriteBlocked)",
+    "    if(returnToBatchManaged&&(!batchContext||!batchTaskReturnIsCurrent(batchContext)||!batchContext.vesselIds.includes(vesselId)))return false;\n    if (!requireLogin()) return false;\n    if(getSupabaseConfig()&&cloudWriteBlocked)"
+  ],
+  [
+    "batchManaged:returnToBatchManaged});\n    const requestIsCurrent=()=>taskOpenRequests.current.isCurrent(requestGeneration)&&liveAuthorizationEpoch.current===requestAuthorizationEpoch;",
+    "batchManaged:returnToBatchManaged,...(batchContext?{batchContext}:{})});\n    const requestIsCurrent=()=>taskOpenRequests.current.isCurrent(requestGeneration)&&liveAuthorizationEpoch.current===requestAuthorizationEpoch&&(!batchContext||batchTaskReturnIsCurrent(batchContext));"
+  ],
+  [
+    "if (returnDestination?.batchManaged) void openBatchManagedVessels();",
+    "if (returnDestination?.batchManaged) {if(returnDestination.batchContext)void openBatchManagedVessels(returnDestination.batchContext);}"
+  ],
+  [
+    "  const openBatchManagedVessels=async()=>{",
+    "  const batchTaskReturnIsCurrent=(context:BatchTaskReturnContext)=>context.userId===liveCurrentUserId.current&&context.identityGeneration===identitySessionGeneration.current&&context.authorizationEpoch===liveAuthorizationEpoch.current&&context.cloudIdentity===cloudConfigIdentity(getSupabaseConfig())&&context.batchSession===batchManagedSession.current;\n  const openBatchManagedVessels=async(returnContext?:BatchTaskReturnContext)=>{\n    if(returnContext&&!batchTaskReturnIsCurrent(returnContext))return;\n    const targets=returnContext?batchTargetVesselsFor(liveData.current.vessels.filter(vessel=>vessel.isActive),currentUser,[...returnContext.vesselIds]):batchTargetVessels;\n    if(returnContext&&targets.length!==returnContext.vesselIds.length)return;\n    const requestIdentityGeneration=identitySessionGeneration.current;\n    const requestCloudIdentity=cloudConfigIdentity(getSupabaseConfig());\n    const identityIsCurrent=()=>liveCurrentUserId.current===currentUser.id&&identitySessionGeneration.current===requestIdentityGeneration&&liveAuthorizationEpoch.current===authorizationEpoch&&cloudConfigIdentity(getSupabaseConfig())===requestCloudIdentity;"
+  ],
+  [
+    "    if(!batchTargetVessels.length)return alert('請先",
+    "    if(!targets.length)return alert('請先"
+  ],
+  [
+    "return alert('上一批船舶協作鎖尚未成功釋放，請稍後再試');\n    const previousLock",
+    "return alert('上一批船舶協作鎖尚未成功釋放，請稍後再試');\n    if(!identityIsCurrent()||(returnContext&&!batchTaskReturnIsCurrent(returnContext)))return;\n    const previousLock"
+  ],
+  [
+    "    batchTargetVesselIdsRef.current=new Set(batchTargetVessels.map(vessel=>vessel.id));",
+    "    if(!identityIsCurrent()||(returnContext&&!batchTaskReturnIsCurrent(returnContext)))return;\n    batchTargetVesselIdsRef.current=new Set(targets.map(vessel=>vessel.id));"
+  ],
+  [
+    "const sessionIsCurrent=()=>batchManagedRequested.current&&batchManagedSession.current===session&&liveAuthorizationEpoch.current===authorizationEpoch;",
+    "const sessionIsCurrent=()=>batchManagedRequested.current&&batchManagedSession.current===session&&identityIsCurrent();"
+  ],
+  [
+    "const requests=[...batchTargetVessels].sort",
+    "const requests=[...targets].sort"
+  ],
+  [
+    "  const renderedBatchManagedAuthorization=batchManagedAuthorization.current;",
+    "  const renderedBatchManagedAuthorization=batchManagedAuthorization.current;\n  const renderedBatchTaskReturnContext:BatchTaskReturnContext=Object.freeze({vesselIds:Object.freeze([...batchTargetVesselIdsRef.current]),userId:currentUser.id,identityGeneration:identitySessionGeneration.current,authorizationEpoch,cloudIdentity:cloudConfigIdentity(getSupabaseConfig()),batchSession:batchManagedSession.current+1});"
+  ],
+  [
+    "onAddTask={id=>{void addTaskForVessel(id,false,true);}}",
+    "onAddTask={id=>{void addTaskForVessel(id,false,true,renderedBatchTaskReturnContext);}}"
+  ]
+]

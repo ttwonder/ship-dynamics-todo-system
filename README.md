@@ -1,5 +1,12 @@
 # 船舶動態與會議管理系統
 
+### 隔離開發：批量船舶→新增要事往返
+
+本機 records-v1 切片已驗證原批量保存→普通要事取消／保存→返回 exact 原兩船；保存與 Task 保存仍分兩段，兩段各等同 operation ACK 後才換視窗／釋鎖。原 UI 不改，只修原選取清空後返回丟失的內部上下文。原 UI／私有 SQL 7 個去重情境；19 個 source-composed／entrance cases、原 batch UI 5／低層 guards 14 分層列證，不能混稱 E2E。
+
+重跑：`node scripts/verify-record-batch-task-browser.mjs`（或 `--reject`／`--tracer-only`）、`node scripts/verify-record-batch-task-session.mjs`、`node scripts/verify-record-batch-task-boundary.mjs`。詳細 RED／GREEN、精確 UI span 例外、gate／歴史失敗與尚未驗收部分見 [模組化儲存隔離開發契約](docs/modular-storage-development.md#records-v1-批量船舶新增普通要事返回原清單本機)。證據根 `C:/Users/tuotu/AppData/Local/hermes/cache/record-batch-task-3333a9e/`；commands.jsonl／manifest.json 程式去重。這是本機驗證／commit，不是 Push、正式 SQL、部署或 hosted／全角色／9船跨頁／手機 PDF／效能驗收。
+
+
 本專案由原始單檔 HTML 改造成 React + Vite + TypeScript，可部署到 GitHub Pages，並預留 Supabase 雲端同步。
 
 ## 已包含

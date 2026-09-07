@@ -151,6 +151,19 @@
 
 後續另驗：批量→＋新增要事完整往返、9 船跨頁／全角色、全手機／PDF、hosted ACL/PostgREST/Realtime／多連線／效能與正式切換，不以本片取代整站驗收。
 
+## records-v1 批量船舶→新增普通要事→返回原清單（本機）
+
+本片基線 `3333a9e3f4262431c63f333cd6b4b298fb6e075e`。原 Dashboard 人工選兩船、留第三船→原批量 modal 編輯→「＋ 新增要事」先保存批量並確認／釋 bundle→原 Task creation modal；Task 取消或保存後，返回同一 exact 兩船、重新 bundle 後讀雲端。仍是批量保存與 Task 保存兩個業務操作，不合併跨視窗交易；Task 取消不回退已確認的批量。
+
+- 真產品 RED：`02-return-desired-red` 原 UI／私有 SQL 確認批量保存及 creation lease 正常，取消卻出現「請先在船舶看板逐船勾選本次要批量更新的船舶」，停在已選 0 的看板。原 open 會清人工 selection；close 只有 Boolean 返回目的地而再讀已清空的 selection。
+- 最小產品修改只在 `src/App.tsx`：不可變 exact IDs、actor、identity generation、authorization epoch、cloud identity、批量 session 的返回上下文；原 Task request token 消耗後才請求重新開啟，重驗身份與全部目標範圍，不取新人的 selection、不補第三船。原 bundle／freshness／creation／receipt／權限與保存 helper 保留。唯一 JSX 差異是 BatchManagedVesselModal 的 onAddTask callback 多傳第四個內部參數；所有可見 UI、文字、CSS、導航、SQL、正式設定不改。
+- 最終原 UI＋真 SupabaseJS→loopback→私有 PGlite owner：`33-final-fresh-receipt`、`34-final-fresh-reject` 各 6 情境，stable scenario ID 去重為 **7**，不稱 12 E2E。兩段 held ACK 均查完全相同 operation envelope，確認前不跨視窗、不提前釋該段鎖；批量後段 SQL 拒絕零部分提交、零 afterSave／creation，原重試只關閉而不復活舊 afterSave。Task 普通保存恰一 task，同交易包含原「新增事項」與原分類點亮 v2 maintenance 的一筆 vessel audit；不是重複 audit。返回後值、全鎖、freshness、new document、零尾隨 patch 均有 SQL／原 UI 證據，未選第三船、既存其他業務、正式 Itinerary／history／矛盾 legacy 保留。
+- 較低層另計：`verify-record-batch-task-session.mjs` 為 **11** 原 close／coordinator／open source-composed controlled-I/O ＋ **8** 原 add entrance cases；包含 exact actor、ABA、epoch、config、batch session、old callback、release successor／rejected、missing target／scope／wrong vessel。它們不是全 App Auth E2E。上一片原 batch UI 回歸 **5**，原 session/lease guard **14**（含 SSR／人工 exact selection／epoch gate）各自列層，不混加。
+- `verify-record-batch-task-boundary.mjs` 對基線 **242** source/public/SQL/root paths、**51** JSX 檔／**147** roots 以精確 span allowlist 比對；不豁免整個 App。三個舊 source-only verifier 僅跟上參數／exact target 名稱，保留原 guards。共用 QA／SQL 沒改，所以不重跑原 8＋4＋4 或無關全站流程。creation／queue／readonly request generation／session-exit／bundle／receipt client/adapter/App／actor authorization／latest requirements、typecheck、build、diff 最後適用結果均 0；build 仍有既有 >500kB chunk 警告。
+- 歷史失敗不隱藏：`01` QA 誤用舊 sentinel prefix，修為原 v2 並修正原取消按鈕；`02` 真產品 RED；`03` 三個 CRLF 多行 patch 未落實的未完成修補，補齊後 `04` GREEN；`05` QA 誤把原 task＋weekly-attention audit 兩筆當重複，改依原 helper 核對；`09` 在原拒絕 callback 尚 busy 時找 retry 按鈕，補等待 settle；`13` 舊 source assertion；`32` 加強新 document 的 local payload 比對後發現原 normalize 為普通 Task 補空 `vesselIds:[]`，QA 只允許這一個精確預期投影差異，保留其他完整 payload／原 UI Task 顯示及 SQL 不變核對。每類 harness 修正未超過三次。工具 write_file 已落盤後遇 JSON 封裝／warning parse error另屬工具執行問題，不冒稱產品 RED。
+
+可重跑：`node scripts/verify-record-batch-task-browser.mjs`、`--reject`、`--tracer-only`，以及 `node scripts/verify-record-batch-task-session.mjs`／`node scripts/verify-record-batch-task-boundary.mjs`。`QA_EVIDENCE_ROOT` 指定 repo 外根；此片為 `C:/Users/tuotu/AppData/Local/hermes/cache/record-batch-task-3333a9e/`，保留逐 command/exit/log，manifest 程式去重 commands／scenarios、完整 full-index patch、raw-blob ZIP／extraction、candidate／commit readback。未新增獨立 review。只做本機 commit，禁止 Push／merge／部署／正式 SQL／config／browserstorage；本片不驗全角色、9船跨頁、完整手機／PDF、hosted ACL/PostgREST/Realtime、多連線／效能或正式切換。
+
 ## 證據標籤
 
 本機測試通過 ≠ 真 Supabase 通過 ≠ 正式環境已切換。讀回負載減少 ≠ 真實網路耗時已改善。UI 原始檔未變 ≠ 已完成所有新後端下的 UI 功能驗收。

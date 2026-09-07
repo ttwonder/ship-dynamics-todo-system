@@ -17,8 +17,8 @@ assert.ok(dashboard.includes('批量選取') && dashboard.includes('已選'), '�
 assert.ok(app.includes('batchManagedOpen'), 'App 需管理批量更新自管船舶彈窗狀態');
 assert.ok(app.includes('<BatchManagedVesselModal'), 'App 需渲染批量更新彈窗');
 assert.ok(app.includes('batchManaged:returnToBatchManaged') && app.includes('returnDestination?.batchManaged'), '新增要事關閉／保存後需只依最新 generation 的返回目的地回到批量更新清單');
-assert.ok(app.includes('addTaskForVessel(id,false,true)'), '批量清單的新增要事需設定返回批量清單');
-assert.ok(app.includes('void openBatchManagedVessels()'), '關閉新增要事後需重新取得全部船舶鎖才可回到批量清單');
+assert.ok(app.includes('addTaskForVessel(id,false,true,renderedBatchTaskReturnContext)'), '批量清單的新增要事需設定返回批量清單');
+assert.ok(app.includes('void openBatchManagedVessels(returnDestination.batchContext)'), '關閉新增要事後需重新取得全部船舶鎖才可回到批量清單');
 
 for (const label of ['目前位置','上一港','下一港','航行狀態','載況','ETA','ETB','ETD','貨名貨量','人工備註','近期動態']) {
   assert.ok(batch.includes(label), `批量更新清單缺少欄位：${label}`);
@@ -43,7 +43,7 @@ assert.ok(app.includes('acquireEditLockBundle(') && app.includes("result.status!
 assert.ok(app.includes('batchSelectedVesselIds') && app.includes('batchTargetVesselIds'), '批量目標需由本次人工勾選船舶組成並凍結exact IDs');
 assert.ok(app.includes("alert('請先在船舶看板逐船勾選本次要批量更新的船舶')"), '沒有人工勾選船舶時必須顯示清楚提示，不得退回自動選取經管船舶');
 assert.ok(app.includes('batchTargetVesselIdsRef.current=new Set') && app.includes('batchTargetVesselIdsRef.current.has(vesselId)'), '開啟時必須凍結exact target IDs，mutation不得擴到未選船舶');
-assert.ok(app.includes('requests=[...batchTargetVessels]'), '雲端bundle只能claim本次exact target船舶');
+assert.ok(app.includes('requests=[...targets]'), '雲端bundle只能claim本次exact target船舶');
 assert.ok(app.includes('save={saveBatchManagedDrafts}') && app.includes("candidates.some(candidate=>!batchMutationLeaseIsOwned(`vessel:${candidate.id}`,prev,mutationAuthorization))"), 'App 必須在整批草稿保存boundary以最新AppData及原render session token驗證每一艘exact vessel bundle lease');
 assert.ok(app.includes('setData(prev=>{') && app.includes('authorizationEpochFor(snapshot,liveUser)') && app.includes('const renderedBatchManagedAuthorization=batchManagedAuthorization.current'), '批量mutation必須在render時捕獲不可變session token，並在setData updater內以最新身份、權限及經管範圍原子重驗');
 assert.ok(app.includes('batchMutationSessionIsCurrent({renderedAuthorization') && app.includes("cloudConfigIdentity(getSupabaseConfig())"), '批量mutation必須執行session行為guard，且本機開啟後出現雲端配置或credential輪替時立即fail closed');
@@ -52,7 +52,7 @@ assert.ok(app.includes('batchLockCoordinator.current.isCurrent') && app.includes
 assert.ok(app.includes('批量船舶協作鎖續期失敗') && app.includes('releaseBatchEditLockSnapshot') && app.includes('invalidateBatchManagedLocks'), '全部船舶鎖必須整組續期、失效與釋放');
 assert.ok(app.includes("runCloudSaveQueueRpc('批量船舶鎖續期'")&&app.includes('Promise.allSettled(snapshot.map'), '批量 heartbeat 必須並行、具硬逾時並等待整組續租全部 settled');
 assert.ok(app.includes('const discardConfigIsCurrent=()=>')&&app.includes('sessionAuthorization.cloudIdentity===cloudConfigIdentity(config)')&&app.includes('sameCloudConfig(getSupabaseConfig(),config)')&&app.includes('if(!batchManagedOperationIsCurrent(operation)||!discardConfigIsCurrent())throw new StaleAsyncConfigError()'), 'batch discard必須在fetch/release前核對captured full config，拒絕同分頁workspace或credential race');
-assert.ok(batch.includes('void submit(()=>onAddTask(vessel.id))')&&app.includes('onAddTask={id=>{void addTaskForVessel(id,false,true);}}'), '從批量清單轉入新增要事前必須先保存整批modal草稿並釋放整組鎖，成功後才可建立返回上下文');
+assert.ok(batch.includes('void submit(()=>onAddTask(vessel.id))')&&app.includes('onAddTask={id=>{void addTaskForVessel(id,false,true,renderedBatchTaskReturnContext);}}'), '從批量清單轉入新增要事前必須先保存整批modal草稿並釋放整組鎖，成功後才可建立返回上下文');
 const closeStart=app.indexOf('const closeBatchManaged=async(expectedAuthorization:BatchManagedAuthorization|null)=>');
 const closeEnd=app.indexOf('\n  const cancelBatchManagedDrafts=',closeStart);
 const closeBranch=app.slice(closeStart,closeEnd);
