@@ -1884,7 +1884,7 @@ export default function App() {
       const confirmed=confirmedCloudData.current;
       if(!confirmed)throw new Error('沒有可驗證的已保存雲端基線');
       const token=configIoCoordinator.current.begin(leaseConfig);
-      const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('vessel:')?recordReadScope.current:'full';
+      const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('internal-control:')?{targets:[{collection:'internalControlCases',id:sectionKey.slice('internal-control:'.length)}]}:sectionKey.startsWith('meeting:')?{targets:[{collection:'meetings',id:sectionKey.slice('meeting:'.length)}]}:sectionKey.startsWith('vessel:')||isInternalControlCreationLockKey(sectionKey)||isMeetingCreationLockKey(sectionKey)?recordReadScope.current:'full';
       const coverageChanged=leaseConfig.readMode==='scoped-v1'&&recordScopeKey(scope)!==recordScopeKey(recordReadScope.current);
       const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,coverageChanged?config=>fetchCloudDataRpc(config,undefined,undefined,scope):vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
       if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!claimStillCurrent())return null;
@@ -2213,6 +2213,18 @@ export default function App() {
       return true;
     }catch(error:any){if(isCurrent())alert(error.message||String(error));return false;}
   };
+  const freshPageData=():AppData|null=>{
+    const snapshot=liveData.current,actor=snapshot.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);
+    if(!actor)return null;
+    const canViewAll=actor.role==='owner'||actor.role==='admin'||hasPermission(snapshot.settings.rolePermissions,actor,'viewAllVessels');
+    const vessels=snapshot.vessels.filter(vessel=>vessel.isActive&&vesselMatchesUser(vessel,actor,canViewAll));
+    const visibleVesselIds=vessels.map(vessel=>vessel.id);
+    const tasks=selectTasksVisibleToUser(snapshot.tasks,actor,{internalControlCases:snapshot.internalControlCases,meetings:snapshot.meetings,visibleVesselIds});
+    const meetings=actor.role==='owner'||actor.role==='admin'?snapshot.meetings:snapshot.meetings.filter(meeting=>(actor.role!=='vessel'||!meeting.isInternalControl)&&meetingAppliesToUser(meeting,vessels,canEditTemporaryMeetings(snapshot.settings.rolePermissions,actor),actor.id));
+    return {...snapshot,tasks,meetings,internalControlCases:selectInternalControlCasesVisibleToUser(snapshot.internalControlCases,snapshot.tasks,actor,visibleVesselIds),taskDismissals:snapshot.taskDismissals.filter(item=>item.userId===actor.id)};
+  };
+  const loadMeetingScope=async(meetingIds:string[]):Promise<AppData|null>=>await loadRecordActionScope({targets:meetingIds.map(id=>({collection:'meetings' as const,id}))})?freshPageData():null;
+  const loadInternalControlScope=async(caseId:string):Promise<AppData|null>=>await loadRecordActionScope({targets:[{collection:'internalControlCases',id:caseId}]})?freshPageData():null;
   const navigateToTab = async (nextTab:Tab) => {
     const incident=vesselLeaseIncidentRef.current;
     if(editingVesselId&&incident&&classifyVesselLeaseIncidentClose(incident.mode)==='confirm-discard'&&incident.sectionKey===`vessel:${editingVesselId}`){
@@ -2228,7 +2240,16 @@ export default function App() {
     }
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId('');
-    if(!await loadRecordActionScope((['dashboard','total','closed','work'] as Tab[]).includes(nextTab)?'home':'full'))return;
+    if(!await loadRecordActionScope((['dashboard','total','closed','work','internalControl','meeting'] as Tab[]).includes(nextTab)?'home':'full'))return;
+    if(nextTab==='meeting'){
+      const snapshot=liveData.current,actor=snapshot.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);
+      if(!actor)return;
+      const canViewAll=actor.role==='owner'||actor.role==='admin'||hasPermission(snapshot.settings.rolePermissions,actor,'viewAllVessels');
+      const vessels=snapshot.vessels.filter(vessel=>vessel.isActive&&vesselMatchesUser(vessel,actor,canViewAll));
+      const visible=actor.role==='owner'||actor.role==='admin'?snapshot.meetings:snapshot.meetings.filter(meeting=>(actor.role!=='vessel'||!meeting.isInternalControl)&&meetingAppliesToUser(meeting,vessels,canEditTemporaryMeetings(snapshot.settings.rolePermissions,actor),actor.id));
+      const selected=sortRecordsNewestCreated(visible.filter(meeting=>meetingAppliesToUser(meeting,vessels,canViewAll,actor.id)))[0];
+      if(selected&&!await loadMeetingScope([selected.id]))return;
+    }
     setTab(nextTab);
   };
   const openVesselDetail = async (vesselId: string) => {
@@ -4710,9 +4731,9 @@ export default function App() {
         markAllRead={()=>setData(previous=>markOwnNotificationsRead(previous,currentUser.id,nowIso()))}
       />}
       {tab==='closed' && <ListPanel title="已結案清單" tasks={closedTasks} data={roleVisibleData} visibleVessels={activeVessels} filters={closedFilters} setFilters={setClosedFilters} fleetTags={fleetTags} userMap={userMap} exportedBy={currentUser.name} onEdit={openTask} onPrint={() => print('已結案清單')} batchContext={listBatchContext} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
-      {tab==='internalControl' && canAccessTab(currentUser,'internalControl') && <InternalControlPage data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onWithdrawTaskSync={withdrawInternalCaseTaskSync} onDelete={removeInternalCase} onBatchClose={caseIds=>batchCompleteTasks([],caseIds)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
+      {tab==='internalControl' && canAccessTab(currentUser,'internalControl') && <InternalControlPage loadCase={loadInternalControlScope} data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onWithdrawTaskSync={withdrawInternalCaseTaskSync} onDelete={removeInternalCase} onBatchClose={caseIds=>batchCompleteTasks([],caseIds)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
       {tab==='stats' && <DataAnalysisView data={roleVisibleData} vessels={canViewAllVessels?reportVessels:activeVessels} />}
-      {tab==='meeting' && <TemporaryMeetingsPage data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} canCloseTasks={canCloseTasks&&currentUser.role!=='vessel'} onOpenDecisionTask={openMeetingTaskFromMeetingPage} onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
+      {tab==='meeting' && <TemporaryMeetingsPage loadMeetings={loadMeetingScope} authorizationEpoch={authorizationEpoch} data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} canCloseTasks={canCloseTasks&&currentUser.role!=='vessel'} onOpenDecisionTask={openMeetingTaskFromMeetingPage} onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
 
       {tab==='reports' && <ReportCenter
         data={roleVisibleData} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} setSelected={setAgendaSelection}

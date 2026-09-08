@@ -34,6 +34,7 @@ type MultiOption = { value: string; label: string };
 
 type Props = {
   data: AppData;
+  loadCase?: (caseId:string)=>Promise<AppData|null>;
   user: UserAccount;
   vessels: Vessel[];
   canCreate: boolean;
@@ -70,7 +71,7 @@ const optionList = (values: string[]): MultiOption[] => values.filter(Boolean).m
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
 const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
 
-export default function InternalControlPage({ data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, requestedCaseId, onRequestedCaseHandled, onCreate, onUpdate, onWithdrawTaskSync, onDelete, onBatchClose, onBatchDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
+export default function InternalControlPage({ loadCase, data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, requestedCaseId, onRequestedCaseHandled, onCreate, onUpdate, onWithdrawTaskSync, onDelete, onBatchClose, onBatchDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
   const [subpage, setSubpage] = useState<Subpage>('open');
   const [filters, setFilters] = useState<InternalControlFilters>(() => emptyFilters(defaultInternalControlVesselSelection(user, vessels)));
   const [batchOpen, setBatchOpen] = useState(false);
@@ -176,6 +177,12 @@ export default function InternalControlPage({ data, user, vessels, canCreate, ca
   const openCase=async(item:InternalControlCase)=>{
     let fresh=item;
     let freshData=data;
+    if(!canMutateItem&&loadCase){
+      const snapshot=await loadCase(item.id);
+      const latest=snapshot?.internalControlCases.find(candidate=>candidate.id===item.id);
+      if(!snapshot||!latest)return;
+      fresh=latest;freshData=snapshot;
+    }
     if(canMutateItem){
       const snapshot=claimItemLease?await claimItemLease(internalControlEditLockKey(item.id),`內控異常｜${richTextToPlainText(item.description)||item.id}`):data;
       if(!snapshot)return;

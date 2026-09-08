@@ -55,8 +55,8 @@ REMAINING means still inherited full or missing the required acceptance.
 | Bulk task deletion / meeting-task transition | shared selected-union coordinator | WIRED; dedicated delete/transition/scoped source-graph tracers remain |
 | Bulk internal-control-only selection | selected case keys through extra locks | WIRED; dedicated original-UI tracer remains |
 | WorkCenter personal dismiss | home metadata; dismissal records are complete | WIRED; peer/fresh-document scoped dismissal tracer remains |
-| InternalControlPage navigation/editor/create/withdraw/delete | nav/lease still full | REMAINING; do not remove full until every child callback is hydrated |
-| TemporaryMeetingsPage overview/editor/create/close/task decisions | nav/lease still full | REMAINING; overview auto-selection and full StatusHistoryModal need explicit reads |
+| InternalControlPage navigation/editor/create/withdraw/delete | home list; exact selected case graph; creation keeps active metadata/targets | PASS list/history/close/reopen; shared create/withdraw/delete wiring, dedicated scoped tracers REMAINING; see case/meeting slice |
+| TemporaryMeetingsPage overview/editor/create/close/task decisions | home list + exact default/selected meeting graph | PASS original history/edit-save/linked decision complete/meeting close/reopen/explicit selection; other command and export tracers REMAINING; see case/meeting slice |
 | Morning workspace / comparison | full | REMAINING previous snapshot and cutoff consumers |
 | Report preview / historical report / report save | full or inherited nav-full | REMAINING explicit selected-source/pinned-snapshot reads; no live substitution for history |
 | Stats navigation | full | REMAINING determine exact consumer needs |
@@ -90,6 +90,8 @@ normalizer, batch tasks, batch internal control, physical task-progress SQL veri
 typecheck, build, diff check. Exact JSX subtree equality against c448836 is recorded
 externally; no visible JSX, CSS, labels, props, navigation order or business rules
 were rewritten. Original task category -> vessel attention side effects are retained.
+
+The follow-up `record-case-meeting-read-slice.md` replaces the task/bulk SQL oracle: old task checks copied entire SQL audit/notification arrays into expected and bulk checked a subset. Historical receipts therefore did not prove independent complete business expectations. The new oracle captures outgoing requests before SQL, derives task/bulk business graphs from raw BEFORE plus explicit original intent, and mutation-tests audit/recipient/history omissions and tampering.
 
 Independent review is a parent reconciliation step, not claimed by this child.
 Do not call R1/R2/R3 complete or enable this development mode in production yet.

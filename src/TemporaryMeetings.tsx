@@ -43,6 +43,8 @@ import type { MeetingRegisterListMode, MeetingRegisterSortKey, MeetingRegisterSo
 
 type Props = {
   data: AppData;
+  loadMeetings?: (meetingIds:string[])=>Promise<AppData|null>;
+  authorizationEpoch?: string;
   visibleVessels: Vessel[];
   currentUser: UserAccount;
   canExportReports: boolean;
@@ -146,7 +148,7 @@ const draftFrom = (meeting?: TemporaryMeeting, tasks = [] as AppData['tasks'], m
   statusLogs: [...(meeting.statusLogs || [])],
 } : blankDraft();
 
-export default function TemporaryMeetingsPage({ data, visibleVessels, currentUser, canExportReports, canCloseTasks, onOpenDecisionTask, onTransitionDecisionTask, setData, commit, claimItemLease, requireItemLease, releaseItemLease, runDurableRelatedMutation, activeItemLeaseKey }: Props) {
+export default function TemporaryMeetingsPage({ loadMeetings, authorizationEpoch, data, visibleVessels, currentUser, canExportReports, canCloseTasks, onOpenDecisionTask, onTransitionDecisionTask, setData, commit, claimItemLease, requireItemLease, releaseItemLease, runDurableRelatedMutation, activeItemLeaseKey }: Props) {
   const canViewAllMeetings = currentUser.role === 'owner' || currentUser.role === 'admin' || hasPermission(data.settings.rolePermissions, currentUser, 'viewAllVessels');
   const editable = canEditTemporaryMeetings(data.settings.rolePermissions, currentUser);
   const canDeleteMeetings = (currentUser.role === 'owner' || currentUser.role === 'admin') && editable;
@@ -186,6 +188,10 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   const pendingDecisionFocusItemIdRef=useRef('');
   const liveDataRef=useRef(data);
   liveDataRef.current=data;
+  const editorContextRef=useRef('');
+  const editorContext=JSON.stringify([currentUser.id,authorizationEpoch]);
+  const scopeLoaderRef=useRef(loadMeetings);
+  scopeLoaderRef.current=loadMeetings;
   const activeItemLeaseKeyRef=useRef(activeItemLeaseKey);
   activeItemLeaseKeyRef.current=activeItemLeaseKey;
 
@@ -258,29 +264,23 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
   })),'meeting-task-item').filter(item => !isRichTextEmpty(item.description));
 
   useEffect(() => {
-    if (creating && !editable) {
-      const next = accessibleMeetings[0];
-      setEditingSessionActive(false);
-      editBaselineRef.current=null;
-      saveReachedLocalStateRef.current=false;
-      setCreating(false);
-      setSelectedId(next?.id || '');
-      setDraft(draftFrom(next, data.tasks, data.settings.meetingTaskCategories));
-      setBaseMeetingUpdatedAt(next?.updatedAt||'');
-      return;
-    }
-    if (creating) return;
-    const meeting = accessibleMeetings.find(item => item.id === selectedId);
-    if (meeting) {
-      setDraft(draftFrom(meeting, data.tasks, data.settings.meetingTaskCategories));
-      setBaseMeetingUpdatedAt(meeting.updatedAt||'');
-      return;
-    }
-    const next = accessibleMeetings[0];
-    setSelectedId(next?.id || '');
-    setDraft(draftFrom(next, data.tasks, data.settings.meetingTaskCategories));
-    setBaseMeetingUpdatedAt(next?.updatedAt||'');
-  }, [selectedId, creating, editable, canViewAllMeetings, visibleVesselKey, currentUser.id]);
+    if(editingSessionActive&&editable&&editorContextRef.current===editorContext)return;
+    if(editingSessionActive&&editorContextRef.current!==editorContext){setEditingSessionActive(false);editBaselineRef.current=null;saveReachedLocalStateRef.current=false;}
+    let cancelled=false;
+    const refresh=async()=>{
+      const next=accessibleMeetings.find(item=>item.id===selectedId)||accessibleMeetings[0];
+      const snapshot=next&&scopeLoaderRef.current?await scopeLoaderRef.current([next.id]):liveDataRef.current;
+      if(cancelled||!snapshot)return;
+      const fresh=next?snapshot.meetings.find(item=>item.id===next.id):undefined;
+      if(next&&!fresh)return;
+      if(creating){setEditingSessionActive(false);editBaselineRef.current=null;saveReachedLocalStateRef.current=false;setCreating(false);}
+      setSelectedId(fresh?.id||'');
+      setDraft(draftFrom(fresh,snapshot.tasks,snapshot.settings.meetingTaskCategories));
+      setBaseMeetingUpdatedAt(fresh?.updatedAt||'');
+    };
+    void refresh();
+    return ()=>{cancelled=true;};
+  }, [selectedId, creating, editable, editingSessionActive, canViewAllMeetings, visibleVesselKey, currentUser.id, authorizationEpoch]);
 
   useEffect(() => {
     if (!notice) return;
@@ -333,13 +333,17 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     return cleanup;
   }, [printMode]);
 
-  const viewMeeting = (meeting: TemporaryMeeting) => {
+  const viewMeeting = async (meeting: TemporaryMeeting) => {
     if(editingSessionActive){
       if(!creating&&selectedId===meeting.id)return;
       alert('請先保存或取消目前編輯，再查看其他會議');
       return;
     }
-    const nextDraft=draftFrom(meeting,data.tasks,data.settings.meetingTaskCategories);
+    const snapshot=loadMeetings?await loadMeetings([meeting.id]):liveDataRef.current;
+    const fresh=snapshot?.meetings.find(item=>item.id===meeting.id);
+    if(!snapshot||!fresh)return;
+    meeting=fresh;
+    const nextDraft=draftFrom(fresh,snapshot.tasks,snapshot.settings.meetingTaskCategories);
     editBaselineRef.current=null;
     saveReachedLocalStateRef.current=false;
     setEditingSessionActive(false);
@@ -366,6 +370,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     const nextDraft=draftFrom(fresh, snapshot.tasks, snapshot.settings.meetingTaskCategories);
     editBaselineRef.current=structuredClone(nextDraft);
     saveReachedLocalStateRef.current=false;
+    editorContextRef.current=editorContext;
     setEditingSessionActive(true);
     setCreating(false);
     setCreatingId('');
@@ -385,6 +390,7 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     const nextDraft=blankDraft();
     editBaselineRef.current=structuredClone(nextDraft);
     saveReachedLocalStateRef.current=false;
+    editorContextRef.current=editorContext;
     setEditingSessionActive(true);
     setCreating(true);
     setCreatingId(draftId);
@@ -1151,11 +1157,12 @@ export default function TemporaryMeetingsPage({ data, visibleVessels, currentUse
     setMeetingPage(1);
   };
   const meetingRegisterSortIndicator=(key:MeetingRegisterSortKey)=>registerSort.key===key?(registerSort.direction==='asc'?'▲':'▼'):'↕';
-  const printMeetings = (mode: 'meetings' | 'register', requestedIds = meetingExportSelection) => {
+  const printMeetings = async (mode: 'meetings' | 'register', requestedIds = meetingExportSelection) => {
     if (!canExportReports) return alert('目前角色未获授权导出会议资料');
     if (printInFlightRef.current || printMode) return alert('正在準備列印，請稍候');
     const allowedIds = requestedIds.filter(id => accessibleMeetings.some(meeting => meeting.id === id));
     if (mode === 'meetings' && !allowedIds.length) return alert('請先勾選至少一筆會議');
+    if(mode==='meetings'&&loadMeetings&&!await loadMeetings(allowedIds))return;
     if(mode==='register')setPrintRegisterListMode(registerListMode);
     setPrintMeetingIds(mode === 'meetings' ? allowedIds : []);
     setPrintMode(mode);
