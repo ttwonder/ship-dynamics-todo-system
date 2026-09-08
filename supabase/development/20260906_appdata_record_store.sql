@@ -418,6 +418,118 @@ end;
 $$;
 revoke all on function public.ship_dynamics_record_commit_validated_v1(text,jsonb,jsonb,jsonb,text,text,jsonb) from public,anon,authenticated;
 
+-- Private equivalence seam for an unchanged single-vessel + withAudit request.
+-- NULL/fallback means the original strict CAS path, never guessed history.
+-- Only audit bodies (<=500 base IDs plus current prefix) are inspected.
+create or replace function public.ship_dynamics_record_merge_audit_v1(
+  p_workspace text,p_operations jsonb,p_current_ids jsonb
+) returns jsonb language plpgsql stable security invoker set search_path=pg_catalog,public as $$
+declare
+  order_op jsonb; vessel_op jsonb; add_op jsonb; op jsonb;
+  base_ids jsonb; caller_ids jsonb; merged_ids jsonb; peer_ids jsonb;
+  base_revision integer; base_count integer; peer_count integer;
+  base_body jsonb; current_body jsonb; body_count bigint;
+  id text; ordinal bigint; new_id text; new_at text;
+  effective jsonb; prefix_bodies jsonb := '[]'::jsonb;
+begin
+  if jsonb_array_length(p_operations) not in (3,4) then return p_operations; end if;
+  if (select count(*) from jsonb_array_elements(p_operations) x where x->>'kind'='order' and x->>'collection'='auditLogs')<>1
+    or (select count(*) from jsonb_array_elements(p_operations) x where x->>'kind'='entity' and x->>'collection'='vessels' and jsonb_typeof(x->'expected')='object' and jsonb_typeof(x->'value')='object')<>1
+    or (select count(*) from jsonb_array_elements(p_operations) x where x->>'kind'='entity' and x->>'collection'='auditLogs' and x->'expected'='null'::jsonb and jsonb_typeof(x->'value')='object')<>1
+  then return p_operations; end if;
+  select x into order_op from jsonb_array_elements(p_operations) x where x->>'kind'='order' and x->>'collection'='auditLogs';
+  select x into vessel_op from jsonb_array_elements(p_operations) x where x->>'collection'='vessels';
+  select x into add_op from jsonb_array_elements(p_operations) x where x->>'collection'='auditLogs' and x->>'kind'='entity' and x->'expected'='null'::jsonb;
+  base_ids:=order_op->'expectedIds'; caller_ids:=order_op->'valueIds';
+  if jsonb_typeof(base_ids) is distinct from 'array' or jsonb_typeof(caller_ids) is distinct from 'array'
+    or jsonb_typeof(p_current_ids) is distinct from 'array' or p_current_ids=base_ids then return p_operations; end if;
+  base_count:=jsonb_array_length(base_ids);
+  if base_count>500 or jsonb_array_length(p_current_ids)>500 then return p_operations; end if;
+  for op in select base_ids union all select caller_ids union all select p_current_ids loop
+    if exists(select 1 from jsonb_array_elements(op) x where jsonb_typeof(x)<>'string' or x='""'::jsonb)
+      or (select count(distinct x) from jsonb_array_elements_text(op) x)<>jsonb_array_length(op) then return p_operations; end if;
+  end loop;
+  new_id:=add_op->>'entityId'; new_at:=add_op#>>'{value,at}';
+  if new_id is null or new_id='' or add_op#>>'{value,id}' is distinct from new_id
+    or add_op#>>'{value,entityType}' is distinct from 'vessel'
+    or add_op#>>'{value,entityId}' is distinct from vessel_op->>'entityId'
+    or base_ids ? new_id or p_current_ids ? new_id
+    or exists(select 1 from public.ship_dynamics_record_history h where h.workspace_key=p_workspace and h.collection='auditLogs' and h.entity_id=new_id)
+    or exists(select 1 from public.ship_dynamics_records r where r.workspace_key=p_workspace and r.collection='auditLogs' and r.entity_id=new_id)
+  then return p_operations; end if;
+  select coalesce(jsonb_agg(x order by n),'[]'::jsonb) into merged_ids
+    from jsonb_array_elements(jsonb_build_array(new_id)||base_ids) with ordinality t(x,n) where n<=500;
+  if caller_ids is distinct from merged_ids or jsonb_array_length(p_operations)<>3+(case when base_count=500 then 1 else 0 end) then return p_operations; end if;
+  -- Reject any extra/duplicate/rewrite/non-tail operation rather than discard it.
+  for op in select x from jsonb_array_elements(p_operations) x where x<>order_op and x<>vessel_op and x<>add_op loop
+    if base_count<>500 or op->>'kind' is distinct from 'entity' or op->>'collection' is distinct from 'auditLogs'
+      or op->>'entityId' is distinct from base_ids->>499 or jsonb_typeof(op->'expected') is distinct from 'object'
+      or op->'value' is distinct from 'null'::jsonb then return p_operations; end if;
+  end loop;
+  select max(v.revision) into base_revision from public.ship_dynamics_record_versions v
+    where v.workspace_key=p_workspace and v.orders->'auditLogs'=base_ids;
+  if base_revision is null then return p_operations; end if;
+  -- P consists only of genuinely new, still immutable rows, not delete/recreate.
+  select coalesce(jsonb_agg(to_jsonb(x) order by n),'[]'::jsonb) into peer_ids
+    from jsonb_array_elements_text(p_current_ids) with ordinality t(x,n) where not base_ids ? x;
+  peer_count:=jsonb_array_length(peer_ids);
+  if peer_count<1 or peer_count>=500 then return p_operations; end if;
+  select coalesce(jsonb_agg(x order by n),'[]'::jsonb) into merged_ids
+    from jsonb_array_elements(peer_ids||base_ids) with ordinality t(x,n) where n<=500;
+  if p_current_ids is distinct from merged_ids then return p_operations; end if;
+  -- Match mergeImmutableAuditLogs: a partial base may not lose base rows.
+  if base_count<500 and base_count+peer_count>500 then return p_operations; end if;
+  for id,ordinal in select * from jsonb_array_elements_text(base_ids) with ordinality loop
+    select count(*),jsonb_agg(t.value)->0 into body_count,base_body from (
+      select r.value from public.ship_dynamics_records r where r.workspace_key=p_workspace and r.collection='auditLogs' and r.entity_id=id and r.revision<=base_revision
+      union all
+      select h.value from public.ship_dynamics_record_history h where h.workspace_key=p_workspace and h.collection='auditLogs' and h.entity_id=id and h.valid_from_revision<=base_revision and h.valid_to_revision>base_revision
+    ) t;
+    if body_count<>1 then return p_operations; end if;
+    if exists(select 1 from public.ship_dynamics_records r where r.workspace_key=p_workspace and r.collection='auditLogs' and r.entity_id=id and r.revision>base_revision)
+      or exists(select 1 from public.ship_dynamics_record_history h where h.workspace_key=p_workspace and h.collection='auditLogs' and h.entity_id=id and h.valid_from_revision>base_revision)
+    then return p_operations; end if;
+    select r.value into current_body from public.ship_dynamics_records r where r.workspace_key=p_workspace and r.collection='auditLogs' and r.entity_id=id;
+    if (p_current_ids ? id and current_body is distinct from base_body) or (not p_current_ids ? id and current_body is not null) then return p_operations; end if;
+    if ordinal=500 then
+      select x into op from jsonb_array_elements(p_operations) x where x->>'kind'='entity' and x->>'collection'='auditLogs' and x->>'entityId'=id;
+      if op->'expected' is distinct from base_body then return p_operations; end if;
+    end if;
+  end loop;
+  prefix_bodies:=jsonb_build_array(add_op->'value');
+  for id in select * from jsonb_array_elements_text(peer_ids) loop
+    select r.value into current_body from public.ship_dynamics_records r where r.workspace_key=p_workspace and r.collection='auditLogs' and r.entity_id=id and r.revision>base_revision;
+    if current_body is null or exists(select 1 from public.ship_dynamics_record_history h where h.workspace_key=p_workspace and h.collection='auditLogs' and h.entity_id=id) then return p_operations; end if;
+    prefix_bodies:=prefix_bodies||jsonb_build_array(current_body);
+  end loop;
+  -- Distinct canonical UTC millisecond strings have the same ordering in JS
+  -- localeCompare and C byte order. Ties/noncanonical dates retain strict CAS;
+  -- never assume the deployment collation implements JS's ID tie comparator.
+  if exists(select 1 from jsonb_array_elements(prefix_bodies) x where coalesce(x->>'at','') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$')
+    or (select count(distinct x->>'at') from jsonb_array_elements(prefix_bodies) x)<>jsonb_array_length(prefix_bodies) then return p_operations; end if;
+  begin
+    for op in select x from jsonb_array_elements(prefix_bodies) x loop
+      if to_char((op->>'at')::timestamptz at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')<>op->>'at' then return p_operations; end if;
+    end loop;
+  exception when invalid_datetime_format or datetime_field_overflow then return p_operations;
+  end;
+  select jsonb_agg(x->'id' order by (x->>'at') collate "C" desc) into merged_ids from jsonb_array_elements(prefix_bodies) x;
+  select jsonb_agg(x order by n) into merged_ids from jsonb_array_elements(merged_ids||base_ids) with ordinality t(x,n) where n<=500;
+  effective:=jsonb_build_array(vessel_op,add_op);
+  -- Only the proven retained base tail is eligible. Never discard a peer audit.
+  for id in select * from jsonb_array_elements_text(p_current_ids) loop
+    if not merged_ids ? id then
+      if not base_ids ? id then return p_operations; end if;
+      select r.value into current_body from public.ship_dynamics_records r where r.workspace_key=p_workspace and r.collection='auditLogs' and r.entity_id=id;
+      if current_body is null then return p_operations; end if;
+      effective:=effective||jsonb_build_array(jsonb_build_object('kind','entity','collection','auditLogs','entityId',id,'expected',current_body,'value',null));
+    end if;
+  end loop;
+  return effective||jsonb_build_array(jsonb_build_object('kind','order','collection','auditLogs','expectedIds',p_current_ids,'valueIds',merged_ids));
+end;
+$$;
+revoke all on function public.ship_dynamics_record_merge_audit_v1(text,jsonb,jsonb) from public,anon,authenticated;
+
 create or replace function public.apply_ship_dynamics_record_patch_v1(
   p_workspace_key text,p_operation_id text,p_operations jsonb,p_saved_by text,
   p_actor_user_id text,p_actor_guard jsonb,p_authorization_guard jsonb,p_lock_guards jsonb
@@ -431,7 +543,7 @@ declare
   target_id text; name text; vessel_count integer := 0; audit_count integer := 0;
   names text[] := array['users','vessels','tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs'];
   orders jsonb; next_orders jsonb; requested_orders jsonb := '{}'::jsonb; next_root jsonb;
-  next_revision integer; saved_at timestamptz; saved_text text;
+  next_revision integer; saved_at timestamptz; saved_text text; original_signature jsonb;
 begin
   if nullif(p_operation_id,'') is null or char_length(p_operation_id)>200 then
     return jsonb_build_object('ok',false,'code','invalid-operation-id'); end if;
@@ -469,6 +581,8 @@ begin
   select coalesce(jsonb_object_agg(collection,c.ids),'{}'::jsonb) into orders
     from public.ship_dynamics_record_collections c where workspace_key=p_workspace_key;
   next_orders := orders; next_root := workspace.root;
+  original_signature := jsonb_build_array(p_operations,p_saved_by,p_actor_user_id,p_actor_guard,p_authorization_guard,p_lock_guards);
+  p_operations := public.ship_dynamics_record_merge_audit_v1(p_workspace_key,p_operations,coalesce(orders->'auditLogs','[]'::jsonb));
 
   -- Prevalidate the whole operation graph before any entity, order or receipt write.
   for operation in select value from jsonb_array_elements(p_operations) loop
@@ -557,7 +671,7 @@ begin
   end loop;
   return public.ship_dynamics_record_commit_validated_v1(
     p_workspace_key,p_operations,next_root,next_orders,p_saved_by,p_operation_id,
-    jsonb_build_array(p_operations,p_saved_by,p_actor_user_id,p_actor_guard,p_authorization_guard,p_lock_guards));
+    original_signature);
 end;
 $$;
 

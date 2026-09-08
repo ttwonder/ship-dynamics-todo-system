@@ -9,14 +9,16 @@ import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
 
 // QA-only: original main.tsx -> App, native input, synthetic identities.
 // No setters, write helpers, fabricated responses, external hosts or user profile.
+const mergeCap=process.argv.find(x=>x.startsWith('--audit-merge-cap='))?.split('=')[1];
+const mergeMode=mergeCap!==undefined;if(mergeMode)assert.ok(['7','500'].includes(mergeCap));
 const root=process.env.QA_EVIDENCE_ROOT;
 assert.ok(root&&path.isAbsolute(root),'Explicit external QA_EVIDENCE_ROOT required');
 assert.ok(!path.resolve(root).toLowerCase().startsWith(path.resolve('.').toLowerCase()+path.sep));
 fs.mkdirSync(root,{recursive:true});
 const run=fs.mkdtempSync(path.join(root,'five-')),profile=path.join(run,'chrome');
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
-const receipt={kind:'original-App-native-PG-multi-context',inputHead:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),status:'RUNNING',cases:[],network:[],errors:[],blockedExternal:[],commands:[{command:'node scripts/verify-record-five-actor-browser.mjs',exit:null}],productionContacted:false};
-receipt.inputs=Object.fromEntries(['scripts/verify-record-five-actor-browser.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','src/App.tsx'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
+const receipt={mergeCap:mergeMode?Number(mergeCap):null,kind:'original-App-native-PG-multi-context',inputHead:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),status:'RUNNING',cases:[],network:[],errors:[],blockedExternal:[],commands:[{command:'node scripts/verify-record-five-actor-browser.mjs',exit:null}],productionContacted:false};
+receipt.inputs=Object.fromEntries(['scripts/verify-record-five-actor-browser.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','src/App.tsx','supabase/development/20260906_appdata_record_store.sql'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
 const save=()=>fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const until=async(fn,label,timeout=25000)=>{const end=Date.now()+timeout;while(Date.now()<end){const v=await fn();if(v)return v;await wait(30);}throw new Error('QA timeout: '+label);};
@@ -87,6 +89,7 @@ async function fiveActorFixture(initial,vite){
   initial.vessels.push({...structuredClone(template),id,name:'QA VESSEL '+n,fullName:'QA VESSEL '+n,shortName:'QA VESSEL '+n,assignedUserIds:n<=5?[actor]:[]});
   if(n<=5)initial.users.push({...structuredClone(operator),id:actor,username:actor,name:'QA OPERATOR '+n,managedVesselIds:[id]});
  }
+ if(mergeMode)initial.auditLogs=Array.from({length:Number(mergeCap)},(_,i)=>({id:'legacy-'+i,at:i%2?'2001-01-01T00:00:00.000Z':'2000-01-01T00:00:00.000Z',actorId:'qa-owner',actorName:'QA OWNER',actorRole:'owner',action:'fixture',entityType:'vessel',entityId:'qa-v2',detail:'old '+i,ipAddress:'192.0.2.99',ipCountryCode:'JP'}));
  const {normalizeAppData}=await vite.ssrLoadModule('/src/normalize.ts');Object.assign(initial,normalizeAppData(initial));
  assert.equal(initial.users.filter(u=>u.role==='owner').length,1);assert.equal(initial.users.length,5);assert.equal(initial.vessels.length,6);
 }
@@ -156,8 +159,30 @@ try{
  for(const p of people){await p.open(p.vessel);await p.fill(field,p.marker);await p.eval(`void(window.__draftNode=${field})`);}
  const initialLocks=await locks();assert.equal(initialLocks.length,5);assert.equal(new Set(initialLocks.map(l=>l.locked_by)).size,5);receipt.initialLocks=initialLocks;
  assert.deepEqual(await read(),base,'all five drafts are not yet in SQL');
- currentCase='U3a';rendezvous=true;await Promise.all(people.map(p=>p.submit()));
  let remaining=[...people];const succeeded=[];
+ if(mergeMode){
+  currentCase='UM-'+mergeCap;rendezvous=true;for(const p of people)await p.submit();
+  const batch=await until(()=>paused.length===5?paused:false,'five original same-base outgoing saves',6000);
+  assert.equal(new Set(batch.map(p=>p.actor)).size,5);for(const p of batch)assert.deepEqual(p.auditExpected,base.payload.auditLogs.map(a=>a.id));
+  const first=batch[0],followers=batch.slice(1);barrier={operationId:first.operationId};first.released=true;await call('Fetch.continueRequest',{requestId:first.requestId},first.session);await until(()=>barrier.entered,'merge leader pre-COMMIT',4000);
+  for(const p of followers){p.released=true;await call('Fetch.continueRequest',{requestId:p.requestId},p.session);}
+  const blocking=await until(async()=>{const rows=(await native.observer.query("select pid,state,wait_event_type,pg_blocking_pids(pid) blockers from pg_stat_activity where application_name like 'record_native_http_%' and wait_event_type='Lock'")).rows;return rows.find(r=>r.blockers.includes(barrier.pid));},'merge native blocker',4000);
+  const peer=followers.find(p=>receipt.httpTransactions.some(t=>t.operationId===p.operationId&&t.pid===blocking.pid));assert.ok(peer);receipt.rounds.push({round:1,requests:batch.map(({session,requestId,...safe})=>safe),blocking:{leaderPid:barrier.pid,peerActor:peer.actor,...blocking}});
+  assert.deepEqual(await read(),base);for(const p of people)assert.ok(await sameDraft(p));assert.equal((await locks()).length,5);await people[4].screen('UM-'+mergeCap+'-pending');save();releaseCommit();barrier=null;rendezvous=false;
+  await until(()=>batch.every(p=>receipt.network.some(n=>n.operationId===p.operationId&&n.finished)),'five first HTTP ACKs',10000);
+  for(const p of people){const chain=receipt.network.filter(n=>n.actor===p.actor&&n.rpc===patchRpc);assert.equal(chain.length,1,'no audit-order retry '+p.actor);assert.equal(chain[0].result,'SQL_OK');assert.equal(chain[0].httpStatus,200);await until(()=>p.saved(),'original auto ACK/close '+p.actor,10000);receipt.actorResults.push({actor:p.actor,vessel:p.vessel,attempts:1,conflicts:0,automaticSuccess:true,manualRequired:false,chain});succeeded.push(p);}
+  remaining=[];
+  const snapshots=[];for(const n of receipt.network.filter(n=>n.rpc===patchRpc).sort((a,b)=>a.revision-b.revision)){const h=(await native.observer.query('select read_ship_dynamics_record_history_v1($1,$2) r',[qa.workspace,n.revision])).rows[0].r;snapshots.push(h);}
+  const final=await read(),allNew=final.payload.auditLogs.filter(a=>!base.payload.auditLogs.some(b=>b.id===a.id));assert.equal(allNew.length,5);assert.equal(new Set(allNew.map(a=>a.at)).size,5,'canonical distinct-at supported branch');
+  for(const [i,h] of snapshots.entries()){
+   const prefix=h.payload.auditLogs.filter(a=>!base.payload.auditLogs.some(b=>b.id===a.id));assert.equal(prefix.length,i+1);for(const a of prefix){assert.equal(a.ipAddress,'192.0.2.30');assert.equal(a.ipCountryCode,'TW');}
+   const expectedAudits=[...prefix].sort((a,b)=>String(b.at).localeCompare(a.at)||a.id.localeCompare(b.id)).concat(base.payload.auditLogs).slice(0,500);assert.deepEqual(h.payload.auditLogs,expectedAudits,'exact base-relative history order/cap');
+   verifyBusiness(base,{...h,revision:h.payload.revision},people.filter(p=>prefix.some(a=>a.actorId===p.actor)));
+   const d=(await native.observer.query('select read_ship_dynamics_record_delta_v1($1,$2,$3) r',[qa.workspace,base.revision,(await native.observer.query('select token from ship_dynamics_record_read_bases where workspace_key=$1 and revision=$2',[qa.workspace,base.revision])).rows[0].token])).rows[0].r;assert.equal(d.status,'delta');const model=structuredClone(base.payload);Object.assign(model,d.root.set);for(const k of d.root.deleted)delete model[k];for(const c of d.collections){const map=new Map(model[c.collection].map(x=>[x.id,x]));for(const id of c.deleted)map.delete(id);for(const x of c.upserts)map.set(x.id,x);model[c.collection]=(c.order||[...map.keys()]).map(id=>map.get(id));}assert.deepEqual(model,final.payload);
+  }
+  receipt.historyHashes=snapshots.map(hash);receipt.auditRetention={base:Number(mergeCap),final:final.payload.auditLogs.length,exactBaseRelativeOrder:true,fullDeltaEachHistory:true};await people[4].screen('UM-'+mergeCap+'-ACK');receipt.cases.push({caseId:'UM-'+mergeCap,status:'PASS',layer:'original-ui-native-sql',actors:5,firstRequestAcks:5,retries:0,manualSync:0});
+ }else{
+ currentCase='U3a';rendezvous=true;await Promise.all(people.map(p=>p.submit()));
  for(let round=1;round<=4;round++){
   const batch=await until(()=>{const rows=paused.filter(p=>!p.released);return rows.length===remaining.length?rows:false;},'round '+round+' actual outgoing saves',6000);
   assert.deepEqual(batch.map(p=>p.actor).sort(),remaining.map(p=>p.actor).sort());
@@ -215,6 +240,7 @@ try{
   assert.equal(receipt.network.slice(closeStart).filter(n=>n.rpc===patchRpc).length,0,'close does not manufacture another business save');
   succeeded.push(p);
  }
+ }
  await until(async()=>(await locks()).length===0,'all original leases released');
  const final=await read(),audits=verifyBusiness(base,final,succeeded),ledger=await receiptLedger();
  const successful=receipt.network.filter(n=>n.rpc===patchRpc&&n.result==='SQL_OK');
@@ -226,7 +252,7 @@ try{
  assert.deepEqual(await read(),final,'no trailing business change during all fresh readers');assert.deepEqual(await receiptLedger(),ledger,'no trailing extra operation');
  receipt.bystanders={completePayload:true,recordValueRevisionXminCtid:true,formalAndLegacyUnchanged:true,completeFreshSqlReads:1,completeFreshDocuments:people.length};
  assert.deepEqual(receipt.errors,[]);assert.deepEqual(receipt.blockedExternal,[]);
- receipt.cases.push({caseId:'U3c',status:'PASS',layer:'original-ui-native-sql-plus-fresh-read-only-reader',manualRecovered:remaining.length});
+ receipt.cases.push({caseId:mergeMode?'UR-'+mergeCap:'U3c',status:'PASS',layer:'original-ui-native-sql-plus-fresh-read-only-reader',manualRecovered:remaining.length});
  receipt.totals={actors:receipt.actorResults.length,automaticSuccess:receipt.actorResults.filter(p=>p.automaticSuccess).length,manualRequired:receipt.actorResults.filter(p=>p.manualRequired).length,recovered:receipt.actorResults.filter(p=>p.recovered).length,uniqueCommittedOperations:ledger.length,uniqueBusinessAudits:audits.length};
  receipt.status='PASS';save();console.log('PASS U3',JSON.stringify(receipt.totals),run);
 
