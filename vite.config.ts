@@ -30,6 +30,8 @@ const appVersionPlugin:Plugin={
 };
 
 export default defineConfig({
+  // Isolated QA can keep Vite writes outside a read-only dependency junction.
+  cacheDir:process.env.QA_VITE_CACHE_DIR,
   plugins: [react(),appVersionPlugin],
   base,
   define:{__SHIP_DYNAMICS_BUILD_VERSION__:JSON.stringify(buildVersion)},

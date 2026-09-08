@@ -16,8 +16,8 @@ const canonical=v=>JSON.stringify(v,(_,x)=>x&&typeof x==='object'&&!Array.isArra
 const hash=v=>createHash('sha256').update(typeof v==='string'?v:canonical(v)).digest('hex');
 const equal=(a,b,label)=>assert.equal(hash(a),hash(b),label);
 const receipt={kind:'records-v1-native-concurrency',started:new Date().toISOString(),status:'RUNNING',cases:[],productionContacted:false,layer:'native PostgreSQL + original pure helpers; NOT browser/client retry/hosted'};
-receipt.inputHead=execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
-receipt.inputs=Object.fromEntries(execFileSync('git',['ls-files','src','supabase','scripts/record-storage-local-qa.mjs','scripts/record-itinerary-local-fixture.mjs','scripts/record-internal-control-local-fixture.mjs'],{encoding:'utf8'}).trim().split(/\r?\n/).map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
+receipt.inputHead=process.env.QA_FIXED_INPUT_HEAD||execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim();
+receipt.inputs=Object.fromEntries((process.env.QA_INPUT_MANIFEST?JSON.parse(fs.readFileSync(process.env.QA_INPUT_MANIFEST,'utf8')).files.map(f=>f.path).filter(p=>p.startsWith('src/')||p.startsWith('supabase/')||['scripts/record-storage-local-qa.mjs','scripts/record-itinerary-local-fixture.mjs','scripts/record-internal-control-local-fixture.mjs'].includes(p)):execFileSync('git',['ls-files','src','supabase','scripts/record-storage-local-qa.mjs','scripts/record-itinerary-local-fixture.mjs','scripts/record-internal-control-local-fixture.mjs'],{encoding:'utf8'}).trim().split(/\r?\n/)).map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
 for(const p of ['scripts/record-storage-native-qa.mjs','scripts/verify-record-concurrency-native.mjs'])receipt.inputs[p]=hash(fs.readFileSync(p,'utf8'));
 let native,qa,failure,caseId='setup';
 const save=()=>fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));
@@ -76,14 +76,17 @@ try{
   const deadline=Date.now()+4000;let activity;
   do{
    activity=(await observer.query('select pid,state,wait_event_type,wait_event,pg_blocking_pids(pid) blockers from pg_stat_activity where pid=$1',[blocked])).rows[0];
-   if(activity?.blockers.includes(blocker))break;
+   if(activity?.blockers.includes(blocker)&&activity.wait_event_type==='Lock'&&activity.wait_event)break;
    await new Promise(r=>setTimeout(r,10));
   }while(Date.now()<deadline);
   assert.ok(activity?.blockers.includes(blocker),'Real peer backend must block pending SQL');assert.equal(activity.wait_event_type,'Lock');
   const locks=(await observer.query("select pid,locktype,mode,granted,relation::regclass::text relation,page,tuple,transactionid::text transactionid from pg_locks where pid=any($1::int[]) order by pid,locktype,mode",[[blocked,blocker]])).rows;
   assert.ok(locks.some(l=>l.pid===blocked&&!l.granted),'pg_locks contains an ungranted peer lock');
   assert.ok(locks.some(l=>l.pid===blocked&&l.relation==='ship_dynamics_record_workspaces'),'Waiting writer touches real workspace root');
-  return {activity,locks,rootSql:'supabase/development/20260906_appdata_record_store.sql:447',rootStatement:'select * into workspace from public.ship_dynamics_record_workspaces where workspace_key=p_workspace_key for update'};
+  const sqlPath='supabase/development/20260906_appdata_record_store.sql',sqlLines=fs.readFileSync(sqlPath,'utf8').split(/\r?\n/);
+  const rootLine=sqlLines.findIndex(line=>line.trim()==='select * into workspace from public.ship_dynamics_record_workspaces where workspace_key=p_workspace_key for no key update;');
+  assert.ok(rootLine>=0,'current root publication statement must be present');
+  return {activity,locks,rootSql:sqlPath+':'+(rootLine+1),rootStatement:sqlLines[rootLine].trim()};
  };
  const overlap=async(ra,rb)=>{
   const before=await ledger();await a.query('begin');

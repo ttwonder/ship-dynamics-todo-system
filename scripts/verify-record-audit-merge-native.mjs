@@ -8,7 +8,7 @@ import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
 const root=process.env.QA_EVIDENCE_ROOT;assert.ok(root&&path.isAbsolute(root));assert.ok(!path.resolve(root).startsWith(path.resolve('.')+path.sep));fs.mkdirSync(root,{recursive:true});
 const run=fs.mkdtempSync(path.join(root,'audit-native-'));
 const hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
-const receipt={kind:'bounded-audit-merge-native',inputHead:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),status:'RUNNING',cases:[],inputs:Object.fromEntries(['supabase/development/20260906_appdata_record_store.sql','scripts/verify-record-audit-merge-native.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','src/cloudBlockPatch.ts','src/cloudRebase.ts','src/utils.ts'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]))};
+const receipt={kind:'bounded-audit-merge-native',inputHead:process.env.QA_FIXED_INPUT_HEAD||execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),status:'RUNNING',cases:[],inputs:Object.fromEntries(['supabase/development/20260906_appdata_record_store.sql','scripts/verify-record-audit-merge-native.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','src/cloudBlockPatch.ts','src/cloudRebase.ts','src/utils.ts'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]))};
 const save=()=>fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));
 let native,qa,failure;
 try{

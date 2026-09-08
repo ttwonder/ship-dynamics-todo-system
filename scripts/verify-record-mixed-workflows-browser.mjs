@@ -146,10 +146,18 @@ async function concurrentStage(id,people,submit){
  const blocking=await until(async()=>{const rows=(await native.observer.query("select pid,state,wait_event_type,wait_event,pg_blocking_pids(pid) blockers from pg_stat_activity where application_name like 'record_native_http_%' and wait_event_type='Lock'")).rows;return rows.find(r=>r.blockers.includes(barrier.pid));},'actual B PG blocking',4000);
  assert.ok(receipt.httpTransactions.some(t=>t.operationId===peer.operationId&&t.pid===blocking.pid));assert.notEqual(blocking.pid,barrier.pid);assert.deepEqual(await read(),before);for(const p of people){assert.ok(await draft(p));await p.screen(id+'-pending-'+p.actor);}assert.deepEqual(await locks(),owned);
  receipt.rounds.push({caseId:id,baseRevision:before.revision,requests:batch.map(({session,requestId,...safe})=>safe),blocking:{leaderPid:barrier.pid,peerOperationId:peer.operationId,...blocking},draftRetained:true,preCommitHoldMs:Date.now()-barrier.enteredAt,leaseKeys:owned.map(l=>l.section_key)});save();rendezvous=false;releaseCommit();barrier=null;
+ // A successful M2 task update intentionally returns to its source vessel editor.
+ // Page-wide "no dialog" is not the command-close boundary; still require its
+ // exact real SQL ACK, detached original draft, saved strip and only that return.
+ const stageSaved=async p=>{
+  if(!receipt.network.slice(networkStart).some(n=>n.actor===p.actor&&n.rpc===patchRpc&&n.result==='SQL_OK'&&n.httpStatus===200))return false;
+  if(!(id==='M2'&&p.actor==='qa-operator'))return await p.saved()&&await p.eval('!window.__mixedDraft.isConnected');
+  return p.eval("(()=>{const ds=[...document.querySelectorAll('[role=dialog]')],source=document.querySelector('#vessel-edit-title');return Boolean(document.querySelector('.save-status-strip.saved'))&&!window.__mixedDraft.isConnected&&ds.every(d=>source&&d.contains(source))&&(!source||source.textContent.includes('QA VESSEL 1'));})()");
+ };
  for(const p of people){
-  await until(async()=>await p.saved()||await p.eval("Boolean(document.querySelector('.save-status-strip.error'))"),id+' automatic terminal '+p.actor,18000);
-  let manualRequired=!(await p.saved()),recoveryAction=null;
-  if(manualRequired){assert.ok(await draft(p));await p.screen(id+'-manual-'+p.actor);await p.sync();recoveryAction='original-sync';if(!receipt.network.slice(networkStart).some(n=>n.actor===p.actor&&n.rpc===patchRpc&&n.result==='SQL_OK')){await p.click('重新保存');recoveryAction+='-then-resave';}await until(()=>receipt.network.slice(networkStart).some(n=>n.actor===p.actor&&n.rpc===patchRpc&&n.result==='SQL_OK'),'manual SQL ACK');if(await p.eval("Boolean(document.querySelector('[role=dialog]'))"))await p.click(submit[people.indexOf(p)]);await until(()=>p.saved(),'manual original close');}
+  await until(async()=>await stageSaved(p)||await p.eval("Boolean(document.querySelector('.save-status-strip.error'))"),id+' automatic terminal '+p.actor,18000);
+  let manualRequired=!(await stageSaved(p)),recoveryAction=null;
+  if(manualRequired){assert.ok(await draft(p));await p.screen(id+'-manual-'+p.actor);await p.sync();recoveryAction='original-sync';if(!receipt.network.slice(networkStart).some(n=>n.actor===p.actor&&n.rpc===patchRpc&&n.result==='SQL_OK')){await p.click('重新保存');recoveryAction+='-then-resave';}await until(()=>receipt.network.slice(networkStart).some(n=>n.actor===p.actor&&n.rpc===patchRpc&&n.result==='SQL_OK'),'manual SQL ACK');if(await p.eval("Boolean(document.querySelector('[role=dialog]'))"))await p.click(submit[people.indexOf(p)]);await until(()=>stageSaved(p),'manual original close');}
   const chain=receipt.network.slice(networkStart).filter(n=>n.actor===p.actor&&n.rpc===patchRpc);assert.equal(chain.filter(n=>n.result==='SQL_OK'&&n.httpStatus===200).length,1,'one actual business ACK per actor');for(let i=1;i<chain.length;i++){assert.notEqual(chain[i].operationId,chain[i-1].operationId);assert.ok(receipt.network.some(n=>n.actor===p.actor&&/^read_ship_dynamics_record/.test(n.rpc)&&n.started>=chain[i-1].started&&n.started<chain[i].started&&n.finished),'original App reread between retry operations');}
   receipt.actorResults.push({caseId:id,actor:p.actor,automaticSuccess:!manualRequired,manualRequired,recoveryAction,attempts:chain.length,chain});await p.screen(id+'-ACK-'+p.actor);
  }

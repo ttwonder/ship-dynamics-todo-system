@@ -7,7 +7,7 @@ import { PGlite } from '@electric-sql/pglite';
 // definitions, NEVER an old data backup: newly committed leaves are hydrated too.
 export const progressRollbackBase = 'ece55206dde4aa851eb8a1a0c8680c6b9fa7e9c7';
 export const progressSqlFiles = ['20260906_appdata_record_store.sql','20260906_appdata_record_delta.sql','20260906_appdata_record_data_management.sql','20260906_record_daily_morning_scheduler.sql'].map(n=>'supabase/development/'+n);
-export const oldProgressSql = file => execFileSync('git',['show',`${progressRollbackBase}:${file}`],{encoding:'utf8'});
+export const oldProgressSql = file => process.env.QA_PROGRESS_BASE_DIR?fs.readFileSync(process.env.QA_PROGRESS_BASE_DIR+'/'+file.split('/').at(-1),'utf8'):execFileSync('git',['show',`${progressRollbackBase}:${file}`],{encoding:'utf8'});
 export const transactionBody = sql => sql.replace(/^begin;\s*$/m,'').replace(/^commit;\s*$/m,'');
 export async function upgradeLocalTaskProgress(db) {
  if(!(db instanceof PGlite))throw new Error('LOCAL_SYNTHETIC_PGLITE_ONLY');
@@ -18,6 +18,7 @@ export async function upgradeLocalTaskProgress(db) {
 export async function rollbackLocalTaskProgress(db) {
  if(!(db instanceof PGlite))throw new Error('LOCAL_SYNTHETIC_PGLITE_ONLY');
  return db.transaction(async tx=>{
+  await tx.exec("select pg_advisory_xact_lock(hashtext('record-maintenance-v1'),0)");
   await tx.exec('lock table ship_dynamics_record_workspaces,ship_dynamics_records,ship_dynamics_record_history,ship_dynamics_record_task_progress,ship_dynamics_record_task_progress_history in share row exclusive mode');
   const snapshots=async()=>{
    const rows=(await tx.query('select workspace_key,revision from ship_dynamics_record_versions order by workspace_key,revision')).rows;

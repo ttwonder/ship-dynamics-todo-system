@@ -4,6 +4,8 @@
 -- A small workspace metadata lock still allocates a commit revision. This is NOT
 -- evidence of independent-connection throughput or the final lock/read design.
 begin;
+-- Before ANY DDL/table lock: all live compatible writers hold the shared side.
+select pg_advisory_xact_lock(hashtext('record-maintenance-v1'),0);
 
 create table if not exists public.ship_dynamics_record_workspaces (
   workspace_key text primary key,
@@ -143,6 +145,75 @@ begin
 end;
 $$;
 
+-- Writer order: maintenance gate -> workspace gate -> operation -> exact entity
+-- advisory keys (including absence) -> rows -> root publication -> audit/order.
+-- Coarse writers use an exclusive workspace gate BEFORE root/entities. Private
+-- materializers fail closed without a caller-owned gate/prepared entity key.
+create or replace function public.ship_dynamics_record_lock_held_v1(p_a integer,p_b integer,p_exclusive boolean default false)
+returns boolean language sql volatile security invoker set search_path=pg_catalog,public as $$
+  select exists(select 1 from pg_locks where locktype='advisory' and pid=pg_backend_pid()
+    and database=(select oid from pg_database where datname=current_database())
+    and classid=p_a::oid and objid=p_b::oid and objsubid=2 and granted
+    and mode=any(case when p_exclusive then array['ExclusiveLock'] else array['ShareLock','ExclusiveLock'] end));
+$$;
+create or replace function public.ship_dynamics_record_other_writer_held_v1(p_workspace text)
+returns boolean language sql volatile security invoker set search_path=pg_catalog,public as $$
+  select exists(select 1 from pg_locks where locktype='advisory' and pid=pg_backend_pid()
+    and database=(select oid from pg_database where datname=current_database())
+    and classid=hashtext('record-writer-v1')::oid and objid<>hashtext(p_workspace)::oid
+    and objsubid=2 and granted and mode=any(array['ShareLock','ExclusiveLock']));
+$$;
+create or replace function public.ship_dynamics_record_writer_gate_v1(p_workspace text,p_exclusive boolean)
+returns void language plpgsql security invoker set search_path=pg_catalog,public as $$
+begin
+  perform pg_advisory_xact_lock_shared(hashtext('record-maintenance-v1'),0);
+  -- A transaction retaining another workspace cannot wait in reverse order.
+  -- Inspect only this backend's gates; no global exclusive writer marker.
+  if public.ship_dynamics_record_other_writer_held_v1(p_workspace) then
+    if p_exclusive then
+      if not pg_try_advisory_xact_lock(hashtext('record-writer-v1'),hashtext(p_workspace)) then
+        raise exception 'record-writer-restart-transaction' using errcode='40001';
+      end if;
+    else
+      if not pg_try_advisory_xact_lock_shared(hashtext('record-writer-v1'),hashtext(p_workspace)) then
+        raise exception 'record-writer-restart-transaction' using errcode='40001';
+      end if;
+    end if;
+    return;
+  end if;
+  if p_exclusive then
+    -- An uncontended multi-command transaction may upgrade; never WAIT on
+    -- an upgrade, because two shared holders could otherwise deadlock.
+    if public.ship_dynamics_record_lock_held_v1(hashtext('record-writer-v1'),hashtext(p_workspace))
+      and not public.ship_dynamics_record_lock_held_v1(hashtext('record-writer-v1'),hashtext(p_workspace),true)
+    then
+      if not pg_try_advisory_xact_lock(hashtext('record-writer-v1'),hashtext(p_workspace)) then
+        raise exception 'record-writer-gate-upgrade' using errcode='40001';
+      end if;
+      return;
+    end if;
+    perform pg_advisory_xact_lock(hashtext('record-writer-v1'),hashtext(p_workspace));
+  else
+    perform pg_advisory_xact_lock_shared(hashtext('record-writer-v1'),hashtext(p_workspace));
+  end if;
+end;
+$$;
+create or replace function public.ship_dynamics_record_assert_writer_v1(p_workspace text,p_collection text default null,p_entity text default null)
+returns void language plpgsql security invoker set search_path=pg_catalog,public as $$
+begin
+  if public.ship_dynamics_record_lock_held_v1(hashtext('record-maintenance-v1'),0,true)
+    or public.ship_dynamics_record_lock_held_v1(hashtext('record-writer-v1'),hashtext(p_workspace),true) then return; end if;
+  if not public.ship_dynamics_record_lock_held_v1(hashtext('record-writer-v1'),hashtext(p_workspace))
+    or (p_collection is not null and p_collection<>'auditLogs' and not public.ship_dynamics_record_lock_held_v1(
+      hashtext('record-entity-v1:'||p_workspace),hashtext(jsonb_build_array(p_collection,p_entity)::text),true))
+  then raise exception 'record-writer-prepare-required' using errcode='55000'; end if;
+end;
+$$;
+revoke all on function public.ship_dynamics_record_lock_held_v1(integer,integer,boolean),
+  public.ship_dynamics_record_other_writer_held_v1(text),
+  public.ship_dynamics_record_writer_gate_v1(text,boolean),
+  public.ship_dynamics_record_assert_writer_v1(text,text,text) from public,anon,authenticated;
+
 -- Caller owns workspace/complete-task CAS and leases. entry_id is ONLY a
 -- physical slot, not a vessel identity or a new business scope epoch.
 create or replace function public.ship_dynamics_record_progress_write_v1(
@@ -153,6 +224,7 @@ declare
   ids jsonb := '[]'::jsonb; item jsonb; ordinal bigint; slot text; vessel jsonb; old_row record;
   meta jsonb;
 begin
+  perform public.ship_dynamics_record_assert_writer_v1(p_workspace,'tasks',p_task);
   if p_value is null or not (p_value ? 'vesselProgress') then meta:=jsonb_build_object('kind','absent');
   elsif jsonb_typeof(p_value -> 'vesselProgress')<>'array' then
     meta:=jsonb_build_object('kind','literal','value',p_value -> 'vesselProgress');
@@ -223,6 +295,7 @@ begin
     or (p_payload ->> 'revision') !~ '^[0-9]+$'
     or jsonb_typeof(p_payload -> 'updatedAt') is distinct from 'string'
   then raise exception 'invalid-record-import'; end if;
+  perform public.ship_dynamics_record_writer_gate_v1(p_workspace_key,true);
   token := md5(p_payload::text);
   perform pg_advisory_xact_lock(hashtext('record-import'), hashtext(p_workspace_key));
   select import_token into previous from public.ship_dynamics_record_workspaces where workspace_key=p_workspace_key;
@@ -361,7 +434,12 @@ declare
   orders jsonb; name text; ids jsonb; operation jsonb; target_id text; replacement jsonb;
   saved_at timestamptz; saved_text text; next_revision integer; receipt jsonb; meta jsonb;
 begin
-  select * into strict workspace from public.ship_dynamics_record_workspaces where workspace_key=p_workspace_key for update;
+  perform public.ship_dynamics_record_assert_writer_v1(p_workspace_key);
+  for operation in select value from jsonb_array_elements(p_operations) where value->>'kind'='entity' loop
+    perform public.ship_dynamics_record_assert_writer_v1(p_workspace_key,operation->>'collection',operation->>'entityId');
+  end loop;
+  select * into strict workspace from public.ship_dynamics_record_workspaces where workspace_key=p_workspace_key for no key update;
+  perform pg_advisory_xact_lock_shared(hashtext('record-published-v1'),hashtext(p_workspace_key));
   select coalesce(jsonb_object_agg(collection,c.ids),'{}'::jsonb) into orders
     from public.ship_dynamics_record_collections c where workspace_key=p_workspace_key;
   saved_at := case when jsonb_array_length(p_operations)=0 then workspace.updated_at else clock_timestamp() end;
@@ -546,6 +624,7 @@ declare
   names text[] := array['users','vessels','tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs'];
   orders jsonb; next_orders jsonb; requested_orders jsonb := '{}'::jsonb; next_root jsonb;
   next_revision integer; saved_at timestamptz; saved_text text; original_signature jsonb;
+  prepared jsonb := '{}'::jsonb; prepared_key text; entity_lock integer; nonblocking_followup boolean;
 begin
   if nullif(p_operation_id,'') is null or char_length(p_operation_id)>200 then
     return jsonb_build_object('ok',false,'code','invalid-operation-id'); end if;
@@ -553,13 +632,79 @@ begin
     return jsonb_build_object('ok',false,'code','invalid-operations'); end if;
   if jsonb_typeof(p_lock_guards) is distinct from 'array' then
     return jsonb_build_object('ok',false,'code','invalid-lock-guards'); end if;
+  perform public.ship_dynamics_record_writer_gate_v1(p_workspace_key,false);
   -- Replay before authorization/lease checks: a committed lost ACK must stay
   -- recoverable after expiry or after a newer save. Payload must match exactly.
-  perform pg_advisory_xact_lock(hashtext('record-operation:' || p_workspace_key),hashtext(p_operation_id));
+  -- A second RPC may own this root or another workspace's writer gate/root.
+  -- Neither may wait behind a peer that can be waiting for a retained lock.
+  nonblocking_followup:=public.ship_dynamics_record_lock_held_v1(hashtext('record-published-v1'),hashtext(p_workspace_key))
+    or public.ship_dynamics_record_other_writer_held_v1(p_workspace_key);
+  if nonblocking_followup then
+    if not pg_try_advisory_xact_lock(hashtext('record-operation:' || p_workspace_key),hashtext(p_operation_id)) then
+      raise exception 'record-writer-restart-transaction' using errcode='40001';
+    end if;
+  else
+    perform pg_advisory_xact_lock(hashtext('record-operation:' || p_workspace_key),hashtext(p_operation_id));
+  end if;
   receipt := public.get_ship_dynamics_record_receipt_v1(p_workspace_key,p_operation_id,p_operations,p_saved_by,p_actor_user_id,p_actor_guard,p_authorization_guard,p_lock_guards);
   if receipt ->> 'status' <> 'missing' then return receipt; end if;
-  select * into workspace from public.ship_dynamics_record_workspaces where workspace_key=p_workspace_key for update;
+  -- Do not lock audit/order here: they are the shared publication domain.
+  -- Lock hashes in numeric order before rows, so even advisory hash collisions
+  -- only reduce concurrency, never reverse a multi-entity lock order.
+  for entity_lock in
+    select distinct hashtext(jsonb_build_array(x->>'collection',x->>'entityId')::text)
+    from jsonb_array_elements(p_operations) x
+    where x->>'kind'='entity' and x->>'collection'<>'auditLogs'
+      and x->>'collection'=any(names) and nullif(x->>'entityId','') is not null
+    order by 1
+  loop
+    if nonblocking_followup then
+      if not pg_try_advisory_xact_lock(hashtext('record-entity-v1:'||p_workspace_key),entity_lock) then
+        raise exception 'record-writer-restart-transaction' using errcode='40001';
+      end if;
+    else
+      perform pg_advisory_xact_lock(hashtext('record-entity-v1:'||p_workspace_key),entity_lock);
+    end if;
+  end loop;
+  for name,target_id in
+    select distinct (x->>'collection') collate "C",(x->>'entityId') collate "C" from jsonb_array_elements(p_operations) x
+    where x->>'kind'='entity' and x->>'collection'<>'auditLogs'
+      and x->>'collection'=any(names) and nullif(x->>'entityId','') is not null
+    order by 1,2
+  loop
+    -- Separate lock and hydration statements: a row changed while lock acquisition
+    -- waited must be hydrated from the new READ COMMITTED snapshot, not the old one.
+    if nonblocking_followup then
+      begin
+        perform 1 from public.ship_dynamics_records r where r.workspace_key=p_workspace_key
+          and r.collection=name and r.entity_id=target_id for update nowait;
+      exception when lock_not_available then
+        raise exception 'record-writer-restart-transaction' using errcode='40001';
+      end;
+    else
+      perform 1 from public.ship_dynamics_records r where r.workspace_key=p_workspace_key
+        and r.collection=name and r.entity_id=target_id for update;
+    end if;
+    select public.ship_dynamics_record_hydrate_v1(r.workspace_key,r.collection,r.entity_id,r.value,r.task_progress_meta,r.revision)
+      into current_value from public.ship_dynamics_records r
+      where r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=target_id;
+    prepared_key:=jsonb_build_array(name,target_id)::text;
+    prepared:=jsonb_set(prepared,array[prepared_key],coalesce(current_value,'null'::jsonb),true);
+  end loop;
+  -- Global revision/history/delta/audit/order still publish atomically. Authority
+  -- and leases are checked AFTER all entity waiting, against this locked root.
+  if nonblocking_followup then
+    begin
+      select * into workspace from public.ship_dynamics_record_workspaces where workspace_key=p_workspace_key for no key update nowait;
+    exception when lock_not_available then
+      raise exception 'record-writer-restart-transaction' using errcode='40001';
+    end;
+  else
+    select * into workspace from public.ship_dynamics_record_workspaces where workspace_key=p_workspace_key for no key update;
+  end if;
   if not found then return jsonb_build_object('ok',false,'code','workspace-not-found'); end if;
+  -- Shared marker only: never serializes independent preparers.
+  perform pg_advisory_xact_lock_shared(hashtext('record-published-v1'),hashtext(p_workspace_key));
 
   -- Only users/vessels/settings are needed for the unchanged authority guards.
   -- Do not reconstruct tasks, meetings, cases, reports or historical audit bodies.
@@ -614,8 +759,12 @@ begin
       if (expected_value is not null and (jsonb_typeof(expected_value) is distinct from 'object' or jsonb_typeof(expected_value -> 'id') is distinct from 'string' or expected_value ->> 'id' is distinct from target_id))
         or (replacement is not null and (jsonb_typeof(replacement) is distinct from 'object' or jsonb_typeof(replacement -> 'id') is distinct from 'string' or replacement ->> 'id' is distinct from target_id))
       then return jsonb_build_object('ok',false,'code','invalid-entity-id'); end if;
-      select public.ship_dynamics_record_hydrate_v1(r.workspace_key,r.collection,r.entity_id,r.value,r.task_progress_meta,r.revision) into current_value
-        from public.ship_dynamics_records r where r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=target_id for update;
+      if name='auditLogs' then
+        select public.ship_dynamics_record_hydrate_v1(r.workspace_key,r.collection,r.entity_id,r.value,r.task_progress_meta,r.revision) into current_value
+          from public.ship_dynamics_records r where r.workspace_key=p_workspace_key and r.collection=name and r.entity_id=target_id for update;
+      else
+        current_value:=nullif(prepared->(jsonb_build_array(name,target_id)::text),'null'::jsonb);
+      end if;
       if current_value is distinct from expected_value then
         return jsonb_build_object('ok',false,'code','block-conflict','conflict_key',name || ':' || target_id); end if;
       if name in ('vessels','tasks','internalControlCases','meetings') then

@@ -45,7 +45,7 @@ export async function createNativeRecordQa(run,receipt,{httpTransactions=false,b
   }
   if(fs.existsSync(data)){
    const owned=JSON.parse(fs.readFileSync(marker,'utf8'));assert.equal(owned.data,data);assert.equal(owned.kind,'records-v1-native-synthetic');
-   fs.rmSync(data,{recursive:true});receipt.ownedDataRemoved=true;
+   await fs.promises.rm(data,{recursive:true,maxRetries:5,retryDelay:100});receipt.ownedDataRemoved=true;
   }
   save();
  };

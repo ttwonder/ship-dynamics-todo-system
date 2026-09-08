@@ -299,6 +299,7 @@ begin
     );
   end if;
 
+  perform public.ship_dynamics_record_writer_gate_v1(p_workspace_key,true);
   select * into current_row
   from public.ship_dynamics_record_workspaces
   where workspace_key = p_workspace_key

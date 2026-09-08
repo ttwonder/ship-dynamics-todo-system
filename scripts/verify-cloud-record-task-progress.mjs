@@ -9,7 +9,7 @@ import { createServer } from 'vite';
 const evidence = fs.mkdtempSync(path.join(process.env.QA_EVIDENCE_ROOT || process.env.TEMP || '.', 'task-progress-sql-'));
 const baseCommit = 'ece55206dde4aa851eb8a1a0c8680c6b9fa7e9c7';
 const sqlPath = 'supabase/development/20260906_appdata_record_store.sql';
-const oldSql = execFileSync('git', ['show', `${baseCommit}:${sqlPath}`], {encoding:'utf8'});
+const oldSql = process.env.QA_PROGRESS_BASE_DIR?fs.readFileSync(path.join(process.env.QA_PROGRESS_BASE_DIR,'20260906_appdata_record_store.sql'),'utf8'):execFileSync('git', ['show', `${baseCommit}:${sqlPath}`], {encoding:'utf8'});
 const db = new PGlite(), oracle = new PGlite();
 const vite = await createServer({server:{middlewareMode:true}, appType:'custom', logLevel:'silent'});
 const key = 'progress-private', actor = 'qa-owner', at = '2026-09-06T00:00:00.000Z', time = '2026-09-06T01:00:00.000Z';
@@ -155,7 +155,10 @@ try {
   for(const d of [db,oracle])assert.deepEqual((await query(d,'select read_ship_dynamics_records_v1($1) result',['raw-private'])).payload,rawBase);
  });
  // Private core here tests storage conversion, not new client authority rules.
- const rawSave=async(d,workspace,id,mutate)=>{
+ const rawSave=async(d,workspace,id,mutate)=>d.transaction(async tx=>{
+  d=tx;
+  if(await query(d,"select to_regprocedure('public.ship_dynamics_record_writer_gate_v1(text,boolean)') is not null result"))
+   await query(d,'select ship_dynamics_record_writer_gate_v1($1,true) result',[workspace]);
   const payload=(await query(d,'select read_ship_dynamics_records_v1($1) result',[workspace])).payload;
   const target=clone(payload.tasks[0]);mutate(target);
   const root=(await d.query('select root from ship_dynamics_record_workspaces where workspace_key=$1',[workspace])).rows[0].root;
@@ -163,7 +166,7 @@ try {
   const operations=[{kind:'entity',collection:'tasks',entityId:target.id,expected:payload.tasks[0],value:target}];
   const r=await query(d,'select ship_dynamics_record_commit_validated_v1($1,$2::jsonb,$3::jsonb,$4::jsonb,$5,$6,$7::jsonb) result',[workspace,JSON.stringify(operations),JSON.stringify(root),JSON.stringify(orders),'PRIVATE QA',id,JSON.stringify([id,operations])]);
   assert.equal(r.ok,true);return r;
- };
+ });
  for(const d of [db,oracle])for(const [i,value] of rawValues.entries())await rawSave(d,'raw-private','raw-version-'+i,t=>{if(value===undefined)delete t.vesselProgress;else t.vesselProgress=value;t.description='version '+i;});
  await check('reconstruction-corruption-refused-with-entire-upgrade-transaction-preserved',async()=>{
   for(const [id,sql,args] of [

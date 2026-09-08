@@ -94,6 +94,7 @@ declare
 begin
   if nullif(p_workspace_key,'') is null or nullif(p_operation_id,'') is null or length(p_operation_id)>160
     or p_captured_at is null or not isfinite(p_captured_at) then raise exception 'invalid-scheduler-request'; end if;
+  perform public.ship_dynamics_record_writer_gate_v1(p_workspace_key,true);
   perform pg_advisory_xact_lock(hashtext('record-operation:' || p_workspace_key),hashtext(operation_key));
   select * into ledger from public.ship_dynamics_record_receipts where workspace_key=p_workspace_key and operation_id=operation_key;
   if found then
