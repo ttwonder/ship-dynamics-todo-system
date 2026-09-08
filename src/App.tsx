@@ -5,7 +5,7 @@ import { createInitialData } from './data/seed';
 import type { AgendaReport, AppData, FilterState, InternalControlCase, MorningReportSnapshot, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, sanitizeAppDataForStorage, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
 import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlockPatchV2UnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, applyCloudBlockPatchV2, claimEditLock, cloudStoragePayloadFor, fetchCloudData as fetchCloudDataRpc, getCloudBlockPatchReceipt, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
-import { buildRecordScopePatch, cleanRecordHomeCacheMatches, type RecordReadScope } from './cloudRecordScopes';
+import { buildRecordScopePatch, cleanRecordHomeCacheMatches, unionRecordScopes, recordScopeKey, type RecordReadScope } from './cloudRecordScopes';
 import { CloudBlockPatchConfirmedRefreshError, CloudBlockPatchOutcomeUnknownError, runCloudBlockPatchWithReceipt } from './cloudBlockReceipt';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
 import { mergeConfirmedCloudSnapshot } from './cloudConfirmedMerge';
@@ -1884,8 +1884,8 @@ export default function App() {
       const confirmed=confirmedCloudData.current;
       if(!confirmed)throw new Error('沒有可驗證的已保存雲端基線');
       const token=configIoCoordinator.current.begin(leaseConfig);
-      const scope:RecordReadScope=sectionKey.startsWith('vessel:')?recordReadScope.current:'full';
-      const coverageChanged=leaseConfig.readMode==='scoped-v1'&&scope!==recordReadScope.current;
+      const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('vessel:')?recordReadScope.current:'full';
+      const coverageChanged=leaseConfig.readMode==='scoped-v1'&&recordScopeKey(scope)!==recordScopeKey(recordReadScope.current);
       const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,coverageChanged?config=>fetchCloudDataRpc(config,undefined,undefined,scope):vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
       if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!claimStillCurrent())return null;
       if(!remote)throw new Error('雲端工作區尚未建立，不能開啟多人單項編輯');
@@ -2193,7 +2193,7 @@ export default function App() {
   const loadRecordActionScope=async(scope:RecordReadScope):Promise<boolean>=>{
     const generation=++actionScopeGeneration.current;
     const config=getSupabaseConfig();
-    if(config?.readMode!=='scoped-v1'||recordReadScope.current===scope)return true;
+    if(config?.readMode!=='scoped-v1'||recordScopeKey(recordReadScope.current)===recordScopeKey(scope))return true;
     const actor=liveCurrentUserId.current,session=identitySessionGeneration.current;
     const token=configIoCoordinator.current.begin(config);
     const isCurrent=()=>generation===actionScopeGeneration.current&&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig());
@@ -2228,7 +2228,7 @@ export default function App() {
     }
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId('');
-    if(!await loadRecordActionScope(nextTab==='dashboard'?'home':'full'))return;
+    if(!await loadRecordActionScope((['dashboard','total','closed','work'] as Tab[]).includes(nextTab)?'home':'full'))return;
     setTab(nextTab);
   };
   const openVesselDetail = async (vesselId: string) => {
@@ -2260,7 +2260,7 @@ export default function App() {
     const capturedConfig=configToken?.config||null;
     const requestIsCurrent=()=>taskOpenRequests.current.isCurrent(requestGeneration)&&liveAuthorizationEpoch.current===requestAuthorizationEpoch&&(!configToken||configIoCoordinator.current.isCurrent(configToken,getSupabaseConfig()));
     blockedTaskCloudConfig.current=capturedConfig;
-    let sourceData=data;
+    let sourceData=liveData.current;
     if(configToken){
       setSensitiveCloudStatus('正在讀取伺服器上的最新事項資料…',`task:${taskId}`);
       try{
@@ -2332,7 +2332,7 @@ export default function App() {
     return requestIsCurrent()?'failed':'cancelled';
   };
   const openTask = async (task: TaskItem, vesselId = '', returnVesselId = ''):Promise<TaskOpenResult> => {
-    if(!await loadRecordActionScope('full'))return 'failed';
+    if(!await loadRecordActionScope({targets:[{collection:'tasks',id:task.id}]}))return 'failed';
     const requestGeneration=taskOpenRequests.current.begin({vesselId:returnVesselId,batchManaged:false});
     const requestIsCurrent=()=>taskOpenRequests.current.isCurrent(requestGeneration);
     const visibleTask=roleVisibleTasks.some(item=>item.id===task.id)?liveData.current.tasks.find(item=>item.id===task.id):undefined;
@@ -3477,12 +3477,18 @@ export default function App() {
     if(!sessionIsCurrent())return false;
     let planningRemote:AppData;
     let plannedLockKeys:string[];
+    let mutationScope:RecordReadScope=recordReadScope.current;
+    const fetchMutationScope=(cfg:ResolvedSupabaseConfig)=>fetchCloudDataRpc(cfg,undefined,undefined,mutationScope);
     try{
       const base=confirmedCloudData.current;
-      const fetched=await fetchCloudData(config);
+      if(config.readMode==='scoped-v1'){
+        const extra=additionalLockKeys(liveData.current);
+        mutationScope={targets:[...uniqueIds.map(id=>({collection:'tasks' as const,id})),...extra.flatMap(key=>key.startsWith('internal-control:')?[{collection:'internalControlCases' as const,id:key.slice('internal-control:'.length)}]:[])]};
+      }
+      const fetched=await fetchMutationScope(config);
       if(!base||!fetched)throw new Error('缺少可信雲端基線');
       if(!sessionIsCurrent())throw new StaleAsyncConfigError();
-      assertRemoteExtendsDurableHistory(cloudIdentity(config),base,fetched);
+      assertRemoteExtendsDurableHistory(cloudIdentity(config),config.readMode==='scoped-v1'?null:base,fetched);
       const remoteActor=fetched.users.find(user=>user.id===actorId&&user.isActive);
       const visibleTaskIds=new Set(remoteActor?selectTasksVisibleToUser(fetched.tasks,remoteActor,{internalControlCases:fetched.internalControlCases,meetings:fetched.meetings,visibleVesselIds:[...batchVisibleVesselIds(fetched,remoteActor)]}).map(task=>task.id):[]);
       if(!remoteActor||uniqueIds.some(id=>!visibleTaskIds.has(id)))throw new Error('最新雲端身份或涉船範圍已無權處理至少一筆要事');
@@ -3544,10 +3550,10 @@ export default function App() {
     let durable=false;
     try{
       const base=confirmedCloudData.current;
-      const remote=await fetchCloudData(config);
+      const remote=await fetchMutationScope(config);
       if(!base||!remote)throw new Error('缺少可信雲端基線');
       assertBundleActive();
-      assertRemoteExtendsDurableHistory(cloudIdentity(config),base,remote);
+      assertRemoteExtendsDurableHistory(cloudIdentity(config),config.readMode==='scoped-v1'?null:base,remote);
       const sameLockKeySet=(left:readonly string[],right:readonly string[])=>left.length===right.length&&left.every((key,index)=>key===right[index]);
       const refreshedLockKeys=[...new Set([...taskRelationLockKeys(remote,uniqueIds),...additionalLockKeys(remote)])].sort((left,right)=>left.localeCompare(right));
       if(!sameLockKeySet(refreshedLockKeys,plannedLockKeys))throw new Error('關聯資料在取得鎖期間已變更，請重新執行');
@@ -3558,6 +3564,7 @@ export default function App() {
       confirmCloudSnapshot(cloudIdentity(config),remote);
       liveData.current=remote;
       flushSync(()=>setData(remote));
+      if(config.readMode==='scoped-v1')recordReadScope.current=mutationScope;
       mutationApplied=mutation(remote);
       if(!mutationApplied){await releaseAll();return false;}
       assertBundleActive();

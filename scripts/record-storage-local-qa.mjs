@@ -32,7 +32,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
   sd_itinerary_record_report_delete_ids_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_set_token','p_delete_report_ids:jsonb'],
   sd_itinerary_record_report_delete_dates_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_set_token','p_delete_dates:jsonb'],
   sd_itinerary_record_load_many_v1:['p_workspace_key','p_vessel_ids:text[]','p_actor_user_id'],
-  read_ship_dynamics_record_scopes_v1:['p_workspace_key','p_scope','p_versions:jsonb'],
+  read_ship_dynamics_record_scopes_v1:['p_workspace_key','p_scope','p_versions:jsonb','p_targets:jsonb'],
   read_ship_dynamics_records_v1:['p_workspace_key'],
   read_ship_dynamics_record_delta_v1:['p_workspace_key','p_base_revision:integer','p_base_token'],
   apply_ship_dynamics_record_patch_v1:requestArgs,

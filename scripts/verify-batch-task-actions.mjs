@@ -79,7 +79,8 @@ try {
   const bundleStart=app.indexOf('const runTaskMutationWithLockBundle=');
   const bundleEnd=app.indexOf('\n  const batchCompleteTasks',bundleStart);
   const bundleBranch=app.slice(bundleStart,bundleEnd);
-  const planningFetch=bundleBranch.indexOf('const fetched=await fetchCloudData(config)');
+  const planningFetch=bundleBranch.indexOf('const fetched=await fetchMutationScope(config)');
+  assert.ok(bundleBranch.includes('const fetchMutationScope=(cfg:ResolvedSupabaseConfig)=>fetchCloudDataRpc(cfg,undefined,undefined,mutationScope)')&&bundleBranch.includes('mutationScope={targets:')&&bundleBranch.includes('const remote=await fetchMutationScope(config)'), 'both planning and post-lease freshness reads must use the exact selected union, not workspace-full');
   const planningKeys=bundleBranch.indexOf('plannedLockKeys=[...new Set([...taskRelationLockKeys(planningRemote,uniqueIds),...additionalLockKeys(planningRemote)])]');
   const bundleClaim=bundleBranch.indexOf('const result=await acquireEditLockBundle(');
   assert.ok(planningFetch>=0&&planningFetch<planningKeys&&planningKeys<bundleClaim,'batch task operations must plan the complete task/meeting/internal-control lock closure from fresh cloud data before claiming');

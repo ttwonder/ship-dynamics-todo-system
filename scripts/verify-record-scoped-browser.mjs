@@ -16,7 +16,7 @@ fs.mkdirSync(root,{recursive:true});
 const run=fs.mkdtempSync(path.join(root,'ui-')),profile=path.join(run,'chrome');
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const receipt={kind:'original-App-native-PG-multi-context',inputHead:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),status:'RUNNING',cases:[],network:[],errors:[],blockedExternal:[],commands:[{command:'node scripts/verify-record-scoped-browser.mjs',exit:null}],productionContacted:false};
-receipt.inputs=Object.fromEntries(['scripts/verify-record-scoped-browser.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','src/App.tsx'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
+receipt.inputs=Object.fromEntries(['scripts/verify-record-scoped-browser.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','src/App.tsx','src/cloud.ts','src/cloudRecordScopes.ts','supabase/development/20260908_appdata_record_scoped_read.sql'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
 const save=()=>fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const until=async(fn,label,timeout=25000)=>{const end=Date.now()+timeout;while(Date.now()<end){const v=await fn();if(v)return v;await wait(30);}throw new Error('QA timeout: '+label);};
@@ -53,12 +53,13 @@ async function login(p){
  await until(async()=>(await p.text()).includes('請輸入管理者設定的進站密碼。'),'original site gate');
  await p.fill("document.querySelector('input[type=password]')",qa.password);await p.click('進入系統');
  await until(async()=>(await p.text()).includes('人員登入／切換'),'original personnel gate');
+ if(p.actor==='qa-vessel'){await p.eval("document.querySelector('select[aria-label=登入部門]').focus()");await p.key('End');await p.key('Enter');await until(()=>p.eval("[...document.querySelector('select[aria-label=登入人員]').options].some(o=>o.value==='qa-vessel')"),'vessel roster');}
  const selector="document.querySelector('select[aria-label=登入人員]')";
  const index=await p.eval(`(()=>{const n=${selector};n.focus();return [...n.options].findIndex(o=>o.value===${JSON.stringify(p.actor)});})()`);assert.ok(index>=0);
  await p.key('Home');for(let i=0;i<index;i++)await p.key('ArrowDown');await p.key('Enter');
  await until(()=>p.eval(`(${selector}).value===${JSON.stringify(p.actor)}`),'native identity select');
- await p.fill("document.querySelector('input[type=password]')",qa.password);await p.click('登入');
- await until(async()=>!(await p.text()).includes('人員登入／切換')&&(await p.text()).includes(p.actor==='qa-owner'?'QA OWNER':'QA OPERATOR'),'original logged-in homepage');await p.sync();
+ if(await p.eval("Boolean(document.querySelector('input[type=password]'))"))await p.fill("document.querySelector('input[type=password]')",qa.password);await p.click('登入');
+ await until(async()=>!(await p.text()).includes('人員登入／切換')&&(await p.text()).includes(p.actor==='qa-owner'?'QA OWNER':p.actor==='qa-vessel'?'QA VESSEL ACCOUNT':'QA OPERATOR'),'original logged-in homepage');await p.sync();
 }
 const locks=async()=> (await native.observer.query("select section_key,locked_by from ship_dynamics_edit_locks where expires_at>now() order by section_key")).rows;
 const read=async()=> (await native.observer.query('select read_ship_dynamics_records_v1($1) r',[qa.workspace])).rows[0].r;
@@ -96,7 +97,7 @@ try{
  native=await createNativeRecordQa(run,receipt,{httpTransactions:true,beforeCommit:async({context,pid,value})=>{
   if(barrier&&context.operationId===barrier.operationId){assert.equal(value.ok,true,'A real SQL executed successfully');barrier.pid=pid;barrier.entered=true;save();await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('private commit barrier budget exceeded')),6000);releaseCommit=()=>{clearTimeout(timer);resolve();};});}
  }});
- qa=await createRecordStorageLocalQa({internalControl:true,scopedRead:true,performanceTrace:true,preparePerformanceFixture:async initial=>{initial.vessels[0].qaUnknown={ordered:['a',{b:2}]};initial.agendaReports=[{id:'qa-report',title:'QA report',vesselIds:['qa-v1'],createdBy:'qa-owner',createdAt:initial.updatedAt,taskCount:initial.tasks.length,kind:'ad-hoc',snapshot:{vessels:structuredClone(initial.vessels),tasks:structuredClone(initial.tasks),meetings:structuredClone(initial.meetings),qaUnknown:'QA_UNLOADED_DETAIL_SENTINEL'}}];for(const t of initial.tasks.filter(t=>!t.isInternalControl)){t.statusLogs.push({id:'qa-recent-log',at:new Date().toISOString(),by:'QA OWNER',text:'QA recent history'},{id:'qa-heavy-log',at:new Date().toISOString(),by:'QA OWNER',text:'QA_UNLOADED_DETAIL_SENTINEL'});}},databaseFactory:async()=>native.adapter});
+ qa=await createRecordStorageLocalQa({internalControl:true,scopedRead:true,performanceTrace:true,preparePerformanceFixture:async initial=>{initial.vessels[0].qaUnknown={ordered:['a',{b:2}]};initial.users.push({...structuredClone(initial.users[0]),id:'qa-vessel',name:'QA VESSEL ACCOUNT',username:'qa-vessel',role:'vessel',managedVesselIds:['qa-v1']});const readonly=structuredClone(initial.tasks.find(t=>!t.isInternalControl));readonly.id='qa-readonly-task';readonly.vesselId='qa-v1';readonly.vesselIds=['qa-v1'];readonly.description='QA READONLY TASK';readonly.statusLogs.push({id:'qa-readonly-old',at:initial.updatedAt,by:'QA OWNER',text:'QA readonly old'},{id:'qa-readonly-deep',at:initial.updatedAt,by:'QA OWNER',text:'QA_READONLY_HISTORY'});initial.tasks.push(readonly);const targetCase=initial.internalControlCases.find(c=>c.id==='qa-withdraw'),targetTask=initial.tasks.find(t=>t.id===targetCase.linkedTaskId);for(const row of [targetCase,targetTask]){row.qaUnknown={ordered:['kept',{n:2}]};row.statusLogs.splice(1,0,{id:'qa-malformed',text:'',qaOpaque:'preserve-malformed'});row.statusLogs.push({id:'qa-target-older',at:initial.updatedAt,by:'QA OWNER',text:'QA target older'},{id:'qa-target-deep',at:initial.updatedAt,by:'QA OWNER',text:'QA_TARGET_HISTORY',qaUnknown:'keep-log'});}for(const id of ['qa-case-delete','qa-task-delete']){const c=initial.internalControlCases.find(c=>c.id===id),t=initial.tasks.find(t=>t.id===c.linkedTaskId);for(const row of [c,t])row.statusLogs.push(...[1,2,3].map(n=>({id:id+'-deep-'+n,at:initial.updatedAt,by:'QA OWNER',text:id+' history '+n,qaRaw:[n,{kept:true}]})));}initial.agendaReports=[{id:'qa-report',title:'QA report',vesselIds:['qa-v1'],createdBy:'qa-owner',createdAt:initial.updatedAt,taskCount:initial.tasks.length,kind:'ad-hoc',snapshot:{vessels:structuredClone(initial.vessels),tasks:structuredClone(initial.tasks),meetings:structuredClone(initial.meetings),qaUnknown:'QA_UNLOADED_DETAIL_SENTINEL'}}];for(const t of initial.tasks.filter(t=>t.id==='qa-unrelated-task')){t.statusLogs.push({id:'qa-recent-log',at:new Date().toISOString(),by:'QA OWNER',text:'QA recent history'},{id:'qa-heavy-log',at:new Date().toISOString(),by:'QA OWNER',text:'QA_UNLOADED_DETAIL_SENTINEL'});}},databaseFactory:async()=>native.adapter});
  receipt.origin=qa.origin;assert.equal((await (await fetch(qa.origin+'/__qa/health')).json()).kind,'REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES');
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let socketPath;await until(()=>{try{[chromePort,socketPath]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(chromePort)&&socketPath?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'Chrome handshake');
@@ -106,7 +107,7 @@ try{
   const handle=async()=>{
    if(m.method==='Runtime.exceptionThrown')receipt.errors.push(m.params.exceptionDetails.text);
    if(m.method==='Page.javascriptDialogOpening'){
-    const {type,message}=m.params,accept=type==='beforeunload'||type==='confirm'&&['同步最新會保留本機修改','請盡量以船端修改為主'].some(t=>message.startsWith(t));
+    const {type,message}=m.params,accept=type==='beforeunload'||type==='confirm'&&['同步最新會保留本機修改','請盡量以船端修改為主','確定批量完成所選'].some(t=>message.startsWith(t));
     if(!accept)receipt.errors.push('unexpected dialog: '+message);await call('Page.handleJavaScriptDialog',{accept},m.sessionId);
    }
    if(m.method==='Fetch.requestPaused'){
@@ -118,7 +119,7 @@ try{
     await call(allowed?'Fetch.continueRequest':'Fetch.failRequest',allowed?{requestId:m.params.requestId}:{requestId:m.params.requestId,errorReason:'BlockedByClient'},m.sessionId);
    }
    if(m.method==='Network.requestWillBeSent'&&m.params.request.url.startsWith(qa.origin+'/rest/v1/rpc/')){
-    const b=JSON.parse(m.params.request.postData||'{}'),row={caseId:currentCase,actor:actors.find(p=>p.s===m.sessionId)?.actor,rpc:m.params.request.url.split('/').at(-1),operationId:b.p_operation_id,payloadHash:hash(b),started:m.params.wallTime*1000};
+    const b=JSON.parse(m.params.request.postData||'{}'),row={caseId:currentCase,actor:actors.find(p=>p.s===m.sessionId)?.actor,rpc:m.params.request.url.split('/').at(-1),operationId:b.p_operation_id,readScope:b.p_scope,targets:b.p_targets,payloadHash:hash(b),started:m.params.wallTime*1000};
     netRows.set(m.sessionId+':'+m.params.requestId,row);receipt.network.push(row);
    }
    const row=netRows.get(m.sessionId+':'+m.params.requestId);
@@ -144,9 +145,17 @@ try{
  assert.throws(()=>scopes.assertRecordScopePatch('home',[{kind:'entity',collection:'tasks'}]),/not-loaded/);
  const detached=scopes.recordScopePayload(state);detached.vessels[0].name='caller mutation';assert.notEqual(scopes.recordScopePayload(state).vessels[0].name,'caller mutation');
  const {normalizeAppData}=await qa.loadModule('/src/normalize.ts'),fullModel=normalizeAppData(baseline.payload),homeModel=normalizeAppData(scopes.recordScopePayload(state));
+ assert.deepEqual(homeModel.tasks.find(t=>t.description==='QA withdraw').statusLogs.slice(0,2),fullModel.tasks.find(t=>t.description==='QA withdraw').statusLogs.slice(0,2),'summary preview equals original normalized full preview despite malformed raw logs');
  assert.equal(scopes.cleanRecordHomeCacheMatches(fullModel,fullModel,homeModel),true);
  const dirty=structuredClone(fullModel);dirty.vessels[0].note.recentDynamics='UNSAVED';assert.equal(scopes.cleanRecordHomeCacheMatches(dirty,fullModel,homeModel),false);
- receipt.cases.push({caseId:'SCOPE-PROTOCOL',status:'PASS'});
+ const missingCollection=structuredClone(response);delete missingCollection.collections.tasks;
+ assert.throws(()=>scopes.consumeRecordScopes(missingCollection,qa.workspace,'home',null),/collection/,'incomplete summary collections reject atomically');
+ const wrongCoverage=structuredClone(response);wrongCoverage.collections.tasks.rows[0].detail=true;
+ assert.throws(()=>scopes.consumeRecordScopes(wrongCoverage,qa.workspace,'home',null),/coverage/);
+ const ghost=structuredClone(response);ghost.collections.tasks.rows.push({id:'ghost',version:0,detail:false,value:{id:'ghost'}});assert.throws(()=>scopes.consumeRecordScopes(ghost,qa.workspace,'home',null),/row/);
+ for(const id of ['constructor','__proto__']){const special=structuredClone(response);special.collections.tasks={ids:[id],rows:[{id,version:0,detail:false,value:{id}}]};const accepted=scopes.consumeRecordScopes(special,qa.workspace,'home',null);assert.equal(scopes.recordScopePayload(accepted).tasks[0].id,id);special.collections.tasks.rows=[];assert.throws(()=>scopes.consumeRecordScopes(special,qa.workspace,'home',null),/unloaded/);}
+ const wrongBase={...state,scopeKey:'full'};assert.throws(()=>scopes.consumeRecordScopes(empty,qa.workspace,'home',wrongBase),/base/);
+ receipt.cases.push({caseId:'SCOPE-PROTOCOL',status:'PASS',coverageNegatives:true,specialIds:true});
 
  const contextB=(await call('Target.createBrowserContext')).browserContextId;
  const b=await makePage('qa-operator',contextB);await login(b);
@@ -166,16 +175,64 @@ try{
  receipt.cases.push({caseId:'VESSEL-SCOPE',status:'PASS',completeSqlEquality:true,peerDraftRetained:true,lostAckExactRecovery:true});
  currentCase='ACTION-DETAIL';
  await a.eval(`void(window.__actionStart=${receipt.network.length})`);
- await a.click('待辦總表');
- await until(()=>receipt.network.some(r=>r.caseId==='ACTION-DETAIL'&&r.containsUnloadedDetail),'explicit action loads complete histories');
+ await a.click('待辦總表');await a.sync();
+ await until(()=>a.eval("document.body.innerText.includes('QA withdraw')"),'original task list');
+ await until(()=>receipt.network.some(r=>r.caseId==='ACTION-DETAIL'&&r.finished),'list read finished');
+ assert.equal(receipt.network.some(r=>r.caseId==='ACTION-DETAIL'&&r.containsUnloadedDetail),false,'task list must keep unrelated histories and report snapshots deferred');
  receipt.cases.push({caseId:'ACTION-DETAIL',status:'PASS'});
- currentCase='RELOAD-FULL-TO-HOME';await a.eval('void(window.__oldDocument=true)');await call('Page.reload',{},a.s);
+ currentCase='TARGET-TASK';
+ await a.activate(`[...document.querySelectorAll('tbody tr')].find(n=>n.innerText.includes('QA withdraw'))?.querySelector('button')`);
+ await until(()=>a.eval("Boolean(document.querySelector('#task-edit-title'))"),'original target task editor');
+ await until(()=>a.eval("document.querySelector('.status-history')?.innerText.includes('QA_TARGET_HISTORY')"),'complete target history');await a.screen('target-task-history');
+ assert.equal(receipt.network.some(r=>r.caseId===currentCase&&r.containsUnloadedDetail),false,'exact task action must not read unrelated history/snapshot');
+ const taskBefore=await read(),caseBefore=taskBefore.payload.internalControlCases.find(c=>c.id==='qa-withdraw'),targetId=caseBefore.linkedTaskId;
+ await a.fill("document.querySelector('.quick-status-bar textarea')",'SCOPED TARGET SAVED');await a.click('加入狀態紀錄');await a.click('保存變更');
+ await until(async()=>{const x=await read();return x.payload.tasks.find(t=>t.id===targetId)?.status==='SCOPED TARGET SAVED';},'target task actual SQL save');
+ const taskAfter=await read();
+ const expected=structuredClone(taskBefore.payload);expected.revision=taskAfter.payload.revision;expected.updatedAt=taskAfter.payload.updatedAt;
+ assert.equal(taskAfter.revision,taskBefore.revision+1);
+ for(const [collection,id] of [['tasks',targetId],['internalControlCases','qa-withdraw']]){
+   const before=expected[collection].find(t=>t.id===id),after=taskAfter.payload[collection].find(t=>t.id===id);
+   assert.deepEqual(after.statusLogs.slice(1),before.statusLogs,'complete previous raw linked history remains ordered and lossless');
+   assert.equal(after.statusLogs[0].text,'SCOPED TARGET SAVED');
+   for(const key of ['status','statusLogs','updatedAt','updatedBy'])before[key]=after[key];
+   assert.deepEqual(after,before,'exact target mutation mask with raw unknown fields');
+ }
+ expected.vessels.find(v=>v.id==='qa-v1').weeklyAttention=['maintenance']; // original saveTask category->attention rule
+ expected.auditLogs=taskAfter.payload.auditLogs;expected.notifications=taskAfter.payload.notifications;
+ assert.deepEqual(taskAfter.payload,expected,'complete linked graph SQL equality, unrelated records untouched');
+ fs.writeFileSync(path.join(run,'target-complete-sql-readback.json'),JSON.stringify({before:scrub(taskBefore),after:scrub(taskAfter),expected:scrub(expected)},null,2));
+ assert.equal(receipt.network.some(r=>r.caseId===currentCase&&r.containsUnloadedDetail),false,'target save and ACK remain scoped');
+ await until(()=>a.saved(),'target UI ACK');await a.sync();await a.screen('target-task-saved');
+ await until(()=>a.saved(),'target saved and released');
+ assert.deepEqual(await locks(),[]);
+ receipt.cases.push({caseId:'TARGET-TASK',status:'PASS',completeSqlGraphEquality:true,orderedRawHistory:true});
+ currentCase='RELOAD-TARGET-TO-HOME';await a.eval('void(window.__oldDocument=true)');await call('Page.reload',{},a.s);
  await until(()=>a.eval('window.__oldDocument!==true&&Boolean(document.querySelector("article.ship-card"))'),'new original document');
  await until(()=>receipt.network.some(r=>r.caseId===currentCase&&r.finished),'new cold response');
- await until(()=>a.saved(),'clean persisted full action can cold-reload as home summary');
+ await until(()=>a.saved(),'clean persisted target action can cold-reload as home summary');
  assert.equal(receipt.network.some(r=>r.caseId===currentCase&&r.containsUnloadedDetail),false);
  await a.open('qa-v2');assert.equal(await a.eval(`(${field}).value`),'SCOPED A SAVED');await a.click('取消並關閉');
- receipt.cases.push({caseId:'RELOAD-FULL-TO-HOME',status:'PASS'});
+ receipt.cases.push({caseId:'RELOAD-TARGET-TO-HOME',status:'PASS'});
+ currentCase='BULK-TARGET-UNION';await a.click('待辦總表');await until(()=>a.eval("Boolean(document.querySelector('tbody .task-link'))"),'bulk list mounted');
+ for(const label of ['QA case-delete','QA task-delete']){await a.eval(`document.querySelectorAll('tbody tr').forEach(n=>{if(n.innerText.includes(${JSON.stringify(label)}))n.querySelector('input[type=checkbox]').focus();})`);await a.key(' ','Space');}
+ await until(()=>a.eval("[...document.querySelectorAll('button')].some(n=>n.innerText==='批量完成（2）'&&!n.disabled)"),'exact selected pair');
+ const bulkBefore=await read();await a.click('批量完成（2）');
+ await until(async()=>{const x=await read();return ['qa-case-delete','qa-task-delete'].every(id=>x.payload.internalControlCases.find(c=>c.id===id)?.isClosed);},'both selected linked graphs completed in SQL');
+ await until(()=>a.saved(),'bulk authoritative ACK');const bulkAfter=await read();assert.equal(bulkAfter.revision,bulkBefore.revision+1);
+ for(const id of ['qa-case-delete','qa-task-delete']){const old=bulkBefore.payload.internalControlCases.find(c=>c.id===id),now=bulkAfter.payload.internalControlCases.find(c=>c.id===id);assert.deepEqual(now.statusLogs.slice(-old.statusLogs.length),old.statusLogs);assert.equal(bulkAfter.payload.tasks.find(t=>t.id===old.linkedTaskId).isClosed,true);}
+ for(const collection of ['agendaReports','meetings'])assert.deepEqual(bulkAfter.payload[collection],bulkBefore.payload[collection]);
+ assert.deepEqual(bulkAfter.payload.tasks.find(t=>t.id==='qa-unrelated-task'),bulkBefore.payload.tasks.find(t=>t.id==='qa-unrelated-task'));
+ assert.equal(receipt.network.some(r=>r.caseId===currentCase&&r.containsUnloadedDetail),false,'bulk never loads unselected detail');await until(async()=>(await locks()).length===0,'bulk complete release');assert.deepEqual(await locks(),[]);
+ fs.writeFileSync(path.join(run,'bulk-complete-sql-readback.json'),JSON.stringify({before:scrub(bulkBefore),after:scrub(bulkAfter)},null,2));
+ receipt.cases.push({caseId:'BULK-TARGET-UNION',status:'PASS',selectedGraphs:2});
+ currentCase='READONLY-TARGET';const contextC=(await call('Target.createBrowserContext')).browserContextId;const c=await makePage('qa-vessel',contextC);await login(c);
+ await c.click('本船待辦');await until(()=>c.eval("[...document.querySelectorAll('tbody tr')].some(n=>n.innerText.includes('QA READONLY TASK'))"),'readonly list mounted');
+ await c.activate(`[...document.querySelectorAll('tbody tr')].find(n=>n.innerText.includes('QA READONLY TASK'))?.querySelector('button')`);
+ await until(()=>c.eval("Boolean(document.querySelector('#task-edit-title'))"),'original read-only task');
+ assert.equal(await c.eval("document.querySelector('.status-history')?.innerText.includes('QA_READONLY_HISTORY')"),true,'read-only viewer receives the requested full history instead of a stale summary render');
+ assert.equal(receipt.network.some(r=>r.caseId===currentCase&&r.containsUnloadedDetail),false);assert.equal(receipt.network.some(r=>r.caseId===currentCase&&r.rpc===patchRpc),false);
+ await c.screen('readonly-target-history');receipt.cases.push({caseId:'READONLY-TARGET',status:'PASS'});
  receipt.status='PASS';
 }catch(e){failure=e;receipt.status='FAIL';receipt.failure={caseId:currentCase,message:e.message,stack:e.stack?.split('\n').slice(0,5)};for(const p of actors.filter(p=>!p.reader)){try{receipt['failureText-'+p.actor]=(await p.text()).slice(0,8000);await p.screen('failure-'+p.actor);}catch{}}console.error(JSON.stringify({status:'FAIL',caseId:currentCase,error:e.message,run}));}
 finally{

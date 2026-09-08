@@ -6,7 +6,7 @@ import { CloudBlockPatchConflictError, type CloudBlockPatchOperation } from './c
 import type { CloudBlockCompactReceipt, CloudBlockReceiptStatus } from './cloudBlockReceipt';
 import { consumeCloudDeltaResponse, type CloudDeltaSnapshot } from './cloudDelta';
 import { consumeRecordSnapshot, usesRecordStorage } from './cloudRecords';
-import { consumeRecordScopes, recordScopePayload, recordScopeVersions, type RecordReadScope, type RecordScopeSnapshot } from './cloudRecordScopes';
+import { consumeRecordScopes, recordScopePayload, recordScopeVersions, recordScopeKey, type RecordReadScope, type RecordScopeSnapshot } from './cloudRecordScopes';
 
 export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string; readMode?: 'snapshot' | 'delta-v1' | 'scoped-v1'; storageMode?: 'legacy' | 'records-v1' }
 export type ResolvedSupabaseConfig = SupabaseConfig & { tableName: string };
@@ -228,18 +228,19 @@ export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, sig
 }
 
 type ScopeCache={key:string;sequence:number;published:number;snapshot:RecordScopeSnapshot|null};
-const scopeCaches=new Map<RecordReadScope,ScopeCache>();
+const scopeCaches=new Map<string,ScopeCache>();
 async function fetchCloudRecordScope(cfg:ResolvedSupabaseConfig,supabase:SupabaseClient,scope:RecordReadScope,signal?:AbortSignal):Promise<AppData|null>{
   signal?.throwIfAborted();
   const key=JSON.stringify([cfg.supabaseUrl,cfg.supabaseAnonKey,cfg.workspaceKey,cfg.tableName,cfg.storageMode,cfg.readMode]);
-  let cache=scopeCaches.get(scope);
-  if(!cache||cache.key!==key){cache={key,sequence:0,published:0,snapshot:null};scopeCaches.set(scope,cache);}
+  const scopeKey=recordScopeKey(scope);
+  let cache=scopeCaches.get(scopeKey);
+  if(!cache||cache.key!==key){cache={key,sequence:0,published:0,snapshot:null};scopeCaches.set(scopeKey,cache);}
   const owner=cache,base=owner.snapshot,sequence=++owner.sequence;
-  let request=supabase.rpc('read_ship_dynamics_record_scopes_v1',{p_workspace_key:cfg.workspaceKey,p_scope:scope,p_versions:recordScopeVersions(base)});
+  let request=supabase.rpc('read_ship_dynamics_record_scopes_v1',{p_workspace_key:cfg.workspaceKey,p_scope:typeof scope==='string'?scope:'targets',p_targets:typeof scope==='object'?scope.targets:[],p_versions:recordScopeVersions(base)});
   if(signal)request=request.abortSignal(signal);
   const {data,error}=await request;signal?.throwIfAborted();if(error)throw error;
   const next=consumeRecordScopes(data,cfg.workspaceKey,scope,base);
-  if(scopeCaches.get(scope)!==owner)throw new Error('stale-record-scope-config');
+  if(scopeCaches.get(scopeKey)!==owner)throw new Error('stale-record-scope-config');
   if(sequence<owner.published)return owner.snapshot?normalizedCloudRead(recordScopePayload(owner.snapshot),owner.snapshot.revision):null;
   if(owner.snapshot&&next&&next.revision<owner.snapshot.revision)throw new Error('record-scope-revision-rollback');
   const normalized=next?normalizedCloudRead(recordScopePayload(next),next.revision):null;

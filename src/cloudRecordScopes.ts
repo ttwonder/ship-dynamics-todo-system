@@ -1,36 +1,65 @@
-import { buildCloudBlockPatch, type CloudBlockPatchOperation } from './cloudBlockPatch';
+import { buildCloudBlockPatch, CLOUD_BLOCK_COLLECTIONS, type CloudBlockPatchOperation } from './cloudBlockPatch';
 import type { AppData } from './types';
 import { normalizeAppData } from './normalize';
 import { appDataContentEqual } from './cloudRebase';
 
-export type RecordReadScope = 'home' | 'full';
-type Row = { version: number; value: Record<string, unknown> };
-export type RecordScopeSnapshot = { revision: number; root: Record<string, unknown>; collections: Record<string, { ids: string[]; rows: Record<string, Row> }> };
+export type RecordTarget = { collection: 'tasks' | 'internalControlCases' | 'meetings' | 'agendaReports'; id: string };
+export type RecordReadScope = 'home' | 'full' | { targets: RecordTarget[] };
+type Row = { version: number; detail?: boolean; value: Record<string, unknown> };
+export const recordScopeKey=(scope:RecordReadScope)=>typeof scope==='string'?scope:JSON.stringify(scope);
+export function unionRecordScopes(left:RecordReadScope,right:RecordReadScope):RecordReadScope {
+  if(left==='full'||right==='full')return 'full';
+  const targets=[...(typeof left==='object'?left.targets:[]),...(typeof right==='object'?right.targets:[])];
+  return targets.length?{targets:[...new Map(targets.map(t=>[JSON.stringify([t.collection,t.id]),t])).values()].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))}:'home';
+}
+export function recordScopeGraph(scope:RecordReadScope,raw:AppData):Set<string> {
+  const key=(collection:string,id:string)=>JSON.stringify([collection,id]);
+  const keys=new Set(typeof scope==='object'?scope.targets.map(t=>key(t.collection,t.id)):[]);
+  let changed=true;
+  while(changed){changed=false;for(const task of raw.tasks){
+    const links=[key('tasks',task.id)];
+    if(task.internalControlCaseId)links.push(key('internalControlCases',task.internalControlCaseId));
+    if(task.sourceMeetingId)links.push(key('meetings',task.sourceMeetingId));
+    for(const c of raw.internalControlCases)if(c.linkedTaskId===task.id)links.push(key('internalControlCases',c.id));
+    if(links.some(k=>keys.has(k)))for(const k of links)if(!keys.has(k)){keys.add(k);changed=true;}
+  }}
+  return keys;
+}
+export type RecordScopeSnapshot = { scopeKey:string; workspace:string; revision: number; root: Record<string, unknown>; collections: Record<string, { ids: string[]; rows: Record<string, Row> }> };
 const clone=<T>(v:T):T=>JSON.parse(JSON.stringify(v));
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
 export function recordScopeVersions(base:RecordScopeSnapshot|null) {
-  return Object.fromEntries(Object.entries(base?.collections||{}).map(([name,c])=>[name,Object.fromEntries(Object.entries(c.rows).map(([id,r])=>[id,r.version]))]));
+  return Object.fromEntries(Object.entries(base?.collections||{}).map(([name,c])=>[name,Object.fromEntries(Object.entries(c.rows).map(([id,r])=>[id,{version:r.version,detail:!!r.detail}]))]));
 }
 export function consumeRecordScopes(value:unknown,workspace:string,scope:RecordReadScope,base:RecordScopeSnapshot|null):RecordScopeSnapshot|null {
-  if(!object(value)||value.protocol!=='ship-dynamics-record-scopes-v1'||value.workspace_key!==workspace||value.scope!==scope)throw new Error('record-scope-response-mismatch');
+  if(!object(value)||value.protocol!=='ship-dynamics-record-scopes-v1'||value.workspace_key!==workspace||value.scope!==(typeof scope==='string'?scope:'targets')||(typeof scope==='object'&&(!Array.isArray(value.targets)||JSON.stringify(value.targets.map(t=>object(t)?[t.collection,t.id]:null))!==JSON.stringify(scope.targets.map(t=>[t.collection,t.id])))))throw new Error('record-scope-response-mismatch');
+  if(base&&(base.scopeKey!==recordScopeKey(scope)||base.workspace!==workspace))throw new Error('record-scope-base-mismatch');
   if(value.status==='missing')return null;
   if(value.status!=='scopes'||!Number.isSafeInteger(value.revision)||Number(value.revision)<0||!object(value.root)||!object(value.collections))throw new Error('invalid-record-scope-response');
+  if(Object.keys(value.collections).length!==CLOUD_BLOCK_COLLECTIONS.length||CLOUD_BLOCK_COLLECTIONS.some(name=>!Object.prototype.hasOwnProperty.call(value.collections,name)))throw new Error('invalid-record-scope-collections');
   const revision=Number(value.revision);
+  if(base&&revision<base.revision)throw new Error('record-scope-version-rollback');
   if(value.root.revision!==revision)throw new Error('record-scope-revision-mismatch');
   const collections:RecordScopeSnapshot['collections']={};
   for(const [name,c] of Object.entries(value.collections)){
     if(!object(c)||!Array.isArray(c.ids)||!Array.isArray(c.rows)||c.ids.some(id=>typeof id!=='string')||new Set(c.ids).size!==c.ids.length)throw new Error('invalid-record-scope-order');
-    const rows:Record<string,Row>={};
-    for(const id of c.ids)if(base?.collections[name]?.rows[id])rows[id]=base.collections[name].rows[id];
+    const rows:Record<string,Row>=Object.create(null);
+    for(const id of c.ids)if(base?.collections[name]&&Object.prototype.hasOwnProperty.call(base.collections[name].rows,id))rows[id]=base.collections[name].rows[id];
     const received=new Set<string>();
     for(const r of c.rows){
-      if(!object(r)||typeof r.id!=='string'||received.has(r.id)||!c.ids.includes(r.id)||!Number.isSafeInteger(r.version)||Number(r.version)>revision||Number(r.version)<0||!object(r.value)||r.value.id!==r.id)throw new Error('invalid-record-scope-row');
-      received.add(r.id);rows[r.id]={version:Number(r.version),value:clone(r.value)};
+      if(!object(r)||typeof r.id!=='string'||received.has(r.id)||!c.ids.includes(r.id)||!Number.isSafeInteger(r.version)||Number(r.version)>revision||Number(r.version)<0||typeof r.detail!=='boolean'||!object(r.value)||r.value.id!==r.id)throw new Error('invalid-record-scope-row');
+      received.add(r.id);rows[r.id]={version:Number(r.version),detail:r.detail===true,value:clone(r.value)};
     }
     if(c.ids.some(id=>!rows[id]))throw new Error('unloaded-record-scope-row');
     collections[name]={ids:[...c.ids],rows};
   }
-  return {revision,root:clone(value.root),collections};
+  const snapshot={scopeKey:recordScopeKey(scope),workspace,revision,root:clone(value.root),collections};
+  const graph=recordScopeGraph(scope,recordScopePayload(snapshot) as unknown as AppData);
+  for(const [name,c] of Object.entries(collections))for(const id of c.ids){
+    const expected=scope==='full'||!['tasks','internalControlCases','meetings','agendaReports'].includes(name)||graph.has(JSON.stringify([name,id]));
+    if(c.rows[id].detail!==expected)throw new Error('record-scope-coverage-mismatch');
+  }
+  return snapshot;
 }
 export function recordScopePayload(snapshot:RecordScopeSnapshot) {
   return clone({...snapshot.root,...Object.fromEntries(Object.entries(snapshot.collections).map(([name,c])=>[name,c.ids.map(id=>c.rows[id].value)]))});
@@ -51,6 +80,21 @@ export function cleanRecordHomeCacheMatches(local:AppData,confirmed:AppData|null
 
 function preserveRecordFields(before:unknown,after:unknown,raw:unknown):unknown {
   if(JSON.stringify(before)===JSON.stringify(after))return raw===undefined?undefined:clone(raw);
+  if(Array.isArray(before)&&Array.isArray(after)&&Array.isArray(raw)){
+    const field=[...before,...after].every(v=>object(v)&&typeof v.id==='string')?'id':[...before,...after].every(v=>object(v)&&typeof v.vesselId==='string')?'vesselId':null;
+    if(field&&new Set(before.map(v=>v[field])).size===before.length&&new Set(after.map(v=>v[field])).size===after.length){
+      const old=new Map(before.map(v=>[v[field],v])),source=new Map(raw.filter(object).map(v=>[v[field],v]));
+      const result=after.map(v=>preserveRecordFields(old.get(v[field]),v,source.get(v[field])));
+      // Normalization may omit malformed raw entries: omission is not deletion.
+      const opaque=raw.filter(v=>!object(v)||!old.has(v[field]));
+      for(const v of opaque){
+        const at=raw.indexOf(v),anchor=raw.slice(at+1).find(x=>object(x)&&old.has(x[field])&&after.some(a=>a[field]===x[field]));
+        const index=anchor?result.findIndex(x=>object(x)&&x[field]===anchor[field]):-1;
+        if(index<0)result.push(clone(v));else result.splice(index,0,clone(v));
+      }
+      return result;
+    }
+  }
   if(object(before)&&object(after)&&object(raw)){
     const result=clone(raw);
     for(const key of new Set([...Object.keys(before),...Object.keys(after)])){
@@ -64,7 +108,7 @@ function preserveRecordFields(before:unknown,after:unknown,raw:unknown):unknown 
 }
 export function buildRecordScopePatch(base:AppData,next:AppData,raw:AppData,scope:RecordReadScope):CloudBlockPatchOperation[]{
   const operations=buildCloudBlockPatch(base,next,raw);
-  assertRecordScopePatch(scope,operations);
+  assertRecordScopePatch(scope,operations,raw);
   return operations.map(op=>{
     if(op.kind==='order')return op;
     if(op.kind==='settings')return {...op,value:preserveRecordFields(base.settings,next.settings,raw.settings) as AppData['settings']};
@@ -78,7 +122,9 @@ export function buildRecordScopePatch(base:AppData,next:AppData,raw:AppData,scop
 }
 
 /** Summaries are not writable bodies. Only complete collections may be patched. */
-export function assertRecordScopePatch(scope:RecordReadScope,operations:readonly CloudBlockPatchOperation[]) {
+export function assertRecordScopePatch(scope:RecordReadScope,operations:readonly CloudBlockPatchOperation[],raw?:AppData) {
   if(scope==='full')return;
-  if(operations.some(op=>op.kind!=='settings'&&['tasks','internalControlCases','meetings','agendaReports'].includes(op.collection)))throw new Error('record-detail-not-loaded');
+  const loaded=raw?recordScopeGraph(scope,raw):new Set<string>();
+  if(operations.some(op=>op.kind!=='settings'&&['tasks','internalControlCases','meetings','agendaReports'].includes(op.collection)&&
+    !(op.kind==='order'||(op.kind==='entity'&&((raw&&typeof op.entityId==='string'&&!op.expected&&!raw[op.collection].some(row=>row.id===op.entityId))||loaded.has(JSON.stringify([op.collection,op.entityId])))))))throw new Error('record-detail-not-loaded');
 }
