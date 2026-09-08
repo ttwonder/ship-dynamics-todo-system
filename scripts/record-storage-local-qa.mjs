@@ -10,9 +10,11 @@ import {shipExcelRpcArgs} from './ship-itinerary-excel-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,preparePerformanceFixture=null}={}) {
+export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,preparePerformanceFixture=null,databaseFactory=null}={}) {
  if(preparePerformanceFixture&&!performanceTrace)throw new Error('Performance fixture requires explicit performanceTrace');
- const db=new PGlite(),metrics=[];
+ // Opt-in private native QA supplies an already identity-verified connection.
+ // The existing browser/PGlite default and migration/seed chain stay unchanged.
+ const db=databaseFactory?await databaseFactory():new PGlite(),metrics=[];
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
  let origin='',http,vite,loseItineraryAck=false,loseReportAck=false,losePruneAck=false;
  let recordFault=null;
@@ -132,6 +134,6 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
   });
   await new Promise((resolve,reject)=>{http.once('error',reject);http.listen(0,'127.0.0.1',resolve);});
   origin=`http://127.0.0.1:${http.address().port}`;
-  return {origin,password,metrics,db,close,setRecordFault:fault=>{if(!internalControl)throw new Error("Record fault hooks require internalControl fixture");recordFault=fault;},loseNextPruneAck:()=>{losePruneAck=true;},loseNextReportAck:()=>{loseReportAck=true;},loseNextItineraryAck:()=>{loseItineraryAck=true;},itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
+  return {origin,password,metrics,db,close,workspace,loadModule:path=>vite.ssrLoadModule(path),setRecordFault:fault=>{if(!internalControl)throw new Error("Record fault hooks require internalControl fixture");recordFault=fault;},loseNextPruneAck:()=>{losePruneAck=true;},loseNextReportAck:()=>{loseReportAck=true;},loseNextItineraryAck:()=>{loseItineraryAck=true;},itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
  }catch(error){await close();throw error;}
 }
