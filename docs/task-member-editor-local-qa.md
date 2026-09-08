@@ -56,7 +56,54 @@ expected task/source/notices/audit/history/unknown-field graph. Native definitio
 reverse SQL and native verifier remain unchanged; the prior 36 native baseline and
 bounded native review are not repeated or counted as new evidence.
 
-## Explicitly OPEN
+## Parent/shared completion slice (base 159fcd3)
+
+This slice preserves original markup, labels, roles, helpers and native SQL.
+Only `App` feedback enrollment and explicit member retry acquisition change.
+
+- **Feedback RED→GREEN:** actual original quick-input and frozen CONFIG DRAFT
+  RETAIN scenarios asserted the false saved strip / safe-to-leave assurance.
+  Member-local capture and recovery now join the existing page feedback boundary.
+  Typed-only quick input, added notes, other visited dirty members, unknown ACK
+  with newer typing and config-frozen drafts are covered. Confirmed B saves and
+  legal ACK after real lease expiry still succeed; ordinary Close/discard and
+  clean no-editor Sync restore the existing saved feedback. Local durability is
+  never advertised as cloud confirmation.
+- **Failed shared handoff RED→GREEN:** after native zero-write `transition-required`,
+  a controlled competing exact task claim denies acquisition after the source
+  lease was acquired. Full raw record/history ledger stays identical, only owned
+  source leases release, and the original draft remains. Once the blocker closes,
+  the original Save action reacquires the child with the OLD member/source CAS.
+  It does not reinterpret unknown outcome as permission for a new operation.
+- **Complete shared graphs:** concurrent last-two member closes, shared last-close
+  retry and shared reopen derive expected business values before SQL from the
+  original workflow helpers and outgoing command. Only generated IDs and bounded
+  server timestamps come from results. Task/source/decision/notices/audit/history,
+  unknown raw fields, unselected members and fresh SQL/browser readers are checked.
+- **Concurrent reopen loser:** two original outgoing intents overlap; A cannot
+  claim the parent while B still owns its child. B wins after A releases its child.
+  A's explicit retry preserves its old source CAS and is rejected with zero partial
+  writes. B's full graph survives a fresh-reader check.
+- **Original deletion policy:** the original JSX explicitly excludes the Delete
+  button in single-member scope (`!editingSingleVessel`). It is not added here.
+  The original selector → Overall → Delete confirmation already performs the exact
+  parent handoff. Cancellation, blocked source with draft retention and original
+  retry, complete allowed deletion and real valid wrong-task/wrong-meeting guards
+  are verified. Alias substitution is a labelled controlled transport fault over
+  real native SQL; it is not an ordinary user action. Full BEFORE ledgers reject
+  partial record/history writes. The delete oracle separately checks the original
+  helper-derived business graph against outgoing intent before SQL.
+- **Direct neighbors:** same-member stale CAS after an intervening original editor
+  rejects without overwrite; independent held native parent CLAIM and REFRESH
+  responses cannot hijack or release the successor's exact parent lease. Existing
+  canClose hiding, meeting-management denial and completed-meeting reopen prohibition
+  remain unchanged and are directly verified.
+
+Fixture role/closure setup and SQL lease-expiry/competing-claim hooks are controlled
+QA setup. Saves, selectors, confirmations, logins and reads use the original App;
+no production setter or fabricated SQL success is substituted.
+
+## Explicitly OPEN (outside this finite slice)
 
 - **MEMBER-UI-UPGRADE:** exact persisted pre-fix whole-task envelope, original
   coordinator/RPC/signature/CAS reconciliation and original-UI upgrade proof.
@@ -68,16 +115,13 @@ bounded native review are not repeated or counted as new evidence.
 - Forced mounted actor/config callback ABA at every await boundary, full production
   bootstrap/auth/render-gate matrix. Config-observer native proof and controlled
   identity predicate are scoped evidence, not full production-mode render proof.
-- Overall parent claim/refresh barriers beyond the proved stale overall read;
-  complete lease renewal/release schedule permutations.
-- Full shared transition graph: failed parent acquisition/handoff, concurrent final
-  closures, reopen/closed-source permissions; original member-delete → parent handoff.
-- Same-member stale CAS after another editor changes the member.
+- Complete lease renewal/release schedule permutations beyond the separately proved
+  representative parent CLAIM and REFRESH generation barriers.
 - Broad global dirty queue coexistence/automatic reconciliation. Member publication
   still refuses an unsafe unrelated local delta and retains request/draft; no
   overwrite or false automatic recovery claim. Overall-only unsent fields are not
-  added to member draft persistence. Header feedback for component-only edits is
-  not claimed globally resolved.
+  added to member draft persistence. The bounded member feedback defect above is
+  closed; this does not claim a global dirty-queue redesign.
 - Remaining R1–R3 entry inventory, hosted/QPS/mobile/PDF/cutover, and the prior
   six-item program are unchanged OPEN. This is not production acceptance.
 
@@ -104,7 +148,7 @@ npm run typecheck
 npm run build
 ```
 
-`QA_MEMBER_UI_FOCUS=scope|recovery|lifecycle|pair` selects bounded tracers;
+`QA_MEMBER_UI_FOCUS=scope|recovery|lifecycle|pair|feedback|shared|concurrent|concurrent-reopen|stale|parent|delete|delete-blocked|delete-wrong-task|delete-wrong-source|permission|closed-source|close-policy` selects bounded tracers;
 default runs the original 8 scenarios. Recovery and lifecycle run in separate fresh
 fixtures: the original PAIR oracle assumes no prior actor notifications, so the
 matrices are not concatenated into one mutated database. Do not add rerun counts together.

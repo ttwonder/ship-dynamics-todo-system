@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {prepareMemberGraph,prepareDeleteGraph} from './task-member-shared-oracle.mjs';
 import {assertMemberPair} from './task-member-business-oracle.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,15 +14,15 @@ import {assertLifecycleReadback} from './record-scoped-lifecycle-oracle.mjs';
 // QA-only: original main.tsx -> App, native input, synthetic identities.
 // No setters, write helpers, fabricated responses, external hosts or user profile.
 const focus=process.env.QA_MEMBER_UI_FOCUS||'original';
-assert.ok(['original','pair','scope','recovery','lifecycle'].includes(focus),'known isolated member QA mode');
+assert.ok(['original','pair','scope','recovery','lifecycle','feedback','shared','concurrent','concurrent-reopen','delete','stale','parent','delete-wrong-task','delete-wrong-source','delete-blocked','permission','closed-source','close-policy'].includes(focus),'known isolated member QA mode');
 const root=process.env.QA_EVIDENCE_ROOT;
 assert.ok(root&&path.isAbsolute(root),'Explicit external QA_EVIDENCE_ROOT required');
 assert.ok(!path.resolve(root).toLowerCase().startsWith(path.resolve('.').toLowerCase()+path.sep));
 fs.mkdirSync(root,{recursive:true});
 const run=fs.mkdtempSync(path.join(root,'member-ui-')),profile=path.join(run,'chrome');
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
-const receipt={kind:'original-App-native-PG-multi-context',inputHead:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),status:'RUNNING',cases:[],network:[],errors:[],blockedExternal:[],commands:[{command:'node scripts/verify-task-member-browser.mjs',exit:null}],productionContacted:false};
-receipt.inputs=Object.fromEntries(['scripts/verify-task-member-browser.mjs','scripts/record-scoped-business-oracle.mjs','scripts/record-scoped-lifecycle-oracle.mjs','src/InternalControlPage.tsx','src/TemporaryMeetings.tsx','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','src/App.tsx','src/EditModals.tsx','src/taskMemberEditor.ts','src/normalizedRepository.ts','src/taskVesselProgress.ts','scripts/task-member-business-oracle.mjs','supabase/development/20260909_task_member_protocol.sql','src/cloud.ts','src/cloudRecordScopes.ts','supabase/development/20260908_appdata_record_scoped_read.sql'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
+const receipt={kind:'original-App-native-PG-multi-context',inputHead:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),status:'RUNNING',focus,cases:[],network:[],errors:[],blockedExternal:[],commands:[{command:'node scripts/verify-task-member-browser.mjs',exit:null}],productionContacted:false};
+receipt.inputs=Object.fromEntries(['scripts/verify-task-member-browser.mjs','scripts/record-scoped-business-oracle.mjs','scripts/record-scoped-lifecycle-oracle.mjs','src/InternalControlPage.tsx','src/TemporaryMeetings.tsx','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','src/App.tsx','src/EditModals.tsx','src/taskMemberEditor.ts','src/normalizedRepository.ts','src/taskVesselProgress.ts','scripts/task-member-business-oracle.mjs','scripts/task-member-shared-oracle.mjs','src/taskWorkflow.ts','src/meetingTaskWorkflow.ts','src/richText.ts','src/vesselDisplay.ts','src/permissions.ts','src/normalize.ts','supabase/development/20260909_task_member_protocol.sql','src/cloud.ts','src/cloudRecordScopes.ts','supabase/development/20260908_appdata_record_scoped_read.sql'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
 const save=()=>fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const until=async(fn,label,timeout=25000)=>{const end=Date.now()+timeout;while(Date.now()<end){const v=await fn();if(v)return v;await wait(30);}throw new Error('QA timeout: '+label);};
@@ -67,7 +68,12 @@ async function login(p){
  if(await p.eval("Boolean(document.querySelector('input[type=password]'))"))await p.fill("document.querySelector('input[type=password]')",qa.password);await p.click('登入');
  await until(async()=>!(await p.text()).includes('人員登入／切換')&&(await p.text()).includes(p.actor==='qa-owner'?'QA OWNER':p.actor==='qa-vessel'?'QA VESSEL ACCOUNT':'QA OPERATOR'),'original logged-in homepage');await p.sync();
 }
+const noUnsafeAssurance=async(p,label)=>{await wait(80);assert.equal(await p.eval("Boolean(document.querySelector('.save-status-strip.saved'))||Boolean(document.querySelector('.save-toast.success'))||document.body.innerText.includes('本頁沒有未保存修改，現在可以安全關閉或重新整理。')"),false,label+' must not claim no unsaved work / safe to leave');};
 const locks=async()=> (await native.observer.query("select section_key,locked_by from ship_dynamics_edit_locks where expires_at>now() order by section_key")).rows;
+const businessLedger=async()=>{
+ const tables=(await native.observer.query("select tablename from pg_tables where schemaname='public' and (tablename like 'ship_dynamics_record%' or tablename like 'ship_dynamics_task_member%') order by tablename")).rows.map(r=>r.tablename);
+ const result={};for(const t of tables)result[t]=(await native.observer.query('select to_jsonb(t) value,xmin::text,ctid::text from public."'+t.replaceAll('"','""')+'" t order by to_jsonb(t)::text')).rows;return result;
+};
 const read=async()=> (await native.observer.query('select read_ship_dynamics_records_v1($1) r',[qa.workspace])).rows[0].r;
 const untouched=async()=> (await native.observer.query("select to_jsonb(t) value,xmin::text,ctid::text from ship_dynamics_records t where collection<>'auditLogs' and not(collection='vessels' and entity_id in ('qa-v1','qa-v2')) order by collection,entity_id")).rows;
 async function freshReadback(name,expected){
@@ -93,6 +99,14 @@ try{
  const {reconcileMeetingTasks}=await vite.ssrLoadModule('/src/meetingTaskWorkflow.ts');
  reconcileMeetingTasks({tasks:initial.tasks,meetingId:meeting.id,vesselIds:meeting.vessels,vesselScopeMode:'vessels',followUps:meeting.taskItems,priority:meeting.priority,isAbnormal:false,isInternalControl:false,expectedDate:'',departments:['督導'],ownerUserIds:['qa-owner','qa-operator'],meetingTaskCategories:initial.settings.meetingTaskCategories,initialStatus:'QA initial',actorId:'qa-owner',actorName:'QA OWNER',at,createTaskId:()=> 'qa-member-task'});
  const t=initial.tasks[0];t.qaUnknown={task:[2,1]};t.vesselProgress=['qa-v1','qa-v2','qa-v3'].map(vesselId=>({vesselId,status:'QA original '+vesselId,isClosed:false,updatedAt:at,updatedBy:'qa-owner',statusLogs:[{id:'preview-1-'+vesselId,at,by:'QA OWNER',text:'preview 1'},{id:'preview-2-'+vesselId,at,by:'QA OWNER',text:'preview 2'},{id:'raw-'+vesselId,at,by:'QA OWNER',byUserId:'qa-owner',text:'QA_PRIVATE_HISTORY_'+vesselId,qaUnknown:{preserved:[2,1]}}],qaUnknown:{member:[1,2]}}));
+ if(['shared','concurrent','concurrent-reopen','permission','closed-source'].includes(focus)){
+   initial.users.find(u=>u.id==='qa-operator').role='admin';
+   for(const p of t.vesselProgress.filter(p=>['closed-source','concurrent-reopen'].includes(focus)||(['shared','permission'].includes(focus)?p.vesselId!=='qa-v1':p.vesselId==='qa-v3')))Object.assign(p,{isClosed:true,closedDate:'2026-09-09',closedBy:'qa-owner'});
+ }
+ if(focus==='permission')initial.users.find(u=>u.id==='qa-operator').role='operator';
+ if(focus==='close-policy')initial.settings.rolePermissions.operator.closeTasks=false;
+ if(['closed-source','concurrent-reopen'].includes(focus)){if(focus==='closed-source')meeting.status='已完成';Object.assign(meeting.taskItems[0],{isClosed:true,closedDate:'2026-09-09',closedBy:'qa-owner'});}
+ if(focus.startsWith('delete-wrong')){const other=structuredClone(meeting);other.id='qa-other-meeting';other.taskItems[0].id='qa-other-decision';initial.meetings.push(other);const otherTask=structuredClone(t);otherTask.id='qa-other-task';otherTask.sourceMeetingId=other.id;otherTask.sourceMeetingItemId=other.taskItems[0].id;otherTask.description='QA OTHER CANARY';initial.tasks.push(otherTask);}
  initial.notifications=[];initial.auditLogs=[];
  },databaseFactory:async()=>native.adapter});
  receipt.origin=qa.origin;assert.equal((await (await fetch(qa.origin+'/__qa/health')).json()).kind,'REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES');
@@ -104,8 +118,8 @@ try{
   const handle=async()=>{
    if(m.method==='Runtime.exceptionThrown')receipt.errors.push(m.params.exceptionDetails.text);
    if(m.method==='Page.javascriptDialogOpening'){
-    const {type,message}=m.params,accept=type==='beforeunload'||type==='prompt'&&message.includes('完成日期')||type==='confirm'&&['同步最新會保留本機修改','請盡量以船端修改為主','確定批量完成所選','確定結案會議','確定重新開啟會議','確定重新開啟此待辦'].some(t=>message.startsWith(t));
-    if(!accept)receipt.errors.push('unexpected dialog: '+message);await call('Page.handleJavaScriptDialog',{accept,...(type==='prompt'?{promptText:'2026-09-09'}:{})},m.sessionId);
+    const {type,message}=m.params,deleteConfirm=currentCase.startsWith('MEMBER-UI-DELETE')&&type==='confirm'&&message.startsWith('確定刪除待辦'),accept=deleteConfirm?currentCase!=='MEMBER-UI-DELETE-CANCEL':type==='beforeunload'||type==='prompt'&&message.includes('完成日期')||type==='confirm'&&['同步最新會保留本機修改','請盡量以船端修改為主','確定批量完成所選','確定結案會議','確定重新開啟會議','確定重新開啟此待辦'].some(t=>message.startsWith(t));
+    if(!accept&&!deleteConfirm)receipt.errors.push('unexpected dialog: '+message);await call('Page.handleJavaScriptDialog',{accept,...(type==='prompt'?{promptText:'2026-09-09'}:{})},m.sessionId);
    }
    if(m.method==='Fetch.requestPaused'){
     const u=new URL(m.params.request.url),allowed=u.origin===qa.origin||['data:','blob:'].includes(u.protocol);
@@ -129,7 +143,7 @@ try{
  const a=await makePage('qa-owner',(await call('Target.createBrowserContext')).browserContextId);await login(a);
  const b=await makePage('qa-operator',(await call('Target.createBrowserContext')).browserContextId);await login(b);
  const open=async(p,id)=>{await p.open(id);const n=receipt.network.length;await p.activate(`[...document.querySelectorAll('.modal-task-row')].find(n=>n.innerText.includes('QA MEMBER TASK'))`);await until(()=>receipt.network.slice(n).some(r=>r.actor===p.actor&&r.rpc==='claim_ship_dynamics_edit_lock'&&r.finished),'original claim response');const claim=receipt.network.slice(n).filter(r=>r.actor===p.actor&&r.rpc==='claim_ship_dynamics_edit_lock').at(-1);assert.equal(claim.result,'SQL_OK','MEMBER-UI-PAIR different selected members must both acquire original editor leases');await until(()=>p.eval("Boolean(document.querySelector('#task-edit-title'))"),'original task modal');};
- const selectScope=async(p,index)=>{await p.eval("document.querySelector('select[aria-label=待辦進度範圍]').focus()");await p.key('Home');for(let i=0;i<index;i++)await p.key('ArrowDown');await p.key('Enter');};
+ const selectScope=async(p,index)=>{await p.eval("document.querySelector('select[aria-label=待辦進度範圍]').focus()");if(index===3){await p.key('End');return;}await p.key('Home');for(let i=0;i<index;i++)await p.key('ArrowDown');};
  if(['scope','recovery'].includes(focus)){
   currentCase='MEMBER-UI-SCOPE-GENERATION';
   await open(a,'qa-v1');const original=await read();
@@ -215,7 +229,7 @@ try{
   assert.equal(await a.eval("window.__configNode===document.querySelector('[aria-label=單船目前狀態]')&&window.__configNode.contentEditable==='false'&&window.__configNode.innerText.includes('CONFIG DRAFT RETAIN')"),true,'configuration removal must freeze same original draft node');
   await a.eval("(()=>{window.SHIP_DYNAMICS_SUPABASE_CONFIG=window.__originalQaConfig;window.dispatchEvent(new StorageEvent('storage',{key:'ship-dynamics-supabase-config'}));})()");await wait(100);
   assert.equal(await a.eval("window.__configNode.contentEditable"),'false','config A/B/A cannot reauthorize predecessor');assert.deepEqual(await read(),before);
-  await a.screen('config-aba-same-draft');await a.click('關閉');await until(()=>a.saved(),'explicit config draft close');await until(()=>a.eval(`Boolean(${field})`),'config source return');await a.click('取消並關閉');await until(()=>a.eval("!document.querySelector('[role=dialog]')"),'config source close');
+  await a.screen('config-aba-same-draft');await noUnsafeAssurance(a,'frozen CONFIG DRAFT RETAIN');await a.click('關閉');await until(()=>a.saved(),'explicit config draft close');await until(()=>a.eval(`Boolean(${field})`),'config source return');await a.click('取消並關閉');await until(()=>a.eval("!document.querySelector('[role=dialog]')"),'config source close');
   receipt.cases.push({caseId:currentCase,status:'PASS',realConfigurationObserver:true,sameNode:true,stickyFreeze:true});
   currentCase='MEMBER-UI-ACK-LEASE-EXPIRY';const start=receipt.network.length;await open(a,'qa-v1');const ackBefore=await read();
   await a.fill("document.querySelector('.quick-status-bar textarea')",'LEGAL ACK AFTER EXPIRY');await a.click('加入狀態紀錄');
@@ -231,7 +245,108 @@ try{
   await until(()=>a.eval(`Boolean(${field})`),'ACK source');await a.click('取消並關閉');await until(()=>a.eval("!document.querySelector('[role=dialog]')"),'ACK source closed');
 
  }
- if(!['scope','recovery','lifecycle'].includes(process.env.QA_MEMBER_UI_FOCUS)){
+ if(['shared','concurrent','concurrent-reopen'].includes(focus)){
+  const closeSource=async(p)=>{await until(()=>p.eval(`Boolean(${field})`),'shared source');await p.click('取消並關閉');await until(()=>p.eval("!document.querySelector('[role=dialog]')"),'source closed');};
+  const fail=async(p,pattern)=>{const start=receipt.errors.length;await p.click('保存變更');await until(()=>receipt.errors.length>start,'authoritative rejection');const errors=receipt.errors.splice(start);assert.ok(errors.every(e=>e.includes(pattern)),JSON.stringify(errors));};
+  let graphs=[];
+  const graphBefore=async({name,body})=>{if(name===patchRpc){const before=await read();graphs.push({operationId:body.p_operation_id,before,graph:await prepareMemberGraph(qa,before,body)});fs.writeFileSync(path.join(run,'shared-expected-before-sql.json'),JSON.stringify(graphs.map(x=>({operationId:x.operationId,before:scrub(x.before),expected:scrub(x.graph.expected)})),null,2));}};
+  if(focus==='shared'){
+   currentCase='MEMBER-UI-HANDOFF-RETRY';await open(a,'qa-v1');await a.fill("document.querySelector('.quick-status-bar textarea')",'HANDOFF ORIGINAL DRAFT');await a.click('加入狀態紀錄');await a.click('標記結案');
+   const before=await read(),beforeLedger=await businessLedger();await a.eval("void(window.__handoffNode=document.querySelector('[aria-label=單船目前狀態]'))");let blocker;
+   qa.setRecordFault({before:async({name,body})=>{if(name==='claim_ship_dynamics_edit_lock'&&body.p_section_key==='task:qa-member-task'&&!blocker){blocker=(await native.observer.query('select claim_ship_dynamics_edit_lock($1,$2,$3,$4,$5) r',[qa.workspace,body.p_section_key,'qa-blocker','QA BLOCKER',75])).rows[0].r;assert.equal(blocker.ok,true);}}});
+   await fail(a,'lock-conflict');assert.deepEqual(await read(),before);assert.deepEqual(await businessLedger(),beforeLedger,'half acquisition zero raw record/history writes');assert.equal(await a.eval("window.__handoffNode===document.querySelector('[aria-label=單船目前狀態]')&&window.__handoffNode.innerText==='HANDOFF ORIGINAL DRAFT'"),true);
+   assert.deepEqual((await locks()).map(l=>l.section_key),['task:qa-member-task'],'half-acquired source released, blocker retained');
+   await native.observer.query('select release_ship_dynamics_edit_lock($1,$2,$3)',[qa.workspace,'task:qa-member-task','qa-blocker']);qa.setRecordFault({before:graphBefore});
+   const wire=receipt.network.length;await a.click('保存變更');await wait(700);
+   assert.ok(receipt.network.slice(wire).some(r=>r.rpc===patchRpc),'original retry must reacquire child and submit retained draft after parent blocker closes');
+   await until(()=>a.saved(),'original retry confirmed');const after=await read();graphs.at(-1).graph.verify(after);await freshReadback('handoff',after);await closeSource(a);
+   receipt.cases.push({caseId:currentCase,status:'PASS',halfAcquisitionZeroWrite:true,ownedOnlyRelease:true,sameDraft:true,originalRetry:true,completeGraph:true});
+   currentCase='MEMBER-UI-REOPEN-GRAPH';await a.click('已結案');await until(()=>a.eval("[...document.querySelectorAll('tr')].some(n=>n.innerText.includes('QA MEMBER TASK'))"),'closed list ready');await a.activate("[...document.querySelectorAll('tr')].find(n=>n.innerText.includes('QA MEMBER TASK'))?.querySelector('button')");await until(()=>a.eval("Boolean(document.querySelector('#task-edit-title'))"),'closed original editor');await a.click('重新開啟');await a.click('保存變更');await until(()=>a.saved(),'shared reopen');const reopened=await read();graphs.at(-1).graph.verify(reopened);await freshReadback('reopen',reopened);receipt.cases.push({caseId:currentCase,status:'PASS',completeGraph:true});
+  }else if(focus==='concurrent-reopen'){
+   currentCase='MEMBER-UI-CONCURRENT-REOPEN-CAS';
+   for(const p of [b,a]){await p.click('已結案');await until(()=>p.eval("[...document.querySelectorAll('tr')].some(n=>n.innerText.includes('QA MEMBER TASK'))"),'reopen list');await p.activate("[...document.querySelectorAll('tr')].find(n=>n.innerText.includes('QA MEMBER TASK'))?.querySelector('button')");await until(()=>p.eval("Boolean(document.querySelector('#task-edit-title'))"),'reopen editor');if(p===b){await selectScope(b,1);await until(()=>b.eval("document.querySelector('[aria-label=單船目前狀態]')?.contentEditable==='true'"),'B selected');}await p.click('重新開啟');}
+   qa.setRecordFault({before:graphBefore});rendezvous=true;await a.click('保存變更');await b.click('保存變更');await until(()=>paused.length===2,'two original reopen intents');rendezvous=false;
+   const start=receipt.errors.length;await call('Fetch.continueRequest',{requestId:paused[0].requestId},paused[0].session);await until(()=>receipt.errors.length>start,'A cannot acquire parent while B child owns');assert.ok(receipt.errors.splice(start).every(e=>e.includes('lock-conflict')));
+   await call('Fetch.continueRequest',{requestId:paused[1].requestId},paused[1].session);await until(()=>b.saved(),'B shared reopen winner');const winner=await read();graphs.at(-1).graph.verify(winner);
+   await fail(a,'member-context-conflict');assert.deepEqual(await read(),winner);await freshReadback('reopen-competitor',winner);await noUnsafeAssurance(a,'old source CAS must keep loser draft');receipt.cases.push({caseId:currentCase,status:'PASS',winnerCompleteGraph:true,loserOldCasRejected:true,zeroPartialWrites:true});
+  }else{
+   currentCase='MEMBER-UI-CONCURRENT-LAST-TWO';await open(a,'qa-v1');await open(b,'qa-v2');await a.click('標記結案');await b.click('標記結案');
+   qa.setRecordFault({before:graphBefore});rendezvous=true;await a.click('保存變更');await b.click('保存變更');await until(()=>paused.length===2,'two overlapping close intents');rendezvous=false;
+   await call('Fetch.continueRequest',{requestId:paused[0].requestId},paused[0].session);await until(()=>a.saved(),'first member wins');const winner=await read();graphs.at(-1).graph.verify(winner);
+   await call('Fetch.continueRequest',{requestId:paused[1].requestId},paused[1].session);await until(()=>b.saved(),'last member exact shared transition');const final=await read();graphs.at(-1).graph.verify(final);await freshReadback('last-two',final);
+   assert.deepEqual(final.payload.tasks[0].vesselProgress.find(p=>p.vesselId==='qa-v1'),winner.payload.tasks[0].vesselProgress.find(p=>p.vesselId==='qa-v1'));assert.equal(final.payload.meetings[0].taskItems[0].isClosed,true);
+   receipt.cases.push({caseId:currentCase,status:'PASS',overlappingOutgoing:true,winnerPreserved:true,authoritativeClosure:true,completeGraph:true});
+  }
+  fs.writeFileSync(path.join(run,'shared-expected-before-sql.json'),JSON.stringify(graphs.map(x=>({operationId:x.operationId,before:scrub(x.before),expected:scrub(x.graph.expected)})),null,2));qa.setRecordFault(null);
+ }
+ if(['permission','closed-source','close-policy'].includes(focus)){
+  currentCase='MEMBER-UI-'+focus.toUpperCase();const before=await read(),p=focus==='closed-source'?a:b;
+  if(focus==='closed-source'){await p.click('已結案');await until(()=>p.eval("[...document.querySelectorAll('tr')].some(n=>n.innerText.includes('QA MEMBER TASK'))"),'closed source list');await p.activate("[...document.querySelectorAll('tr')].find(n=>n.innerText.includes('QA MEMBER TASK'))?.querySelector('button')");await until(()=>p.eval("Boolean(document.querySelector('#task-edit-title'))"),'closed source editor');}
+  else await open(p,'qa-v1');
+  if(focus==='close-policy'){assert.equal(await p.eval("[...document.querySelectorAll('[role=dialog] button')].some(n=>['標記結案','重新開啟'].includes(n.innerText))"),false,'existing canClose permission hides action');}
+  else{await p.click(focus==='closed-source'?'重新開啟':'標記結案');const start=receipt.errors.length;await p.click('保存變更');await until(()=>receipt.errors.length>start,'source policy rejection');const errors=receipt.errors.splice(start);assert.ok(errors.every(e=>e.includes(focus==='closed-source'?'meeting-reopen-required':'meeting-permission-denied')),JSON.stringify(errors));assert.equal(await p.eval("Boolean(document.querySelector('#task-edit-title'))"),true);await noUnsafeAssurance(p,'source permission rejected draft');}
+  assert.deepEqual(await read(),before);receipt.cases.push({caseId:currentCase,status:'PASS',originalPolicyPreserved:true,zeroBusinessWrites:true});
+ }
+ if(focus==='stale'){
+  currentCase='MEMBER-UI-STALE-SAME-CAS';await open(a,'qa-v1');await a.fill("document.querySelector('.quick-status-bar textarea')",'STALE A DRAFT');await a.click('加入狀態紀錄');await selectScope(a,1);await until(()=>a.eval("document.querySelector('[aria-label=單船目前狀態]')?.contentEditable==='true'"),'A releases first member');
+  await open(b,'qa-v1');await b.fill("document.querySelector('.quick-status-bar textarea')",'COMPETITOR SURVIVES');await b.click('加入狀態紀錄');await b.click('保存變更');await until(()=>b.saved(),'intervening same-member ACK');const winner=await read(),winnerLedger=await businessLedger();
+  await selectScope(a,0);await until(()=>a.eval("document.querySelector('[aria-label=單船目前狀態]')?.innerText==='STALE A DRAFT'&&document.querySelector('[aria-label=單船目前狀態]').contentEditable==='true'"),'original stale draft reacquired');await a.eval("void(window.__staleNode=document.querySelector('[aria-label=單船目前狀態]'))");
+  const start=receipt.errors.length;await a.click('保存變更');await until(()=>receipt.errors.length>start,'same member CAS rejects');const errors=receipt.errors.splice(start);assert.ok(errors.every(e=>e.includes('member-context-conflict')),JSON.stringify(errors));assert.deepEqual(await read(),winner);assert.deepEqual(await businessLedger(),winnerLedger,'stale same-member zero raw record/history writes');assert.equal(await a.eval("window.__staleNode===document.querySelector('[aria-label=單船目前狀態]')&&window.__staleNode.innerText==='STALE A DRAFT'"),true);await noUnsafeAssurance(a,'stale CAS retained draft');await freshReadback('stale-competitor',winner);receipt.cases.push({caseId:currentCase,status:'PASS',zeroWrite:true,sameDraft:true,competitorSurvived:true,oldCasPreserved:true});
+ }
+ if(focus==='parent'){
+  await open(a,'qa-v1');await a.fill("document.querySelector('.quick-status-bar textarea')",'PARENT A RETAIN');await a.click('加入狀態紀錄');const before=await read();
+  for(const kind of ['CLAIM','REFRESH']){
+   currentCase='MEMBER-UI-PARENT-'+kind;let held=false,release,oldLease;
+   qa.setRecordFault({after:async({name,body,value})=>{if(!held&&(kind==='CLAIM'?name==='claim_ship_dynamics_edit_lock'&&body.p_section_key==='task:qa-member-task':name==='read_ship_dynamics_record_scopes_v1'&&(await locks()).some(l=>l.section_key==='task:qa-member-task'))){held=true;oldLease=kind==='CLAIM'?value:(await native.observer.query("select * from ship_dynamics_edit_locks where section_key='task:qa-member-task'")).rows[0];await new Promise(r=>{release=r;});}return false;}});
+   await selectScope(a,3);await until(()=>held,'held native parent '+kind);
+   if(kind==='CLAIM')await native.observer.query("update ship_dynamics_edit_locks set expires_at=clock_timestamp()-interval '1 second' where section_key=$1 and locked_by=$2",[oldLease.section_key,oldLease.locked_by]);
+   await selectScope(a,1);await until(()=>a.eval("document.querySelector('[aria-label=單船目前狀態]')?.contentEditable==='true'"),'successor B owns child');await selectScope(a,3);await until(()=>a.eval("Boolean(document.querySelector('.task-global-fields'))&&!document.querySelector('.task-global-fields').disabled"),'successor parent owned');
+   const successor=(await native.observer.query("select section_key,locked_by,lease_version from ship_dynamics_edit_locks where section_key='task:qa-member-task' and expires_at>now()")).rows;assert.equal(successor.length,1);assert.notEqual(successor[0].locked_by,oldLease.locked_by);
+   release();await wait(300);assert.deepEqual((await native.observer.query("select section_key,locked_by,lease_version from ship_dynamics_edit_locks where section_key='task:qa-member-task' and expires_at>now()")).rows,successor);assert.equal(await a.eval("!document.querySelector('.task-global-fields').disabled"),true);qa.setRecordFault(null);await selectScope(a,0);await until(()=>a.eval("document.querySelector('[aria-label=單船目前狀態]')?.innerText==='PARENT A RETAIN'&&document.querySelector('[aria-label=單船目前狀態]').contentEditable==='true'"),'A draft after old parent response');assert.deepEqual(await read(),before);receipt.cases.push({caseId:currentCase,status:'PASS',heldNativeResponse:true,successorExactLeasePreserved:true,zeroWrite:true});
+  }
+ }
+ if(focus.startsWith('delete')){
+  currentCase='MEMBER-UI-DELETE-CANCEL';await open(a,'qa-v1');await a.fill("document.querySelector('.quick-status-bar textarea')",'DELETE RETAIN');await a.click('加入狀態紀錄');await a.eval("void(window.__deleteNode=document.querySelector('[aria-label=單船目前狀態]'))");const before=await read(),beforeLedger=await businessLedger(),wire=receipt.network.length;
+  assert.equal(await a.eval("[...document.querySelectorAll('#task-edit-title~* button,.modal-header button')].some(n=>n.innerText==='刪除待辦')"),false,'original member scope prohibits deletion');
+  await selectScope(a,3);await until(()=>a.eval("[...document.querySelectorAll('button')].some(n=>n.innerText==='刪除待辦'&&!n.disabled)"),'original overall delete entry');
+  await a.click('刪除待辦');await wait(150);assert.deepEqual(await read(),before);assert.deepEqual(await businessLedger(),beforeLedger);assert.equal(receipt.network.slice(wire).filter(r=>r.rpc.includes('save_')).length,0);receipt.cases.push({caseId:currentCase,status:'PASS',zeroWrite:true});
+  if(focus==='delete-blocked'){
+   currentCase='MEMBER-UI-DELETE-BLOCKED';const block=(await native.observer.query('select claim_ship_dynamics_edit_lock($1,$2,$3,$4,$5) r',[qa.workspace,'meeting:qa-member-meeting','delete-blocker','QA BLOCKER',75])).rows[0].r;assert.equal(block.ok,true);
+   const start=receipt.errors.length;await a.click('刪除待辦');await until(()=>receipt.errors.length>start,'original delete parent/source acquisition denied');await until(()=>a.eval("[...document.querySelectorAll('button')].some(n=>n.innerText==='刪除待辦'&&!n.disabled)"),'failed delete callback fully settled');const errors=receipt.errors.splice(start);assert.ok(errors.every(e=>e.includes('未執行')),JSON.stringify(errors));assert.deepEqual(await read(),before);assert.deepEqual(await businessLedger(),beforeLedger);assert.equal(await a.eval("Boolean(document.querySelector('#task-edit-title'))&&Object.values(localStorage).some(v=>v.includes('DELETE RETAIN'))"),true,'original private member draft retained through failed overall delete');
+   await native.observer.query('select release_ship_dynamics_edit_lock($1,$2,$3)',[qa.workspace,'meeting:qa-member-meeting','delete-blocker']);await until(()=>a.eval("[...document.querySelectorAll('button')].some(n=>n.innerText==='刪除待辦'&&!n.disabled)"),'original retry delete path');receipt.cases.push({caseId:currentCase,status:'PASS',zeroWrite:true,draftRetained:true});
+  }
+  currentCase=focus.startsWith('delete-wrong')?'MEMBER-UI-'+focus.toUpperCase():'MEMBER-UI-DELETE-ALLOWED';let deleteCapture,expected;
+  qa.setRecordFault({before:async({name,body})=>{if(name==='apply_ship_dynamics_record_patch_v1'){
+    if(focus.startsWith('delete-wrong')){
+      const wrong=focus==='delete-wrong-task'?'task:qa-other-task':'meeting:qa-other-meeting',target=focus==='delete-wrong-task'?'task:qa-member-task':'meeting:qa-member-meeting';
+      const valid=(await native.observer.query('select claim_ship_dynamics_edit_lock($1,$2,$3,$4,$5) r',[qa.workspace,wrong,'alias-'+focus,'QA VALID ALIAS',75])).rows[0].r;assert.equal(valid.ok,true);assert.ok(body.p_lock_guards.some(g=>g.section_key===target));body.p_lock_guards=body.p_lock_guards.map(g=>g.section_key===target?{section_key:wrong,locked_by:valid.locked_by}:g);receipt.validWrongParent={wrong,target,validUnexpired:true,transportSubstitution:'controlled'};
+    }
+    deleteCapture={body:structuredClone(body),captured:Date.now()};expected=structuredClone(before.payload);
+    for(const op of body.p_operations.filter(o=>o.kind==='entity')){const rows=expected[op.collection],i=rows.findIndex(r=>r.id===op.entityId);assert.deepEqual(i<0?null:rows[i],op.expected);if(op.value===null)rows.splice(i,1);else if(i<0)rows.push(structuredClone(op.value));else rows[i]=structuredClone(op.value);}
+    for(const op of body.p_operations.filter(o=>o.kind==='order')){const rows=new Map(expected[op.collection].map(x=>[x.id,x]));expected[op.collection]=op.valueIds.map(id=>rows.get(id));}
+    assert.equal(expected.tasks.some(t=>t.id==='qa-member-task'),false);assert.deepEqual(expected.meetings[0].taskItems,[]);assert.equal(expected.auditLogs[0].action,'刪除事項');for(const audit of expected.auditLogs.filter(x=>!before.payload.auditLogs.some(a=>a.id===x.id))){audit.ipAddress='192.0.2.30';audit.ipCountryCode='TW';}
+    const business=await prepareDeleteGraph(qa,before,body);business.revision=expected.revision;assert.deepEqual(business,expected,'outgoing deletion agrees with original helper-derived graph BEFORE SQL');fs.writeFileSync(path.join(run,'delete-before-sql-expected.json'),JSON.stringify(scrub(business),null,2));
+  }}});
+  await a.click('刪除待辦');await wait(700);assert.ok(receipt.network.slice(wire).some(r=>r.rpc==='claim_ship_dynamics_edit_lock'),'original selector hands off to exact parent');
+  if(focus.startsWith('delete-wrong')){
+    await until(()=>receipt.errors.some(e=>e.includes('lock-conflict')),'valid wrong exact entity guard rejected');receipt.errors=receipt.errors.filter(e=>!e.includes('lock-conflict'));assert.deepEqual(await read(),before);assert.deepEqual(await businessLedger(),beforeLedger,'valid wrong parent zero raw record/history writes');assert.equal(await a.eval("Boolean(document.querySelector('#task-edit-title'))"),true);await freshReadback(focus,before);receipt.cases.push({caseId:currentCase,status:'PASS',validWrongParent:true,zeroWrite:true,originalDraftEditorRetained:true});
+  }else{
+  await until(()=>a.saved(),'original member delete ACK');const after=await read();assert.equal(after.payload.tasks.some(t=>t.id==='qa-member-task'),false);assert.equal(after.payload.meetings[0].taskItems.length,0);assert.equal(after.revision,before.revision+1);assert.ok(deleteCapture,'original delete patch captured before SQL');expected.revision=after.revision;expected.updatedAt=after.payload.updatedAt;assert.deepEqual(after.payload,expected,'complete original delete intent graph');await freshReadback('delete',after);receipt.cases.push({caseId:currentCase,status:'PASS',completeGraph:true,originalOverallEntry:true});
+  }
+ }
+ if(focus==='feedback'){
+  currentCase='MEMBER-UI-FEEDBACK-QUICK';const before=await read();
+  assert.equal(await a.eval("Boolean(document.querySelector('.save-status-strip.saved'))"),true,'clean sync stays saved');
+  await open(a,'qa-v1');await a.fill("document.querySelector('.quick-status-bar textarea')",'TYPED ONLY UNSAVED');
+  await a.screen('typed-only-feedback');await noUnsafeAssurance(a,'typed-only quick input');
+  assert.deepEqual(await read(),before);receipt.cases.push({caseId:currentCase,status:'PASS',zeroWrite:true});
+  currentCase='MEMBER-UI-FEEDBACK-ADDED';await a.click('加入狀態紀錄');await noUnsafeAssurance(a,'added note');receipt.cases.push({caseId:currentCase,status:'PASS'});
+  currentCase='MEMBER-UI-FEEDBACK-CROSS-SCOPE';await selectScope(a,1);await until(()=>a.eval("document.querySelector('[aria-label=單船目前狀態]')?.contentEditable==='true'"),'B ready');await noUnsafeAssurance(a,'private A draft while clean B selected');
+  await a.fill("document.querySelector('.quick-status-bar textarea')",'B KNOWN ACK');await a.click('加入狀態紀錄');await a.click('保存變更');await until(()=>a.eval("!document.querySelector('#task-edit-title')"),'known B ACK still succeeds despite private A');
+  assert.equal((await read()).revision,before.revision+1);receipt.cases.push({caseId:currentCase,status:'PASS',knownAckNotRejected:true});
+  await until(()=>a.eval(`Boolean(${field})`),'source return');await a.click('取消並關閉');await until(()=>a.saved(),'original close restores saved');await a.sync();assert.equal(await a.eval("Boolean(document.querySelector('.save-status-strip.saved'))"),true);
+ }
+ if(['original','pair'].includes(focus)){
  currentCase='MEMBER-UI-PAIR';const before=await read();fs.writeFileSync(path.join(run,'pair-before.json'),JSON.stringify(scrub(before),null,2));
  await open(a,'qa-v1');await open(b,'qa-v2');
  await a.screen('pair-a-open');await b.screen('pair-b-open');
@@ -282,7 +397,7 @@ try{
  await wait(300);
  assert.equal(await a.eval("window.__lateDraftNode===document.querySelector('[aria-label=單船目前狀態]')"),true,'late ACK must not close newer visible draft');
  assert.equal(await a.eval("document.querySelector('[aria-label=單船目前狀態]').innerHTML"),visibleNew);
- assert.equal((await read()).revision,outcomeBefore.revision+1,'lost ACK commits once');
+ await noUnsafeAssurance(a,'unknown ACK / newer visible text');assert.equal((await read()).revision,outcomeBefore.revision+1,'lost ACK commits once');
  qa.setRecordFault(null);
  await a.click('保存變更');await until(()=>a.saved(),'newer draft save after original receipt');
  assert.equal((await read()).revision,outcomeBefore.revision+2,'newer draft is a distinct operation');
@@ -355,6 +470,6 @@ finally{
  if(ws?.readyState===WebSocket.OPEN){try{await call('Browser.close');}catch{}ws.close();}
  const processGone=()=>!browser||!spawnSync('tasklist',['/FI',`PID eq ${browser.pid}`,'/FO','CSV','/NH'],{encoding:'utf8'}).stdout.includes(`","${browser.pid}",`);
  try{if(browser&&!processGone()){spawnSync('taskkill',['/PID',String(browser.pid),'/T','/F'],{stdio:'ignore'});await until(processGone,'owned Chrome gone',5000);}}catch(e){receipt.chromeCleanupRetry=e.message;}
- try{if(qa)await qa.close();if(native)await native.close();if(qa)await assert.rejects(()=>fetch(qa.origin+'/__qa/health'));if(chromePort)assert.equal(await portClosed(Number(chromePort)),true);assert.ok(processGone());fs.rmSync(profile,{recursive:true,force:true});receipt.cleanup={httpStopped:true,chromeStopped:true,chromePortClosed:true,profileRemoved:true,pgStopped:receipt.stopped,pgPortClosed:receipt.portClosed,ownedDataRemoved:receipt.ownedDataRemoved};}catch(e){failure??=e;receipt.cleanupError=e.message;receipt.status='FAIL';}
+ try{if(qa)await qa.close();if(native)await native.close();if(qa)await assert.rejects(()=>fetch(qa.origin+'/__qa/health'));if(chromePort)await until(()=>portClosed(Number(chromePort)),'owned Chrome port closes after service cleanup',5000);assert.ok(processGone());fs.rmSync(profile,{recursive:true,force:true});receipt.cleanup={httpStopped:true,chromeStopped:true,chromePortClosed:true,profileRemoved:true,pgStopped:receipt.stopped,pgPortClosed:receipt.portClosed,ownedDataRemoved:receipt.ownedDataRemoved};}catch(e){failure??=e;receipt.cleanupError=e.message;receipt.status='FAIL';}
  receipt.commands[0].exit=failure?1:0;save();console.log(JSON.stringify({status:receipt.status,run,cases:receipt.cases.map(c=>c.caseId),cleanup:receipt.cleanup}));if(failure)process.exitCode=1;
 }

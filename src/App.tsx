@@ -524,6 +524,10 @@ export default function App() {
     return true;
   };
   useEffect(()=>{
+    if(memberEditor.current?.hasUnconfirmedDraft()){
+      if(savePhaseRef.current==='saved'||saveToastRef.current?.kind==='success')retainPageDraftFeedback();
+      return;
+    }
     if(!pageDraftFeedbackPending.current||hasPageDraftContext())return;
     pageDraftFeedbackPending.current=false;
     if(cloudWriteBlocked||hasUnsavedWork.current||cloudSaveInFlight.current||cloudSyncInFlight.current||pendingCloudData.current.size()||savePhaseRef.current!=='dirty')return;
@@ -4427,7 +4431,10 @@ export default function App() {
   const taskEditorVisibleVessels=taskReadOnlyData?taskReadOnlyData.vessels as Vessel[]:activeVessels;
   const taskEditorUser=currentUser;
   const memberDraftEditor=memberEditor.current;
-  const captureTaskMemberDraft=memberDraftEditor?(task:TaskItem,scope:string,quickStatus:string)=>memberDraftEditor.captureDraft(task,scope,quickStatus):undefined;
+  const captureTaskMemberDraft=memberDraftEditor?(task:TaskItem,scope:string,quickStatus:string)=>{
+    memberDraftEditor.captureDraft(task,scope,quickStatus);
+    if(memberEditor.current===memberDraftEditor&&memberDraftEditor.hasUnconfirmedDraft())retainPageDraftFeedback();
+  }:undefined;
   const editingTaskScopeVessels=editingTask?taskVessels(editingTask,taskEditorData.vessels):[];
   const creatingVisibleTask=Boolean(creatingTask&&editingTask&&editingTask.id===creatingTask.id&&!taskReadOnlyData&&taskEditorAuthorizationEpoch===authorizationEpoch&&canCreateTasks);
   const canEditOverallTask=Boolean(creatingVisibleTask||(

@@ -35,6 +35,15 @@ export class TaskMemberEditor {
     if(!p||p.p_workspace_key!==this.config.workspaceKey||p.p_actor_user_id!==this.actorId||p.p_task_id!==this.taskId||p.p_vessel_id!==vesselId||typeof p.p_operation_id!=='string'||typeof pending.draft!=='string'||JSON.parse(pending.draft)?.vesselId!==vesselId)throw new Error('pending-member-scope-mismatch');
     return pending;
   }
+  hasUnconfirmedDraft(){
+    if(this.disposed||!this.identityIsCurrent())return false;
+    const content=(p:TaskVesselProgress)=>JSON.stringify([p.status,p.isClosed,p.closedDate||'',p.statusLogs]);
+    for(const scope of this.contexts.keys()){
+      try{const draft=this.localDraft(scope);if(this.pending(scope)||draft&&(draft.quickStatus||content(draft.progress)!==content(draft.baseline)))return true;}
+      catch{return true;}
+    }
+    return false;
+  }
   captureDraft(candidate:TaskItem,vesselId:string,quickStatus:string){
     if(!this.current()||candidate.id!==this.taskId||this.scope!==vesselId||vesselId==='overall')return;
     const ctx=this.contexts.get(vesselId);if(!ctx)return;
@@ -123,9 +132,12 @@ export class TaskMemberEditor {
     if(this.busy||!this.current()||this.scope!==vesselId)return false;
     const ctx=this.contexts.get(vesselId);if(!ctx)return false;
     const key=memberPendingKey(this.config,this.actorId,this.taskId,vesselId),draft=JSON.stringify(taskProgressForVessel(candidate,vesselId));
-    this.busy=true;const g=this.generation;
+    this.busy=true;let g=this.generation;
     try{
       let pending=this.pending(vesselId),r:any;
+      // A proved zero-write promotion failure detached the child. Only an explicit
+      // retry reacquires it; select preserves the original member/source CAS.
+      if(!pending&&!this.lease){if(!await this.select(vesselId))return false;g=this.generation;}
       if(pending){r=await this.rpc('get_ship_dynamics_task_member_receipt_v1',pending.params);if(!this.current(g))return false;}
       if(!pending){
         const lease=this.lease;if(!this.writable||!lease||Date.parse(lease.expires_at)<=Date.now())throw new Error('協作鎖已失效，目前內容只保留在這個視窗');
