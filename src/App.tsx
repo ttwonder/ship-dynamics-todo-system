@@ -496,6 +496,30 @@ export default function App() {
   const clearStaleSaveSuccessToast=()=>{
     if(saveToastRef.current?.kind==='success')dismissSaveToast();
   };
+  // Page-local editors are not AppData deltas, nor are they lease durability.
+  const pageEditorContextRef=useRef(false);
+  pageEditorContextRef.current=Boolean(editingVesselId||editingTaskId||creatingTask||batchManagedOpen);
+  const pageDraftFeedbackPending=useRef(false);
+  const hasPageDraftContext=()=>Boolean(
+    pageEditorContextRef.current||vesselLeaseIncidentRef.current
+    ||activeEditLockRef.current&&activeEditLockRef.current.status!=='blocked'
+    ||batchManagedOpenRef.current||pendingTaskCreationsRef.current.length
+    ||vesselAttentionSaveQueue.current?.hasPending()
+  );
+  const retainPageDraftFeedback=()=>{
+    if(!hasPageDraftContext())return false;
+    pageDraftFeedbackPending.current=true;
+    clearStaleSaveSuccessToast();
+    setSavePhase('dirty');
+    setCloudStatus('修改仍保留在目前頁面，請不要關閉。');
+    return true;
+  };
+  useEffect(()=>{
+    if(!pageDraftFeedbackPending.current||hasPageDraftContext())return;
+    pageDraftFeedbackPending.current=false;
+    if(cloudWriteBlocked||hasUnsavedWork.current||cloudSaveInFlight.current||cloudSyncInFlight.current||pendingCloudData.current.size()||savePhaseRef.current!=='dirty')return;
+    if(confirmedCloudData.current&&appDataContentEqual(liveData.current,confirmedCloudData.current))setSavePhase('saved');
+  });
   useEffect(()=>{
     const handleStorage=(event:StorageEvent)=>{if(event.key?.startsWith(PENDING_TASK_CREATION_STORAGE_PREFIX))refreshPendingTaskCreations();};
     const requestRun=()=>{void pendingTaskCreationProcessorRef.current();};
@@ -4036,7 +4060,8 @@ export default function App() {
         rememberCloudIdentity();
         if(hasLocalChanges){
           await enqueueCloudSave(prepared);
-        }else{
+          retainPageDraftFeedback();
+        }else if(!retainPageDraftFeedback()){
           hasUnsavedWork.current=false;
           setSavePhase('saved');
           setCloudStatus(savedStatus('已同步雲端', remote.updatedAt));
@@ -4087,6 +4112,7 @@ export default function App() {
     if (cloudSyncInFlight.current) { setCloudStatus('正在同步雲端，完成後才能保存');showSaveToast('info','正在同步雲端','同步完成後系統會繼續處理尚未保存的修改。');return; }
     if (cloudWriteBlocked) { hasUnsavedWork.current=true;setSavePhase('error');setCloudStatus('這些修改尚未保存到雲端：請先同步最新，再重新保存');showSaveToast('error','尚未保存到雲端','請先點擊「同步最新（安全合併）」；同步完成後，再點擊「重新保存」。直到畫面顯示「已保存到雲端」前，請不要關閉頁面。');return; }
     if (confirmedCloudData.current&&appDataContentEqual(data,confirmedCloudData.current)) {
+      if(retainPageDraftFeedback())return;
       hasUnsavedWork.current=false;
       setSavePhase('saved');
       setCloudStatus(savedStatus('雲端已是最新版本',confirmedCloudData.current.updatedAt));

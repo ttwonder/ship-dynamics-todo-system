@@ -46,7 +46,19 @@ Artifact root：`C:/Users/tuotu/AppData/Local/hermes/cache/record-ui-concurrency
 
 首跑 `ui-JGS2k5` exit 1 卡在錯誤的「B 頁面應顯示 A 船 marker」oracle。operator 本來只看自己船，且原 App 在編輯中延後套用新雲端模型；實際回覆已是新 revision，草稿未失。修為 assert 原新雲端提示＋真 HTTP 新 revision＋同 DOM 草稿；另將 fresh reader 改成已存在的 `fetchCloudData(explicitQaConfig)` 唯讀 API。未改產品。
 
-U1 截圖另可見原同步 toast「本頁沒有未保存修改，現在可以安全關閉或重新整理」，同時 child-only 草稿還在。此為本次可見的既有文案／草稿狀態落差，**未修復、未測試真的關頁或重新整理會否遺失**；不要把本片 PASS 解讀為此提示已正確或 child draft 可抗刷新。核心草稿持續／真保存契約有實測，不擴大成新的 UI 改造。
+歷史 U1 截圖另可見原同步 toast「本頁沒有未保存修改，現在可以安全關閉或重新整理」，同時 child-only 草稿還在。該基線當時未修復此狀態誤報；以下有界修復已另建 RED→GREEN。**仍未測試真的關頁或重新整理會否遺失**，不把提示修復當成 child draft 可抗刷新。
+
+### Child-only 草稿成功誤報修復（基線 `253e71035565bea292e1d20f2bc2c4fedd95c6a5`）
+
+- 只改 App 內部 feedback：同步的無模型 delta／模型保存 ACK，以及頁首無 delta 保存，必須在回覆時重新讀取目前編輯上下文、獨立 vessel incident、batch／pending 草稿。不能只用一個 lease 代表所有草稿，也不把這個 feedback flag 混入原保存／釋鎖 durability。
+- 仍在編輯時清除舊成功 toast，沿用既有保留內容提示與 dirty phase；不清原 dirty ref、不提交 child draft、不關 editor。原保存 ACK／取消關閉後，僅在模型已確認且沒有保存錯誤／隊列時解除本次 feedback，避免永久 dirty。
+- 原 JSX 19 roots（僅 CRLF→LF 正規化）、markup／styles／文字 literal 全保留；內部 prop allowlist 為空，無 SQL／共享 native adapter／正式設定改動。這是狀態回饋修復，不是視覺或操作改造。
+- 原 App＋native SQL：U1/U2 保留完整 payload／三份 fresh readback、真 pre-COMMIT 阻塞、原 client retry、audit／未參與資料不變；另 D1 同 DOM 草稿＋真 peer read＋零未送 business write＋保 lease、D2 原頁首無 delta 保存不誤報、D3 原「取消並關閉」零寫入且解除 feedback、D4 無 editor 乾淨頁原 sync／Save 正常成功。共 **6 stable cases**，D1/D2 是 U1 的細分觀測，不能當成六套独立 concurrency 情境。
+- `node scripts/verify-child-draft-feedback.mjs`：**14 source-executed composed controlled-I/O cases**，執行原 App helper／syncLatest／saveChanges 與收尾 effect；涵蓋無 lease 的 editor／incident、batch／pending、blocked lease 負控、dirty 保留、取消與同步 await 期間進出 editor，及模型 ACK 時 child／無 child 正負控。不冒稱 mounted React／真 SQL；source boundary 另計。
+- 四個相鄰 command gates：save-queue-feedback、cloud-save-intents、realtime-sync、vessel-lease-continuity 均 exit 0（舊 runner 不提供 stable case 數，不虛構合計）。最終 typecheck／build exit 0；build 僅既有 >500kB chunk warning。未重跑不適用的全量 normalized UI 或未變更 SQL 基線。
+- 證據根：`C:/Users/tuotu/AppData/Local/hermes/cache/record-child-draft-feedback-253e7103/`。真正 native RED：`red/ui-VBjgbI/receipt.json`，exit 1 明確失敗於 D1 unsafe toast，不是 selector。第一輪 GREEN 到 D3 因錯誤取消 label 而停，修為原「取消並關閉」；第二個 harness 邊界失敗為 CRLF 比對，僅測試正規化，沒有改 UI。模型 ACK 近鄰另有 `adjacent-red.json` 的 C13 行為 RED。
+- 最終 native：`final-candidate/ui-Q7FWUq/receipt.json`，6 cases PASS／原 U1 截圖已檢視。`final-candidate/composed.json` 14 PASS；`gates.json`、`final-gates.json` 保留逐命令 exit；`delivery-receipt.json` 綁 input hashes／staged tree／commit／清理，完整 patch 用 Git `--output` 產生。
+- 只本機 synthetic 原 UI；owned Chrome／HTTP／PG 與專屬 ports 均停止。無 push／merge／部署／正式 SQL／正式設定；無新獨立 reviewer。U3 五人、hosted／production、手機／PDF、全站所有 child 表單及抗刷新持久化不是本片驗收範圍。最多兩次 harness 修理，完成此有界切片即交回唯一 writer。
 
 ## 最小重跑（Git Bash，在 canonical repo）
 
