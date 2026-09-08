@@ -1,10 +1,12 @@
 import { getSupabaseClient, type ResolvedSupabaseConfig } from './cloud';
 import type { TaskItem, TaskVesselProgress } from './types';
 import { taskProgressForVessel } from './taskVesselProgress';
+import { NormalizedDurableStateStore } from './normalizedRepository';
 
 export type MemberContext = {ok:true;protocol:string;section_key:string;task:TaskItem;progress:TaskVesselProgress;expected:{structure:string;member:string;source:{collection:string;id:string;version:number}[]};actor_guard:unknown;closure:{vesselId:string;isClosed:boolean}[];revision:number};
 type Lease={section_key:string;locked_by:string;lease_version:string;expires_at:string};
 type Pending={params:Record<string,unknown>;draft:string};
+type MemberDraft={progress:TaskVesselProgress;baseline:TaskVesselProgress;expected:MemberContext['expected'];quickStatus:string};
 export type MemberConfirmation={operationId:string;vesselId:string;submitted:TaskVesselProgress;progress:TaskVesselProgress};
 const clone=<T,>(x:T):T=>JSON.parse(JSON.stringify(x));
 export const memberPendingKey=(config:ResolvedSupabaseConfig,actor:string,task:string,vessel:string)=>'ship-dynamics-member-pending-v1:'+JSON.stringify([config.supabaseUrl,config.workspaceKey,actor,task,vessel]);
@@ -20,8 +22,40 @@ export class TaskMemberEditor {
   private busy=false;
   private parentLeases:Lease[]=[];
   private disposed=false;
-  constructor(readonly config:ResolvedSupabaseConfig,readonly actorId:string,readonly actorName:string,readonly taskId:string,readonly isCurrent:()=>boolean,readonly changed:()=>void){}
-  private current(g=this.generation){return !this.disposed&&g===this.generation&&this.isCurrent();}
+  private frozen=false;
+  private drafts=new NormalizedDurableStateStore();
+  quickStatus='';
+  private workspace(){return JSON.stringify([this.config.supabaseUrl,this.config.workspaceKey]);}
+  private draftEntity(vesselId:string){return 'task-member-v1:'+JSON.stringify([this.taskId,vesselId]);}
+  private localDraft(vesselId:string){return this.drafts.load<MemberDraft>(this.workspace(),this.actorId,this.draftEntity(vesselId))?.draft;}
+  private pending(vesselId:string):Pending|null{
+    const raw=localStorage.getItem(memberPendingKey(this.config,this.actorId,this.taskId,vesselId));
+    if(!raw)return null;
+    const pending=JSON.parse(raw) as Pending,p=pending?.params;
+    if(!p||p.p_workspace_key!==this.config.workspaceKey||p.p_actor_user_id!==this.actorId||p.p_task_id!==this.taskId||p.p_vessel_id!==vesselId||typeof p.p_operation_id!=='string'||typeof pending.draft!=='string'||JSON.parse(pending.draft)?.vesselId!==vesselId)throw new Error('pending-member-scope-mismatch');
+    return pending;
+  }
+  captureDraft(candidate:TaskItem,vesselId:string,quickStatus:string){
+    if(!this.current()||candidate.id!==this.taskId||this.scope!==vesselId||vesselId==='overall')return;
+    const ctx=this.contexts.get(vesselId);if(!ctx)return;
+    const progress=taskProgressForVessel(candidate,vesselId);
+    // Do not persist a not-yet-loaded sibling stub during selector acquisition.
+    if(!progress.statusLogs.length&&ctx.progress.statusLogs.length)return;
+    try{this.drafts.saveDraft({workspaceId:this.workspace(),actorId:this.actorId,entityKey:this.draftEntity(vesselId),baseVersions:{},draft:{progress:clone(progress),baseline:clone(ctx.progress),expected:clone(ctx.expected),quickStatus}});}
+    catch(e:any){this.writable=false;this.message=e.message||'本機草稿未能保存';this.changed();}
+  }
+  constructor(readonly config:ResolvedSupabaseConfig,readonly actorId:string,readonly actorName:string,readonly taskId:string,readonly isCurrent:()=>boolean,readonly changed:()=>void,readonly identityIsCurrent:()=>boolean=isCurrent){}
+  private current(g=this.generation){return !this.disposed&&!this.frozen&&g===this.generation&&this.isCurrent();}
+  isUsable(){return this.current();}
+  preservesDraft(taskId:string){return !this.disposed&&this.taskId===taskId&&this.identityIsCurrent();}
+  checkCurrent(){
+    if(this.disposed||this.frozen||this.isCurrent())return;
+    this.frozen=true;this.writable=false;++this.generation;
+    if(this.timer)clearInterval(this.timer);this.timer=null;
+    const lease=this.lease;this.lease=null;
+    this.message='協作鎖已失效，目前內容只保留在這個視窗';this.changed();
+    void this.release(lease).catch(()=>{/* captured old owner only; TTL remains the fallback */});
+  }
   private async rpc(name:string,params:Record<string,unknown>){
     const client=getSupabaseClient(this.config);if(!client)throw new Error('尚未配置 Supabase');
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
@@ -36,7 +70,10 @@ export class TaskMemberEditor {
     const previous=this.lease;this.lease=null;if(this.timer)clearInterval(this.timer);this.timer=null;
     try{
       await this.release(previous);if(!this.current(g))return null;
+      // Validate the exact private residue before any member RPC. Never migrate a whole-task request.
+      const pending=this.pending(vesselId),saved=this.localDraft(vesselId);
       const fresh=await this.read(vesselId);if(!this.current(g))return null;
+      if(saved&&(saved.progress?.vesselId!==vesselId||saved.baseline?.vesselId!==vesselId||typeof saved.expected?.member!=='string'||typeof saved.expected?.structure!=='string'))throw new Error('local-member-draft-scope-mismatch');
       const owner=crypto.randomUUID();
       const result=await this.rpc('claim_ship_dynamics_edit_lock',{p_workspace_key:this.config.workspaceKey,p_section_key:fresh.section_key,p_locked_by:owner,p_locked_by_name:this.actorName,p_ttl_seconds:75});
       if(!result?.ok)throw new Error(result?.code||'lock-conflict');
@@ -45,15 +82,18 @@ export class TaskMemberEditor {
       if(!this.current(g)){await this.release(lease);return null;}
       this.lease=lease;
       // A reopened selector keeps its original same-member precondition, not a rebase.
-      if(!this.contexts.has(vesselId))this.contexts.set(vesselId,fresh);
+      if(!this.contexts.has(vesselId))this.contexts.set(vesselId,saved?{...fresh,progress:clone(saved.baseline),expected:clone(saved.expected)}:fresh);
       const ctx=this.contexts.get(vesselId)!;
-      this.task={...clone(ctx.task),vesselProgress:ctx.closure.map(c=>c.vesselId===vesselId?clone(ctx.progress):{...c,status:'',statusLogs:[]})};
+      const progress=saved?.progress||(pending?JSON.parse(pending.draft) as TaskVesselProgress:ctx.progress);
+      this.quickStatus=saved?.quickStatus||'';
+      this.task={...clone(ctx.task),vesselProgress:ctx.closure.map(c=>c.vesselId===vesselId?clone(progress):{...c,status:'',statusLogs:[]})};
       this.writable=true;this.message='';this.changed();
       this.timer=setInterval(()=>{void this.renew(g,lease);},25000);
       return clone(this.task);
     }catch(e:any){if(this.current(g)){this.message=e.message||String(e);this.writable=false;this.changed();}return null;}
   }
   private async renew(g:number,lease:Lease){
+    if(!this.current(g)||this.lease!==lease)return;
     try{const r=await this.rpc('renew_ship_dynamics_task_member_lock_v1',{p_workspace_key:this.config.workspaceKey,p_section_key:lease.section_key,p_locked_by:lease.locked_by,p_lease_version:lease.lease_version,p_ttl_seconds:75});
       if(!this.current(g)||this.lease!==lease)return;
       if(!r?.ok||r.lease_version!==lease.lease_version)throw new Error(r?.code||'lock-conflict');lease.expires_at=r.expires_at;
@@ -85,7 +125,7 @@ export class TaskMemberEditor {
     const key=memberPendingKey(this.config,this.actorId,this.taskId,vesselId),draft=JSON.stringify(taskProgressForVessel(candidate,vesselId));
     this.busy=true;const g=this.generation;
     try{
-      let pending:Pending|null=JSON.parse(localStorage.getItem(key)||'null'),r:any;
+      let pending=this.pending(vesselId),r:any;
       if(pending){r=await this.rpc('get_ship_dynamics_task_member_receipt_v1',pending.params);if(!this.current(g))return false;}
       if(!pending){
         const lease=this.lease;if(!this.writable||!lease||Date.parse(lease.expires_at)<=Date.now())throw new Error('協作鎖已失效，目前內容只保留在這個視窗');
@@ -116,6 +156,13 @@ export class TaskMemberEditor {
       const confirmed=await this.read(vesselId);if(!this.current(g))return false;
       await publish(r.revision);if(!this.current(g))return false;
       this.contexts.set(vesselId,confirmed);
+      const saved=this.localDraft(vesselId),submitted=JSON.parse(pending.draft) as TaskVesselProgress;
+      if(saved){
+        const count=saved.progress.statusLogs.length-submitted.statusLogs.length;
+        if(count<0||JSON.stringify(saved.progress.statusLogs.slice(count))!==JSON.stringify(submitted.statusLogs))throw new Error('local-member-draft-history-conflict');
+        const progress={...saved.progress,statusLogs:[...saved.progress.statusLogs.slice(0,count),...clone(confirmed.progress.statusLogs)]};
+        this.drafts.saveDraft({workspaceId:this.workspace(),actorId:this.actorId,entityKey:this.draftEntity(vesselId),baseVersions:{},draft:{...saved,progress,baseline:clone(confirmed.progress),expected:clone(confirmed.expected)}});
+      }
       this.confirmation={operationId:String(pending.params.p_operation_id),vesselId,submitted:JSON.parse(pending.draft),progress:clone(confirmed.progress)};
       this.changed();
       localStorage.removeItem(key);
@@ -123,5 +170,6 @@ export class TaskMemberEditor {
     }catch(e:any){if(this.current(g)){this.message=e.message||String(e);this.changed();alert(this.message);}return false;}finally{try{await this.releaseParents();}catch{/* exact parent owners expire; never replace a business receipt */}this.busy=false;}
   }
   async suspend(){++this.generation;this.writable=false;if(this.timer)clearInterval(this.timer);this.timer=null;const lease=this.lease;this.lease=null;await this.release(lease);}
-  async close(){if(this.busy)return false;this.disposed=true;++this.generation;if(this.timer)clearInterval(this.timer);this.timer=null;const lease=this.lease;this.lease=null;await this.release(lease);return true;}
+  async dispose(){this.disposed=true;++this.generation;if(this.timer)clearInterval(this.timer);this.timer=null;const lease=this.lease;this.lease=null;try{await this.release(lease);}catch{/* only the captured old lease may expire */}}
+  async close(){if(this.busy)return false;for(const scope of this.contexts.keys())if(!localStorage.getItem(memberPendingKey(this.config,this.actorId,this.taskId,scope)))this.drafts.removeDraft(this.workspace(),this.actorId,this.draftEntity(scope));this.disposed=true;++this.generation;if(this.timer)clearInterval(this.timer);this.timer=null;const lease=this.lease;this.lease=null;await this.release(lease);return true;}
 }

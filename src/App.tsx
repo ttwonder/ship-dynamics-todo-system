@@ -297,8 +297,9 @@ function taskMatchesFilters(t: TaskItem, filters: FilterState, vesselMap: Record
 
 export default function App() {
   const memberEditor=useRef<TaskMemberEditor|null>(null);
+  const memberScopeGeneration=useRef(0);
   const [,setMemberEditorVersion]=useState(0);
-  useEffect(()=>()=>{void memberEditor.current?.close();},[]);
+  useEffect(()=>()=>{void memberEditor.current?.dispose();},[]);
   const recordReadScope=useRef<RecordReadScope>('home');
   const actionScopeGeneration=useRef(0);
   const fetchCloudData=(config?:ResolvedSupabaseConfig|null,signal?:AbortSignal,confirmed?:AppData)=>fetchCloudDataRpc(config,signal,confirmed,recordReadScope.current);
@@ -1349,6 +1350,7 @@ export default function App() {
   useEffect(()=>{
     const lock=activeEditLock;
     const checkConfig=()=>{
+      memberEditor.current?.checkCurrent();
       const configIdentity=cloudConfigIdentity(getSupabaseConfig());
       if(configIdentity!==observedCloudConfig.current){observedCloudConfig.current=configIdentity;configIoCoordinator.current.invalidate();}
       const pending=pendingClaimConfig.current;
@@ -1874,12 +1876,13 @@ export default function App() {
     if(sectionKey.startsWith('internal-control:'))return snapshot.internalControlCases.some(item=>internalControlEditLockKey(item.id)===sectionKey);
     return false;
   };
-  const refreshAfterItemLease=async(sectionKey:string,vesselFreshness=false):Promise<AppData|null>=>{
+  const refreshAfterItemLease=async(sectionKey:string,vesselFreshness=false,ownerIsCurrent:()=>boolean=()=>true):Promise<AppData|null>=>{
+    if(!ownerIsCurrent())return null;
     const claimedLock=activeEditLockRef.current;
     if(!claimedLock||claimedLock.sectionKey!==sectionKey||claimedLock.status!=='owned')return null;
     const leaseConfig=getSupabaseConfig();
     if(!leaseConfig)return itemLeaseIsAuthorizedInSnapshot(sectionKey,liveData.current)?liveData.current:null;
-    const claimStillCurrent=()=>activeEditLockRef.current?.leaseOwnerId===claimedLock.leaseOwnerId&&lockCoordinator.current.isCurrent(claimedLock.generation)&&sameCloudConfig(getSupabaseConfig(),leaseConfig);
+    const claimStillCurrent=()=>ownerIsCurrent()&&activeEditLockRef.current?.leaseOwnerId===claimedLock.leaseOwnerId&&lockCoordinator.current.isCurrent(claimedLock.generation)&&sameCloudConfig(getSupabaseConfig(),leaseConfig);
     try{
       if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
       const beforeSave=confirmedCloudData.current;
@@ -2148,7 +2151,8 @@ export default function App() {
   const statsTasks = useMemo(() => roleVisibleTasks.filter(t=>taskMatchesFilters(t,filters,vesselMap,currentUser,false,canViewAllVessels,Boolean(currentUser&&t.ownerUserIds.includes(currentUser.id)))),[roleVisibleTasks,vesselMap,currentUser,filters,canViewAllVessels]);
   const closedTasks = useMemo(() => sortRecordsNewestCreated(roleVisibleTasks.filter(t=>taskMatchesFilters(t,closedFilters,vesselMap,currentUser,true,canViewAllVessels,Boolean(currentUser&&t.ownerUserIds.includes(currentUser.id))))),[roleVisibleTasks,vesselMap,currentUser,closedFilters,canViewAllVessels]);
 
-  if (!cloudBootstrapped) return <>{appVersionUpdateNotice}<div className="login-page"><div className="login-card loading-card"><h2>正在載入雲端主資料</h2><p className="muted">請稍候，完成前不會寫入或覆蓋資料。</p></div></div></>;
+  const preserveMemberDraft=Boolean(memberEditor.current?.preservesDraft(editingTaskId)&&taskEditorAuthorizationEpoch===authorizationEpoch&&activeVessels.some(v=>v.id===memberEditor.current?.scope));
+  if (!cloudBootstrapped&&!preserveMemberDraft) return <>{appVersionUpdateNotice}<div className="login-page"><div className="login-card loading-card"><h2>正在載入雲端主資料</h2><p className="muted">請稍候，完成前不會寫入或覆蓋資料。</p></div></div></>;
   const firstRunInitializationAllowed=mayOfferFirstRunInitialization({
     cloudConfigured:Boolean(getSupabaseConfig()),
     cloudBootstrapped,
@@ -2160,7 +2164,7 @@ export default function App() {
   });
   const productionCloudUnavailable=!getSupabaseConfig()&&!import.meta.env.DEV;
   const productionCloudSafetyGateBlocked=shouldRenderProductionCloudSafetyGate({
-    productionCloudUnavailable,
+    productionCloudUnavailable:productionCloudUnavailable&&!preserveMemberDraft,
     editingVesselId,
     currentUserId:currentUser?.id||'',
     authorizationEpoch,
@@ -2194,13 +2198,14 @@ export default function App() {
   };
   // Compatibility consumers expand only on the user's action, never on bootstrap.
 
-  const loadRecordActionScope=async(scope:RecordReadScope):Promise<boolean>=>{
+  const loadRecordActionScope=async(scope:RecordReadScope,ownerIsCurrent:()=>boolean=()=>true):Promise<boolean>=>{
+    if(!ownerIsCurrent())return false;
     const generation=++actionScopeGeneration.current;
     const config=getSupabaseConfig();
     if(config?.readMode!=='scoped-v1'||recordScopeKey(recordReadScope.current)===recordScopeKey(scope))return true;
     const actor=liveCurrentUserId.current,session=identitySessionGeneration.current;
     const token=configIoCoordinator.current.begin(config);
-    const isCurrent=()=>generation===actionScopeGeneration.current&&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig());
+    const isCurrent=()=>ownerIsCurrent()&&generation===actionScopeGeneration.current&&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig());
     try{
       if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
       if(!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current))await enqueueCloudSave(liveData.current);
@@ -2230,6 +2235,7 @@ export default function App() {
   const loadMeetingScope=async(meetingIds:string[]):Promise<AppData|null>=>await loadRecordActionScope({targets:meetingIds.map(id=>({collection:'meetings' as const,id}))})?freshPageData():null;
   const loadInternalControlScope=async(caseId:string):Promise<AppData|null>=>await loadRecordActionScope({targets:[{collection:'internalControlCases',id:caseId}]})?freshPageData():null;
   const navigateToTab = async (nextTab:Tab) => {
+    if(memberEditor.current)return; // Explicit editor close/discard owns its lifecycle.
     const incident=vesselLeaseIncidentRef.current;
     if(editingVesselId&&incident&&classifyVesselLeaseIncidentClose(incident.mode)==='confirm-discard'&&incident.sectionKey===`vessel:${editingVesselId}`){
       const incidentLock=activeEditLockRef.current;
@@ -2343,7 +2349,7 @@ export default function App() {
       if(activeEditLockRef.current&&!await releaseExclusiveItemLease(activeEditLockRef.current.sectionKey))return 'failed';
       const actor=currentUser.id,session=identitySessionGeneration.current,epoch=authorizationEpoch;
       const scope=vesselId||taskVesselIds(task).find(id=>activeVessels.some(v=>v.id===id))||'';
-      const editor=new TaskMemberEditor(memberConfig,actor,currentUser.name,task.id,()=>requestIsCurrent()&&liveCurrentUserId.current===actor&&identitySessionGeneration.current===session&&liveAuthorizationEpoch.current===epoch&&sameCloudConfig(memberConfig,getSupabaseConfig()),()=>setMemberEditorVersion(v=>v+1));
+      const editor=new TaskMemberEditor(memberConfig,actor,currentUser.name,task.id,()=>requestIsCurrent()&&liveCurrentUserId.current===actor&&identitySessionGeneration.current===session&&liveAuthorizationEpoch.current===epoch&&sameCloudConfig(memberConfig,getSupabaseConfig()),()=>setMemberEditorVersion(v=>v+1),()=>requestIsCurrent()&&liveCurrentUserId.current===actor&&identitySessionGeneration.current===session&&liveAuthorizationEpoch.current===epoch);
       memberEditor.current=editor;
       const selected=await editor.select(scope);
       if(!selected||!requestIsCurrent()){await editor.close();if(memberEditor.current===editor)memberEditor.current=null;return 'failed';}
@@ -2368,18 +2374,23 @@ export default function App() {
     return requestIsCurrent()?'failed':'cancelled';
   };
   const changeTaskMemberScope=async(scope:string):Promise<TaskItem|null>=>{
-    const member=memberEditor.current;if(!member||!member.isCurrent())return null;
+    const member=memberEditor.current;if(!member||!member.isUsable())return null;
+    const generation=++memberScopeGeneration.current;
+    const scopeIsCurrent=()=>generation===memberScopeGeneration.current&&memberEditor.current===member&&member.isUsable();
+    // Invalidate member reads/claims synchronously, including overall -> member ABA.
+    const suspended=member.suspend();member.scope=scope;setMemberEditorVersion(v=>v+1);
+    await suspended;if(!scopeIsCurrent())return null;
     if(scope==='overall'){
-      await member.suspend();member.scope='overall';setMemberEditorVersion(v=>v+1);
-      if(!await loadRecordActionScope({targets:[{collection:'tasks',id:member.taskId}]}))return null;
-      if(memberEditor.current!==member||!member.isCurrent())return null;
-      if(await claimEditingLock(`task:${member.taskId}`,'待辦',member.isCurrent,false)!=='owned')return null;
-      const snapshot=await refreshAfterItemLease(`task:${member.taskId}`);
-      if(!snapshot||memberEditor.current!==member||!member.isCurrent())return null;
+      if(!await loadRecordActionScope({targets:[{collection:'tasks',id:member.taskId}]},scopeIsCurrent))return null;
+      if(!scopeIsCurrent())return null;
+      if(await claimEditingLock(`task:${member.taskId}`,'待辦',scopeIsCurrent,false)!=='owned'||!scopeIsCurrent())return null;
+      const snapshot=await refreshAfterItemLease(`task:${member.taskId}`,false,scopeIsCurrent);
+      if(!snapshot||!scopeIsCurrent())return null;
       const task=snapshot.tasks.find(t=>t.id===member.taskId);if(!task)return null;
       member.task=task;member.writable=true;setMemberEditorVersion(v=>v+1);return task;
     }
     if(activeEditLockRef.current&&!await releaseExclusiveItemLease(activeEditLockRef.current.sectionKey))return null;
+    if(!scopeIsCurrent())return null;
     return member.select(scope);
   };
   const openTask = async (task: TaskItem, vesselId = '', returnVesselId = ''):Promise<TaskOpenResult> => {
@@ -3377,7 +3388,7 @@ export default function App() {
       const before=liveData.current;
       if(!confirmedCloudData.current||!appDataContentEqual(before,confirmedCloudData.current))throw new Error('本機其他修改尚未確認，請先安全同步');
       const remote=await fetchCloudData(member.config);
-      if(!member.isCurrent()||memberEditor.current!==member)throw new StaleAsyncConfigError();
+      if(!member.isUsable()||memberEditor.current!==member)throw new StaleAsyncConfigError();
       if(!remote||remote.revision<revision||liveData.current!==before)throw new Error('單船已保存，正在等待安全讀回');
       assertRemoteExtendsDurableHistory(cloudIdentity(member.config),null,remote);
       confirmCloudSnapshot(cloudIdentity(member.config),remote);liveData.current=remote;setData(remote);lastCloudRevision.current=remote.revision;setSavePhase('saved');setCloudStatus(savedStatus('已安全保存到雲端',remote.updatedAt));
@@ -4323,7 +4334,7 @@ export default function App() {
   closeVesselEditorRef.current=closeVesselEditor;
   const saveCloudConfiguration = async (config:SupabaseConfig) => {
     if(vesselLeaseIncidentRef.current){alert('仍有船舶快速更新草稿保留中；請先在該視窗明確放棄並關閉，再更改 Supabase 設定。');return false;}
-    if(activeEditLockRef.current||batchManagedOpenRef.current||pendingTaskCreationsRef.current.length>0||vesselAttentionSaveQueue.current?.hasPending()){
+    if(memberEditor.current||activeEditLockRef.current||batchManagedOpenRef.current||pendingTaskCreationsRef.current.length>0||vesselAttentionSaveQueue.current?.hasPending()){
       alert('目前仍有編輯中的項目、待同步新增要事或關注燈；請先看到「已保存到雲端」，再更改 Supabase 設定。');
       return false;
     }
@@ -4333,7 +4344,7 @@ export default function App() {
         const durablePending=readPendingTaskCreations(window.localStorage);
         pendingTaskCreationsRef.current=durablePending;
         setPendingTaskCreations(durablePending);
-        if(durablePending.length||activeEditLockRef.current||batchManagedOpenRef.current||vesselAttentionSaveQueue.current?.hasPending())return false;
+        if(durablePending.length||memberEditor.current||activeEditLockRef.current||batchManagedOpenRef.current||vesselAttentionSaveQueue.current?.hasPending())return false;
         pendingTaskCreationRunGeneration.current+=1;
         saveSupabaseConfig(config);
         window.location.reload();
@@ -4415,6 +4426,8 @@ export default function App() {
   const taskEditorData=taskReadOnlyData?taskReadOnlyData as unknown as AppData:roleVisibleData;
   const taskEditorVisibleVessels=taskReadOnlyData?taskReadOnlyData.vessels as Vessel[]:activeVessels;
   const taskEditorUser=currentUser;
+  const memberDraftEditor=memberEditor.current;
+  const captureTaskMemberDraft=memberDraftEditor?(task:TaskItem,scope:string,quickStatus:string)=>memberDraftEditor.captureDraft(task,scope,quickStatus):undefined;
   const editingTaskScopeVessels=editingTask?taskVessels(editingTask,taskEditorData.vessels):[];
   const creatingVisibleTask=Boolean(creatingTask&&editingTask&&editingTask.id===creatingTask.id&&!taskReadOnlyData&&taskEditorAuthorizationEpoch===authorizationEpoch&&canCreateTasks);
   const canEditOverallTask=Boolean(creatingVisibleTask||(
@@ -4785,7 +4798,7 @@ export default function App() {
     </main>
     {currentUser.role!=='vessel'&&canEditBusinessContent&&(vesselEditorLeaseAuthorized||Boolean(vesselLeaseIncidentForEditor))&&editingVesselId&&activeVessels.some(vessel=>vessel.id===editingVesselId) && <VesselEditModal vessel={editingOperationalVessel} data={roleVisibleData} currentUser={currentUser} leaseMode={vesselLeaseMode} leaseMessage={vesselLeaseIncidentForEditor?.message||''} close={()=>void closeVesselEditor(activeEditLockRef.current)} onSave={saveVesselEditorDraft} addTask={id=>{void addTaskForVessel(id,true).then(opened=>{if(opened)setEditingVesselId('');});}} editTask={id=>{const vesselId=editingVesselId;const task=data.tasks.find(item=>item.id===id);if(!task)return alert('找不到對應待辦');setEditingVesselId('');void (async()=>{const result=await openTask(task,vesselId,vesselId);if(result==='failed')void openVesselEditor(vesselId);})();}} />}
     {currentUser.role!=='vessel'&&canEditBusinessContent&&batchManagedOpen && <BatchManagedVesselModal vessels={effectiveBatchSessionVessels} lockedVesselIds={batchLockedVesselIds} readOnly={batchManagedWriteSuspended} saving={batchManagedClosing} save={saveBatchManagedDrafts} cancel={()=>void cancelBatchManagedDrafts(renderedBatchManagedAuthorization)} close={()=>void closeBatchManaged(renderedBatchManagedAuthorization)} discard={()=>void discardBatchManagedChanges(renderedBatchManagedAuthorization)} onAddTask={id=>{void addTaskForVessel(id,false,true,renderedBatchTaskReturnContext);}} />}
-    {editingTask&&taskEditorLeaseAuthorized && <TaskEditModal task={editingTask} creating={creatingVisibleTask} data={taskEditorData} visibleVessels={taskEditorVisibleVessels} currentUser={taskEditorUser} canClose={!taskEditorReadOnly&&editingTaskCanMutate&&canCloseTasks&&currentUser.role!=='vessel'} canDelete={!taskEditorReadOnly&&editingTaskCanMutate&&canDeleteTasks} canCancelInternalControl={Boolean(!taskEditorReadOnly&&editingTaskCanMutate&&editingTask&&editingTaskScopeVessels.length===taskVesselIds(editingTask).length&&editingTaskScopeVessels.every(vessel=>canCancelInternalControl(currentUser,vessel)))} canEditOverall={Boolean((memberEditor.current||!taskEditorReadOnly)&&editingTaskCanMutate&&canEditOverallTask)} onProgressScopeChange={memberEditor.current?changeTaskMemberScope:undefined} memberConfirmation={memberEditor.current?.confirmation} initialProgressVesselId={taskProgressVesselId} readOnly={taskEditorReadOnly} readOnlyReason={taskReadOnlyReason} close={()=>void closeTaskEditor(taskEditorRequestGeneration)} onDraftChange={captureCreationDraft} onSave={saveTask} onSaveVesselProgress={saveTaskVesselProgress} onDelete={()=>deleteTask(editingTask)} />}
+    {editingTask&&taskEditorLeaseAuthorized && <TaskEditModal task={editingTask} creating={creatingVisibleTask} data={taskEditorData} visibleVessels={taskEditorVisibleVessels} currentUser={taskEditorUser} canClose={!taskEditorReadOnly&&editingTaskCanMutate&&canCloseTasks&&currentUser.role!=='vessel'} canDelete={!taskEditorReadOnly&&editingTaskCanMutate&&canDeleteTasks} canCancelInternalControl={Boolean(!taskEditorReadOnly&&editingTaskCanMutate&&editingTask&&editingTaskScopeVessels.length===taskVesselIds(editingTask).length&&editingTaskScopeVessels.every(vessel=>canCancelInternalControl(currentUser,vessel)))} canEditOverall={Boolean((memberEditor.current||!taskEditorReadOnly)&&editingTaskCanMutate&&canEditOverallTask)} onProgressScopeChange={memberEditor.current?changeTaskMemberScope:undefined} memberConfirmation={memberEditor.current?.confirmation} memberQuickStatus={memberEditor.current?.quickStatus} memberDraftChanged={captureTaskMemberDraft} initialProgressVesselId={taskProgressVesselId} readOnly={taskEditorReadOnly} readOnlyReason={taskReadOnlyReason} close={()=>void closeTaskEditor(taskEditorRequestGeneration)} onDraftChange={captureCreationDraft} onSave={saveTask} onSaveVesselProgress={saveTaskVesselProgress} onDelete={()=>deleteTask(editingTask)} />}
     {currentUser.role!=='vessel'&&canExportReports&&reportPreviewOpen && <ReportPreviewModal data={reportPreviewData} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} reportDate={reportPreviewHistory?.businessDate} reportSnapshot={reportPreviewSnapshot} close={()=>{setReportPreviewOpen(false);setReportPreviewHistoryId('');setReportPreviewLiveItinerarySnapshot(null);}} onPrint={printReport} />}
     {passwordModalOpen && <PersonalPasswordModal currentUser={currentUser} close={()=>setPasswordModalOpen(false)} commit={commit} />}
     {browserRecoveryOpen&&<BrowserRecoveryModal advanced={browserRecoveryAdvanced} phase={browserRecoveryPhase} message={browserRecoveryMessage} onClose={closeBrowserRecovery} onToggleAdvanced={()=>setBrowserRecoveryAdvanced(value=>!value)} onSafeRepair={()=>void runSafeBrowserRepair()} onFullReset={()=>void runFullBrowserReset()} />}

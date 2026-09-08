@@ -159,7 +159,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, onSave, addT
   </div></div>;
 }
 
-export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, canEditOverall, initialProgressVesselId = '', onProgressScopeChange, memberConfirmation, readOnly = false, readOnlyReason = '', close, onDraftChange, onSave, onSaveVesselProgress, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; canEditOverall: boolean; initialProgressVesselId?: string; onProgressScopeChange?: (scope:string)=>Promise<TaskItem|null>; memberConfirmation?: import('./taskMemberEditor').MemberConfirmation; readOnly?: boolean; readOnlyReason?: string; close: () => void; onDraftChange?: (task: TaskItem) => void; onSave: (task: TaskItem, creating: boolean, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onSaveVesselProgress: (task: TaskItem, vesselId: string, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onDelete: () => boolean | Promise<boolean> }) {
+export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, canEditOverall, initialProgressVesselId = '', onProgressScopeChange, memberConfirmation, memberDraftChanged, memberQuickStatus, readOnly = false, readOnlyReason = '', close, onDraftChange, onSave, onSaveVesselProgress, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; canEditOverall: boolean; initialProgressVesselId?: string; onProgressScopeChange?: (scope:string)=>Promise<TaskItem|null>; memberConfirmation?: import('./taskMemberEditor').MemberConfirmation; memberDraftChanged?: (task:TaskItem,scope:string,quickStatus:string)=>void; memberQuickStatus?: string; readOnly?: boolean; readOnlyReason?: string; close: () => void; onDraftChange?: (task: TaskItem) => void; onSave: (task: TaskItem, creating: boolean, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onSaveVesselProgress: (task: TaskItem, vesselId: string, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onDelete: () => boolean | Promise<boolean> }) {
   const [saving,setSaving]=useState(false);
   useEscapeClose(()=>{if(!saving)close();});
   const [draft, setDraft] = useState<TaskItem | null>(() => task ? clone(task) : null);
@@ -182,13 +182,14 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const expectedRevisionRef=useRef(data.revision);
   const progressLoadGeneration=useRef(0);
   const loadedProgressScopes=useRef(new Set<string>());
-  const [quickStatus, setQuickStatus] = useState('');
+  const [quickStatus, setQuickStatus] = useState(memberQuickStatus||'');
   const initialTaskScopeIds=task?taskVesselIds(task):[];
   const initialVisibleScopeIds=initialTaskScopeIds.filter(id=>visibleVessels.some(vessel=>vessel.id===id));
   const hasPerVesselProgress=Boolean(task&&usesPerVesselProgress(task));
   const [progressScope,setProgressScope]=useState(()=>hasPerVesselProgress
     ? (initialProgressVesselId&&initialVisibleScopeIds.includes(initialProgressVesselId)?initialProgressVesselId:initialVisibleScopeIds[0]||'')
     : 'overall');
+  useEffect(()=>{if(draft)memberDraftChanged?.(clone(draft),progressScope,quickStatus);},[draft,progressScope,quickStatus]);
   if (!draft) return null;
   const changeProgressScope=async(scope:string)=>{
     if(saving)return;

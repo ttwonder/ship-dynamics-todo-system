@@ -1,34 +1,96 @@
-# Original task-member editor — bounded local slice
+# Original task-member editor — bounded local slices
 
-Base: 436f9cd3a3146e51c7c6d9e61cb069279e13f035. Entry remains main.tsx → App.
-This is a usable local integration slice, **not full R3 or six-class closure**.
-No push, production SQL, deployment, user browser, role redesign, or native protocol changes.
+Entry remains `src/main.tsx → App`. Native protocol base is
+436f9cd3a3146e51c7c6d9e61cb069279e13f035; recovery slice continues
+parent-verified e35b9e4977cfa2d82a73a383d0b2715b5e0828ca.
+**Usable local integration, not full R3 / member-program closure.**
+No push, production SQL, deployment, user browser, role redesign, or native SQL edits.
 
-## Implemented and exercised
-- Existing eligible linked-meeting/multi-vessel predicate, modal, selector and source-return workflow.
-- Opaque server section key; separate selected-member/structure/source CAS, publication revision and exact versioned renew/release.
-- Two original-logins/different members: both first ACK; native HTTP/independent PG transactions; complete original-helper intent vs SQL task/source/notices/audit/history/unknown-field graph and unselected canary; fresh SQL and fresh original browser.
-- A→B→A retains each visited scope draft and the original DOM; no implicit sibling save. Delayed native read cannot overwrite successor member scope.
-- Same-member exclusion and valid wrong-member guard injection at native HTTP/SQL boundary reject with zero business writes and retain draft DOM.
-- Actual client heartbeat after private SQL lease expiry revokes writes with same draft DOM/caret.
-- Lost save response → exact operation ID and payload receipt lookup; newer visible typing survives late ACK and is saved as a distinct request.
-- Last-member leaf returns zero-write transition-required; child released; exact task/source parent locks acquired; original expected context rechecked without rebasing; shared save synchronizes source and both audit actions.
-- Overall scope uses original whole-task save and retains authoritative member bodies rather than saving sibling stubs/drafts.
-- Original active-editor identity-exit refusal now includes member sessions.
+## Recovery/lifecycle slice
 
-## Remaining (must not claim covered)
-- MEMBER-UI-UPGRADE: real persisted pre-fix whole-task pending envelope and recovery through original UI. Legacy RPC/envelope code was not migrated or cleared; non-interference needs that explicit scenario.
-- Same-member stale CAS after another editor updates; late claim/renew/release and overall/member scope races beyond the proved late member read.
-- Parent transition rejection/failed lock handoff, concurrent final closures, reopen/whole-meeting-closed permission boundaries, and complete transition graph oracle (pair has complete graph oracle; transition currently has specific source/audit/canary assertions).
-- Legal in-flight ACK crossing actual client lease expiry; forced actor/config ABA; render-gate continuity; fresh-document pending recovery and durable newer unsent drafts.
-- Integrate member sessions into remaining original config/navigation/editor lifecycle and shared destructive-action paths. The original delete handler still requires a parent task lease; the member path has not added that handoff. Do not call all original operations closed.
-- Global dirty/pending queue interaction: confirmed member publish currently refuses unsafe local/global dirty state and retains request. Automatic recovery/durable unsent draft coverage is not complete.
+Original UI and private native PostgreSQL acceptance (unique scenario IDs):
+- MEMBER-UI-SCOPE-GENERATION: held overall native scope read → successor B;
+  stale read makes zero parent claims/publication, A draft returns without autosave.
+  Same-node assertion is B before/after the late result; overall and member already
+  render different fields and are not falsely claimed to share one DOM node.
+- MEMBER-UI-LATE-CLAIM-ABA: native committed B claim response held, A selected,
+  old B lease expired in synthetic SQL, new B version acquired. Old exact release
+  cannot delete/replace the successor lease or draft.
+- MEMBER-UI-FRESH-PENDING: real new original browser document over existing origin
+  storage restores newer unsent rich text. Original pending envelope remains byte
+  identical; exact operation/payload receipt adoption commits no replacement;
+  newer text saves separately. Unselected members, unknown raw task fields and
+  original raw history tail are checked independently.
+- MEMBER-UI-FRESH-UNSENT-PRIVATE: unsent-only progress and not-yet-added quick input
+  survive a new document. Another original actor cannot see/adopt the private draft.
+  Recovery makes zero business writes; explicit original Cancel discards it.
+- MEMBER-UI-NAV-CONTINUITY: original navigation cannot invalidate/orphan an open
+  member editor. Same node and writable draft remain until explicit close.
+- MEMBER-UI-CONFIG-ABA: actual config observer freezes the same draft node;
+  restoring A after B does not reauthorize its predecessor.
+- MEMBER-UI-ACK-LEASE-EXPIRY: legal native command commits, response is held near
+  the actual 25-second heartbeat. SQL lease expiry triggers real client read-only
+  mode; the legal committed ACK still succeeds, with one command and no replay.
 
-## Reproduction
-Use per-command SHIP_QA_PG_BIN and SHIP_QA_PG_MODULE pointing to the approved local portable runtime, QA_EVIDENCE_ROOT to a new private external directory, QA_VITE_CACHE_DIR to a dedicated private cache.
+Separate controlled production-code tests cover stale pre-dispatch renewal,
+current renewal, actual App busy-unmount cleanup, four independent pending identity
+mismatches (zero dispatch and unchanged envelope), missing receipt / original
+replay without new CAS, identity-versus-config continuity, and both config-write
+entry/race guards. These are **not** additional UI/native cases.
+
+Durable drafts reuse `NormalizedDurableStateStore` with exact URL/workspace,
+actor, task/member keys. They keep old member/structure/source CAS and baseline,
+not a new CAS from a refreshed document. Pending commands remain in the existing
+member pending key; unknown outcome does not authorize deletion. Only the exact
+selected confirmation merges acknowledged history. No new workspace store,
+whole-task conversion, browser-storage clearing, or global dirty overwrite exists.
+Unmount invalidates even a busy editor but does not discard its durable artifacts.
+Explicit close removes visited unsent drafts only when no matching pending exists.
+
+## Preserved first-slice scenarios
+
+PAIR, SWITCH, OUTCOME, OVERALL, SAME, LEASE-LOSS, SWITCH-LATE, TRANSITION remain
+in the final default runner (8 unique original scenarios, not 8 acceptance classes).
+PAIR uses original pure business helpers and pre-SQL outgoing intent for the full
+expected task/source/notices/audit/history/unknown-field graph. Native definitions,
+reverse SQL and native verifier remain unchanged; the prior 36 native baseline and
+bounded native review are not repeated or counted as new evidence.
+
+## Explicitly OPEN
+
+- **MEMBER-UI-UPGRADE:** exact persisted pre-fix whole-task envelope, original
+  coordinator/RPC/signature/CAS reconciliation and original-UI upgrade proof.
+  No migration or claim of compatibility was added. The inspected original App
+  whole-task path constructs an operation ID inside its in-memory cloud queue
+  (`App.tsx` / `cloudBlockReceipt.ts`); this is not proof of a durable old envelope.
+  The exact predecessor artifact/route still must be identified and exercised,
+  not fabricated or converted into a member request.
+- Forced mounted actor/config callback ABA at every await boundary, full production
+  bootstrap/auth/render-gate matrix. Config-observer native proof and controlled
+  identity predicate are scoped evidence, not full production-mode render proof.
+- Overall parent claim/refresh barriers beyond the proved stale overall read;
+  complete lease renewal/release schedule permutations.
+- Full shared transition graph: failed parent acquisition/handoff, concurrent final
+  closures, reopen/closed-source permissions; original member-delete → parent handoff.
+- Same-member stale CAS after another editor changes the member.
+- Broad global dirty queue coexistence/automatic reconciliation. Member publication
+  still refuses an unsafe unrelated local delta and retains request/draft; no
+  overwrite or false automatic recovery claim. Overall-only unsent fields are not
+  added to member draft persistence. Header feedback for component-only edits is
+  not claimed globally resolved.
+- Remaining R1–R3 entry inventory, hosted/QPS/mobile/PDF/cutover, and the prior
+  six-item program are unchanged OPEN. This is not production acceptance.
+
+## Reproduce locally
+
+Use explicit approved `SHIP_QA_PG_BIN`, `SHIP_QA_PG_MODULE`, external
+`QA_EVIDENCE_ROOT` and dedicated `QA_VITE_CACHE_DIR`.
 
 ```
 node scripts/verify-task-member-browser.mjs
+QA_MEMBER_UI_FOCUS=recovery node scripts/verify-task-member-browser.mjs
+QA_MEMBER_UI_FOCUS=lifecycle node scripts/verify-task-member-browser.mjs
+node scripts/verify-task-member-lifecycle.mjs
 node scripts/verify-task-member-ui-boundary.mjs
 node scripts/verify-record-scoped-browser.mjs
 npm run test:meeting-vessel-progress
@@ -42,6 +104,12 @@ npm run typecheck
 npm run build
 ```
 
-QA_MEMBER_UI_FOCUS=pair stops after the vertical tracer. Native definitions/reverse/native runner remain byte-equal to the base. Native task-family handling and short root publication may wait; no zero-wait or hosted performance claim.
-The frozen-JSX gate allows only named internal TaskEditModal props and the original selector callback. No CSS, entry, controls, labels, markup or role-policy edits.
-External raw receipts, failures, screenshots, graph oracle and exact final Git identity are indexed by member-ui-delivery.json in the delegated evidence root. Final member browser run: member-ui-KoV0j5 (8 scenario IDs, not eight acceptance classes). Previous scoped regression: ui-ud320c (12 UI + 1 protocol). No new independent review requested.
+`QA_MEMBER_UI_FOCUS=scope|recovery|lifecycle|pair` selects bounded tracers;
+default runs the original 8 scenarios. Recovery and lifecycle run in separate fresh
+fixtures: the original PAIR oracle assumes no prior actor notifications, so the
+matrices are not concatenated into one mutated database. Do not add rerun counts together.
+Frozen JSX gate permits only exact named internal TaskEditModal prop values and the
+original selector callback; all other roots, CSS, entry and native files are frozen.
+External `member-recovery-delivery.json` indexes final command receipts, old failed
+attempts, exact input hashes, cleanup, local commit and ownership handback.
+Independent review is reserved to the parent and was not requested by this writer.

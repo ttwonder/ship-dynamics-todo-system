@@ -12,6 +12,8 @@ import {assertLifecycleReadback} from './record-scoped-lifecycle-oracle.mjs';
 
 // QA-only: original main.tsx -> App, native input, synthetic identities.
 // No setters, write helpers, fabricated responses, external hosts or user profile.
+const focus=process.env.QA_MEMBER_UI_FOCUS||'original';
+assert.ok(['original','pair','scope','recovery','lifecycle'].includes(focus),'known isolated member QA mode');
 const root=process.env.QA_EVIDENCE_ROOT;
 assert.ok(root&&path.isAbsolute(root),'Explicit external QA_EVIDENCE_ROOT required');
 assert.ok(!path.resolve(root).toLowerCase().startsWith(path.resolve('.').toLowerCase()+path.sep));
@@ -19,7 +21,7 @@ fs.mkdirSync(root,{recursive:true});
 const run=fs.mkdtempSync(path.join(root,'member-ui-')),profile=path.join(run,'chrome');
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const receipt={kind:'original-App-native-PG-multi-context',inputHead:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),status:'RUNNING',cases:[],network:[],errors:[],blockedExternal:[],commands:[{command:'node scripts/verify-task-member-browser.mjs',exit:null}],productionContacted:false};
-receipt.inputs=Object.fromEntries(['scripts/verify-task-member-browser.mjs','scripts/record-scoped-business-oracle.mjs','scripts/record-scoped-lifecycle-oracle.mjs','src/InternalControlPage.tsx','src/TemporaryMeetings.tsx','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','src/App.tsx','src/EditModals.tsx','src/taskMemberEditor.ts','scripts/task-member-business-oracle.mjs','supabase/development/20260909_task_member_protocol.sql','src/cloud.ts','src/cloudRecordScopes.ts','supabase/development/20260908_appdata_record_scoped_read.sql'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
+receipt.inputs=Object.fromEntries(['scripts/verify-task-member-browser.mjs','scripts/record-scoped-business-oracle.mjs','scripts/record-scoped-lifecycle-oracle.mjs','src/InternalControlPage.tsx','src/TemporaryMeetings.tsx','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','src/App.tsx','src/EditModals.tsx','src/taskMemberEditor.ts','src/normalizedRepository.ts','src/taskVesselProgress.ts','scripts/task-member-business-oracle.mjs','supabase/development/20260909_task_member_protocol.sql','src/cloud.ts','src/cloudRecordScopes.ts','supabase/development/20260908_appdata_record_scoped_read.sql'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
 const save=()=>fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const until=async(fn,label,timeout=25000)=>{const end=Date.now()+timeout;while(Date.now()<end){const v=await fn();if(v)return v;await wait(30);}throw new Error('QA timeout: '+label);};
@@ -127,6 +129,109 @@ try{
  const a=await makePage('qa-owner',(await call('Target.createBrowserContext')).browserContextId);await login(a);
  const b=await makePage('qa-operator',(await call('Target.createBrowserContext')).browserContextId);await login(b);
  const open=async(p,id)=>{await p.open(id);const n=receipt.network.length;await p.activate(`[...document.querySelectorAll('.modal-task-row')].find(n=>n.innerText.includes('QA MEMBER TASK'))`);await until(()=>receipt.network.slice(n).some(r=>r.actor===p.actor&&r.rpc==='claim_ship_dynamics_edit_lock'&&r.finished),'original claim response');const claim=receipt.network.slice(n).filter(r=>r.actor===p.actor&&r.rpc==='claim_ship_dynamics_edit_lock').at(-1);assert.equal(claim.result,'SQL_OK','MEMBER-UI-PAIR different selected members must both acquire original editor leases');await until(()=>p.eval("Boolean(document.querySelector('#task-edit-title'))"),'original task modal');};
+ const selectScope=async(p,index)=>{await p.eval("document.querySelector('select[aria-label=待辦進度範圍]').focus()");await p.key('Home');for(let i=0;i<index;i++)await p.key('ArrowDown');await p.key('Enter');};
+ if(['scope','recovery'].includes(focus)){
+  currentCase='MEMBER-UI-SCOPE-GENERATION';
+  await open(a,'qa-v1');const original=await read();
+  await a.fill("document.querySelector('.quick-status-bar textarea')",'SCOPE A UNSENT');await a.click('加入狀態紀錄');
+  await a.eval("void(window.__scopeFenceNode=document.querySelector('[aria-label=單船目前狀態]'))");
+  let held=false,release;
+  qa.setRecordFault({before:async({name,body})=>{if(name==='read_ship_dynamics_record_scopes_v1'&&body.p_scope==='targets'&&!held){held=true;await new Promise(r=>{release=r;});}}});
+  await selectScope(a,3);await until(()=>held,'overall native read barrier');
+  await selectScope(a,1);await until(()=>a.eval("document.querySelector('select[aria-label=待辦進度範圍]').value==='qa-v2'&&document.querySelector('[aria-label=單船目前狀態]').contentEditable==='true'"),'successor B acquired');
+  await a.eval("void(window.__scopeFenceNode=document.querySelector('[aria-label=單船目前狀態]'))");
+  const lateStart=receipt.network.length;release();await wait(700);
+  assert.equal(receipt.network.slice(lateStart).filter(r=>r.rpc==='claim_ship_dynamics_edit_lock').length,0,'stale overall read must not dispatch parent claim after successor B');
+  assert.equal(await a.eval("window.__scopeFenceNode===document.querySelector('[aria-label=單船目前狀態]')&&window.__scopeFenceNode.contentEditable==='true'"),true);
+  qa.setRecordFault(null);await selectScope(a,0);await until(()=>a.eval("document.querySelector('.status-history')?.innerText.includes('SCOPE A UNSENT')"),'A ABA draft retained');
+  assert.deepEqual(await read(),original);receipt.cases.push({caseId:currentCase,status:'PASS',nativeHeldRead:true,noStaleClaim:true,sameNode:true,noAutoSave:true});
+  currentCase='MEMBER-UI-LATE-CLAIM-ABA';
+  let claimHeld=false,releaseClaim,oldLease;
+  qa.setRecordFault({after:async({name,body,value})=>{if(name==='claim_ship_dynamics_edit_lock'&&body.p_section_key.includes('qa-v2')&&!claimHeld){claimHeld=true;oldLease=value;await new Promise(r=>{releaseClaim=r;});}return false;}});
+  await selectScope(a,1);await until(()=>claimHeld,'B native claim committed, response held');
+  await selectScope(a,0);await until(()=>a.eval("document.querySelector('select[aria-label=待辦進度範圍]').value==='qa-v1'&&document.querySelector('[aria-label=單船目前狀態]').contentEditable==='true'"),'A successor while B response held');
+  await native.observer.query("update ship_dynamics_edit_locks set expires_at=clock_timestamp()-interval '1 second' where section_key=$1",[oldLease.section_key]);
+  await selectScope(a,1);await until(()=>a.eval("document.querySelector('select[aria-label=待辦進度範圍]').value==='qa-v2'&&document.querySelector('[aria-label=單船目前狀態]').contentEditable==='true'"),'new B generation acquired');
+  const newLease=(await native.observer.query('select section_key,locked_by,lease_version from ship_dynamics_edit_locks where section_key=$1',[oldLease.section_key])).rows[0];assert.notEqual(newLease.lease_version,oldLease.lease_version);
+  await a.eval("void(window.__lateClaimNode=document.querySelector('[aria-label=單船目前狀態]'))");releaseClaim();await wait(450);
+  assert.deepEqual((await native.observer.query('select section_key,locked_by,lease_version from ship_dynamics_edit_locks where section_key=$1',[oldLease.section_key])).rows,[newLease],'late exact old release cannot affect new same-member lease');
+  assert.equal(await a.eval("window.__lateClaimNode===document.querySelector('[aria-label=單船目前狀態]')&&window.__lateClaimNode.contentEditable==='true'"),true);assert.deepEqual(await read(),original);qa.setRecordFault(null);
+  receipt.cases.push({caseId:currentCase,status:'PASS',nativeHeldClaim:true,actualNewLeaseVersion:true,lateReleaseFenced:true});
+  await a.click('取消');await until(()=>a.saved(),'scope close');await until(()=>a.eval(`Boolean(${field})`),'scope source');await a.click('取消並關閉');await until(()=>a.eval("!document.querySelector('[role=dialog]')"),'scope source close');
+ }
+ if(focus==='recovery'){
+  currentCase='MEMBER-UI-FRESH-PENDING';await open(a,'qa-v1');const before=await read();
+  await a.fill("document.querySelector('.quick-status-bar textarea')",'FRESH SUBMITTED');await a.click('加入狀態紀錄');
+  let committed=false,lookup=false,releaseLookup;
+  qa.setRecordFault({after:async({name})=>{if(name===patchRpc){committed=true;return true;}if(name==='get_ship_dynamics_task_member_receipt_v1'){lookup=true;await new Promise(r=>{releaseLookup=r;});return true;}return false;}});
+  await a.click('保存變更');await until(()=>committed&&lookup,'native commit ACK lost and receipt barrier');
+  await a.eval("document.querySelector('[aria-label=單船目前狀態]').focus()");await call('Input.insertText',{text:' NEWER UNSENT FRESH'},a.s);
+  const visible=await a.eval("document.querySelector('[aria-label=單船目前狀態]').innerHTML");
+  const persisted=await a.eval("Object.fromEntries(Object.entries(localStorage).filter(([k])=>k.startsWith('ship-dynamics-member-pending-v1:')))");
+  const pendingKey=Object.keys(persisted).find(k=>{try{return JSON.parse(persisted[k]).params?.p_operation_id;}catch{return false;}});assert.ok(pendingKey,'original immutable submitted request persisted');
+  const envelope=JSON.parse(persisted[pendingKey]);releaseLookup();await until(()=>receipt.errors.some(s=>s.startsWith('unexpected dialog:')),'unknown outcome surfaced');receipt.errors=receipt.errors.filter(s=>!s.startsWith('unexpected dialog:'));
+  qa.setRecordFault(null);await a.eval('void(window.__oldRecoveryDocument=true)');await call('Page.reload',{},a.s);
+  await until(()=>a.eval('window.__oldRecoveryDocument!==true&&Boolean(document.querySelector("article.ship-card"))'),'real new original document');
+  await native.observer.query("update ship_dynamics_edit_locks set expires_at=clock_timestamp()-interval '1 second' where section_key like 'task-member-v1:%'");
+  await open(a,'qa-v1');
+  assert.equal(await a.eval("document.querySelector('[aria-label=單船目前狀態]').innerHTML"),visible,'new browser document restores newer unsent text, not only committed authority');
+  assert.equal(await a.eval(`localStorage.getItem(${JSON.stringify(pendingKey)})`),persisted[pendingKey],'opening never rewrites original pending envelope');
+  const wireStart=receipt.network.length;await a.click('保存變更');
+  await until(()=>receipt.network.slice(wireStart).some(r=>r.rpc==='get_ship_dynamics_task_member_receipt_v1'&&r.finished),'fresh document original receipt lookup');await wait(300);
+  assert.equal(await a.eval("Boolean(document.querySelector('#task-edit-title'))"),true,'prior ACK must not close newer draft');
+  assert.equal(await a.eval("document.querySelector('[aria-label=單船目前狀態]').innerHTML"),visible);
+  const lookupWire=receipt.network.slice(wireStart).find(r=>r.rpc==='get_ship_dynamics_task_member_receipt_v1');assert.equal(lookupWire.operationId,envelope.params.p_operation_id);assert.equal(lookupWire.payloadHash,hash(envelope.params));
+  assert.equal((await read()).revision,before.revision+1,'receipt adoption never creates replacement operation');
+  await a.click('保存變更');await until(()=>a.saved(),'durable newer draft distinct save');const after=await read();assert.equal(after.revision,before.revision+2);assert.equal(after.payload.tasks[0].vesselProgress.find(p=>p.vesselId==='qa-v1').status,visible);
+  for(const id of ['qa-v2','qa-v3'])assert.deepEqual(after.payload.tasks[0].vesselProgress.find(p=>p.vesselId===id),before.payload.tasks[0].vesselProgress.find(p=>p.vesselId===id));
+  assert.deepEqual(after.payload.tasks[0].qaUnknown,before.payload.tasks[0].qaUnknown);
+  assert.deepEqual(after.payload.tasks[0].vesselProgress.find(p=>p.vesselId==='qa-v1').statusLogs.slice(-3),before.payload.tasks[0].vesselProgress.find(p=>p.vesselId==='qa-v1').statusLogs.slice(-3));
+  receipt.cases.push({caseId:currentCase,status:'PASS',freshDocument:true,immutableOriginalReceipt:true,newerUnsentDurable:true,unselectedCanary:true,rawHistory:true});
+  await until(()=>a.eval(`Boolean(${field})`),'fresh source');await a.click('取消並關閉');await until(()=>a.eval("!document.querySelector('[role=dialog]')"),'fresh source close');
+ }
+ if(focus==='recovery'){
+  currentCase='MEMBER-UI-FRESH-UNSENT-PRIVATE';await open(a,'qa-v1');const before=await read();
+  await a.fill("document.querySelector('.quick-status-bar textarea')",'PRIVATE UNSENT PROGRESS');await a.click('加入狀態紀錄');
+  await a.fill("document.querySelector('.quick-status-bar textarea')",'PRIVATE QUICK NOT ADDED');
+  await a.eval('void(window.__oldUnsentDocument=true)');await call('Page.reload',{},a.s);await until(()=>a.eval('window.__oldUnsentDocument!==true&&Boolean(document.querySelector("article.ship-card"))'),'new unsent document');
+  await native.observer.query("update ship_dynamics_edit_locks set expires_at=clock_timestamp()-interval '1 second' where section_key like 'task-member-v1:%'");
+  await open(b,'qa-v1');assert.equal((await b.text()).includes('PRIVATE UNSENT PROGRESS'),false,'other actor never adopts predecessor private draft');assert.equal(await b.eval("document.querySelector('.quick-status-bar textarea').value"),'');await b.click('取消');await until(()=>b.saved(),'private B close');await until(()=>b.eval(`Boolean(${field})`),'private B source');await b.click('取消並關閉');await until(()=>b.eval("!document.querySelector('[role=dialog]')"),'private B source closed');
+  await open(a,'qa-v1');assert.equal(await a.eval("document.querySelector('[aria-label=單船目前狀態]').innerText"),'PRIVATE UNSENT PROGRESS');assert.equal(await a.eval("document.querySelector('.quick-status-bar textarea').value"),'PRIVATE QUICK NOT ADDED');assert.deepEqual(await read(),before,'recovery and actor read never auto-save');
+  await a.click('取消');await until(()=>a.saved(),'private A discard');await until(()=>a.eval(`Boolean(${field})`),'private A source');await a.click('取消並關閉');await until(()=>a.eval("!document.querySelector('[role=dialog]')"),'private A source closed');
+  receipt.cases.push({caseId:currentCase,status:'PASS',freshDocument:true,unsentOnly:true,quickInput:true,actorPrivate:true,zeroBusinessWrites:true});
+ }
+ if(focus==='lifecycle'){
+  currentCase='MEMBER-UI-NAV-CONTINUITY';await open(a,'qa-v1');const navBefore=await read();
+  await a.fill("document.querySelector('.quick-status-bar textarea')",'NAV DRAFT RETAIN');await a.click('加入狀態紀錄');
+  await a.eval("void(window.__navNode=document.querySelector('[aria-label=單船目前狀態]'))");const navWire=receipt.network.length;
+  await a.click('待辦總表');await wait(1200);
+  assert.equal(await a.eval("window.__navNode===document.querySelector('[aria-label=單船目前狀態]')&&window.__navNode.contentEditable==='true'&&window.__navNode.innerText.includes('NAV DRAFT RETAIN')"),true,'navigation must not orphan active member draft/request generation');
+  assert.equal(receipt.network.slice(navWire).filter(r=>r.rpc==='read_ship_dynamics_record_scopes_v1').length,0,'blocked navigation does not change authority coverage');assert.deepEqual(await read(),navBefore);
+  receipt.cases.push({caseId:currentCase,status:'PASS',nativeNavigation:true,sameNode:true,noOrphan:true});
+  currentCase='MEMBER-UI-CONFIG-ABA';const before=await read();
+  await a.fill("document.querySelector('.quick-status-bar textarea')",'CONFIG DRAFT RETAIN');await a.click('加入狀態紀錄');
+  await a.eval("void(window.__configNode=document.querySelector('[aria-label=單船目前狀態]'))");
+  await a.eval("(()=>{window.__originalQaConfig=window.SHIP_DYNAMICS_SUPABASE_CONFIG;window.SHIP_DYNAMICS_SUPABASE_CONFIG=undefined;window.dispatchEvent(new StorageEvent('storage',{key:'ship-dynamics-supabase-config'}));})()");await wait(1250);
+  assert.equal(await a.eval("window.__configNode===document.querySelector('[aria-label=單船目前狀態]')&&window.__configNode.contentEditable==='false'&&window.__configNode.innerText.includes('CONFIG DRAFT RETAIN')"),true,'configuration removal must freeze same original draft node');
+  await a.eval("(()=>{window.SHIP_DYNAMICS_SUPABASE_CONFIG=window.__originalQaConfig;window.dispatchEvent(new StorageEvent('storage',{key:'ship-dynamics-supabase-config'}));})()");await wait(100);
+  assert.equal(await a.eval("window.__configNode.contentEditable"),'false','config A/B/A cannot reauthorize predecessor');assert.deepEqual(await read(),before);
+  await a.screen('config-aba-same-draft');await a.click('關閉');await until(()=>a.saved(),'explicit config draft close');await until(()=>a.eval(`Boolean(${field})`),'config source return');await a.click('取消並關閉');await until(()=>a.eval("!document.querySelector('[role=dialog]')"),'config source close');
+  receipt.cases.push({caseId:currentCase,status:'PASS',realConfigurationObserver:true,sameNode:true,stickyFreeze:true});
+  currentCase='MEMBER-UI-ACK-LEASE-EXPIRY';const start=receipt.network.length;await open(a,'qa-v1');const ackBefore=await read();
+  await a.fill("document.querySelector('.quick-status-bar textarea')",'LEGAL ACK AFTER EXPIRY');await a.click('加入狀態紀錄');
+  const claim=receipt.network.slice(start).filter(r=>r.rpc==='claim_ship_dynamics_edit_lock').at(-1);
+  await until(()=>Date.now()>claim.started+22000,'real heartbeat window before legal dispatch',25000);
+  let ackHeld=false,releaseAck;qa.setRecordFault({after:async({name})=>{if(name===patchRpc&&!ackHeld){ackHeld=true;await new Promise(r=>{releaseAck=r;});}return false;}});
+  await a.click('保存變更');await until(()=>ackHeld,'legal command committed ACK held');
+  await native.observer.query("update ship_dynamics_edit_locks set expires_at=clock_timestamp()-interval '1 second' where section_key like 'task-member-v1:%'");
+  await until(()=>a.eval("document.querySelector('[aria-label=單船目前狀態]')?.contentEditable==='false'"),'actual client heartbeat expiry during committed command',6500);
+  releaseAck();await until(()=>a.saved(),'known legal committed ACK remains successful after lease loss');qa.setRecordFault(null);
+  assert.equal((await read()).revision,ackBefore.revision+1);assert.equal(receipt.network.filter(r=>r.caseId===currentCase&&r.rpc===patchRpc).length,1);
+  receipt.cases.push({caseId:currentCase,status:'PASS',legalCommittedAck:true,actualHeartbeatExpiry:true,noReplay:true});
+  await until(()=>a.eval(`Boolean(${field})`),'ACK source');await a.click('取消並關閉');await until(()=>a.eval("!document.querySelector('[role=dialog]')"),'ACK source closed');
+
+ }
+ if(!['scope','recovery','lifecycle'].includes(process.env.QA_MEMBER_UI_FOCUS)){
  currentCase='MEMBER-UI-PAIR';const before=await read();fs.writeFileSync(path.join(run,'pair-before.json'),JSON.stringify(scrub(before),null,2));
  await open(a,'qa-v1');await open(b,'qa-v2');
  await a.screen('pair-a-open');await b.screen('pair-b-open');
@@ -242,6 +347,7 @@ try{
 
  }
 
+ }
  assert.deepEqual(receipt.errors,[]);receipt.status='PASS';
 }catch(e){failure=e;receipt.status='FAIL';receipt.failure={caseId:currentCase,message:e.message,stack:e.stack?.split('\n').slice(0,5)};for(const p of actors.filter(p=>!p.reader)){try{receipt['failureText-'+p.actor]=(await p.text()).slice(0,8000);await p.screen('failure-'+p.actor);}catch{}}save();console.error(JSON.stringify({status:'FAIL',caseId:currentCase,error:e.message,run}));}
 finally{
