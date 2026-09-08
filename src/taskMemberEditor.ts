@@ -128,7 +128,7 @@ export class TaskMemberEditor {
     if(!latest.closure.some(c=>c.vesselId===vesselId))throw new Error('member-context-conflict');
     return {draft:pending.draft,params:{...clone(pending.params),p_operation_id:crypto.randomUUID(),p_command:{...(pending.params.p_command as object),mode:'shared'},p_lock_guards:this.parentLeases.map(l=>({section_key:l.section_key,locked_by:l.locked_by,lease_version:l.lease_version}))}};
   }
-  async save(candidate:TaskItem,vesselId:string,publish:(revision:number)=>Promise<void>):Promise<boolean>{
+  async save(candidate:TaskItem,vesselId:string,publish:(revision:number)=>Promise<void>,prepareSubmit:()=>Promise<void>=async()=>{}):Promise<boolean>{
     if(this.busy||!this.current()||this.scope!==vesselId)return false;
     const ctx=this.contexts.get(vesselId);if(!ctx)return false;
     const key=memberPendingKey(this.config,this.actorId,this.taskId,vesselId),draft=JSON.stringify(taskProgressForVessel(candidate,vesselId));
@@ -140,6 +140,7 @@ export class TaskMemberEditor {
       if(!pending&&!this.lease){if(!await this.select(vesselId))return false;g=this.generation;}
       if(pending){r=await this.rpc('get_ship_dynamics_task_member_receipt_v1',pending.params);if(!this.current(g))return false;}
       if(!pending){
+        await prepareSubmit();if(!this.current(g))return false;
         const lease=this.lease;if(!this.writable||!lease||Date.parse(lease.expires_at)<=Date.now())throw new Error('協作鎖已失效，目前內容只保留在這個視窗');
         const progress=taskProgressForVessel(candidate,vesselId),old=ctx.progress;
         const prefix=progress.statusLogs.slice(0,Math.max(0,progress.statusLogs.length-old.statusLogs.length));
@@ -155,7 +156,9 @@ export class TaskMemberEditor {
       if(r?.ok===false&&r.code==='transition-required'){
         // Authoritative zero-write result terminates the leaf request. Shared is new.
         localStorage.removeItem(key);
-        pending=await this.promote(pending,vesselId,g);localStorage.setItem(key,JSON.stringify(pending));
+        pending=await this.promote(pending,vesselId,g);
+        await prepareSubmit();if(!this.current(g))return false;
+        localStorage.setItem(key,JSON.stringify(pending));
         try{r=await this.rpc('save_ship_dynamics_task_member_v1',pending.params);}
         catch{r=await this.rpc('get_ship_dynamics_task_member_receipt_v1',pending.params);}
         if(!this.current(g))return false;

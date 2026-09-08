@@ -17,7 +17,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
  const db=databaseFactory?await databaseFactory():new PGlite(),metrics=[];
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
  let origin='',http,vite,loseItineraryAck=false,loseReportAck=false,losePruneAck=false;
- let recordFault=null;
+ let recordFault=null,uiMiddleware=null;
  const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:'records-v1',readMode:scopedRead?'scoped-v1':'delta-v1'});
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
@@ -52,7 +52,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
   for(const path of ['supabase/schema.sql','supabase/development/20260906_appdata_record_store.sql','supabase/development/20260906_appdata_record_delta.sql'])await db.exec(fs.readFileSync(path,'utf8'));
   if(taskMember)await db.exec(fs.readFileSync('supabase/development/20260909_task_member_protocol.sql','utf8'));
   if(scopedRead)await db.exec(fs.readFileSync('supabase/development/20260908_appdata_record_scoped_read.sql','utf8'));
-  vite=await createViteServer({cacheDir:process.env.QA_VITE_CACHE_DIR,server:{middlewareMode:true},logLevel:'silent',plugins:[{
+  vite=await createViteServer({cacheDir:process.env.QA_VITE_CACHE_DIR,server:{middlewareMode:true,...(process.env.QA_HMR_PORT?{hmr:{port:Number(process.env.QA_HMR_PORT)}}:{})},logLevel:'silent',plugins:[{
    name:'isolated-record-qa-label',
    transformIndexHtml(html){return html.replace('<body>','<body><aside id="isolated-qa-label" style="position:fixed;z-index:2147483647;bottom:0;right:0;background:#442200;color:white;padding:4px 10px;font:12px sans-serif;pointer-events:none">真實 UI＋測試資料｜本機 SQL；非正式環境</aside>');},
   }]});
@@ -134,11 +134,11 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
      }catch(error){metrics.push({rpc:name,status:'SQL_ERROR',code:error.code});send(res,400,{code:error.code||'QA_SQL_ERROR',message:error.message});}
      return;
     }
-    vite.middlewares(req,res,()=>send(res,404,{code:'QA_NOT_FOUND'}));
+    (uiMiddleware||vite.middlewares)(req,res,()=>send(res,404,{code:'QA_NOT_FOUND'}));
    }catch(error){send(res,500,{code:'QA_HARNESS_ERROR',message:error.message});}
   });
   await new Promise((resolve,reject)=>{http.once('error',reject);http.listen(0,'127.0.0.1',resolve);});
   origin=`http://127.0.0.1:${http.address().port}`;
-  return {origin,password,metrics,db,close,workspace,loadModule:path=>vite.ssrLoadModule(path),setRecordFault:fault=>{if(!internalControl)throw new Error("Record fault hooks require internalControl fixture");recordFault=fault;},loseNextPruneAck:()=>{losePruneAck=true;},loseNextReportAck:()=>{loseReportAck=true;},loseNextItineraryAck:()=>{loseItineraryAck=true;},itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
+  return {origin,password,metrics,db,close,workspace,setUiMiddleware:middleware=>{uiMiddleware=middleware;},loadModule:path=>vite.ssrLoadModule(path),setRecordFault:fault=>{if(!internalControl)throw new Error("Record fault hooks require internalControl fixture");recordFault=fault;},loseNextPruneAck:()=>{losePruneAck=true;},loseNextReportAck:()=>{loseReportAck=true;},loseNextItineraryAck:()=>{loseItineraryAck=true;},itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
  }catch(error){await close();throw error;}
 }

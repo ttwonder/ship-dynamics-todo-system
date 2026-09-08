@@ -5,7 +5,7 @@ import { createInitialData } from './data/seed';
 import type { AgendaReport, AppData, FilterState, InternalControlCase, MorningReportSnapshot, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, sanitizeAppDataForStorage, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
 import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlockPatchV2UnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, applyCloudBlockPatchV2, claimEditLock, cloudStoragePayloadFor, fetchCloudData as fetchCloudDataRpc, getCloudBlockPatchReceipt, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
-import { buildRecordScopePatch, cleanRecordHomeCacheMatches, unionRecordScopes, recordScopeKey, type RecordReadScope } from './cloudRecordScopes';
+import { buildRecordScopePatch, cleanRecordHomeCacheMatches, recordRecoveryReadScope, unionRecordScopes, recordScopeKey, type RecordReadScope } from './cloudRecordScopes';
 import { CloudBlockPatchConfirmedRefreshError, CloudBlockPatchOutcomeUnknownError, runCloudBlockPatchWithReceipt } from './cloudBlockReceipt';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
 import { mergeConfirmedCloudSnapshot } from './cloudConfirmedMerge';
@@ -1100,6 +1100,9 @@ export default function App() {
       try{localStorage.setItem(CLOUD_REVISION_FLOORS_KEY,serializeDurableRevisionFloors(durableCloudRevisionFloors.current));}catch{/* legacy base still supplies this session floor */}
     }
     const persistedDurableFloor=durableCloudRevisionFloors.current.get(identity)??-1;
+    // A dirty persisted AppData is an old global intent, not a home summary.
+    // Only this recovery bootstrap expands coverage; clean member opens stay scoped.
+    if(cfg.readMode==='scoped-v1'&&trustedLocalIdentity&&persistedConfirmedBase&&!appDataContentEqual(data,persistedConfirmedBase))recordReadScope.current=recordRecoveryReadScope(persistedConfirmedBase,data);
     let cancelled=false;
     setSavePhase('saving');
     setCloudStatus('正在載入雲端主資料...');
@@ -2350,6 +2353,10 @@ export default function App() {
     if(!authorizedEditLockKeys.has(`task:${task.id}`)){if(requestIsCurrent())alert('目前身份無權編輯此待辦');return requestIsCurrent()?'failed':'cancelled';}
     const memberConfig=getSupabaseConfig();
     if(memberConfig?.storageMode==='records-v1'&&usesPerVesselProgress(task)){
+      const openingActor=currentUser.id,openingSession=identitySessionGeneration.current,openingEpoch=authorizationEpoch;
+      const openingIsCurrent=()=>requestIsCurrent()&&openingActor===liveCurrentUserId.current&&openingSession===identitySessionGeneration.current&&openingEpoch===liveAuthorizationEpoch.current&&sameCloudConfig(memberConfig,getSupabaseConfig());
+      try{await ensureMemberGlobalDurable(openingIsCurrent);}catch(error:any){if(openingIsCurrent())alert(error.message||String(error));return 'failed';}
+      if(!openingIsCurrent())return 'cancelled';
       if(activeEditLockRef.current&&!await releaseExclusiveItemLease(activeEditLockRef.current.sectionKey))return 'failed';
       const actor=currentUser.id,session=identitySessionGeneration.current,epoch=authorizationEpoch;
       const scope=vesselId||taskVesselIds(task).find(id=>activeVessels.some(v=>v.id===id))||'';
@@ -2393,6 +2400,7 @@ export default function App() {
       const task=snapshot.tasks.find(t=>t.id===member.taskId);if(!task)return null;
       member.task=task;member.writable=true;setMemberEditorVersion(v=>v+1);return task;
     }
+    try{await ensureMemberGlobalDurable(scopeIsCurrent);}catch(error:any){if(scopeIsCurrent())alert(error.message||String(error));return null;}
     if(activeEditLockRef.current&&!await releaseExclusiveItemLease(activeEditLockRef.current.sectionKey))return null;
     if(!scopeIsCurrent())return null;
     return member.select(scope);
@@ -3386,17 +3394,37 @@ export default function App() {
       refreshPendingTaskCreations();
     }
   };
+  const ensureMemberGlobalDurable=async(ownerIsCurrent:()=>boolean)=>{
+    const config=getSupabaseConfig();if(!config)throw new StaleAsyncConfigError();
+    const actor=liveCurrentUserId.current,session=identitySessionGeneration.current,epoch=liveAuthorizationEpoch.current;
+    const token=configIoCoordinator.current.begin(config);
+    const isCurrent=()=>ownerIsCurrent()&&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current&&epoch===liveAuthorizationEpoch.current&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig())&&hasCurrentCloudIdentity();
+    if(!isCurrent())throw new StaleAsyncConfigError();
+    if(cloudWriteBlocked||cloudSyncInFlight.current)throw new Error('本機其他修改尚未確認，請先安全同步');
+    if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
+    if(cloudSaveInFlight.current)await cloudSaveInFlight.current;
+    if(!isCurrent())throw new StaleAsyncConfigError();
+    if(!confirmedCloudData.current)throw new Error('缺少可信的雲端合併基線');
+    if(!appDataContentEqual(liveData.current,confirmedCloudData.current))await enqueueCloudSave(liveData.current,isCurrent,true,isCurrent);
+    if(!isCurrent())throw new StaleAsyncConfigError();
+    if(pendingCloudData.current.size()||!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current))throw new Error('本機其他修改尚未確認，請先安全同步');
+  };
   const saveTaskVesselProgress = async (candidate: TaskItem, vesselId: string, expectedUpdatedAt: string, expectedRevision: number) => {
     const member=memberEditor.current;
     if(member&&member.taskId===candidate.id)return member.save(candidate,vesselId,async revision=>{
-      const before=liveData.current;
-      if(!confirmedCloudData.current||!appDataContentEqual(before,confirmedCloudData.current))throw new Error('本機其他修改尚未確認，請先安全同步');
+      if(cloudSaveInFlight.current)await cloudSaveInFlight.current.catch(()=>undefined);
+      if(!member.isUsable()||memberEditor.current!==member)throw new StaleAsyncConfigError();
       const remote=await fetchCloudData(member.config);
       if(!member.isUsable()||memberEditor.current!==member)throw new StaleAsyncConfigError();
-      if(!remote||remote.revision<revision||liveData.current!==before)throw new Error('單船已保存，正在等待安全讀回');
+      if(!remote||remote.revision<revision)throw new Error('單船已保存，正在等待安全讀回');
+      const base=confirmedCloudData.current;
+      let prepared:AppData;
+      try{prepared=prepareCloudSyncSnapshot(base,liveData.current,remote,lastCloudRevision.current,nowIso(),member.actorId);}catch{throw new Error('單船已保存；本機其他修改仍保留，正在等待安全同步讀回');}
       assertRemoteExtendsDurableHistory(cloudIdentity(member.config),null,remote);
-      confirmCloudSnapshot(cloudIdentity(member.config),remote);liveData.current=remote;setData(remote);lastCloudRevision.current=remote.revision;setSavePhase('saved');setCloudStatus(savedStatus('已安全保存到雲端',remote.updatedAt));
-    });
+      confirmCloudSnapshot(cloudIdentity(member.config),remote);liveData.current=prepared;setData(prepared);lastCloudRevision.current=remote.revision;
+      hasUnsavedWork.current=!appDataContentEqual(prepared,remote);
+      setSavePhase(hasUnsavedWork.current?'dirty':'saved');setCloudStatus(savedStatus('已安全保存到雲端',remote.updatedAt));
+    },()=>ensureMemberGlobalDurable(()=>memberEditor.current===member&&member.isUsable()));
     if(!requireMutationLease(`task:${candidate.id}`))return false;
     let applied=false;
     let failure='單船進度已變更或權限已更新，請重新開啟後再試';
@@ -4146,6 +4174,8 @@ export default function App() {
     if (!confirm('同步最新會保留本機修改並嘗試與雲端安全合併；只有本機沒有修改時才直接採用雲端資料。確定繼續？')) return;
     if (cloudSyncInFlight.current) return setCloudStatus('正在同步雲端，請稍候');
 
+    const syncActor=liveCurrentUserId.current,syncSession=identitySessionGeneration.current,syncEpoch=liveAuthorizationEpoch.current;
+    const syncOwnerIsCurrent=()=>syncActor===liveCurrentUserId.current&&syncSession===identitySessionGeneration.current&&syncEpoch===liveAuthorizationEpoch.current&&sameCloudConfig(syncConfig,getSupabaseConfig());
     const syncStartedWithUnsavedWork=hasUnsavedWork.current;
     const cachedCloudIdentity=cachedCloudIdentityFor(syncConfig);
     const hasUnboundLocalCache=!cachedCloudIdentity&&localStorage.getItem(STORAGE_KEY)!==null;
@@ -4162,8 +4192,20 @@ export default function App() {
     pendingCloudData.current.rejectAll(new StaleAsyncConfigError());
     if (cloudSaveInFlight.current) await cloudSaveInFlight.current.catch(() => undefined);
     try {
-      const remote = await configIoCoordinator.current.run(syncToken, getSupabaseConfig, fetchCloudData);
+      let remote = await configIoCoordinator.current.run(syncToken, getSupabaseConfig, fetchCloudData);
+      if(!syncOwnerIsCurrent())throw new StaleAsyncConfigError();
+      const recoveryBase=confirmedCloudData.current;
+      if(remote&&syncConfig.readMode==='scoped-v1'&&recoveryBase&&!appDataContentEqual(liveData.current,recoveryBase)){
+        // Changed home previews can slide old history out of their bounded window.
+        // Hydrate those targets before the unchanged append-only B/L/R guard.
+        const scope=unionRecordScopes(recordReadScope.current,recordRecoveryReadScope(recoveryBase,remote));
+        if(JSON.stringify(scope)!==JSON.stringify(recordReadScope.current)){
+          recordReadScope.current=scope;
+          remote=await configIoCoordinator.current.run(syncToken,getSupabaseConfig,fetchCloudData);
+        }
+      }
       if (!configIoCoordinator.current.isCurrent(syncToken, getSupabaseConfig())) throw new StaleAsyncConfigError();
+      if(!syncOwnerIsCurrent())throw new StaleAsyncConfigError();
       const localSnapshot=liveData.current;
       const expectedRevision=lastCloudRevision.current;
       const baseSnapshot=confirmedCloudData.current;
@@ -4178,11 +4220,12 @@ export default function App() {
         activeCloudIdentity.current = syncIdentity;
         lastCloudRevision.current = remote.revision;
         confirmCloudSnapshot(syncIdentity,remote);
-        setData(prepared);
+        liveData.current=prepared;setData(prepared);
         setCloudWriteBlocked(false);
         rememberCloudIdentity();
         if(hasLocalChanges){
-          await enqueueCloudSave(prepared);
+          await enqueueCloudSave(prepared,syncOwnerIsCurrent,true,syncOwnerIsCurrent);
+          if(!syncOwnerIsCurrent())throw new StaleAsyncConfigError();
           retainPageDraftFeedback();
         }else if(!retainPageDraftFeedback()){
           hasUnsavedWork.current=false;
@@ -4196,6 +4239,7 @@ export default function App() {
         throw new CloudRebaseConflictError(['雲端工作區沒有主資料，已禁止從瀏覽器初始化']);
       }
     } catch (error: any) {
+      if(!syncOwnerIsCurrent())return;
       hasUnsavedWork.current=syncStartedWithUnsavedWork;
       setCloudWriteBlocked(true);
       setSavePhase('error');

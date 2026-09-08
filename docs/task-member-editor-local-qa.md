@@ -103,25 +103,66 @@ Fixture role/closure setup and SQL lease-expiry/competing-claim hooks are contro
 QA setup. Saves, selectors, confirmations, logins and reads use the original App;
 no production setter or fabricated SQL success is substituted.
 
+## Pre-member snapshot upgrade and global/member barrier (base 429d55f)
+
+The mounted pre-member `436f9cd` App did **not** persist a whole-task request
+ID/signature/CAS envelope. The applicable bytes are AppData L, confirmed base B,
+cache identity and revision floors. Creation-only commands and the alternate
+NormalizedApp are not that route. `verify-task-member-upgrade.mjs` boots immutable
+old Git bytes, types and saves through the original owner UI, fails real HTTP
+transport before SQL or after native commit, and captures those naturally written
+storage keys. A fresh original App document uses the SAME origin, browser context,
+workspace, actor and database. The old document/server stop before the switch;
+only the captured old lease's synthetic TTL is explicitly expired. The genuine
+old outgoing ID/signature is an external SQL observer oracle, never browser state.
+
+- Uncommitted: original safe sync reconstructs the snapshot intent through the
+  existing whole-task queue/helper/lock protocol, legitimately with a new ID.
+- Committed / ACK+lookup lost: B/L/R adopts the already-existing complete graph;
+  no second whole-task mutation, no conversion to a member request.
+- Same-record conflict: exact L/B bytes and peer's full native graph survive;
+  existing conflict resolution is the correct terminal outcome, zero new writes.
+- Disjoint other task: original safe sync combines both complete graphs, then the
+  original member editor obtains its first ACK. Unknown raw fields, third-member
+  history and the independent canary task/source survive the complete oracles.
+- Read coverage: dirty legacy snapshots recover only changed targets and retained
+  detail tails/snapshots. Treating a target-enriched B as plain home OR blindly
+  expanding every B to full both falsely reject trusted history. Clean opens stay
+  scoped; no new store, protocol, CAS migration or full-read-on-every-open shortcut.
+- New member opens, scope selection and immediate pre-dispatch await the original
+  global queue under captured actor/config/session/authorization generation.
+  A blocked or baseless snapshot stays intact. Member-private typing/quick input
+  and feedback dirty do not count as a global AppData delta.
+- Already-pending member receipt adoption bypasses the new-submit guard. A legal
+  committed ACK waits for safe full readback; B/L/R retains concurrent unrelated
+  global changes instead of rejecting after commit or splicing a task-only base.
+
+Behavioral RED receipts are retained for genuine old-snapshot recovery and
+member-before-global dispatch. The separate controlled production-App extraction
+and real TaskMemberEditor test (`verify-task-member-global-barrier.mjs`) probes
+live delta/in-flight drain, actor/config/session/epoch invalidation at the new
+await, missing base/wrong identity, immediate pre-dispatch, committed-pending
+retention, concurrent global changes after ACK, and safe-sync read invalidation.
+These controlled transport tests are NOT additional original-UI/native cases or
+proof of every possible mounted ABA schedule. Existing recovery/lifecycle/shared
+and 13 scoped-read original-UI cases remain separate regression layers.
+
+Reproduce with `QA_OLD_SOURCE_ROOT` pointing to the verified external immutable
+436f9cd raw Git extraction (no clone/worktree; temporary dependency link only in
+that owned copy). Set `QA_MEMBER_UPGRADE` separately to `uncommitted`, `committed`,
+`conflict`, `disjoint`, or `guard`, then run
+`node scripts/verify-task-member-upgrade.mjs`. The runner requires external
+`QA_EVIDENCE_ROOT` and `QA_VITE_CACHE_DIR`, and removes the exact external link.
+
 ## Explicitly OPEN (outside this finite slice)
 
-- **MEMBER-UI-UPGRADE:** exact persisted pre-fix whole-task envelope, original
-  coordinator/RPC/signature/CAS reconciliation and original-UI upgrade proof.
-  No migration or claim of compatibility was added. The inspected original App
-  whole-task path constructs an operation ID inside its in-memory cloud queue
-  (`App.tsx` / `cloudBlockReceipt.ts`); this is not proof of a durable old envelope.
-  The exact predecessor artifact/route still must be identified and exercised,
-  not fabricated or converted into a member request.
 - Forced mounted actor/config callback ABA at every await boundary, full production
   bootstrap/auth/render-gate matrix. Config-observer native proof and controlled
   identity predicate are scoped evidence, not full production-mode render proof.
 - Complete lease renewal/release schedule permutations beyond the separately proved
   representative parent CLAIM and REFRESH generation barriers.
-- Broad global dirty queue coexistence/automatic reconciliation. Member publication
-  still refuses an unsafe unrelated local delta and retains request/draft; no
-  overwrite or false automatic recovery claim. Overall-only unsent fields are not
-  added to member draft persistence. The bounded member feedback defect above is
-  closed; this does not claim a global dirty-queue redesign.
+- Overall-only unsent component fields retain their original in-document scope;
+  no reload persistence or automatic overall save was added.
 - Remaining R1–R3 entry inventory, hosted/QPS/mobile/PDF/cutover, and the prior
   six-item program are unchanged OPEN. This is not production acceptance.
 

@@ -25,6 +25,28 @@ export function recordScopeGraph(scope:RecordReadScope,raw:AppData):Set<string> 
   }}
   return keys;
 }
+/** Reconstruct only read coverage from surviving AppData, never a request/CAS.
+ * Home omits history tails and report snapshots; every retained detail or local
+ * changed row needs its original target graph before comparing the trusted base.
+ */
+export function recordRecoveryReadScope(base:AppData,local:AppData):RecordReadScope {
+  const targets:RecordTarget[]=[];
+  const hasDetail=(value:unknown):boolean=>{
+    if(!value||typeof value!=='object')return false;
+    if(Array.isArray(value))return value.some(hasDetail);
+    const row=value as Record<string,unknown>;
+    return Object.prototype.hasOwnProperty.call(row,'snapshot')||(Array.isArray(row.statusLogs)&&row.statusLogs.length>2)||Object.values(row).some(hasDetail);
+  };
+  for(const collection of ['tasks','internalControlCases','meetings','agendaReports'] as const){
+    const before=new Map<string,unknown>(base[collection].map((row):[string,unknown]=>[row.id,row]));
+    const after=new Map<string,unknown>(local[collection].map((row):[string,unknown]=>[row.id,row]));
+    for(const id of new Set([...before.keys(),...after.keys()])){
+      const b=before.get(id),l=after.get(id);
+      if(JSON.stringify(b)!==JSON.stringify(l)||hasDetail(b)||hasDetail(l))targets.push({collection,id});
+    }
+  }
+  return unionRecordScopes('home',{targets});
+}
 export type RecordScopeSnapshot = { scopeKey:string; workspace:string; revision: number; root: Record<string, unknown>; collections: Record<string, { ids: string[]; rows: Record<string, Row> }> };
 const clone=<T>(v:T):T=>JSON.parse(JSON.stringify(v));
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
