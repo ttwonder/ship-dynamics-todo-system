@@ -486,8 +486,10 @@ begin
       select h.value from public.ship_dynamics_record_history h where h.workspace_key=p_workspace and h.collection='auditLogs' and h.entity_id=id and h.valid_from_revision<=base_revision and h.valid_to_revision>base_revision
     ) t;
     if body_count<>1 then return p_operations; end if;
+    -- Reappearing E is not caller provenance: an older body interval means
+    -- this ID was rewritten/recreated before the selected matching revision.
     if exists(select 1 from public.ship_dynamics_records r where r.workspace_key=p_workspace and r.collection='auditLogs' and r.entity_id=id and r.revision>base_revision)
-      or exists(select 1 from public.ship_dynamics_record_history h where h.workspace_key=p_workspace and h.collection='auditLogs' and h.entity_id=id and h.valid_from_revision>base_revision)
+      or exists(select 1 from public.ship_dynamics_record_history h where h.workspace_key=p_workspace and h.collection='auditLogs' and h.entity_id=id and (h.valid_from_revision>base_revision or h.valid_to_revision<=base_revision))
     then return p_operations; end if;
     select r.value into current_body from public.ship_dynamics_records r where r.workspace_key=p_workspace and r.collection='auditLogs' and r.entity_id=id;
     if (p_current_ids ? id and current_body is distinct from base_body) or (not p_current_ids ? id and current_body is not null) then return p_operations; end if;

@@ -23,7 +23,7 @@
 
 這不是完整全域並發解法：root lock 仍排隊；tasks／批量／notifications／任意 reorder 仍維持原契約。同時刻、非標準時間、無可靠基準、改写／重建或超過 499 peer prefix 不走合併。依原 `mergeImmutableAuditLogs`，未滿 500 的共同基準若已被 peer 截掉原基準資料亦不放寬；499 的 A 填滿、B 同基準合併已單獨驗證。沒有全面重排舊歷史，也沒有建立新的 server retention 政策。未查正式 audit 筆數；不宣稱 hosted QPS、正式可用率或任意五人保存都免重試。
 
-## 真實驗證
+## 初版 ff11c260 的真實驗證（保留歷史收據）
 
 證據根：`C:/Users/tuotu/AppData/Local/hermes/cache/record-audit-merge-12dda66c`。
 
@@ -43,7 +43,9 @@
 
 舊 U3 四輪「followers 必須衝突」只適用 `12dda66c` 歷史 baseline。新 runner 是 explicit mode，不刪舊驗證、不造衝突來迎合舊正例。新的 UI evidence 只計 UM-7／UM-500 兩個有界情境；UR 為獨立唯讀證據。
 
-`src`／package bytes 未改，因此沒有把舊 typecheck/build 重跑當本片 gate；當前 affected 原 App 實際在 Vite 中執行。未開新 reviewer 迴圈，無獨立 review PASS 聲稱。
+收據範圍澄清：每個歷史 revision 都核對完整 snapshot 與 audit 順序；delta RPC 則從共同基準重建最終 current payload，不是逐個歷史 revision 的 delta。原收據欄名 `fullDeltaEachHistory` 過廣，後續 runner 改為 `fullFinalDeltaReconstructed`；保留既有收據作歷史，不將重複讀取加算為新情境。
+
+`src`／package bytes 未改，因此沒有把舊 typecheck/build 重跑當本片 gate；當前 affected 原 App 實際在 Vite 中執行。實作者交回此初版時尚無獨立 review PASS 聲稱；其後的差異檢查與修正另列於下。
 
 ## 異常與交付紀律
 
@@ -52,3 +54,16 @@
 這次實際時程／harness 修理次數超過原預定有界預算，不宣稱符合該程序限制；沒有以少於 500 的片段或未驗證輸出冒充完成。最終產品／原 UI 與 SQL gates 的 PASS 限上述真實輸出。
 
 所有測試只在已驗證 portable PostgreSQL runtime 的新 owned loopback cluster；每次 exact data_directory、user、host/port 核對後才安裝 development SQL。HTTP／owned Chrome／PG／ports 已關閉、private profile/data 已移除；runtime 本體保留。最終 hash manifest、完整 staged Git patch、exact staged tree／commit tree 與 clean receipt 位於同證據根。沒有 Push、merge、production SQL、部署或使用者 Chrome 操作。
+
+## 獨立檢查後：重現並修正 order 再現的 ABA 缺口
+
+獨立檢查發現，同一 audit ID 集合 E 可在合法刪除／重建後再次出現，不能只用最新相同 order 的 revision 當作 caller 基準。父以原 RPC 重現：先保留 B 舊請求，刪除／以不同 detail 重建 `legacy-0` 並恢復 E，再提交 A 的新 audit；原 JS rebase 拒絕 B，但初版 SQL 卻 ACK 並寫入。這是產品 RED，不是測試工具錯誤。
+
+修正只增加一項保守條件：E 中任何 ID 若存在 `valid_to_revision <= base_revision` 的更早 body interval，即退出快速合併、沿原 strict CAS。保留既有「基準後被改寫」檢查與完整預驗證；正常 peer 在基準之後造成的 cap 尾端歸檔不受此條件影響。這不把重建後的 E 偷換成舊 caller 的基準，也不新增權限、RPC 參數或重試政策。
+
+- `G-reappearing-order-ABA` 真 native RED→GREEN：修正後拒絕舊請求，所有 business ledger 零寫入；原 rebase 衝突、重現 E 的 revisions 與前後 ledger hash 均留存。
+- 原生 suite 加入此負控後為 23 cases；500／499／7 正例、既有拒絕條件、late rollback、signature replay 與 ACL 仍通過。
+- 修正後 UM-500／UM-7 再以原 App 跑過，各 5 first-request ACK、零 retry／manual；UI oracle 現在直接對照記憶體中捕捉的原 outgoing audit body，只替換 IP／country 等 server-owned metadata，不再用回讀內容推導自己的 body 期望。原 request／guards 不寫入檔案。
+- 首次修正後 UM-500 已通過 UI／資料斷言，但 owned data 清理遇 Windows `EBUSY` 而 exit 1；原 FAIL 收據保留。父核專屬 PID／ports 均停後只刪該次 data／chrome 目錄，再跑 UM-500 與尚未跑的 UM-7，兩個命令均 exit 0。
+
+此閉合證據根為 `C:/Users/tuotu/AppData/Local/hermes/cache/record-audit-aba-ff11c260`；`closure-receipt.json` 聚合精確 run 路徑、當前 inputs／候選 tree、RED／GREEN 及清理分類。初版收據與超時紀錄不覆寫；本節不代表 hosted、production、任意時序或抗刷新持久化已驗。

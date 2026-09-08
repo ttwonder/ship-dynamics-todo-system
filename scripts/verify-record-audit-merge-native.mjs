@@ -44,6 +44,29 @@ try{
   receipt.cases.push({caseId:'M-cap-'+cap,status:'PASS',layer:'native-SQL-original-builder-readonly-rebase-oracle',ackA,ackB,auditCount:final.payload.auditLogs.length,exactFullHistory:true,delta,originalSignatureReplay:true,signatureMismatch:true,hash:hash(final)});save();
  }
 
+ // An order can recur after a legal delete/recreate; identical IDs are not an identical base.
+ {
+  const f=await fixture(7),stale=await make(f.w,f.base,'qa-v1','qa-operator');
+  const original=f.base.payload.auditLogs[0],ids=f.base.payload.auditLogs.map(x=>x.id);
+  const remove=structuredClone(stale);remove.id='aba-delete-'+(++serial);remove.ops=[{kind:'entity',collection:'auditLogs',entityId:original.id,expected:original,value:null}];
+  assert.equal((await stamped(b,remove)).ok,true,'original RPC allows this fixture deletion');
+  const afterDelete=await read(f.w),restore=await make(f.w,afterDelete,'qa-v2','qa-owner');
+  restore.ops=[restore.ops.find(o=>o.collection==='vessels'),{kind:'entity',collection:'auditLogs',entityId:original.id,expected:null,value:{...original,detail:'ABA rebuilt business body'}},{kind:'order',collection:'auditLogs',expectedIds:afterDelete.payload.auditLogs.map(x=>x.id),valueIds:ids}];
+  assert.equal((await stamped(a,restore)).ok,true,'original RPC restores E with a changed audit body');
+  const restored=await read(f.w);assert.deepEqual(restored.payload.auditLogs.map(x=>x.id),ids);
+  assert.notEqual(restored.payload.auditLogs[0].detail,original.detail);
+  const matching=(await observer.query("select revision from ship_dynamics_record_versions where workspace_key=$1 and orders->'auditLogs'=$2::jsonb order by revision",[f.w,JSON.stringify(ids)])).rows.map(x=>x.revision);assert.ok(matching.length>=2);
+  const peer=await make(f.w,restored,'qa-v2','qa-owner');assert.equal((await stamped(a,peer)).ok,true);
+  const remote=await read(f.w);let rebaseError;
+  try{rebaseDisjointAppData(f.base.payload,stale.next,remote.payload,new Date().toISOString(),stale.actor);}catch(e){rebaseError=e;}
+  assert.equal(rebaseError?.name,'CloudRebaseConflictError');assert.ok(rebaseError.conflicts.some(x=>x.startsWith('auditLogs:')));
+  const before=await ledger(f.w),result=await stamped(b,stale),after=await ledger(f.w);
+  receipt.abaProbe={originalBaseline:f.base.revision,matchingOrderRevisions:matching,originalRebaseConflicts:rebaseError.conflicts,result,beforeLedgerHash:hash(before),afterLedgerHash:hash(after)};save();
+  assert.equal(result.ok,false,'ABA reappearing E must not ACK a stale request rejected by the original rebase');
+  assert.equal(result.code,'block-conflict');assert.deepEqual(after,before,'ABA rejection writes nothing');
+  receipt.cases.push({caseId:'G-reappearing-order-ABA',status:'PASS',layer:'native-negative-original-RPC',matchingOrderRevisions:matching,originalRebaseConflicts:rebaseError.conflicts,result});save();
+ }
+
  const {w,base}=await fixture(500),ra=await make(w,base,'qa-v2','qa-owner'),rb=await make(w,base,'qa-v1','qa-operator');assert.equal((await stamped(a,ra)).ok,true);
  const add=r=>r.ops.find(o=>o.kind==='entity'&&o.collection==='auditLogs'&&o.expected===null);
  const order=r=>r.ops.find(o=>o.kind==='order');const del=r=>r.ops.find(o=>o.kind==='entity'&&o.collection==='auditLogs'&&o.value===null);

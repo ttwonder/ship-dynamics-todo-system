@@ -112,6 +112,7 @@ function verifyBusiness(before,after,succeeded){
 async function receiptLedger(){return (await native.observer.query('select operation_id,result from ship_dynamics_record_receipts where workspace_key=$1 order by operation_id',[qa.workspace])).rows;}
 async function sameDraft(p){return p.eval(`window.__draftNode===${field}&&window.__draftNode.value===${JSON.stringify(p.marker)}`);}
 
+const outgoingAuditBodies=new Map(); // In memory only; never persist request guards or bodies.
 try{
  native=await createNativeRecordQa(run,receipt,{httpTransactions:true,beforeCommit:async({context,pid,value})=>{
   if(barrier&&context.operationId===barrier.operationId){assert.equal(value.ok,true,'A real SQL executed successfully');barrier.pid=pid;barrier.entered=true;barrier.enteredAt=Date.now();save();await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('private commit barrier budget exceeded')),6000);releaseCommit=()=>{clearTimeout(timer);resolve();};});}
@@ -136,7 +137,7 @@ try{
     const u=new URL(m.params.request.url),allowed=u.origin===qa.origin||['data:','blob:'].includes(u.protocol);
     if(!allowed)receipt.blockedExternal.push(u.origin);
     if(allowed&&rendezvous&&u.pathname.endsWith('/rpc/'+patchRpc)){
-     const body=JSON.parse(m.params.request.postData);paused.push({session:m.sessionId,requestId:m.params.requestId,operationId:body.p_operation_id,actor:body.p_actor_user_id,payloadHash:hash(body),auditExpected:body.p_operations.find(o=>o.kind==='order'&&o.collection==='auditLogs')?.expectedIds});save();return;
+     const body=JSON.parse(m.params.request.postData);for(const op of body.p_operations){if(op.kind==='entity'&&op.collection==='auditLogs'&&op.expected===null&&!outgoingAuditBodies.has(op.entityId))outgoingAuditBodies.set(op.entityId,structuredClone(op.value));}paused.push({session:m.sessionId,requestId:m.params.requestId,operationId:body.p_operation_id,actor:body.p_actor_user_id,payloadHash:hash(body),auditExpected:body.p_operations.find(o=>o.kind==='order'&&o.collection==='auditLogs')?.expectedIds});save();return;
     }
     await call(allowed?'Fetch.continueRequest':'Fetch.failRequest',allowed?{requestId:m.params.requestId}:{requestId:m.params.requestId,errorReason:'BlockedByClient'},m.sessionId);
    }
@@ -175,12 +176,12 @@ try{
   const snapshots=[];for(const n of receipt.network.filter(n=>n.rpc===patchRpc).sort((a,b)=>a.revision-b.revision)){const h=(await native.observer.query('select read_ship_dynamics_record_history_v1($1,$2) r',[qa.workspace,n.revision])).rows[0].r;snapshots.push(h);}
   const final=await read(),allNew=final.payload.auditLogs.filter(a=>!base.payload.auditLogs.some(b=>b.id===a.id));assert.equal(allNew.length,5);assert.equal(new Set(allNew.map(a=>a.at)).size,5,'canonical distinct-at supported branch');
   for(const [i,h] of snapshots.entries()){
-   const prefix=h.payload.auditLogs.filter(a=>!base.payload.auditLogs.some(b=>b.id===a.id));assert.equal(prefix.length,i+1);for(const a of prefix){assert.equal(a.ipAddress,'192.0.2.30');assert.equal(a.ipCountryCode,'TW');}
+   const prefix=h.payload.auditLogs.filter(a=>!base.payload.auditLogs.some(b=>b.id===a.id));assert.equal(prefix.length,i+1);for(const a of prefix){const outgoing=outgoingAuditBodies.get(a.id);assert.ok(outgoing,'captured original outgoing audit '+a.id);assert.deepEqual(a,{...outgoing,ipAddress:'192.0.2.30',ipCountryCode:'TW'},'entire outgoing audit body preserved, except server-owned metadata');}
    const expectedAudits=[...prefix].sort((a,b)=>String(b.at).localeCompare(a.at)||a.id.localeCompare(b.id)).concat(base.payload.auditLogs).slice(0,500);assert.deepEqual(h.payload.auditLogs,expectedAudits,'exact base-relative history order/cap');
    verifyBusiness(base,{...h,revision:h.payload.revision},people.filter(p=>prefix.some(a=>a.actorId===p.actor)));
    const d=(await native.observer.query('select read_ship_dynamics_record_delta_v1($1,$2,$3) r',[qa.workspace,base.revision,(await native.observer.query('select token from ship_dynamics_record_read_bases where workspace_key=$1 and revision=$2',[qa.workspace,base.revision])).rows[0].token])).rows[0].r;assert.equal(d.status,'delta');const model=structuredClone(base.payload);Object.assign(model,d.root.set);for(const k of d.root.deleted)delete model[k];for(const c of d.collections){const map=new Map(model[c.collection].map(x=>[x.id,x]));for(const id of c.deleted)map.delete(id);for(const x of c.upserts)map.set(x.id,x);model[c.collection]=(c.order||[...map.keys()]).map(id=>map.get(id));}assert.deepEqual(model,final.payload);
   }
-  receipt.historyHashes=snapshots.map(hash);receipt.auditRetention={base:Number(mergeCap),final:final.payload.auditLogs.length,exactBaseRelativeOrder:true,fullDeltaEachHistory:true};await people[4].screen('UM-'+mergeCap+'-ACK');receipt.cases.push({caseId:'UM-'+mergeCap,status:'PASS',layer:'original-ui-native-sql',actors:5,firstRequestAcks:5,retries:0,manualSync:0});
+  receipt.historyHashes=snapshots.map(hash);receipt.auditRetention={base:Number(mergeCap),final:final.payload.auditLogs.length,exactBaseRelativeOrder:true,fullFinalDeltaReconstructed:true,originalOutgoingAuditBodiesMatched:true};await people[4].screen('UM-'+mergeCap+'-ACK');receipt.cases.push({caseId:'UM-'+mergeCap,status:'PASS',layer:'original-ui-native-sql',actors:5,firstRequestAcks:5,retries:0,manualSync:0});
  }else{
  currentCase='U3a';rendezvous=true;await Promise.all(people.map(p=>p.submit()));
  for(let round=1;round<=4;round++){
