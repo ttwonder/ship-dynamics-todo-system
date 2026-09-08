@@ -6,8 +6,9 @@ import { CloudBlockPatchConflictError, type CloudBlockPatchOperation } from './c
 import type { CloudBlockCompactReceipt, CloudBlockReceiptStatus } from './cloudBlockReceipt';
 import { consumeCloudDeltaResponse, type CloudDeltaSnapshot } from './cloudDelta';
 import { consumeRecordSnapshot, usesRecordStorage } from './cloudRecords';
+import { consumeRecordScopes, recordScopePayload, recordScopeVersions, type RecordReadScope, type RecordScopeSnapshot } from './cloudRecordScopes';
 
-export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string; readMode?: 'snapshot' | 'delta-v1'; storageMode?: 'legacy' | 'records-v1' }
+export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string; readMode?: 'snapshot' | 'delta-v1' | 'scoped-v1'; storageMode?: 'legacy' | 'records-v1' }
 export type ResolvedSupabaseConfig = SupabaseConfig & { tableName: string };
 export interface CloudEditingLock { ok: boolean; sectionKey: string; lockedBy?: string; lockedByName?: string; expiresAt?: string }
 declare global { interface Window { SHIP_DYNAMICS_SUPABASE_CONFIG?: SupabaseConfig } }
@@ -188,11 +189,12 @@ async function fetchCloudDeltaData(cfg: ResolvedSupabaseConfig, supabase: Supaba
 
 /** The third argument is reserved for the single-vessel editor freshness check.
  * Default callers still receive newly materialized complete authoritative AppData. */
-export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, signal?: AbortSignal, confirmedForFreshness?: AppData): Promise<AppData | null> {
+export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, signal?: AbortSignal, confirmedForFreshness?: AppData, scope:RecordReadScope='full'): Promise<AppData | null> {
   const cfg = config === undefined ? getSupabaseConfig() : config;
   const supabase = getSupabaseClient(cfg);
   if (!supabase || !cfg) { deltaReadCache = null; return null; }
   if (usesRecordStorage(cfg)) {
+    if (cfg.readMode === 'scoped-v1') return fetchCloudRecordScope(cfg,supabase,scope,signal);
     if (cfg.readMode === 'delta-v1') return fetchCloudDeltaData(cfg, supabase, signal, confirmedForFreshness);
     deltaReadCache = null;
     signal?.throwIfAborted();
@@ -222,6 +224,26 @@ export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, sig
   normalized.revision = sourceRevision;
   rawPayload.revision=sourceRevision;
   rawPayloadByNormalized.set(normalized,rawPayload);
+  return normalized;
+}
+
+type ScopeCache={key:string;sequence:number;published:number;snapshot:RecordScopeSnapshot|null};
+const scopeCaches=new Map<RecordReadScope,ScopeCache>();
+async function fetchCloudRecordScope(cfg:ResolvedSupabaseConfig,supabase:SupabaseClient,scope:RecordReadScope,signal?:AbortSignal):Promise<AppData|null>{
+  signal?.throwIfAborted();
+  const key=JSON.stringify([cfg.supabaseUrl,cfg.supabaseAnonKey,cfg.workspaceKey,cfg.tableName,cfg.storageMode,cfg.readMode]);
+  let cache=scopeCaches.get(scope);
+  if(!cache||cache.key!==key){cache={key,sequence:0,published:0,snapshot:null};scopeCaches.set(scope,cache);}
+  const owner=cache,base=owner.snapshot,sequence=++owner.sequence;
+  let request=supabase.rpc('read_ship_dynamics_record_scopes_v1',{p_workspace_key:cfg.workspaceKey,p_scope:scope,p_versions:recordScopeVersions(base)});
+  if(signal)request=request.abortSignal(signal);
+  const {data,error}=await request;signal?.throwIfAborted();if(error)throw error;
+  const next=consumeRecordScopes(data,cfg.workspaceKey,scope,base);
+  if(scopeCaches.get(scope)!==owner)throw new Error('stale-record-scope-config');
+  if(sequence<owner.published)return owner.snapshot?normalizedCloudRead(recordScopePayload(owner.snapshot),owner.snapshot.revision):null;
+  if(owner.snapshot&&next&&next.revision<owner.snapshot.revision)throw new Error('record-scope-revision-rollback');
+  const normalized=next?normalizedCloudRead(recordScopePayload(next),next.revision):null;
+  owner.published=sequence;owner.snapshot=next;
   return normalized;
 }
 

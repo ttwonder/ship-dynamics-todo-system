@@ -4,7 +4,8 @@ import fpmcLogo from './assets/fpmc-logo.png';
 import { createInitialData } from './data/seed';
 import type { AgendaReport, AppData, FilterState, InternalControlCase, MorningReportSnapshot, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, sanitizeAppDataForStorage, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
-import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlockPatchV2UnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, applyCloudBlockPatchV2, claimEditLock, cloudStoragePayloadFor, fetchCloudData, getCloudBlockPatchReceipt, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
+import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlockPatchV2UnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, applyCloudBlockPatchV2, claimEditLock, cloudStoragePayloadFor, fetchCloudData as fetchCloudDataRpc, getCloudBlockPatchReceipt, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
+import { buildRecordScopePatch, cleanRecordHomeCacheMatches, type RecordReadScope } from './cloudRecordScopes';
 import { CloudBlockPatchConfirmedRefreshError, CloudBlockPatchOutcomeUnknownError, runCloudBlockPatchWithReceipt } from './cloudBlockReceipt';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
 import { mergeConfirmedCloudSnapshot } from './cloudConfirmedMerge';
@@ -294,6 +295,9 @@ function taskMatchesFilters(t: TaskItem, filters: FilterState, vesselMap: Record
 }
 
 export default function App() {
+  const recordReadScope=useRef<RecordReadScope>('home');
+  const actionScopeGeneration=useRef(0);
+  const fetchCloudData=(config?:ResolvedSupabaseConfig|null,signal?:AbortSignal,confirmed?:AppData)=>fetchCloudDataRpc(config,signal,confirmed,recordReadScope.current);
   const [data, setData] = useState<AppData>(() => normalizeAppData(loadLocal()) || createInitialData());
   const [siteUnlocked, setSiteUnlocked] = useState(() => sessionStorage.getItem(SESSION_SITE_UNLOCK) === '1');
   const [currentUserId, setCurrentUserIdState] = useState(() => localStorage.getItem(CURRENT_USER_KEY) || '');
@@ -864,7 +868,7 @@ export default function App() {
                   :sanitizeAppDataForStorage(rebaseDisjointAppData(base,nextForSave,remote,nowIso(),actorUserId));
                 mergedRemoteChanges=mergedRemoteChanges||!appDataContentEqual(base,remote);
                 const storageRemote=cloudStoragePayloadFor(remote);
-                const operations=buildCloudBlockPatch(remote,candidate,storageRemote);
+                const operations=token.config.readMode==='scoped-v1'?buildRecordScopePatch(remote,candidate,storageRemote,recordReadScope.current):buildCloudBlockPatch(remote,candidate,storageRemote);
                 if(!operations.length){persisted=remote;break;}
                 assertActorAuthorizedForAppDataChange(remote,candidate,actorUserId);
                 const actorGuard=actorStorageAuthorizationGuard(remote,storageRemote,actorUserId);
@@ -1102,7 +1106,8 @@ export default function App() {
       }
       if (remote) {
         lastCloudRevision.current=remote.revision||0;
-        const localContentDiverged=hasLocalCache&&!appDataContentEqual(data,remote);
+        const cleanCoverageTransition=cfg.readMode==='scoped-v1'&&Boolean(trustedLocalIdentity)&&cleanRecordHomeCacheMatches(data,persistedConfirmedBase,remote);
+        const localContentDiverged=hasLocalCache&&!appDataContentEqual(data,remote)&&!cleanCoverageTransition;
         const persistedRemoteRollback=remote.revision<persistedDurableFloor;
         const recoveredBase=!identityChanged&&!unknownDirtyCache?trustedPersistedBaseForRemote(persistedConfirmedBase,remote,appDataContentEqual):null;
         if (identityChanged || unknownDirtyCache || localContentDiverged || persistedRemoteRollback) {
@@ -1879,10 +1884,12 @@ export default function App() {
       const confirmed=confirmedCloudData.current;
       if(!confirmed)throw new Error('沒有可驗證的已保存雲端基線');
       const token=configIoCoordinator.current.begin(leaseConfig);
-      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
+      const scope:RecordReadScope=sectionKey.startsWith('vessel:')?recordReadScope.current:'full';
+      const coverageChanged=leaseConfig.readMode==='scoped-v1'&&scope!==recordReadScope.current;
+      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,coverageChanged?config=>fetchCloudDataRpc(config,undefined,undefined,scope):vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
       if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!claimStillCurrent())return null;
       if(!remote)throw new Error('雲端工作區尚未建立，不能開啟多人單項編輯');
-      assertRemoteExtendsDurableHistory(cloudWorkspaceIdentity(leaseConfig),confirmed,remote);
+      assertRemoteExtendsDurableHistory(cloudWorkspaceIdentity(leaseConfig),coverageChanged?null:confirmed,remote);
       const resolution=resolveItemEditSession({
         live:liveData.current,confirmed,remote,equals:appDataContentEqual,
         select:snapshot=>itemLeaseExistsInSnapshot(sectionKey,snapshot)?snapshot:undefined,
@@ -1893,6 +1900,7 @@ export default function App() {
       if(resolution.status==='missing')throw new Error('項目已被刪除');
       if(resolution.status==='unauthorized')throw new Error('最新雲端權限已撤銷此項目的編輯權');
       lastCloudRevision.current=remote.revision;
+      if(coverageChanged)recordReadScope.current=scope;
       confirmCloudSnapshot(cloudIdentity(leaseConfig),remote);
       liveData.current=remote;
       setData(remote);
@@ -2180,6 +2188,31 @@ export default function App() {
     setTaskReadOnlyReason('');
     clearBlockedTaskLock();
   };
+  // Compatibility consumers expand only on the user's action, never on bootstrap.
+
+  const loadRecordActionScope=async(scope:RecordReadScope):Promise<boolean>=>{
+    const generation=++actionScopeGeneration.current;
+    const config=getSupabaseConfig();
+    if(config?.readMode!=='scoped-v1'||recordReadScope.current===scope)return true;
+    const actor=liveCurrentUserId.current,session=identitySessionGeneration.current;
+    const token=configIoCoordinator.current.begin(config);
+    const isCurrent=()=>generation===actionScopeGeneration.current&&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig());
+    try{
+      if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
+      if(!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current))await enqueueCloudSave(liveData.current);
+      if(!isCurrent()||activeEditLockRef.current||batchManagedOpenRef.current)return false;
+      const before=liveData.current;
+      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,cfg=>fetchCloudDataRpc(cfg,undefined,undefined,scope));
+      if(!isCurrent()||liveData.current!==before||activeEditLockRef.current||batchManagedOpenRef.current)return false;
+      if(!remote)throw new Error('雲端工作區不存在');
+      // Coverage changed, not business content. Still enforce the durable floor.
+      assertRemoteExtendsDurableHistory(cloudIdentity(config),null,remote);
+      recordReadScope.current=scope;
+      confirmCloudSnapshot(cloudIdentity(config),remote);
+      liveData.current=remote;setData(remote);lastCloudRevision.current=remote.revision;
+      return true;
+    }catch(error:any){if(isCurrent())alert(error.message||String(error));return false;}
+  };
   const navigateToTab = async (nextTab:Tab) => {
     const incident=vesselLeaseIncidentRef.current;
     if(editingVesselId&&incident&&classifyVesselLeaseIncidentClose(incident.mode)==='confirm-discard'&&incident.sectionKey===`vessel:${editingVesselId}`){
@@ -2195,9 +2228,11 @@ export default function App() {
     }
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId('');
+    if(!await loadRecordActionScope(nextTab==='dashboard'?'home':'full'))return;
     setTab(nextTab);
   };
-  const openVesselDetail = (vesselId: string) => {
+  const openVesselDetail = async (vesselId: string) => {
+    if(!await loadRecordActionScope('full'))return;
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId(vesselId);
   };
@@ -2208,6 +2243,7 @@ export default function App() {
   };
 
   const openVesselEditor = async (id: string) => {
+    if(tab==='dashboard'&&!selectedVesselDetailId&&!await loadRecordActionScope('home'))return;
     invalidatePendingTaskOpen();
     const vessel = data.vessels.find(item => item.id === id);
     if (!vessel) return alert('找不到對應船舶');
@@ -2296,9 +2332,10 @@ export default function App() {
     return requestIsCurrent()?'failed':'cancelled';
   };
   const openTask = async (task: TaskItem, vesselId = '', returnVesselId = ''):Promise<TaskOpenResult> => {
+    if(!await loadRecordActionScope('full'))return 'failed';
     const requestGeneration=taskOpenRequests.current.begin({vesselId:returnVesselId,batchManaged:false});
     const requestIsCurrent=()=>taskOpenRequests.current.isCurrent(requestGeneration);
-    const visibleTask=roleVisibleTasks.find(item=>item.id===task.id);
+    const visibleTask=roleVisibleTasks.some(item=>item.id===task.id)?liveData.current.tasks.find(item=>item.id===task.id):undefined;
     if(!visibleTask){if(requestIsCurrent())taskOpenRequests.current.clearIfCurrent(requestGeneration);alert('無權查看此待辦');return requestIsCurrent()?'failed':'cancelled';}
     if(vesselId&&(!taskVesselIds(visibleTask).includes(vesselId)||!activeVessels.some(vessel=>vessel.id===vesselId))){if(requestIsCurrent())taskOpenRequests.current.clearIfCurrent(requestGeneration);alert('無權更新此船舶進度');return requestIsCurrent()?'failed':'cancelled';}
     const result=await openTaskEditor(visibleTask,vesselId,requestGeneration);
@@ -2311,6 +2348,7 @@ export default function App() {
     return openTask(task);
   };
   const addTaskForVessel = async (vesselId: string, returnToVessel = false, returnToBatchManaged = false, batchContext?:BatchTaskReturnContext):Promise<boolean> => {
+    if(!activeEditLockRef.current&&!await loadRecordActionScope('full'))return false;
     if(returnToBatchManaged&&(!batchContext||!batchTaskReturnIsCurrent(batchContext)||!batchContext.vesselIds.includes(vesselId)))return false;
     if (!requireLogin()) return false;
     if(getSupabaseConfig()&&cloudWriteBlocked){alert('雲端寫入已阻擋；請先使用「同步最新（安全合併）」處理本機與雲端差異，再新增要事。');return false;}
@@ -3944,6 +3982,7 @@ export default function App() {
     },internalControlLockKeysForActor);
   };
   const openReportPreview = async () => {
+    if(!await loadRecordActionScope('full'))return;
     if (!canExportReports) return alert('目前角色未獲授權預覽或匯出報告');
     let snapshot:ItineraryProjectionSnapshot;
     try{snapshot=await requireFreshItineraryProjection(activeVessels);}
@@ -4508,6 +4547,7 @@ export default function App() {
     const previousLock=activeEditLockRef.current;
     if(previousLock?.status==='owned'&&!await ensureCloudDurableBeforeLeaseRelease(previousLock.sectionKey))return;
     if(!(await releaseCurrentEditLock()))return alert('上一個協作鎖尚未成功釋放，暫不開啟批量更新');
+    if(!await loadRecordActionScope('full'))return;
     if(!identityIsCurrent()||(returnContext&&!batchTaskReturnIsCurrent(returnContext)))return;
     batchTargetVesselIdsRef.current=new Set(targets.map(vessel=>vessel.id));
     const session=++batchManagedSession.current;

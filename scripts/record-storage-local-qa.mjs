@@ -10,7 +10,7 @@ import {shipExcelRpcArgs} from './ship-itinerary-excel-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,preparePerformanceFixture=null,databaseFactory=null}={}) {
+export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,scopedRead=false,preparePerformanceFixture=null,databaseFactory=null}={}) {
  if(preparePerformanceFixture&&!performanceTrace)throw new Error('Performance fixture requires explicit performanceTrace');
  // Opt-in private native QA supplies an already identity-verified connection.
  // The existing browser/PGlite default and migration/seed chain stay unchanged.
@@ -18,7 +18,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
  let origin='',http,vite,loseItineraryAck=false,loseReportAck=false,losePruneAck=false;
  let recordFault=null;
- const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:'records-v1',readMode:'delta-v1'});
+ const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:'records-v1',readMode:scopedRead?'scoped-v1':'delta-v1'});
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
   ...(shipExcel?shipExcelRpcArgs:{}),
@@ -32,6 +32,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
   sd_itinerary_record_report_delete_ids_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_set_token','p_delete_report_ids:jsonb'],
   sd_itinerary_record_report_delete_dates_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_set_token','p_delete_dates:jsonb'],
   sd_itinerary_record_load_many_v1:['p_workspace_key','p_vessel_ids:text[]','p_actor_user_id'],
+  read_ship_dynamics_record_scopes_v1:['p_workspace_key','p_scope','p_versions:jsonb'],
   read_ship_dynamics_records_v1:['p_workspace_key'],
   read_ship_dynamics_record_delta_v1:['p_workspace_key','p_base_revision:integer','p_base_token'],
   apply_ship_dynamics_record_patch_v1:requestArgs,
@@ -47,6 +48,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
  try {
   await db.exec('create role anon nologin;create role authenticated nologin;');
   for(const path of ['supabase/schema.sql','supabase/development/20260906_appdata_record_store.sql','supabase/development/20260906_appdata_record_delta.sql'])await db.exec(fs.readFileSync(path,'utf8'));
+  if(scopedRead)await db.exec(fs.readFileSync('supabase/development/20260908_appdata_record_scoped_read.sql','utf8'));
   vite=await createViteServer({server:{middlewareMode:true},logLevel:'silent',plugins:[{
    name:'isolated-record-qa-label',
    transformIndexHtml(html){return html.replace('<body>','<body><aside id="isolated-qa-label" style="position:fixed;z-index:2147483647;bottom:0;right:0;background:#442200;color:white;padding:4px 10px;font:12px sans-serif;pointer-events:none">真實 UI＋測試資料｜本機 SQL；非正式環境</aside>');},
@@ -99,7 +101,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
      if(body.p_workspace_key!==workspace){send(res,403,{code:'QA_SCOPE_MISMATCH',message:'Only the isolated fixture workspace is accepted'});return;}
      const start=performance.now();
      // Opt-in measurements only. Never persist request bodies, keys or credentials.
-     const trace=performanceTrace?{requestBytes:length,requestStartedMs:performance.timeOrigin+start,baseRevision:body.p_base_revision??null}:null;
+     const trace=performanceTrace?{requestBytes:length,requestStartedMs:performance.timeOrigin+start,baseRevision:body.p_base_revision??null,scope:body.p_scope??null}:null;
      if(internalControl&&recordFault?.before&&['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1','renew_ship_dynamics_edit_lock'].includes(name))await recordFault.before({name,body,db,metrics});
      try{
       const value=await db.transaction(async tx=>{
@@ -111,7 +113,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
        if(trace)trace.sqlEndedMs=performance.timeOrigin+performance.now();
        return result;
       },db.httpTransactions?{rpc:name,operationId:body.p_operation_id,payloadHash:createHash('sha256').update(JSON.stringify(body)).digest('hex')}:undefined);
-      if(trace){trace.transactionEndedMs=performance.timeOrigin+performance.now();trace.sqlMs=trace.sqlEndedMs-trace.sqlStartedMs;trace.responseKind=value?.status??null;trace.responseBytes=Buffer.byteLength(JSON.stringify(value??null));}
+      if(trace){trace.transactionEndedMs=performance.timeOrigin+performance.now();trace.sqlMs=trace.sqlEndedMs-trace.sqlStartedMs;trace.responseKind=value?.status??null;trace.changedRecords=value?.collections?Object.entries(value.collections).flatMap(([collection,c])=>(c.rows||[]).map(r=>({collection,id:r.id,version:r.version}))):null;trace.responseBytes=Buffer.byteLength(JSON.stringify(value??null));}
       if(value?.code==='authorization-conflict'){
        const debug=(await db.query(`select ship_dynamics_actor_guard((read_ship_dynamics_records_v1($1))->'payload',$2) as guard,ship_dynamics_patch_touches_authorization_domain($3::jsonb) as touches`,[workspace,body.p_actor_user_id,JSON.stringify(body.p_operations)])).rows[0];
        const differs=(a,b,prefix='')=>{if(a===b)return[];if(a&&b&&typeof a==='object'&&typeof b==='object')return[...new Set([...Object.keys(a),...Object.keys(b)])].flatMap(k=>differs(a[k],b[k],prefix?prefix+'.'+k:k));return[prefix];};
