@@ -90,7 +90,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
     // Prevent a default config asset from ever reaching this local fixture.
     if(url.pathname.endsWith('/supabase-config.js')){res.setHeader('Content-Type','application/javascript');res.setHeader('Cache-Control','no-store');res.end(`window.SHIP_DYNAMICS_SUPABASE_CONFIG=${JSON.stringify(config())};`);return;}
     if(url.pathname==='/__qa/blank'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><html><body></body></html>');return;}
-    if(url.pathname==='/__qa/health'){send(res,200,{ready:true,kind:'REAL_UI_SYNTHETIC_DATA_LOCAL_PGLITE'});return;}
+    if(url.pathname==='/__qa/health'){send(res,200,{ready:true,kind:db.qaKind||'REAL_UI_SYNTHETIC_DATA_LOCAL_PGLITE'});return;}
     if(url.pathname.startsWith('/rest/v1/')){
      const name=url.pathname.slice('/rest/v1/rpc/'.length),args=rpcArgs[name];
      if(req.method!=='POST'||!url.pathname.startsWith('/rest/v1/rpc/')||!args){metrics.push({rpc:name,status:'UNSUPPORTED'});send(res,404,{code:'PGRST202',message:`Internal QA does not implement ${name}; no success substituted`});return;}
@@ -110,14 +110,14 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
        const result=(await tx.query(`select public.${name}(${args.map((arg,index)=>`$${index+1}::${arg.split(':')[1]||'text'}`).join(',')}) as result`,params)).rows[0].result;
        if(trace)trace.sqlEndedMs=performance.timeOrigin+performance.now();
        return result;
-      });
+      },db.httpTransactions?{rpc:name,operationId:body.p_operation_id,payloadHash:createHash('sha256').update(JSON.stringify(body)).digest('hex')}:undefined);
       if(trace){trace.transactionEndedMs=performance.timeOrigin+performance.now();trace.sqlMs=trace.sqlEndedMs-trace.sqlStartedMs;trace.responseKind=value?.status??null;trace.responseBytes=Buffer.byteLength(JSON.stringify(value??null));}
       if(value?.code==='authorization-conflict'){
        const debug=(await db.query(`select ship_dynamics_actor_guard((read_ship_dynamics_records_v1($1))->'payload',$2) as guard,ship_dynamics_patch_touches_authorization_domain($3::jsonb) as touches`,[workspace,body.p_actor_user_id,JSON.stringify(body.p_operations)])).rows[0];
        const differs=(a,b,prefix='')=>{if(a===b)return[];if(a&&b&&typeof a==='object'&&typeof b==='object')return[...new Set([...Object.keys(a),...Object.keys(b)])].flatMap(k=>differs(a[k],b[k],prefix?prefix+'.'+k:k));return[prefix];};
        metrics.push({rpc:name,diagnostic:'GUARD_KEYS_ONLY',actorMismatchKeys:differs(debug.guard,body.p_actor_guard),touchesAuthorization:debug.touches,hasAuthorizationGuard:body.p_authorization_guard!=null,operations:body.p_operations.map(op=>({kind:op.kind,collection:op.collection,entityId:op.entityId}))});
       }
-      metrics.push({rpc:name,status:value?.ok===false?value.code:'SQL_OK',operationId:body.p_operation_id,vesselId:body.p_vessel_id,revision:value?.revision,bytes:Buffer.byteLength(JSON.stringify(value??null)),elapsedMs:performance.now()-start,...(trace?{trace}:{})});
+      metrics.push({rpc:name,status:value?.ok===false?value.code:'SQL_OK',conflictKey:value?.conflict_key,operationId:body.p_operation_id,vesselId:body.p_vessel_id,revision:value?.revision,bytes:Buffer.byteLength(JSON.stringify(value??null)),elapsedMs:performance.now()-start,...(trace?{trace}:{})});
       if(loseItineraryAck&&(name==='sd_itinerary_record_save_v1'||(shipExcel&&name==='sd_itinerary_save_public'))){loseItineraryAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic ACK loss after actual SQL commit'});return;}
       if(loseReportAck&&['sd_itinerary_record_report_save_manual_v1','sd_itinerary_record_report_delete_ids_v1'].includes(name)){loseReportAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic report ACK loss after actual SQL commit'});return;}
       if(losePruneAck&&name==='prune_ship_dynamics_record_revision_history_v1'){losePruneAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic prune ACK loss after actual SQL commit'});return;}

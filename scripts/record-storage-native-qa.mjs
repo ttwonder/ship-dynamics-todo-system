@@ -6,7 +6,8 @@ import {createRequire} from 'node:module';
 import {execFileSync} from 'node:child_process';
 
 // No connection-string/host/database input: only an owned fresh localhost cluster.
-export async function createNativeRecordQa(run,receipt){
+export async function createNativeRecordQa(run,receipt,{httpTransactions=false,beforeCommit=null}={}){
+ assert.ok(!beforeCommit||httpTransactions,'Native commit barrier requires opt-in HTTP transactions');
  const bin=process.env.SHIP_QA_PG_BIN,modulePath=process.env.SHIP_QA_PG_MODULE;
  for(const p of [bin,modulePath])assert.ok(p&&path.isAbsolute(p),'Explicit absolute SHIP_QA_PG_BIN / SHIP_QA_PG_MODULE required');
  for(const k of Object.keys(process.env))if(/^PG/i.test(k))delete process.env[k];
@@ -53,10 +54,31 @@ export async function createNativeRecordQa(run,receipt){
   fs.writeFileSync(marker,JSON.stringify({kind:'records-v1-native-synthetic',data,port}));
   receipt.isolation={data,host:'127.0.0.1',port,pgEnvironmentRemoved:true,connectionStringAccepted:false};save();
   command('initdb',['-D',data,'-U','ship_qa','--encoding=UTF8','--locale=C','--auth-local=trust','--auth-host=trust']);
-  command('pg_ctl',['-D',data,'-l',path.join(run,'postgres.log'),'-o',`-h 127.0.0.1 -p ${port} -c max_connections=12 -c timezone=UTC -c log_statement=none -c log_min_error_statement=panic -c log_error_verbosity=terse`,'-w','-t','20','start']);
+  command('pg_ctl',['-D',data,'-l',path.join(run,'postgres.log'),'-o',`-h 127.0.0.1 -p ${port} -c max_connections=${httpTransactions?24:12} -c timezone=UTC -c log_statement=none -c log_min_error_statement=panic -c log_error_verbosity=terse`,'-w','-t','20','start']);
   const setup=await connect('setup'),observer=await connect('observer'),a=await connect('writer_a'),b=await connect('writer_b');
   assert.equal(new Set(receipt.connections.map(c=>c.pid)).size,4);
   const adapter={query:(...args)=>setup.query(...args),exec:sql=>setup.query(sql),close:async()=>{},transaction:async fn=>{await setup.query('begin');try{const v=await fn(adapter);await setup.query('commit');return v;}catch(e){await setup.query('rollback');throw e;}}};
+  if(httpTransactions){
+   // Bounded reusable clients; identity is checked by connect BEFORE checkout.
+   // Setup/observer/direct baseline clients never service HTTP transactions.
+   const idle=[],waiting=[];let allocated=0;
+   const acquire=async()=>{if(idle.length)return idle.pop();if(allocated<10){const n=++allocated;try{return await connect('http_'+n);}catch(e){allocated--;throw e;}}return new Promise(resolve=>waiting.push(resolve));};
+   const release=c=>{const next=waiting.shift();if(next)next(c);else idle.push(c);};
+   adapter.httpTransactions=true;adapter.qaKind='REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES';
+   adapter.transaction=async(fn,context={})=>{
+    const c=await acquire(),pid=c.processID;
+    const row={rpc:context.rpc,operationId:context.operationId,payloadHash:context.payloadHash,pid,started:new Date().toISOString()};
+    receipt.httpTransactions??=[];receipt.httpTransactions.push(row);save();
+    const tx={query:(...args)=>c.query(...args),exec:sql=>c.query(sql)};
+    try{
+     await c.query('begin');const value=await fn(tx);
+     Object.assign(row,{sqlFinished:true,status:value?.ok===false?value.code:'SQL_OK',conflictKey:value?.conflict_key,revision:value?.revision});save();
+     if(beforeCommit)await beforeCommit({context,pid,value});
+     await c.query('commit');row.committed=true;return value;
+    }catch(e){await c.query('rollback');row.rolledBack=true;row.errorCode=e.code;throw e;}
+    finally{row.ended=new Date().toISOString();release(c);save();}
+   };
+  }
   return {adapter,observer,a,b,connect,close,save};
  }catch(e){try{await close();}catch(cleanup){receipt.cleanupError=cleanup.message;save();}throw e;}
 }
