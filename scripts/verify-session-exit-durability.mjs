@@ -7,7 +7,7 @@ const management=fs.readFileSync('src/Management.tsx','utf8');
 const leaveStart=app.indexOf('const leaveCurrentIdentity = async');
 const leaveEnd=app.indexOf('\n  const readOnlyTask',leaveStart);
 const leave=app.slice(leaveStart,leaveEnd);
-const openEditorGuard=leave.indexOf('if(activeEditLockRef.current||batchManagedOpenRef.current)');
+const openEditorGuard=leave.indexOf('if(memberEditor.current||activeEditLockRef.current||batchManagedOpenRef.current)');
 assert.ok(openEditorGuard>=0&&openEditorGuard<leave.indexOf('taskOpenRequests.current.invalidate()'),'identity switching must refuse to unmount any local modal draft while an item or batch editing session is open');
 assert.ok(leave.includes('請先保存或關閉目前編輯器'),'the refusal must tell the user how to preserve the draft');
 const durableIndex=leave.indexOf('ensureCloudDurableBeforeLeaseRelease(');

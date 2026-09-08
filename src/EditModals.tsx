@@ -159,14 +159,29 @@ export function VesselEditModal({ vessel, data, currentUser, close, onSave, addT
   </div></div>;
 }
 
-export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, canEditOverall, initialProgressVesselId = '', readOnly = false, readOnlyReason = '', close, onDraftChange, onSave, onSaveVesselProgress, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; canEditOverall: boolean; initialProgressVesselId?: string; readOnly?: boolean; readOnlyReason?: string; close: () => void; onDraftChange?: (task: TaskItem) => void; onSave: (task: TaskItem, creating: boolean, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onSaveVesselProgress: (task: TaskItem, vesselId: string, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onDelete: () => boolean | Promise<boolean> }) {
+export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, canEditOverall, initialProgressVesselId = '', onProgressScopeChange, memberConfirmation, readOnly = false, readOnlyReason = '', close, onDraftChange, onSave, onSaveVesselProgress, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; canEditOverall: boolean; initialProgressVesselId?: string; onProgressScopeChange?: (scope:string)=>Promise<TaskItem|null>; memberConfirmation?: import('./taskMemberEditor').MemberConfirmation; readOnly?: boolean; readOnlyReason?: string; close: () => void; onDraftChange?: (task: TaskItem) => void; onSave: (task: TaskItem, creating: boolean, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onSaveVesselProgress: (task: TaskItem, vesselId: string, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onDelete: () => boolean | Promise<boolean> }) {
   const [saving,setSaving]=useState(false);
   useEscapeClose(()=>{if(!saving)close();});
   const [draft, setDraft] = useState<TaskItem | null>(() => task ? clone(task) : null);
   const [plannedDurationInput,setPlannedDurationInput]=useState(()=>task?.plannedDurationDays===undefined?'':String(task.plannedDurationDays));
+  const draftEditVersion=useRef(0);
+  useEffect(()=>{
+    if(!memberConfirmation)return;
+    const {vesselId,submitted,progress}=memberConfirmation;
+    setDraft(previous=>{
+      if(!previous)return previous;
+      const current=taskProgressForVessel(previous,vesselId);
+      const count=current.statusLogs.length-submitted.statusLogs.length;
+      if(count<0||JSON.stringify(current.statusLogs.slice(count))!==JSON.stringify(submitted.statusLogs))return previous;
+      const rebased={...current,statusLogs:[...current.statusLogs.slice(0,count),...clone(progress.statusLogs)]};
+      return {...previous,vesselProgress:[rebased,...(previous.vesselProgress||[]).filter(p=>p.vesselId!==vesselId)]};
+    });
+  },[memberConfirmation]);
   useEffect(()=>{if(creating&&draft)onDraftChange?.(clone(draft));},[creating,draft,onDraftChange]);
   const expectedUpdatedAtRef=useRef(task?.updatedAt||'');
   const expectedRevisionRef=useRef(data.revision);
+  const progressLoadGeneration=useRef(0);
+  const loadedProgressScopes=useRef(new Set<string>());
   const [quickStatus, setQuickStatus] = useState('');
   const initialTaskScopeIds=task?taskVesselIds(task):[];
   const initialVisibleScopeIds=initialTaskScopeIds.filter(id=>visibleVessels.some(vessel=>vessel.id===id));
@@ -175,6 +190,22 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     ? (initialProgressVesselId&&initialVisibleScopeIds.includes(initialProgressVesselId)?initialProgressVesselId:initialVisibleScopeIds[0]||'')
     : 'overall');
   if (!draft) return null;
+  const changeProgressScope=async(scope:string)=>{
+    if(saving)return;
+    if(!loadedProgressScopes.current.size)loadedProgressScopes.current.add(progressScope);
+    const generation=++progressLoadGeneration.current;
+    setProgressScope(scope);setQuickStatus('');
+    if(!onProgressScopeChange)return;
+    const selected=await onProgressScopeChange(scope);
+    if(!selected||generation!==progressLoadGeneration.current||loadedProgressScopes.current.has(scope))return;
+    loadedProgressScopes.current.add(scope);
+    setDraft(previous=>{
+      if(!previous)return previous;
+      if(scope==='overall'){expectedUpdatedAtRef.current=selected.updatedAt;return {...clone(selected),vesselProgress:clone(previous.vesselProgress||[])};}
+      const progress=taskProgressForVessel(selected,scope);
+      return {...previous,vesselProgress:[progress,...(previous.vesselProgress||[]).filter(p=>p.vesselId!==scope)]};
+    });
+  };
   const hasVisibleScope=taskVesselIds(draft).some(id=>visibleVessels.some(vessel=>vessel.id===id));
   if(!hasVisibleScope)return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-restricted-title"><div className="modal-header"><div><h2 id="task-restricted-title">查看待辦</h2><small>仅显示负责人可见内容；船舶资料仍受权限保护</small></div><button className="btn ghost" onClick={close}>關閉</button></div><div className="detail-grid"><div><b>事项内容</b><RichTextContent value={draft.description} fallback="尚未输入事项内容"/></div><div><b>总体状态</b><RichTextContent value={draft.status} fallback="尚未更新状态"/></div><div><b>涉及部门</b><p>{draft.departments.join('、')||'未指定部门'}</p></div><div><b>预计完成</b><p>{draft.expectedDate||'未设定'}</p></div></div><div className="callout warning">您可因负责人关系查看本事项，但目前无权查看或修改相关船舶资料。</div></div></div>;
   const hasMeetingScope = Boolean(draft.sourceMeetingId);
@@ -183,7 +214,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const visibleScopeIds=taskScopeIds.filter(id=>visibleVessels.some(vessel=>vessel.id===id));
   const editingSingleVessel=perVesselMode&&progressScope!=='overall';
   const globalReadOnly=readOnly||saving||editingSingleVessel||(perVesselMode&&!canEditOverall);
-  const change = (fn: (target: TaskItem) => void) => {if(saving)return;setDraft(previous => { if (!previous) return previous; const next=clone(previous); fn(next); next.updatedAt=nowIso(); next.updatedBy=currentUser.id; if(creating)onDraftChange?.(clone(next)); return next; });};
+  const change = (fn: (target: TaskItem) => void) => {if(saving&&!onProgressScopeChange)return;draftEditVersion.current++;setDraft(previous => { if (!previous) return previous; const next=clone(previous); fn(next); next.updatedAt=nowIso(); next.updatedBy=currentUser.id; if(creating)onDraftChange?.(clone(next)); return next; });};
   const selectedProgress=editingSingleVessel?taskProgressForVessel(draft,progressScope):{vesselId:'overall',status:draft.status,isClosed:draft.isClosed,closedDate:draft.closedDate,closedBy:draft.closedBy,updatedAt:draft.updatedAt,updatedBy:draft.updatedBy,statusLogs:draft.statusLogs};
   const changeProgress=(fn:(progress:ReturnType<typeof taskProgressForVessel>)=>void)=>change(target=>{
     if(progressScope==='overall'){
@@ -220,7 +251,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     if(saving)return;
     if(editingSingleVessel){
       setSaving(true);
-      try{if(await onSaveVesselProgress(draft,progressScope,expectedUpdatedAtRef.current,expectedRevisionRef.current))close();}
+      try{const version=draftEditVersion.current;if(await onSaveVesselProgress(draft,progressScope,expectedUpdatedAtRef.current,expectedRevisionRef.current)&&draftEditVersion.current===version)close();}
       finally{setSaving(false);}
       return;
     }
@@ -272,7 +303,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" disabled={saving} onClick={()=>void remove()}>刪除待辦</button>}{!readOnly&&!creating&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} disabled={saving} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" disabled={saving} onClick={close}>{readOnly?'關閉':creating?'取消並關閉':'取消'}</button>{!readOnly&&<button className="btn primary" disabled={saving} onClick={save}>{saving?'正在確認雲端…':creating?'保存並關閉':'保存變更'}</button>}</div></div>
     {readOnly&&readOnlyReason&&<div className="callout info read-only-server-note" role="status"><b>只讀詳情</b><span>{readOnlyReason}；此頁不可修改或保存。</span></div>}
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
-    {perVesselMode&&<section className="vessel-progress-scope"><div className="field"><label>進度範圍</label><select aria-label="待辦進度範圍" value={progressScope} onChange={event=>{setProgressScope(event.target.value);setQuickStatus('');}}>{visibleScopeIds.map(id=>{const vessel=data.vessels.find(item=>item.id===id);return <option key={id} value={id}>單船進度｜{vessel?vesselDisplayName(vessel):id}</option>})}{canEditOverall&&<option value="overall">總體進度｜全部涉船</option>}</select></div><div className="progress-scope-note"><b>單船 {progressSummary.completed}/{progressSummary.total} 已結案</b><span>{editingSingleVessel?'目前操作只会更新所选船舶，不影响总体及其他船舶。':'目前操作会更新整项会议待办的总体进度。'}</span></div></section>}
+    {perVesselMode&&<section className="vessel-progress-scope"><div className="field"><label>進度範圍</label><select aria-label="待辦進度範圍" value={progressScope} onChange={event=>{void changeProgressScope(event.target.value);}}>{visibleScopeIds.map(id=>{const vessel=data.vessels.find(item=>item.id===id);return <option key={id} value={id}>單船進度｜{vessel?vesselDisplayName(vessel):id}</option>})}{canEditOverall&&<option value="overall">總體進度｜全部涉船</option>}</select></div><div className="progress-scope-note"><b>單船 {progressSummary.completed}/{progressSummary.total} 已結案</b><span>{editingSingleVessel?'目前操作只会更新所选船舶，不影响总体及其他船舶。':'目前操作会更新整项会议待办的总体进度。'}</span></div></section>}
     <fieldset disabled={globalReadOnly} className="task-global-fields"><div className="grid cols-3">
       <div className="field"><label>船舶{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label>{hasMeetingScope?<div className="scope-result-note task-scope-readonly"><b>{taskVesselLabel(draft, visibleVessels)}</b><span>船種：{taskShipTypeLabel(draft, visibleVessels)}｜範圍由臨會／專題同步</span></div>:<select disabled={globalReadOnly||creating} required={creating} aria-required={creating} value={draft.vesselId} onChange={event=>{const value=event.target.value;change(target=>{target.vesselId=value;if(creating)target.ownerUserIds=involvedUserIdsForVessel(value);});}}>{visibleVessels.map(vessel=><option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select>}{creating&&<small>新增期間已鎖定此船，避免其他人同時新增同船要事。</small>}</div>
       <div className="field"><label>{hasMeetingScope?'會議議題關注程度':'要事關注程度'}{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><select disabled={globalReadOnly||hasMeetingScope} required={creating} aria-required={creating} value={draft.priority} onChange={event=>{const value=event.target.value as TaskPriority;change(target=>{target.priority=value;});}}>{data.settings.priorities.map(priority=><option key={priority}>{priority}</option>)}</select>{hasMeetingScope&&<small>範圍與關注程度由臨會／專題同步</small>}</div>

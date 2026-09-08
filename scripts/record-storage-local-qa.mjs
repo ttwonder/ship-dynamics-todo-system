@@ -10,7 +10,7 @@ import {shipExcelRpcArgs} from './ship-itinerary-excel-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,scopedRead=false,preparePerformanceFixture=null,databaseFactory=null}={}) {
+export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,scopedRead=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null}={}) {
  if(preparePerformanceFixture&&!performanceTrace)throw new Error('Performance fixture requires explicit performanceTrace');
  // Opt-in private native QA supplies an already identity-verified connection.
  // The existing browser/PGlite default and migration/seed chain stay unchanged.
@@ -23,6 +23,8 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
  const rpcArgs={
   ...(shipExcel?shipExcelRpcArgs:{}),
   ...recordWriteArgs,
+  ...(taskMember?Object.fromEntries(['save_ship_dynamics_task_member_v1','get_ship_dynamics_task_member_receipt_v1'].map(name=>[name,['p_workspace_key','p_operation_id','p_task_id','p_vessel_id','p_command:jsonb','p_expected:jsonb','p_actor_user_id','p_actor_guard:jsonb','p_lock_guards:jsonb']])):{}),
+  ...(taskMember?{read_ship_dynamics_task_member_v1:['p_workspace_key','p_task_id','p_vessel_id','p_actor_user_id'],renew_ship_dynamics_task_member_lock_v1:['p_workspace_key','p_section_key','p_locked_by','p_lease_version','p_ttl_seconds:integer'],release_ship_dynamics_task_member_lock_v1:['p_workspace_key','p_section_key','p_locked_by','p_lease_version']}:{}),
   get_ship_dynamics_record_storage_stats_v1:['p_workspace_key','p_actor_user_id'],
   prune_ship_dynamics_record_revision_history_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_revisions:jsonb','p_delete_revisions:jsonb'],
   sd_itinerary_record_report_save_manual_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid'],
@@ -48,6 +50,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
  try {
   await db.exec('create role anon nologin;create role authenticated nologin;');
   for(const path of ['supabase/schema.sql','supabase/development/20260906_appdata_record_store.sql','supabase/development/20260906_appdata_record_delta.sql'])await db.exec(fs.readFileSync(path,'utf8'));
+  if(taskMember)await db.exec(fs.readFileSync('supabase/development/20260909_task_member_protocol.sql','utf8'));
   if(scopedRead)await db.exec(fs.readFileSync('supabase/development/20260908_appdata_record_scoped_read.sql','utf8'));
   vite=await createViteServer({cacheDir:process.env.QA_VITE_CACHE_DIR,server:{middlewareMode:true},logLevel:'silent',plugins:[{
    name:'isolated-record-qa-label',
@@ -102,7 +105,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
      const start=performance.now();
      // Opt-in measurements only. Never persist request bodies, keys or credentials.
      const trace=performanceTrace?{requestBytes:length,requestStartedMs:performance.timeOrigin+start,baseRevision:body.p_base_revision??null,scope:body.p_scope??null}:null;
-     if(internalControl&&recordFault?.before&&['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1','renew_ship_dynamics_edit_lock'].includes(name))await recordFault.before({name,body,db,metrics});
+     if(internalControl&&recordFault?.before&&(taskMember||['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1','renew_ship_dynamics_edit_lock'].includes(name)))await recordFault.before({name,body,db,metrics});
      try{
       const value=await db.transaction(async tx=>{
        if(trace)trace.sqlStartedMs=performance.timeOrigin+performance.now();
@@ -123,7 +126,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
       if(loseItineraryAck&&(name==='sd_itinerary_record_save_v1'||(shipExcel&&name==='sd_itinerary_save_public'))){loseItineraryAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic ACK loss after actual SQL commit'});return;}
       if(loseReportAck&&['sd_itinerary_record_report_save_manual_v1','sd_itinerary_record_report_delete_ids_v1'].includes(name)){loseReportAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic report ACK loss after actual SQL commit'});return;}
       if(losePruneAck&&name==='prune_ship_dynamics_record_revision_history_v1'){losePruneAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic prune ACK loss after actual SQL commit'});return;}
-      if(internalControl&&recordFault?.after&&['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1'].includes(name)){
+      if(internalControl&&recordFault?.after&&(taskMember||['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1'].includes(name))){
        const drop=await recordFault.after({name,body,value,db,metrics});
        if(drop){metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic record ACK loss after actual SQL commit'});return;}
       }
