@@ -5,7 +5,7 @@ import { createInitialData } from './data/seed';
 import type { AgendaReport, AppData, FilterState, InternalControlCase, MorningReportSnapshot, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, sanitizeAppDataForStorage, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
 import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlockPatchV2UnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, applyCloudBlockPatchV2, claimEditLock, cloudStoragePayloadFor, fetchCloudData as fetchCloudDataRpc, getCloudBlockPatchReceipt, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
-import { buildRecordScopePatch, cleanRecordHomeCacheMatches, recordRecoveryReadScope, unionRecordScopes, recordScopeKey, type RecordReadScope } from './cloudRecordScopes';
+import { isMorningRecordScope, buildRecordScopePatch, cleanRecordHomeCacheMatches, recordRecoveryReadScope, unionRecordScopes, recordScopeKey, type RecordReadScope } from './cloudRecordScopes';
 import { CloudBlockPatchConfirmedRefreshError, CloudBlockPatchOutcomeUnknownError, runCloudBlockPatchWithReceipt } from './cloudBlockReceipt';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
 import { mergeConfirmedCloudSnapshot } from './cloudConfirmedMerge';
@@ -2259,8 +2259,8 @@ export default function App() {
     ++reportActionGeneration.current;
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId('');
-    const statsOwner=(nextTab==='stats'||nextTab==='reports')?{generation:actionScopeGeneration.current+1,actor:liveCurrentUserId.current,session:identitySessionGeneration.current}:null;
-    if(!await loadRecordActionScope((['dashboard','total','closed','work','internalControl','meeting','stats','reports'] as Tab[]).includes(nextTab)?'home':'full'))return;
+    const statsOwner=(nextTab==='stats'||nextTab==='reports'||nextTab==='morning')?{generation:actionScopeGeneration.current+1,actor:liveCurrentUserId.current,session:identitySessionGeneration.current}:null;
+    if(!await loadRecordActionScope(nextTab==='morning'?'morning':(['dashboard','total','closed','work','internalControl','meeting','stats','reports'] as Tab[]).includes(nextTab)?'home':'full'))return;
     if(statsOwner&&(statsOwner.generation!==actionScopeGeneration.current||statsOwner.actor!==liveCurrentUserId.current||statsOwner.session!==identitySessionGeneration.current))return;
     if(nextTab==='meeting'){
       const snapshot=liveData.current,actor=snapshot.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);
@@ -2400,7 +2400,7 @@ export default function App() {
     const suspended=member.suspend();member.scope=scope;setMemberEditorVersion(v=>v+1);
     await suspended;if(!scopeIsCurrent())return null;
     if(scope==='overall'){
-      if(!await loadRecordActionScope({targets:[{collection:'tasks',id:member.taskId}]},scopeIsCurrent))return null;
+      if(!await loadRecordActionScope(isMorningRecordScope(recordReadScope.current)?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:member.taskId}]}):{targets:[{collection:'tasks',id:member.taskId}]},scopeIsCurrent))return null;
       if(!scopeIsCurrent())return null;
       if(await claimEditingLock(`task:${member.taskId}`,'待辦',scopeIsCurrent,false)!=='owned'||!scopeIsCurrent())return null;
       const snapshot=await refreshAfterItemLease(`task:${member.taskId}`,false,scopeIsCurrent);
@@ -2414,7 +2414,7 @@ export default function App() {
     return member.select(scope);
   };
   const openTask = async (task: TaskItem, vesselId = '', returnVesselId = ''):Promise<TaskOpenResult> => {
-    if(!(getSupabaseConfig()?.storageMode==='records-v1'&&usesPerVesselProgress(task))&&!await loadRecordActionScope({targets:[{collection:'tasks',id:task.id}]}))return 'failed';
+    if(!(getSupabaseConfig()?.storageMode==='records-v1'&&usesPerVesselProgress(task))&&!await loadRecordActionScope(isMorningRecordScope(recordReadScope.current)?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:task.id}]}):{targets:[{collection:'tasks',id:task.id}]}))return 'failed';
     const requestGeneration=taskOpenRequests.current.begin({vesselId:returnVesselId,batchManaged:false});
     const requestIsCurrent=()=>taskOpenRequests.current.isCurrent(requestGeneration);
     const visibleTask=roleVisibleTasks.some(item=>item.id===task.id)?liveData.current.tasks.find(item=>item.id===task.id):undefined;

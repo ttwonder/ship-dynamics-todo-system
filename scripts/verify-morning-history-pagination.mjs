@@ -22,7 +22,7 @@ try{
 }finally{await server.close();}
 
 const source=fs.readFileSync('src/MorningWorkspace.tsx','utf8');
-assert.match(source,/historicalDiscussionTasks[\s\S]*paginateMorningHistory/,'分頁必須套用在既有歷史未結篩選與排序結果之後');
+assert.match(source,/historicalEntries[\s\S]*paginateMorningHistory/,'分頁必須套用在既有歷史未結篩選與排序結果之後');
 assert.match(source,/<HistoryPaginationControls[^>]*position="上方"/,'歷史清單上方必須有分頁控制');
 assert.match(source,/<HistoryPaginationControls[^>]*position="下方"/,'歷史清單下方必須有分頁控制');
 assert.match(source,/歷史未結上方頁碼/,'上方控制需提供直接跳頁');

@@ -4,17 +4,20 @@ import { normalizeAppData } from './normalize';
 import { appDataContentEqual } from './cloudRebase';
 
 export type RecordTarget = { collection: 'tasks' | 'internalControlCases' | 'meetings' | 'agendaReports'; id: string };
-export type RecordReadScope = 'home' | 'full' | { targets: RecordTarget[] };
+export type RecordReadScope = 'home' | 'full' | 'morning' | { targets: RecordTarget[]; morning?: true };
+export const isMorningRecordScope=(scope:RecordReadScope)=>scope==='morning'||(typeof scope==='object'&&scope.morning===true);
 type Row = { version: number; detail?: boolean; value: Record<string, unknown> };
 export const recordScopeKey=(scope:RecordReadScope)=>typeof scope==='string'?scope:JSON.stringify(scope);
 export function unionRecordScopes(left:RecordReadScope,right:RecordReadScope):RecordReadScope {
   if(left==='full'||right==='full')return 'full';
   const targets=[...(typeof left==='object'?left.targets:[]),...(typeof right==='object'?right.targets:[])];
+  if(isMorningRecordScope(left)||isMorningRecordScope(right))return {morning:true,targets};
   return targets.length?{targets:[...new Map(targets.map(t=>[JSON.stringify([t.collection,t.id]),t])).values()].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))}:'home';
 }
 export function recordScopeGraph(scope:RecordReadScope,raw:AppData):Set<string> {
   const key=(collection:string,id:string)=>JSON.stringify([collection,id]);
   const keys=new Set(typeof scope==='object'?scope.targets.map(t=>key(t.collection,t.id)):[]);
+  if(isMorningRecordScope(scope))for(const name of ['tasks','internalControlCases','meetings'] as const)for(const row of raw[name])keys.add(key(name,row.id));
   let changed=true;
   while(changed){changed=false;for(const task of raw.tasks){
     const links=[key('tasks',task.id)];
@@ -94,7 +97,7 @@ export function cleanRecordHomeCacheMatches(local:AppData,confirmed:AppData|null
     if(Array.isArray(v.statusLogs))v.statusLogs=v.statusLogs.slice(0,2);
     if(Array.isArray(v.vesselProgress))for(const p of v.vesselProgress)summary(p);
     const snapshot=v.snapshot;
-    if(object(snapshot)&&Array.isArray(snapshot.vessels)&&Array.isArray(snapshot.tasks)&&Array.isArray(snapshot.meetings))v.__recordSnapshotAvailable=true;
+    if(object(snapshot)&&Array.isArray(snapshot.vessels)&&Array.isArray(snapshot.tasks)&&Array.isArray(snapshot.meetings)){v.__recordSnapshotAvailable=true;v.__recordMorningTimes={windowEndedAt:typeof snapshot.windowEndedAt==='string'?snapshot.windowEndedAt:'',capturedAt:typeof snapshot.capturedAt==='string'?snapshot.capturedAt:''};}
     delete v.snapshot;
   };
   for(const name of ['tasks','internalControlCases','meetings','agendaReports'] as const)for(const row of projected[name])summary(row as unknown as Record<string,unknown>);

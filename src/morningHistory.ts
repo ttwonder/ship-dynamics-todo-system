@@ -39,10 +39,10 @@ function validInstant(value: unknown): string | undefined {
 
 function reportCutoff(report: AgendaReport): string | undefined {
   if (report.kind !== 'daily-morning' || report.source === 'scheduled') return undefined;
-  return validInstant(report.snapshot?.windowEndedAt) || validInstant(report.createdAt) || validInstant(report.snapshot?.capturedAt);
+  return validInstant(report.snapshot?.windowEndedAt ?? report.__recordMorningTimes?.windowEndedAt) || validInstant(report.createdAt) || validInstant(report.snapshot?.capturedAt ?? report.__recordMorningTimes?.capturedAt);
 }
 
-function latestManualReport(reports: AgendaReport[], endedAt: string, excludedReportId = ''): AgendaReport | undefined {
+export function latestManualReport(reports: AgendaReport[], endedAt: string, excludedReportId = ''): AgendaReport | undefined {
   const candidates = reports
     .filter(report => report.id !== excludedReportId)
     .map(report => ({ report, cutoff: reportCutoff(report) }))

@@ -181,6 +181,7 @@ function normalizeAgendaReports(value: unknown): AgendaReport[] {
       source: item.source === 'manual' || item.source === 'scheduled' ? item.source : undefined,
       updatedAt: text(item.updatedAt) || undefined,
       snapshot: validSnapshot,
+      ...(item.snapshot === undefined && object(item.__recordMorningTimes) ? {__recordMorningTimes:{windowEndedAt:text(object(item.__recordMorningTimes)!.windowEndedAt),capturedAt:text(object(item.__recordMorningTimes)!.capturedAt)}} : {}),
       ...(item.snapshot === undefined && item.__recordSnapshotAvailable === true ? {__recordSnapshotAvailable:true as const} : {}),
     };
     return normalized;

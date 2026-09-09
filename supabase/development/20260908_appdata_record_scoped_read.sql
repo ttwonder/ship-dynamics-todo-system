@@ -12,9 +12,9 @@ begin
     select coalesce(jsonb_agg(public.ship_dynamics_record_summary_v1(x.value) order by x.n),'[]') into progress from jsonb_array_elements(p_body->'vesselProgress') with ordinality x(value,n);
     result:=jsonb_set(result,'{vesselProgress}',progress);
   end if;
-  result:=result-'__recordSnapshotAvailable';
+  result:=result-'__recordSnapshotAvailable'-'__recordMorningTimes';
   if jsonb_typeof(p_body->'snapshot')='object' and jsonb_typeof(p_body->'snapshot'->'vessels')='array' and jsonb_typeof(p_body->'snapshot'->'tasks')='array' and jsonb_typeof(p_body->'snapshot'->'meetings')='array' then
-    result:=result || jsonb_build_object('__recordSnapshotAvailable',true);
+    result:=result || jsonb_build_object('__recordSnapshotAvailable',true,'__recordMorningTimes',jsonb_build_object('windowEndedAt',case when jsonb_typeof(p_body->'snapshot'->'windowEndedAt')='string' then p_body->'snapshot'->>'windowEndedAt' else '' end,'capturedAt',case when jsonb_typeof(p_body->'snapshot'->'capturedAt')='string' then p_body->'snapshot'->>'capturedAt' else '' end));
   end if;
   return result-'snapshot';
 end; $$;

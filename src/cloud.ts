@@ -1,12 +1,13 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { AppData } from './types';
 import { isPlaceholder, sanitizeAppDataForStorage } from './utils';
+import { latestManualReport } from './morningHistory';
 import { normalizeAppData } from './normalize';
 import { CloudBlockPatchConflictError, type CloudBlockPatchOperation } from './cloudBlockPatch';
 import type { CloudBlockCompactReceipt, CloudBlockReceiptStatus } from './cloudBlockReceipt';
 import { consumeCloudDeltaResponse, type CloudDeltaSnapshot } from './cloudDelta';
 import { consumeRecordSnapshot, usesRecordStorage } from './cloudRecords';
-import { consumeRecordScopes, recordScopePayload, recordScopeVersions, recordScopeKey, type RecordReadScope, type RecordScopeSnapshot } from './cloudRecordScopes';
+import { isMorningRecordScope, consumeRecordScopes, recordScopePayload, recordScopeVersions, recordScopeKey, type RecordReadScope, type RecordScopeSnapshot } from './cloudRecordScopes';
 
 export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string; readMode?: 'snapshot' | 'delta-v1' | 'scoped-v1'; storageMode?: 'legacy' | 'records-v1' }
 export type ResolvedSupabaseConfig = SupabaseConfig & { tableName: string };
@@ -230,6 +231,20 @@ export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, sig
 type ScopeCache={key:string;sequence:number;published:number;snapshot:RecordScopeSnapshot|null};
 const scopeCaches=new Map<string,ScopeCache>();
 async function fetchCloudRecordScope(cfg:ResolvedSupabaseConfig,supabase:SupabaseClient,scope:RecordReadScope,signal?:AbortSignal):Promise<AppData|null>{
+  if(isMorningRecordScope(scope)){
+    // No partial model is published: discover then read one coherent revision.
+    for(let attempt=0;attempt<3;attempt++){
+      const home=await fetchCloudRecordScope(cfg,supabase,'home',signal);
+      if(!home)return null;
+      if(home.agendaReports.some(report=>report.__recordSnapshotAvailable&&!report.__recordMorningTimes))throw new Error('morning-read-metadata-unavailable');
+      const report=latestManualReport(home.agendaReports,new Date().toISOString());
+      const targets=[...(['tasks','internalControlCases','meetings'] as const).flatMap(collection=>home[collection].map(row=>({collection,id:row.id}))),...(report?[{collection:'agendaReports' as const,id:report.id}]:[]),...(typeof scope==='object'?scope.targets:[])];
+      const unique=[...new Map(targets.map(t=>[JSON.stringify(t),t])).values()];
+      const detail=await fetchCloudRecordScope(cfg,supabase,{targets:unique},signal);
+      if(detail&&detail.revision===home.revision)return detail;
+    }
+    throw new Error('morning-read-revision-changed');
+  }
   signal?.throwIfAborted();
   const key=JSON.stringify([cfg.supabaseUrl,cfg.supabaseAnonKey,cfg.workspaceKey,cfg.tableName,cfg.storageMode,cfg.readMode]);
   const scopeKey=recordScopeKey(scope);
@@ -254,7 +269,7 @@ export async function saveCloudData(payload: AppData, expectedRevision: number, 
   const supabase = getSupabaseClient(cfg);
   if (!supabase || !cfg) throw new Error('尚未配置 Supabase；資料只保存在此瀏覽器。');
   if (usesRecordStorage(cfg)) throw new CloudBlockPatchRejectedError('record-full-save-disabled');
-  if(payload.agendaReports.some(report=>Object.prototype.hasOwnProperty.call(report,'__recordSnapshotAvailable')))throw new CloudBlockPatchRejectedError('record-summary-not-writable');
+  if(payload.agendaReports.some(report=>(Object.prototype.hasOwnProperty.call(report,'__recordSnapshotAvailable')||Object.prototype.hasOwnProperty.call(report,'__recordMorningTimes'))))throw new CloudBlockPatchRejectedError('record-summary-not-writable');
   const cleanPayload = sanitizeAppDataForStorage(payload);
   const row = {
     workspace_key: cfg.workspaceKey,

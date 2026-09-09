@@ -250,6 +250,7 @@ export interface AgendaReport {
   snapshot?: MorningReportSnapshot;
   /** Read-only scoped projection, never a snapshot or writable business field. */
   readonly __recordSnapshotAvailable?: true;
+  readonly __recordMorningTimes?: { windowEndedAt?: string; capturedAt?: string };
 }
 
 export interface MorningReportSnapshot {
