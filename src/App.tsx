@@ -2259,8 +2259,8 @@ export default function App() {
     ++reportActionGeneration.current;
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId('');
-    const statsOwner=(nextTab==='stats'||nextTab==='reports'||nextTab==='morning')?{generation:actionScopeGeneration.current+1,actor:liveCurrentUserId.current,session:identitySessionGeneration.current}:null;
-    if(!await loadRecordActionScope(nextTab==='morning'?'morning':(['dashboard','total','closed','work','internalControl','meeting','stats','reports'] as Tab[]).includes(nextTab)?'home':'full'))return;
+    const statsOwner=(nextTab==='stats'||nextTab==='reports'||nextTab==='morning'||nextTab==='management')?{generation:actionScopeGeneration.current+1,actor:liveCurrentUserId.current,session:identitySessionGeneration.current}:null;
+    if(!await loadRecordActionScope(nextTab==='morning'?'morning':(['dashboard','total','closed','work','internalControl','meeting','stats','reports','management'] as Tab[]).includes(nextTab)?'home':'full'))return;
     if(statsOwner&&(statsOwner.generation!==actionScopeGeneration.current||statsOwner.actor!==liveCurrentUserId.current||statsOwner.session!==identitySessionGeneration.current))return;
     if(nextTab==='meeting'){
       const snapshot=liveData.current,actor=snapshot.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);
