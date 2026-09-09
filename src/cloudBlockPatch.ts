@@ -96,6 +96,7 @@ const assertOperationShape=(operation:CloudBlockPatchOperation)=>{
   if(!operation.entityId)throw new TypeError('Cloud block entity operation is missing entityId');
   for(const [label,value] of [['expected',operation.expected],['value',operation.value]] as const){
     if(value===null)continue;
+    if(operation.collection==='agendaReports'&&Object.prototype.hasOwnProperty.call(value,'__recordSnapshotAvailable'))throw new TypeError('record-summary-not-writable');
     if(value.id!==operation.entityId)throw new TypeError(`${operation.collection}:${operation.entityId} ${label} id mismatch`);
     canonical(value);
   }

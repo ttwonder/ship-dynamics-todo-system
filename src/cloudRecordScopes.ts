@@ -93,6 +93,8 @@ export function cleanRecordHomeCacheMatches(local:AppData,confirmed:AppData|null
   const summary=(v:Record<string,unknown>)=>{
     if(Array.isArray(v.statusLogs))v.statusLogs=v.statusLogs.slice(0,2);
     if(Array.isArray(v.vesselProgress))for(const p of v.vesselProgress)summary(p);
+    const snapshot=v.snapshot;
+    if(object(snapshot)&&Array.isArray(snapshot.vessels)&&Array.isArray(snapshot.tasks)&&Array.isArray(snapshot.meetings))v.__recordSnapshotAvailable=true;
     delete v.snapshot;
   };
   for(const name of ['tasks','internalControlCases','meetings','agendaReports'] as const)for(const row of projected[name])summary(row as unknown as Record<string,unknown>);

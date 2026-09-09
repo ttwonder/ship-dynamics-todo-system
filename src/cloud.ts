@@ -254,6 +254,7 @@ export async function saveCloudData(payload: AppData, expectedRevision: number, 
   const supabase = getSupabaseClient(cfg);
   if (!supabase || !cfg) throw new Error('尚未配置 Supabase；資料只保存在此瀏覽器。');
   if (usesRecordStorage(cfg)) throw new CloudBlockPatchRejectedError('record-full-save-disabled');
+  if(payload.agendaReports.some(report=>Object.prototype.hasOwnProperty.call(report,'__recordSnapshotAvailable')))throw new CloudBlockPatchRejectedError('record-summary-not-writable');
   const cleanPayload = sanitizeAppDataForStorage(payload);
   const row = {
     workspace_key: cfg.workspaceKey,

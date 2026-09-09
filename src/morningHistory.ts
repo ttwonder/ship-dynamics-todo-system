@@ -241,6 +241,6 @@ export function upsertDailyMorningReport<T extends MorningHistoryData>(data: T, 
 
 export function dailyMorningReports(reports: AgendaReport[]): AgendaReport[] {
   return reports
-    .filter(report => report.kind === 'daily-morning' && Boolean(report.businessDate) && Boolean(report.snapshot))
+    .filter(report => report.kind === 'daily-morning' && Boolean(report.businessDate) && (Boolean(report.snapshot) || report.__recordSnapshotAvailable === true))
     .sort((left, right) => (right.businessDate || '').localeCompare(left.businessDate || '') || (right.updatedAt || right.createdAt).localeCompare(left.updatedAt || left.createdAt));
 }

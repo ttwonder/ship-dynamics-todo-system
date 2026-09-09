@@ -336,6 +336,7 @@ export default function App() {
   const [agendaSelection, setAgendaSelection] = useState<string[]>([]);
   const [batchSelectedVesselIds, setBatchSelectedVesselIds] = useState<string[]>([]);
   const [printTitle, setPrintTitle] = useState('');
+  const reportActionGeneration=useRef(0);
   const [reportPreviewOpen, setReportPreviewOpen] = useState(false);
   const [reportPreviewHistoryId,setReportPreviewHistoryId]=useState('');
   const [reportPreviewLiveItinerarySnapshot,setReportPreviewLiveItinerarySnapshot]=useState<ItineraryProjectionSnapshot|null>(null);
@@ -2205,11 +2206,11 @@ export default function App() {
   };
   // Compatibility consumers expand only on the user's action, never on bootstrap.
 
-  const loadRecordActionScope=async(scope:RecordReadScope,ownerIsCurrent:()=>boolean=()=>true):Promise<boolean>=>{
+  const loadRecordActionScope=async(scope:RecordReadScope,ownerIsCurrent:()=>boolean=()=>true,forceFresh=false):Promise<boolean>=>{
     if(!ownerIsCurrent())return false;
     const generation=++actionScopeGeneration.current;
     const config=getSupabaseConfig();
-    if(config?.readMode!=='scoped-v1'||recordScopeKey(recordReadScope.current)===recordScopeKey(scope))return true;
+    if(config?.readMode!=='scoped-v1'||(!forceFresh&&recordScopeKey(recordReadScope.current)===recordScopeKey(scope)))return true;
     const actor=liveCurrentUserId.current,session=identitySessionGeneration.current;
     const token=configIoCoordinator.current.begin(config);
     const isCurrent=()=>ownerIsCurrent()&&generation===actionScopeGeneration.current&&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig());
@@ -2255,10 +2256,11 @@ export default function App() {
       else if(lock.status!=='owned'&&!await releaseCurrentEditLock())return;
       closeEditorForLock(lock);
     }
+    ++reportActionGeneration.current;
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId('');
-    const statsOwner=nextTab==='stats'?{generation:actionScopeGeneration.current+1,actor:liveCurrentUserId.current,session:identitySessionGeneration.current}:null;
-    if(!await loadRecordActionScope((['dashboard','total','closed','work','internalControl','meeting','stats'] as Tab[]).includes(nextTab)?'home':'full'))return;
+    const statsOwner=(nextTab==='stats'||nextTab==='reports')?{generation:actionScopeGeneration.current+1,actor:liveCurrentUserId.current,session:identitySessionGeneration.current}:null;
+    if(!await loadRecordActionScope((['dashboard','total','closed','work','internalControl','meeting','stats','reports'] as Tab[]).includes(nextTab)?'home':'full'))return;
     if(statsOwner&&(statsOwner.generation!==actionScopeGeneration.current||statsOwner.actor!==liveCurrentUserId.current||statsOwner.session!==identitySessionGeneration.current))return;
     if(nextTab==='meeting'){
       const snapshot=liveData.current,actor=snapshot.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);
@@ -3879,13 +3881,17 @@ export default function App() {
     if(currentUser.role!=='owner'&&currentUser.role!=='admin')return alert('只有 Owner／管理員可以保存正式每日早會快照'),false;
     if(cloudSaveInFlight.current||pendingCloudData.current.size()>0)return alert('目前仍有雲端保存作業，請等頁首顯示已保存後再建立早會快照'),false;
     const expectedAuthorizationEpoch=authorizationEpoch;
+    const ownerIsCurrent=captureReportAction();
+    if(!await loadRecordActionScope('full',ownerIsCurrent)||!ownerIsCurrent())return false;
     let itineraryProjectionSnapshot:ItineraryProjectionSnapshot;
     try{
       itineraryProjectionSnapshot=await requireFreshItineraryProjection(activeVessels);
     }catch(error){
+      if(!ownerIsCurrent())return false;
       console.error('Itinerary formal snapshot refresh failed',error);
       return alert('無法確認最新正式 Itinerary；本次未建立早會快照，請稍後重試'),false;
     }
+    if(!ownerIsCurrent())return false;
     const baseline=liveData.current;
     const actor=baseline.users.find(user=>user.id===currentUser.id&&user.isActive);
     if(!actor||(actor.role!=='owner'&&actor.role!=='admin')||authorizationEpochFor(baseline,actor)!==expectedAuthorizationEpoch)return alert('讀取 Itinerary 期間身份、權限或可見船舶已變更；本次未建立快照'),false;
@@ -3904,7 +3910,7 @@ export default function App() {
     const requestUserId=currentUser.id;
     const isCurrent=()=>{
       const latest=getSupabaseConfig();
-      return Boolean(latest&&sameCloudConfig(cfg,latest)&&cloudIdentity(latest)===expectedIdentity&&liveCurrentUserId.current===requestUserId);
+      return Boolean(ownerIsCurrent()&&latest&&sameCloudConfig(cfg,latest)&&cloudIdentity(latest)===expectedIdentity&&liveCurrentUserId.current===requestUserId);
     };
     if(saveTimer.current){clearTimeout(saveTimer.current);saveTimer.current=null;}
     try{
@@ -4102,19 +4108,39 @@ export default function App() {
     return applied;
     },internalControlLockKeysForActor);
   };
+  const captureReportAction=()=>{
+    const generation=++reportActionGeneration.current;
+    const actor=liveCurrentUserId.current,session=identitySessionGeneration.current,epoch=liveAuthorizationEpoch.current;
+    const config=getSupabaseConfig(),token=config?configIoCoordinator.current.begin(config):null;
+    return ()=>generation===reportActionGeneration.current&&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current&&epoch===liveAuthorizationEpoch.current&&(token?configIoCoordinator.current.isCurrent(token,getSupabaseConfig()):!getSupabaseConfig());
+  };
+  const closeReportPreview=()=>{
+    ++reportActionGeneration.current;
+    setReportPreviewOpen(false);setReportPreviewHistoryId('');setReportPreviewLiveItinerarySnapshot(null);
+  };
   const openReportPreview = async () => {
-    if(!await loadRecordActionScope('full'))return;
+    const isCurrent=captureReportAction();
+    if(!await loadRecordActionScope('full',isCurrent)||!isCurrent())return;
     if (!canExportReports) return alert('目前角色未獲授權預覽或匯出報告');
     let snapshot:ItineraryProjectionSnapshot;
     try{snapshot=await requireFreshItineraryProjection(activeVessels);}
-    catch(error){console.error('Itinerary report refresh failed',error);return alert('無法確認最新正式 Itinerary；本次未開啟正式報告，請稍後重試');}
+    catch(error){if(!isCurrent())return;console.error('Itinerary report refresh failed',error);return alert('無法確認最新正式 Itinerary；本次未開啟正式報告，請稍後重試');}
+    if(!isCurrent())return;
     setReportPreviewLiveItinerarySnapshot(snapshot);
     setReportPreviewHistoryId('');
     setReportPreviewOpen(true);
   };
-  const openHistoricalReport=(report:AgendaReport)=>{
-    if(!canExportReports||report.kind!=='daily-morning'||!report.snapshot)return alert('此筆早會歷史目前沒有可檢視的快照。');
-    const allowed=new Set(activeVessels.map(vessel=>vessel.id));
+  const openHistoricalReport=async(summary:AgendaReport)=>{
+    const isCurrent=captureReportAction();
+    if(!canExportReports||summary.kind!=='daily-morning')return alert('此筆早會歷史目前沒有可檢視的快照。');
+    if(!await loadRecordActionScope({targets:[{collection:'agendaReports',id:summary.id}]},isCurrent,true)||!isCurrent())return;
+    const report=liveData.current.agendaReports.find(item=>item.id===summary.id);
+    if(!report||report.kind!=='daily-morning'||!report.snapshot)return alert('此筆早會歷史目前沒有可檢視的快照。');
+    const latest=liveData.current,actor=latest.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);
+    if(!actor)return;
+    const canViewAll=actor.role==='owner'||actor.role==='admin'||hasPermission(latest.settings.rolePermissions,actor,'viewAllVessels');
+    const allowed=new Set(latest.vessels.filter(vessel=>vessel.isActive&&vesselMatchesUser(vessel,actor,canViewAll)).map(vessel=>vessel.id));
+    if(!canViewAll&&(!report.vesselIds.length||!report.vesselIds.every(id=>allowed.has(id))))return alert('此筆早會歷史目前沒有可檢視的快照。');
     setAgendaSelection(report.vesselIds.filter(id=>allowed.has(id)));
     setReportPreviewLiveItinerarySnapshot(null);
     setReportPreviewHistoryId(report.id);
@@ -4859,7 +4885,7 @@ export default function App() {
     {currentUser.role!=='vessel'&&canEditBusinessContent&&(vesselEditorLeaseAuthorized||Boolean(vesselLeaseIncidentForEditor))&&editingVesselId&&activeVessels.some(vessel=>vessel.id===editingVesselId) && <VesselEditModal vessel={editingOperationalVessel} data={roleVisibleData} currentUser={currentUser} leaseMode={vesselLeaseMode} leaseMessage={vesselLeaseIncidentForEditor?.message||''} close={()=>void closeVesselEditor(activeEditLockRef.current)} onSave={saveVesselEditorDraft} addTask={id=>{void addTaskForVessel(id,true).then(opened=>{if(opened)setEditingVesselId('');});}} editTask={id=>{const vesselId=editingVesselId;const task=data.tasks.find(item=>item.id===id);if(!task)return alert('找不到對應待辦');setEditingVesselId('');void (async()=>{const result=await openTask(task,vesselId,vesselId);if(result==='failed')void openVesselEditor(vesselId);})();}} />}
     {currentUser.role!=='vessel'&&canEditBusinessContent&&batchManagedOpen && <BatchManagedVesselModal vessels={effectiveBatchSessionVessels} lockedVesselIds={batchLockedVesselIds} readOnly={batchManagedWriteSuspended} saving={batchManagedClosing} save={saveBatchManagedDrafts} cancel={()=>void cancelBatchManagedDrafts(renderedBatchManagedAuthorization)} close={()=>void closeBatchManaged(renderedBatchManagedAuthorization)} discard={()=>void discardBatchManagedChanges(renderedBatchManagedAuthorization)} onAddTask={id=>{void addTaskForVessel(id,false,true,renderedBatchTaskReturnContext);}} />}
     {editingTask&&taskEditorLeaseAuthorized && <TaskEditModal task={editingTask} creating={creatingVisibleTask} data={taskEditorData} visibleVessels={taskEditorVisibleVessels} currentUser={taskEditorUser} canClose={!taskEditorReadOnly&&editingTaskCanMutate&&canCloseTasks&&currentUser.role!=='vessel'} canDelete={!taskEditorReadOnly&&editingTaskCanMutate&&canDeleteTasks} canCancelInternalControl={Boolean(!taskEditorReadOnly&&editingTaskCanMutate&&editingTask&&editingTaskScopeVessels.length===taskVesselIds(editingTask).length&&editingTaskScopeVessels.every(vessel=>canCancelInternalControl(currentUser,vessel)))} canEditOverall={Boolean((memberEditor.current||!taskEditorReadOnly)&&editingTaskCanMutate&&canEditOverallTask)} onProgressScopeChange={memberEditor.current?changeTaskMemberScope:undefined} memberConfirmation={memberEditor.current?.confirmation} memberQuickStatus={memberEditor.current?.quickStatus} memberDraftChanged={captureTaskMemberDraft} initialProgressVesselId={taskProgressVesselId} readOnly={taskEditorReadOnly} readOnlyReason={taskReadOnlyReason} close={()=>void closeTaskEditor(taskEditorRequestGeneration)} onDraftChange={captureCreationDraft} onSave={saveTask} onSaveVesselProgress={saveTaskVesselProgress} onDelete={()=>deleteTask(editingTask)} />}
-    {currentUser.role!=='vessel'&&canExportReports&&reportPreviewOpen && <ReportPreviewModal data={reportPreviewData} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} reportDate={reportPreviewHistory?.businessDate} reportSnapshot={reportPreviewSnapshot} close={()=>{setReportPreviewOpen(false);setReportPreviewHistoryId('');setReportPreviewLiveItinerarySnapshot(null);}} onPrint={printReport} />}
+    {currentUser.role!=='vessel'&&canExportReports&&reportPreviewOpen && <ReportPreviewModal data={reportPreviewData} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} reportDate={reportPreviewHistory?.businessDate} reportSnapshot={reportPreviewSnapshot} close={closeReportPreview} onPrint={printReport} />}
     {passwordModalOpen && <PersonalPasswordModal currentUser={currentUser} close={()=>setPasswordModalOpen(false)} commit={commit} />}
     {browserRecoveryOpen&&<BrowserRecoveryModal advanced={browserRecoveryAdvanced} phase={browserRecoveryPhase} message={browserRecoveryMessage} onClose={closeBrowserRecovery} onToggleAdvanced={()=>setBrowserRecoveryAdvanced(value=>!value)} onSafeRepair={()=>void runSafeBrowserRepair()} onFullReset={()=>void runFullBrowserReset()} />}
     {currentUser.role!=='vessel'&&!selectedVesselDetailId&&(['dashboard','morning','reports'] as Tab[]).includes(tab) && <div className="selection-dock no-print">涉會船舶 <b className="selected-vessel-count">{agendaSelection.length}</b> 艘 <button className="btn pink small" onClick={()=>navigateToTab('morning')}>進入早會</button><button className="btn primary small" onClick={openReportPreview}>預覽報告</button></div>}

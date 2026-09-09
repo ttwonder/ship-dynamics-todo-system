@@ -248,6 +248,8 @@ export interface AgendaReport {
   source?: 'manual' | 'scheduled';
   updatedAt?: string;
   snapshot?: MorningReportSnapshot;
+  /** Read-only scoped projection, never a snapshot or writable business field. */
+  readonly __recordSnapshotAvailable?: true;
 }
 
 export interface MorningReportSnapshot {
