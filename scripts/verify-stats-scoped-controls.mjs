@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import ts from 'typescript';
+import {createHash} from 'node:crypto';
+const root=process.env.QA_EVIDENCE_ROOT;assert.ok(root&&path.isAbsolute(root));fs.mkdirSync(root,{recursive:true});
+const source=fs.readFileSync('src/App.tsx','utf8'),sf=ts.createSourceFile('App.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),cases=[];
+const initializer=name=>{let found;const visit=n=>{if(ts.isVariableDeclaration(n)&&n.name.getText(sf)===name)found=n.initializer.getText(sf);ts.forEachChild(n,visit);};visit(sf);assert.ok(found,name);return found;};
+// Trusted checked-out App AST only; no user or network strings enter executable source.
+const mount=(name,c)=>new Function(...Object.keys(c),ts.transpileModule('const handler='+initializer(name)+';',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText+'return handler;')(...Object.values(c));
+const ref=current=>({current});
+const test=async(id,fn)=>{try{await fn();cases.push({caseId:id,status:'PASS'});}catch(e){cases.push({caseId:id,status:'FAIL',message:e.message});}};
+const fixture=()=>{let tab='dashboard';const scopes=[],c={memberEditor:ref(null),vesselLeaseIncidentRef:ref(null),editingVesselId:'',activeEditLockRef:ref(null),invalidatePendingTaskOpen:()=>{},setSelectedVesselDetailId:()=>{},actionScopeGeneration:ref(0),liveCurrentUserId:ref('actor-id'),identitySessionGeneration:ref(1),setTab:t=>tab=t};c.loadRecordActionScope=async scope=>{++c.actionScopeGeneration.current;scopes.push(scope);return true;};return {c,scopes,nav:mount('navigateToTab',c),tab:()=>tab};};
+await test('ST-CONTROL-HOME',async()=>{const f=fixture();await f.nav('stats');assert.deepEqual(f.scopes,['home']);assert.equal(f.tab(),'stats');});
+for(const kind of ['actor','session','generation'])await test('ST-CONTROL-MICROTASK-'+kind.toUpperCase(),async()=>{const f=fixture(),w=f.nav('stats');if(kind==='actor')f.c.liveCurrentUserId.current='successor-same-display';if(kind==='session')++f.c.identitySessionGeneration.current;if(kind==='generation')++f.c.actionScopeGeneration.current;await w;assert.equal(f.tab(),'dashboard','stale cached-scope continuation cannot publish stats');});
+await test('ST-CONTROL-NEWER-NAV',async()=>{const f=fixture();await Promise.all([f.nav('stats'),f.nav('total')]);assert.equal(f.tab(),'total');});
+await test('ST-CONTROL-MEMBER-EDITOR',async()=>{const f=fixture();f.c.memberEditor.current={};await f.nav('stats');assert.deepEqual(f.scopes,[]);assert.equal(f.tab(),'dashboard');});
+await test('ST-CONTROL-FAILED-READ',async()=>{const f=fixture();f.c.loadRecordActionScope=async()=>false;const nav=mount('navigateToTab',f.c);await nav('stats');assert.equal(f.tab(),'dashboard');});
+for(const target of ['morning','reports','management'])await test('ST-CONTROL-UNCHANGED-FULL-'+target,async()=>{const f=fixture();await f.nav(target);assert.deepEqual(f.scopes,['full']);assert.equal(f.tab(),target);});
+const receipt={layer:'controlled-original-App-callbacks-not-original-UI',inputs:{'src/App.tsx':createHash('sha256').update(JSON.stringify(source)).digest('hex')},status:cases.every(c=>c.status==='PASS')?'PASS':'FAIL',cases};fs.writeFileSync(path.join(root,'controlled.json'),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt));if(receipt.status!=='PASS')process.exitCode=1;

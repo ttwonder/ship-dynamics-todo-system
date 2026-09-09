@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {execFileSync} from 'node:child_process';
+const base='d321b8c03c7af41d1a7bd759e397c203cb75fc6b';
+const old=p=>execFileSync('git',['show',base+':'+p],{encoding:'utf8'}).replaceAll('\r\n','\n'),now=p=>fs.readFileSync(p,'utf8').replaceAll('\r\n','\n');
+const before="    if(!await loadRecordActionScope((['dashboard','total','closed','work','internalControl','meeting'] as Tab[]).includes(nextTab)?'home':'full'))return;";
+const after="    const statsOwner=nextTab==='stats'?{generation:actionScopeGeneration.current+1,actor:liveCurrentUserId.current,session:identitySessionGeneration.current}:null;\n    if(!await loadRecordActionScope((['dashboard','total','closed','work','internalControl','meeting','stats'] as Tab[]).includes(nextTab)?'home':'full'))return;\n    if(statsOwner&&(statsOwner.generation!==actionScopeGeneration.current||statsOwner.actor!==liveCurrentUserId.current||statsOwner.session!==identitySessionGeneration.current))return;";
+assert.equal(old('src/App.tsx').split(before).length,2);assert.equal(now('src/App.tsx'),old('src/App.tsx').replace(before,after),'exact stats-only read entry and continuation guard; every other byte including JSX unchanged');
+const paths=execFileSync('git',['ls-tree','-r','--name-only',base],{encoding:'utf8'}).trim().split('\n').filter(p=>p.startsWith('src/')||p.startsWith('supabase/')||['index.html','package.json','vite.config.ts'].includes(p));
+for(const p of paths.filter(p=>p!=='src/App.tsx'))assert.equal(now(p),old(p),p+' unchanged');
+console.log(JSON.stringify({status:'PASS',layer:'exact-source-boundary',base,productChangedPaths:['src/App.tsx'],exactReplacementCount:1,frozenFiles:paths.length-1,jsxChanged:false,cssChanged:false,sqlChanged:false,statisticsDefinitionsChanged:false,rolesChanged:false}));

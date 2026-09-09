@@ -2257,7 +2257,9 @@ export default function App() {
     }
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId('');
-    if(!await loadRecordActionScope((['dashboard','total','closed','work','internalControl','meeting'] as Tab[]).includes(nextTab)?'home':'full'))return;
+    const statsOwner=nextTab==='stats'?{generation:actionScopeGeneration.current+1,actor:liveCurrentUserId.current,session:identitySessionGeneration.current}:null;
+    if(!await loadRecordActionScope((['dashboard','total','closed','work','internalControl','meeting','stats'] as Tab[]).includes(nextTab)?'home':'full'))return;
+    if(statsOwner&&(statsOwner.generation!==actionScopeGeneration.current||statsOwner.actor!==liveCurrentUserId.current||statsOwner.session!==identitySessionGeneration.current))return;
     if(nextTab==='meeting'){
       const snapshot=liveData.current,actor=snapshot.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);
       if(!actor)return;
