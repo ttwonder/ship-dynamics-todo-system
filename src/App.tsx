@@ -2270,11 +2270,15 @@ export default function App() {
     setTab(nextTab);
   };
   const openVesselDetail = async (vesselId: string) => {
-    if(!await loadRecordActionScope('full'))return;
+    // This page consumes complete summaries; child editors load their own graph.
+    const generation=actionScopeGeneration.current+1;
+    const actor=liveCurrentUserId.current,session=identitySessionGeneration.current;
+    if(!await loadRecordActionScope('home')||generation!==actionScopeGeneration.current||actor!==liveCurrentUserId.current||session!==identitySessionGeneration.current)return;
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId(vesselId);
   };
   const closeVesselDetail = () => {
+    ++actionScopeGeneration.current;
     invalidatePendingTaskOpen();
     dashboardReturnVesselIdRef.current=selectedVesselDetailId;
     setSelectedVesselDetailId('');
