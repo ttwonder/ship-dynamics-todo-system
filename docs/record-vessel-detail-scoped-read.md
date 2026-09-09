@@ -60,7 +60,7 @@ browser receipt 的 inputs SHA 為 `SHA256(JSON.stringify(UTF8 text))`；command
 
 ## 明確 OPEN／未做
 
-- 獨立 batch/create、morning/report/stats/management 的剩餘 scope 片，以及 report preview／historical agenda full 入口仍 OPEN，沒有刪除或改列可選。
+- batch/create 相連片的目前接受狀態另見 `record-batch-create-scoped-read.md`。其餘 morning/report/stats/management、report preview，以及 `openHistoricalReport` 的 history-snapshot consumer scope 仍 OPEN，沒有刪除或改列可選。此前將批量入口行號誤記為 historical agenda；當前 App 無 `openHistoricalAgenda`，此項僅更正指標，不宣稱報告歷史已驗收。
 - 本片不宣稱全 R1–R3 完成，也沒有重開已閉合 homepage/task/case/meeting/member/root writer 或 legacy upgrade。
 - 無全站 review、無新的 independent PASS。B01 沿用父代理既有定點 closure，不在此片重審。
 - 無正式服務接觸、正式 SQL、Push、merge 或部署。私有 PG、Chrome、HTTP、profile/data 均由各 runner 精確清理，終態詳見 handback。

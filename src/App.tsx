@@ -1898,7 +1898,7 @@ export default function App() {
       const confirmed=confirmedCloudData.current;
       if(!confirmed)throw new Error('沒有可驗證的已保存雲端基線');
       const token=configIoCoordinator.current.begin(leaseConfig);
-      const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('internal-control:')?{targets:[{collection:'internalControlCases',id:sectionKey.slice('internal-control:'.length)}]}:sectionKey.startsWith('meeting:')?{targets:[{collection:'meetings',id:sectionKey.slice('meeting:'.length)}]}:sectionKey.startsWith('vessel:')||isInternalControlCreationLockKey(sectionKey)||isMeetingCreationLockKey(sectionKey)?recordReadScope.current:'full';
+      const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('internal-control:')?{targets:[{collection:'internalControlCases',id:sectionKey.slice('internal-control:'.length)}]}:sectionKey.startsWith('meeting:')?{targets:[{collection:'meetings',id:sectionKey.slice('meeting:'.length)}]}:sectionKey.startsWith('vessel:')||isTaskCreationLockKey(sectionKey)||isInternalControlCreationLockKey(sectionKey)||isMeetingCreationLockKey(sectionKey)?recordReadScope.current:'full';
       const coverageChanged=leaseConfig.readMode==='scoped-v1'&&recordScopeKey(scope)!==recordScopeKey(recordReadScope.current);
       const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,coverageChanged?config=>fetchCloudDataRpc(config,undefined,undefined,scope):vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
       if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!claimStillCurrent())return null;
@@ -2426,7 +2426,10 @@ export default function App() {
     return openTask(task);
   };
   const addTaskForVessel = async (vesselId: string, returnToVessel = false, returnToBatchManaged = false, batchContext?:BatchTaskReturnContext):Promise<boolean> => {
-    if(!activeEditLockRef.current&&!await loadRecordActionScope('full'))return false;
+    const requestActor=liveCurrentUserId.current,requestIdentityGeneration=identitySessionGeneration.current,requestCloudIdentity=cloudConfigIdentity(getSupabaseConfig());
+    const openingIsCurrent=()=>requestActor===liveCurrentUserId.current&&requestIdentityGeneration===identitySessionGeneration.current&&requestCloudIdentity===cloudConfigIdentity(getSupabaseConfig())&&authorizationEpoch===liveAuthorizationEpoch.current;
+    if(!activeEditLockRef.current&&!await loadRecordActionScope(recordReadScope.current,openingIsCurrent))return false;
+    if(!openingIsCurrent())return false;
     if(returnToBatchManaged&&(!batchContext||!batchTaskReturnIsCurrent(batchContext)||!batchContext.vesselIds.includes(vesselId)))return false;
     if (!requireLogin()) return false;
     if(getSupabaseConfig()&&cloudWriteBlocked){alert('雲端寫入已阻擋；請先使用「同步最新（安全合併）」處理本機與雲端差異，再新增要事。');return false;}
@@ -2437,7 +2440,7 @@ export default function App() {
     invalidatePendingTaskOpen();
     const requestAuthorizationEpoch=authorizationEpoch;
     const requestGeneration=taskOpenRequests.current.begin({vesselId:returnToVessel?vesselId:'',batchManaged:returnToBatchManaged,...(batchContext?{batchContext}:{})});
-    const requestIsCurrent=()=>taskOpenRequests.current.isCurrent(requestGeneration)&&liveAuthorizationEpoch.current===requestAuthorizationEpoch&&(!batchContext||batchTaskReturnIsCurrent(batchContext));
+    const requestIsCurrent=()=>openingIsCurrent()&&taskOpenRequests.current.isCurrent(requestGeneration)&&liveAuthorizationEpoch.current===requestAuthorizationEpoch&&(!batchContext||batchTaskReturnIsCurrent(batchContext));
     const id = uid('task');
     const creationLockKey=taskCreationLockKey(vesselId,id);
     const creationAuthorized=()=>{
@@ -4685,7 +4688,7 @@ export default function App() {
     const previousLock=activeEditLockRef.current;
     if(previousLock?.status==='owned'&&!await ensureCloudDurableBeforeLeaseRelease(previousLock.sectionKey))return;
     if(!(await releaseCurrentEditLock()))return alert('上一個協作鎖尚未成功釋放，暫不開啟批量更新');
-    if(!await loadRecordActionScope('full'))return;
+    if(!await loadRecordActionScope(recordReadScope.current))return;
     if(!identityIsCurrent()||(returnContext&&!batchTaskReturnIsCurrent(returnContext)))return;
     batchTargetVesselIdsRef.current=new Set(targets.map(vessel=>vessel.id));
     const session=++batchManagedSession.current;

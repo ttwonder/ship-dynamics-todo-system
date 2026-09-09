@@ -1,0 +1,18 @@
+[
+  [
+    "      const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('internal-control:')?{targets:[{collection:'internalControlCases',id:sectionKey.slice('internal-control:'.length)}]}:sectionKey.startsWith('meeting:')?{targets:[{collection:'meetings',id:sectionKey.slice('meeting:'.length)}]}:sectionKey.startsWith('vessel:')||isInternalControlCreationLockKey(sectionKey)||isMeetingCreationLockKey(sectionKey)?recordReadScope.current:'full';\n",
+    "      const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('internal-control:')?{targets:[{collection:'internalControlCases',id:sectionKey.slice('internal-control:'.length)}]}:sectionKey.startsWith('meeting:')?{targets:[{collection:'meetings',id:sectionKey.slice('meeting:'.length)}]}:sectionKey.startsWith('vessel:')||isTaskCreationLockKey(sectionKey)||isInternalControlCreationLockKey(sectionKey)||isMeetingCreationLockKey(sectionKey)?recordReadScope.current:'full';\n"
+  ],
+  [
+    "    if(!activeEditLockRef.current&&!await loadRecordActionScope('full'))return false;\n",
+    "    const requestActor=liveCurrentUserId.current,requestIdentityGeneration=identitySessionGeneration.current,requestCloudIdentity=cloudConfigIdentity(getSupabaseConfig());\n    const openingIsCurrent=()=>requestActor===liveCurrentUserId.current&&requestIdentityGeneration===identitySessionGeneration.current&&requestCloudIdentity===cloudConfigIdentity(getSupabaseConfig())&&authorizationEpoch===liveAuthorizationEpoch.current;\n    if(!activeEditLockRef.current&&!await loadRecordActionScope(recordReadScope.current,openingIsCurrent))return false;\n    if(!openingIsCurrent())return false;\n"
+  ],
+  [
+    "    const requestIsCurrent=()=>taskOpenRequests.current.isCurrent(requestGeneration)&&liveAuthorizationEpoch.current===requestAuthorizationEpoch&&(!batchContext||batchTaskReturnIsCurrent(batchContext));\n",
+    "    const requestIsCurrent=()=>openingIsCurrent()&&taskOpenRequests.current.isCurrent(requestGeneration)&&liveAuthorizationEpoch.current===requestAuthorizationEpoch&&(!batchContext||batchTaskReturnIsCurrent(batchContext));\n"
+  ],
+  [
+    "    if(!(await releaseCurrentEditLock()))return alert('上一個協作鎖尚未成功釋放，暫不開啟批量更新');\n    if(!await loadRecordActionScope('full'))return;\n",
+    "    if(!(await releaseCurrentEditLock()))return alert('上一個協作鎖尚未成功釋放，暫不開啟批量更新');\n    if(!await loadRecordActionScope(recordReadScope.current))return;\n"
+  ]
+]

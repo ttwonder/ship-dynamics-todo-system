@@ -13,7 +13,7 @@ for(const variation of ['current','actor','identity-ABA','epoch','config','batch
  let cleared=0,opened=0,claims=0,release=0;const c=coordinator();
  const context=Object.freeze({vesselIds:Object.freeze(['v1','v2']),userId:'owner',identityGeneration:1,authorizationEpoch:'epoch',cloudIdentity:'cloud',batchSession:4});
  let token=c.begin({vesselId:'',batchManaged:true,batchContext:context});
- const env={taskOpenRequests:{current:c},taskEditorRequestGeneration:token,activeEditLockRef:{current:{sectionKey:'task-create:v2:v1:t',leaseOwnerId:'own'}},editingTaskId:'',creatingTask:{id:'t'},quarantinedCreationDraft:null,
+ const env={memberEditor:{current:null},taskOpenRequests:{current:c},taskEditorRequestGeneration:token,activeEditLockRef:{current:{sectionKey:'task-create:v2:v1:t',leaseOwnerId:'own'}},editingTaskId:'',creatingTask:{id:'t'},quarantinedCreationDraft:null,
   liveCurrentUserId:{current:'owner'},identitySessionGeneration:{current:1},liveAuthorizationEpoch:{current:'epoch'},batchManagedSession:{current:4},getSupabaseConfig:()=>env.cloud,cloudConfigIdentity:x=>x,cloud:'cloud',
   currentUser:{id:'owner',role:'owner'},authorizationEpoch:'epoch',liveData:{current:{vessels:[{id:'v1',isActive:true},{id:'v2',isActive:true},{id:'v3',isActive:true}]}},batchTargetVessels:[],batchManagedRequested:{current:false},batchManagedOpenRef:{current:false},canEditBusinessContent:true,
   batchTargetVesselsFor:(v,u,ids)=>v.filter(x=>ids.includes(x.id)&&!(variation==='foreign-scope'&&x.id==='v2')),
@@ -36,7 +36,7 @@ for(const variation of ['current','actor','identity-ABA','epoch','config','batch
 }
 for(const variation of ['current','actor','ABA','epoch','config','batch-session','wrong-vessel','missing-context']){
  let reached=0;const context={vesselIds:['v1','v2'],userId:'owner',identityGeneration:1,authorizationEpoch:'e',cloudIdentity:'c',batchSession:2};
- const env={liveCurrentUserId:{current:'owner'},identitySessionGeneration:{current:1},liveAuthorizationEpoch:{current:'e'},batchManagedSession:{current:2},getSupabaseConfig:()=>env.config,config:'c',cloudConfigIdentity:x=>x,requireLogin:()=>{reached++;return false;}};
+ const env={activeEditLockRef:{current:{}},authorizationEpoch:'e',liveCurrentUserId:{current:'owner'},identitySessionGeneration:{current:1},liveAuthorizationEpoch:{current:'e'},batchManagedSession:{current:2},getSupabaseConfig:()=>env.config,config:'c',cloudConfigIdentity:x=>x,requireLogin:()=>{reached++;return false;}};
  env.batchTaskReturnIsCurrent=bind('batchTaskReturnIsCurrent',env);
  if(variation==='actor')env.liveCurrentUserId.current='other';if(variation==='ABA')env.identitySessionGeneration.current++;
  if(variation==='epoch')env.liveAuthorizationEpoch.current='other';if(variation==='config')env.config='other';if(variation==='batch-session')env.batchManagedSession.current++;
