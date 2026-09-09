@@ -14,7 +14,7 @@ import {assertLifecycleReadback} from './record-scoped-lifecycle-oracle.mjs';
 // QA-only: original main.tsx -> App, native input, synthetic identities.
 // No setters, write helpers, fabricated responses, external hosts or user profile.
 const focus=process.env.QA_MEMBER_UI_FOCUS||'original';
-assert.ok(['original','pair','scope','recovery','lifecycle','feedback','shared','concurrent','concurrent-reopen','delete','stale','parent','delete-wrong-task','delete-wrong-source','delete-blocked','permission','closed-source','close-policy'].includes(focus),'known isolated member QA mode');
+assert.ok(['original','pair','b01','scope','recovery','lifecycle','feedback','shared','concurrent','concurrent-reopen','delete','stale','parent','delete-wrong-task','delete-wrong-source','delete-blocked','permission','closed-source','close-policy'].includes(focus),'known isolated member QA mode');
 const root=process.env.QA_EVIDENCE_ROOT;
 assert.ok(root&&path.isAbsolute(root),'Explicit external QA_EVIDENCE_ROOT required');
 assert.ok(!path.resolve(root).toLowerCase().startsWith(path.resolve('.').toLowerCase()+path.sep));
@@ -345,6 +345,58 @@ try{
   await a.fill("document.querySelector('.quick-status-bar textarea')",'B KNOWN ACK');await a.click('加入狀態紀錄');await a.click('保存變更');await until(()=>a.eval("!document.querySelector('#task-edit-title')"),'known B ACK still succeeds despite private A');
   assert.equal((await read()).revision,before.revision+1);receipt.cases.push({caseId:currentCase,status:'PASS',knownAckNotRejected:true});
   await until(()=>a.eval(`Boolean(${field})`),'source return');await a.click('取消並關閉');await until(()=>a.saved(),'original close restores saved');await a.sync();assert.equal(await a.eval("Boolean(document.querySelector('.save-status-strip.saved'))"),true);
+ }
+ if(focus==='b01'){
+  const quick="document.querySelector('.quick-status-bar textarea')",rich="document.querySelector('[aria-label=單船目前狀態]')";
+  const closeSource=async()=>{await until(()=>a.eval(`Boolean(${field})`),'B01 source return');await a.click('取消並關閉');await until(()=>a.eval("!document.querySelector('[role=dialog]')"),'B01 source close');};
+  const draftValues="Object.values(localStorage).flatMap(v=>{try{const x=JSON.parse(v);return x?.draft?.quickStatus!==undefined?[x.draft]:[];}catch{return [];}})";
+  const snapshot=()=>a.eval(`(()=>{const q=${quick},r=${rich};return {modalOpen:Boolean(document.querySelector('#task-edit-title')),sameQuick:q===window.__b01Quick,sameRich:r===window.__b01Rich,quickValue:q?.value??null,richValue:r?.innerHTML??null,durableQuick:(${draftValues}).map(d=>d.quickStatus),pending:Object.keys(localStorage).filter(k=>k.startsWith('ship-dynamics-member-pending-v1:')).length,saving:[...document.querySelectorAll('[role=dialog] button')].some(n=>n.innerText==='正在確認雲端…'),saved:Boolean(document.querySelector('.save-status-strip.saved'))};})()`);
+  currentCase='MEMBER-UI-B01-QUICK-ACK';await open(a,'qa-v1');const before=await read(),leaseBefore=await locks();
+  await a.fill(quick,'B01 FIRST COMMITTED');await a.click('加入狀態紀錄');
+  let dropped=false,entered=false,releaseReceipt,oracle;
+  qa.setRecordFault({before:async({name,body})=>{if(name===patchRpc)oracle=await prepareMemberGraph(qa,before,structuredClone(body));},after:async({name})=>{if(name===patchRpc&&!dropped){dropped=true;return true;}if(name==='get_ship_dynamics_task_member_receipt_v1'){entered=true;await new Promise(r=>{releaseReceipt=r;});}return false;}});
+  await a.click('保存變更');await until(()=>entered,'B01 legal commit and held original receipt');
+  await a.eval(`void(window.__b01Quick=${quick},window.__b01Rich=${rich})`);
+  const richBefore=await a.eval(`${rich}.innerHTML`),Q='B01 QUICK ONLY MUST REMAIN';
+  const pendingBefore=await a.eval("Object.fromEntries(Object.entries(localStorage).filter(([k])=>k.startsWith('ship-dynamics-member-pending-v1:')))");
+  await a.fill(quick,Q);
+  await until(()=>a.eval(`(${draftValues}).some(d=>d.quickStatus===${JSON.stringify(Q)})`),'B01 natural durable quick input');
+  assert.equal(await a.eval(`${rich}.innerHTML`),richBefore,'textarea-only: no rich text edit or Add');
+  assert.deepEqual(await a.eval("Object.fromEntries(Object.entries(localStorage).filter(([k])=>k.startsWith('ship-dynamics-member-pending-v1:')))"),pendingBefore,'new quick input never rewrites immutable pending');
+  const committed=await read();oracle.verify(committed);assert.equal(JSON.stringify(committed).includes(Q),false);receipt.b01Before=await snapshot();
+  releaseReceipt();await until(()=>receipt.network.some(r=>r.caseId===currentCase&&r.rpc==='get_ship_dynamics_task_member_receipt_v1'&&r.finished),'B01 receipt finished');
+  // Observe one atomic DOM/storage snapshot after the exact save callback settles.
+  await until(async()=>!(await snapshot()).saving,'B01 save callback settled');await wait(350);
+  const settled=await snapshot();receipt.b01After=settled;await a.screen('b01-quick-after-ack');save();
+  assert.equal(settled.modalOpen&&settled.sameQuick&&settled.sameRich,true,'B-01 legal ACK must retain the same textarea-only newer editor');
+  assert.equal(settled.quickValue,Q);assert.equal(settled.richValue,richBefore);assert.ok(settled.durableQuick.includes(Q));assert.equal(settled.pending,0,'legal ACK is confirmed, not business failure');
+  await noUnsafeAssurance(a,'B01 newer quick-only draft');assert.deepEqual(await locks(),leaseBefore,'legal ACK must not release valid owned member lease');assert.deepEqual(await read(),committed);
+  const wire=receipt.network.filter(r=>r.caseId===currentCase),request=wire.filter(r=>r.rpc===patchRpc),lookup=wire.find(r=>r.rpc==='get_ship_dynamics_task_member_receipt_v1');assert.equal(request.length,1);assert.equal(lookup.operationId,request[0].operationId);assert.equal(lookup.payloadHash,request[0].payloadHash);
+  fs.writeFileSync(path.join(run,'b01-first-complete-graph.json'),JSON.stringify({before:scrub(before),after:scrub(committed),expected:scrub(oracle.verify(committed))},null,2));
+  receipt.cases.push({caseId:currentCase,status:'PASS',atomicSnapshot:settled,immutableOriginalReceipt:true,oneOperation:true,notAutoAdded:true,validLeaseRetained:true});qa.setRecordFault(null);
+  currentCase='MEMBER-UI-B01-FRESH-ADD-SAVE';
+  await a.eval('void(window.__b01OldDocument=true)');await call('Page.reload',{},a.s);await until(()=>a.eval('window.__b01OldDocument!==true&&Boolean(document.querySelector("article.ship-card"))'),'B01 fresh original document');
+  // Only the old document's exact synthetic lease TTL; no business data changes.
+  for(const l of leaseBefore)await native.observer.query("update ship_dynamics_edit_locks set expires_at=clock_timestamp()-interval '1 second' where section_key=$1 and locked_by=$2",[l.section_key,l.locked_by]);
+  await open(a,'qa-v1');assert.equal(await a.eval(`${quick}.value`),Q);assert.equal(await a.eval(`${rich}.innerHTML`),richBefore);assert.deepEqual(await read(),committed,'fresh recovery does not submit quick input');await noUnsafeAssurance(a,'B01 recovered quick-only draft');
+  let secondOracle;qa.setRecordFault({before:async({name,body})=>{if(name===patchRpc)secondOracle=await prepareMemberGraph(qa,committed,structuredClone(body));}});
+  await a.click('加入狀態紀錄');assert.equal(await a.eval(`${quick}.value`),'');await a.click('保存變更');await until(()=>a.saved(),'B01 explicit Add then separate Save auto-closes');
+  const second=await read();secondOracle.verify(second);const newWire=receipt.network.filter(r=>r.caseId===currentCase&&r.rpc===patchRpc);assert.equal(newWire.length,1);assert.notEqual(newWire[0].operationId,request[0].operationId);
+  const progress=second.payload.tasks[0].vesselProgress.find(p=>p.vesselId==='qa-v1');assert.equal(progress.status,Q);assert.equal(progress.statusLogs.filter(l=>l.text==='B01 FIRST COMMITTED').length,1);assert.equal(progress.statusLogs.filter(l=>l.text===Q).length,1);
+  await freshReadback('b01-second',second);fs.writeFileSync(path.join(run,'b01-second-complete-graph.json'),JSON.stringify({before:scrub(committed),after:scrub(second),expected:scrub(secondOracle.verify(second))},null,2));
+  receipt.cases.push({caseId:currentCase,status:'PASS',freshOriginalDocument:true,naturalDurableQuick:true,explicitAdd:true,distinctOperation:true,fullHistoryMetadataNoticesAudit:true,firstLogNotDuplicated:true});qa.setRecordFault(null);await closeSource();
+  currentCase='MEMBER-UI-B01-CLEAN-ACK';await open(a,'qa-v1');const cleanBefore=await read();await a.fill(quick,'B01 CLEAN SAVE');await a.click('加入狀態紀錄');
+  let cleanHeld=false,releaseClean;qa.setRecordFault({after:async({name})=>{if(name===patchRpc&&!cleanHeld){cleanHeld=true;await new Promise(r=>{releaseClean=r;});}return false;}});
+  await a.click('保存變更');await until(()=>cleanHeld,'B01 clean legal ACK held');releaseClean();await until(()=>a.saved(),'B01 no new editing retains original automatic close');
+  assert.equal((await read()).revision,cleanBefore.revision+1);assert.equal((await snapshot()).pending,0);assert.equal((await locks()).some(l=>l.section_key.startsWith('task-member-v1:')),false);receipt.cases.push({caseId:currentCase,status:'PASS',noNewInput:true,originalAutoClose:true,memberLeaseReleased:true});qa.setRecordFault(null);await closeSource();
+  currentCase='MEMBER-UI-B01-CLEAR-DISCARD';await open(a,'qa-v1');const clearBefore=await read();await a.fill(quick,'B01 CLEAR SAVE');await a.click('加入狀態紀錄');await a.fill(quick,'B01 USER CLEARS THIS');
+  let clearHeld=false,releaseClear;qa.setRecordFault({after:async({name})=>{if(name===patchRpc&&!clearHeld){clearHeld=true;await new Promise(r=>{releaseClear=r;});}return false;}});
+  await a.click('保存變更');await until(()=>clearHeld,'B01 clear-input ACK held');await a.eval(`${quick}.focus();${quick}.select()`);await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Backspace',code:'Backspace',windowsVirtualKeyCode:8},a.s);await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Backspace',code:'Backspace',windowsVirtualKeyCode:8},a.s);await until(()=>a.eval(`${quick}.value===''`),'B01 native Backspace actually cleared input');releaseClear();
+  await until(()=>receipt.network.some(r=>r.caseId===currentCase&&r.rpc===patchRpc&&r.finished),'B01 clear receipt finished');await until(async()=>!(await snapshot()).saving,'B01 clear callback settled');await wait(350);
+  const cleared=await snapshot();assert.equal(cleared.modalOpen,true,'user clearing quick input also advances synchronous edit version');assert.equal(cleared.quickValue,'');assert.equal((await read()).revision,clearBefore.revision+1);
+  await a.fill(quick,'B01 EXPLICIT DISCARD');await until(()=>a.eval(`(${draftValues}).some(d=>d.quickStatus==='B01 EXPLICIT DISCARD')`),'B01 discard natural draft');await noUnsafeAssurance(a,'B01 explicit discard draft');const discardBefore=await read();
+  await a.click('取消');await until(()=>a.saved(),'B01 original Cancel discards');assert.equal(await a.eval(`(${draftValues}).some(d=>d.quickStatus==='B01 EXPLICIT DISCARD')`),false);assert.deepEqual(await read(),discardBefore);qa.setRecordFault(null);await closeSource();
+  await open(a,'qa-v1');assert.equal(await a.eval(`${quick}.value`),'','explicit discard does not recover');await a.click('取消');await until(()=>a.saved(),'B01 discard reopen close');await closeSource();receipt.cases.push({caseId:currentCase,status:'PASS',nativeClearInput:true,explicitCancelDiscard:true,noDiscardWrite:true});
  }
  if(['original','pair'].includes(focus)){
  currentCase='MEMBER-UI-PAIR';const before=await read();fs.writeFileSync(path.join(run,'pair-before.json'),JSON.stringify(scrub(before),null,2));

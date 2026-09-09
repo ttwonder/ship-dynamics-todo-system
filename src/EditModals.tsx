@@ -183,6 +183,8 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const progressLoadGeneration=useRef(0);
   const loadedProgressScopes=useRef(new Set<string>());
   const [quickStatus, setQuickStatus] = useState(memberQuickStatus||'');
+  // Count typing (including clearing) before a pending ACK can decide to close.
+  const changeQuickStatus=(value:string)=>{draftEditVersion.current++;setQuickStatus(value);};
   const initialTaskScopeIds=task?taskVesselIds(task):[];
   const initialVisibleScopeIds=initialTaskScopeIds.filter(id=>visibleVessels.some(vessel=>vessel.id===id));
   const hasPerVesselProgress=Boolean(task&&usesPerVesselProgress(task));
@@ -323,7 +325,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     {currentUser.role!=='vessel'&&<MeetingPeoplePicker label="追蹤窗口" users={eligibleOwnerUsers} departments={data.settings.departments} selectedIds={draft.ownerUserIds} onChange={values=>change(target=>{target.ownerUserIds=values;})} disabled={globalReadOnly}/>}</fieldset>
     {!creating&&<div className="grid cols-3 task-completion-date-row"><div className="field"><label>完成日期</label><input type="date" disabled={readOnly||!canClose} value={selectedProgress.closedDate||''} onChange={event=>setCompletionDate(event.target.value)}/><small>{selectedProgress.isClosed?'已結案日期；與「標記結案」彈出的日期同步':'選擇日期會同步標記為已結案'}</small></div></div>}
     {editingSingleVessel&&<div className="field vessel-progress-status"><label>單船目前狀態／決議｜{selectedVessel?vesselDisplayName(selectedVessel):progressScope}</label><RichTextEditor ariaLabel="單船目前狀態" readOnly={readOnly} value={selectedProgress.status} onChange={value=>changeProgress(target=>{target.status=value;})}/></div>}
-    {!readOnly&&<div className="quick-status-bar"><textarea value={quickStatus} onChange={event=>setQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();addStatus();}}} placeholder={editingSingleVessel?'快速更新此船狀態…':'快速更新總體狀態…'}/><button className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>}
+    {!readOnly&&<div className="quick-status-bar"><textarea value={quickStatus} onChange={event=>changeQuickStatus(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();addStatus();}}} placeholder={editingSingleVessel?'快速更新此船狀態…':'快速更新總體狀態…'}/><button className="btn primary" onClick={addStatus}>加入狀態紀錄</button></div>}
     <section className="status-history"><h3>{editingSingleVessel?'單船狀態歷程':'總體狀態歷程'}</h3>{selectedProgress.statusLogs.length?selectedProgress.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{formatTaipeiDateTime(log.at)}｜{log.by}</small></article>):<p className="muted">尚無狀態紀錄</p>}</section></div>
   </div></div>;
 }

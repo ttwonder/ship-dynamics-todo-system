@@ -154,6 +154,57 @@ that owned copy). Set `QA_MEMBER_UPGRADE` separately to `uncommitted`, `committe
 `node scripts/verify-task-member-upgrade.mjs`. The runner requires external
 `QA_EVIDENCE_ROOT` and `QA_VITE_CACHE_DIR`, and removes the exact external link.
 
+## B-01 deterministic fix (base 7e3eee5)
+
+A legal member ACK previously auto-closed the original modal and removed a newer,
+not-yet-added textarea-only quick draft. `TaskEditModal.changeQuickStatus` now
+increments the existing `draftEditVersion` **synchronously in the input event**,
+before updating quick state. The existing successful-ACK close guard therefore
+retains the same editor when typing or clearing occurred during Save. This is not
+an effect-based version update and leaves no input-event → effect close window.
+
+Only this exact internal textarea `onChange` is added to the JSX allowlist. No
+visible markup, copy, buttons, styles, roles or permission policy changes. No
+textarea disabling, automatic Add/Save, pending rewrite, CAS change, App/global
+queue change or SQL edit. Legal ACK still confirms and clears its exact pending
+operation; keeping the newer draft does not turn it into a business failure.
+
+`QA_MEMBER_UI_FOCUS=b01 node scripts/verify-task-member-browser.mjs` runs four
+unique original-App/native-PG scenarios in one isolated fixture:
+- **MEMBER-UI-B01-QUICK-ACK:** original SQL commit, lost first ACK and held exact
+  receipt; only native textarea input Q (no Add/richtext edit). Original pending
+  bytes stay equal. An atomic DOM/storage snapshot after Save settles proves the
+  same task/richtext/textarea nodes, Q in natural durable private storage, no
+  pending operation, truthful unsaved feedback and retained exact owned lease.
+  One original command/receipt commits once; Q is absent from committed SQL.
+- **MEMBER-UI-B01-FRESH-ADD-SAVE:** a genuinely new original document restores Q
+  without business writes. Original Add then Save creates a distinct operation;
+  the first history row is not duplicated. Both complete task/source/history/
+  metadata/notice/audit graphs are derived before SQL by the existing oracle;
+  fresh native connection and browser-document reads match the full graph.
+- **MEMBER-UI-B01-CLEAN-ACK:** a held legal ACK with no new edit still automatically
+  closes and releases the member lease. The modal is not permanently pinned.
+- **MEMBER-UI-B01-CLEAR-DISCARD:** native Backspace clears quick input while ACK is
+  held, and the newer edit prevents auto-close. Original Cancel discards a later
+  private Q without a write; reopening does not recover the discarded text.
+
+One direct inspection of the same primitive found only user input, Add clear,
+scope clear and initialization. Add already increments `changeProgress/change`;
+scope changes return while saving; initialization/confirmation are not new user
+edits. The existing draft capture and feedback effects remain unchanged. Existing
+OUTCOME richtext, recovery/private draft, config freeze, actual heartbeat ACK,
+feedback and default original 8 scenarios are affected regression gates, not a
+new actor × config matrix. Controlled lifecycle 11 remains a separate layer.
+
+The repo-native regression was observed RED on unchanged production bytes before
+the fix, then GREEN. An intermediate clear-input control failed because the old
+QA key helper omitted Windows Backspace virtual-key metadata; the focused probe
+now sends native VK 8 and asserts the textarea is actually empty before releasing
+ACK. Both failed receipts remain external; browser errors are still asserted.
+The old independent 7e3eee5 review remains FAIL. This is a fixer-tested deterministic
+B-01 candidate, not a new independent review PASS. No A/C/D, upgrade, scoped SQL,
+native baseline, production acceptance or full R3 closure is reopened or claimed.
+
 ## Explicitly OPEN (outside this finite slice)
 
 - Forced mounted actor/config callback ABA at every await boundary, full production
@@ -189,12 +240,13 @@ npm run typecheck
 npm run build
 ```
 
-`QA_MEMBER_UI_FOCUS=scope|recovery|lifecycle|pair|feedback|shared|concurrent|concurrent-reopen|stale|parent|delete|delete-blocked|delete-wrong-task|delete-wrong-source|permission|closed-source|close-policy` selects bounded tracers;
+`QA_MEMBER_UI_FOCUS=b01|scope|recovery|lifecycle|pair|feedback|shared|concurrent|concurrent-reopen|stale|parent|delete|delete-blocked|delete-wrong-task|delete-wrong-source|permission|closed-source|close-policy` selects bounded tracers;
 default runs the original 8 scenarios. Recovery and lifecycle run in separate fresh
 fixtures: the original PAIR oracle assumes no prior actor notifications, so the
 matrices are not concatenated into one mutated database. Do not add rerun counts together.
 Frozen JSX gate permits only exact named internal TaskEditModal prop values and the
-original selector callback; all other roots, CSS, entry and native files are frozen.
+original selector callback plus the exact TaskEditModal quick-input onChange; all
+other roots, CSS, entry and native files are frozen.
 External `member-recovery-delivery.json` indexes final command receipts, old failed
 attempts, exact input hashes, cleanup, local commit and ownership handback.
 Independent review is reserved to the parent and was not requested by this writer.
