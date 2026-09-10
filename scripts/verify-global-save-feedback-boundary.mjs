@@ -1,0 +1,6 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import {execFileSync} from 'node:child_process';
+const base='756534becdd26d20207e592f25df5f3d4c984060',root=process.env.QA_EVIDENCE_ROOT;assert.ok(root&&path.isAbsolute(root));
+const before=execFileSync('git',['show',base+':src/App.tsx'],{encoding:'utf8'}).replaceAll('\r\n','\n'),after=fs.readFileSync('src/App.tsx','utf8').replaceAll('\r\n','\n');
+const anchor='    const validateCompletion=()=>';assert.equal(before.split(anchor).length,2);const expected=before.replace(anchor,'    clearStaleSaveSuccessToast();\n'+anchor);assert.equal(after,expected,'App permits exactly one non-visible accepted-intent feedback call; all guards, queue, and JSX unchanged');
+for(const file of ['src/Management.tsx','src/managementDraft.ts','src/styles.css','src/main.tsx','src/cloudSaveQueue.ts','src/permissions.ts'])assert.equal(fs.readFileSync(file,'utf8').replaceAll('\r\n','\n'),execFileSync('git',['show',base+':'+file],{encoding:'utf8'}).replaceAll('\r\n','\n'),file+' frozen');
+const receipt={status:'PASS',base,layer:'exact-source-boundary',allowedProductDelta:'clearStaleSaveSuccessToast after accepted enqueue before in-flight return',unchangedRender:true};fs.writeFileSync(path.join(root,'global-boundary.json'),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt));

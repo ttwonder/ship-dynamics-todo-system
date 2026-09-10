@@ -792,6 +792,7 @@ export default function App() {
     const requestIdentityGeneration=identitySessionGeneration.current;
     hasUnsavedWork.current=true;
     const completion=pendingCloudData.current.enqueue({snapshot,baseSnapshot:confirmedCloudData.current?clone(confirmedCloudData.current):null,token:requestToken,savedBy:currentUser?.name||'unknown',actorUserId:requestActorUserId,identityGeneration:requestIdentityGeneration,lockGuards:captureCloudBlockLockGuards(requestConfig),renderRebase,visibleBaseline:renderRebase?null:clone(liveData.current),isCurrent,canSubmit});
+    clearStaleSaveSuccessToast();
     const validateCompletion=()=>{if(!isCurrent()||liveCurrentUserId.current!==requestActorUserId||identitySessionGeneration.current!==requestIdentityGeneration||!configIoCoordinator.current.isCurrent(requestToken,getSupabaseConfig()))throw new StaleAsyncConfigError();};
     if (cloudSaveInFlight.current) return completion.then(validateCompletion);
     const task = (async () => {
