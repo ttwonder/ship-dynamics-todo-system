@@ -69,5 +69,5 @@ export async function runVesselLifecycle({a,qa,read,call,until,wait,write,receip
    await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},a.s);await toggle('顯示停用船舶');
   }
  }
- if(!negative){await call('Page.reload',{},a.s);await until(()=>a.eval("Boolean(document.querySelector('.app'))||[...document.querySelectorAll('button')].some(n=>n.innerText.trim()==='管理')"),'fresh original app');await a.click('管理');await sub();assert.equal(await hasShip(),true);assert.equal(await a.eval(`(${check('顯示停用船舶')}).checked`),false);pass('VLC-2-fresh-document-reactivated');}
+ if(!negative){await call('Page.reload',{},a.s);await until(()=>a.eval("Boolean(document.querySelector('.app'))||[...document.querySelectorAll('button')].some(n=>n.innerText.trim()==='管理')").catch(error=>{if(/Inspected target navigated or closed|Execution context was destroyed|Cannot find context/.test(error.message))return false;throw error;}),'fresh original app');await a.click('管理');await sub();assert.equal(await hasShip(),true);assert.equal(await a.eval(`(${check('顯示停用船舶')}).checked`),false);pass('VLC-2-fresh-document-reactivated');}
 }
