@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { AppData, PermissionKey, RolePermissions, UserAccount, UserRole, Vessel, VesselDelegateAssignment } from './types';
 import { getSupabaseConfig, type SupabaseConfig } from './cloud';
 import { isOwner, nowIso, roleLabel, sha256, uid } from './utils';
@@ -9,6 +9,7 @@ import { WEEKLY_ATTENTION_CATEGORY_MAP, isMeetingTaskSource, taskCategoriesOf } 
 import { DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES, sanitizeEquipmentFailureSubcategories } from './internalControlWorkflow';
 import { formatTaipeiDateTime } from './taipeiTime';
 import { presentAuditLog } from './auditPresentation';
+import { useManagementDraft } from './managementDraft';
 import DataManagementPanel from './DataManagementPanel';
 
 type Section = 'directory' | 'people' | 'vessels' | 'categories' | 'attention' | 'roles' | 'owner' | 'audit' | 'data';
@@ -20,7 +21,8 @@ type VesselDraft = Pick<Vessel, 'name' | 'shortName' | 'fullName' | 'shipType' |
 type Props = {
   data: AppData;
   currentUser: UserAccount;
-  commit: (mutate: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => void;
+  commit: (mutate: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string, isCurrent?: () => boolean) => Promise<boolean>;
+  captureCommitContext: () => () => boolean;
   onSaveSupabaseConfig: (config:SupabaseConfig)=>Promise<boolean>;
 };
 
@@ -48,7 +50,7 @@ const vesselDraft = (v?: Vessel): VesselDraft => v ? {
 const canManageVesselAssignments = (user: Pick<UserAccount, 'role' | 'isActive'>) => user.isActive && (user.role === 'admin' || user.role === 'operator');
 const managerNames = (users: UserAccount[], ids: string[]) => ids.map(id => users.find(user => user.id === id && user.isActive)?.name).filter(Boolean) as string[];
 
-export default function ManagementView({ data, currentUser, commit, onSaveSupabaseConfig }: Props) {
+export default function ManagementView({ data, currentUser, commit, captureCommitContext, onSaveSupabaseConfig }: Props) {
   const owner = isOwner(currentUser);
   const canManageUsers = hasPermission(data.settings.rolePermissions, currentUser, 'manageUsers');
   const canManageVessels = hasPermission(data.settings.rolePermissions, currentUser, 'manageVessels');
@@ -67,24 +69,33 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
   const [selectedVesselId, setSelectedVesselId] = useState(activeVessels[0]?.id || '');
   const [creatingUser, setCreatingUser] = useState(false);
   const [creatingVessel, setCreatingVessel] = useState(false);
-  const [personDraft, setPersonDraft] = useState<UserDraft>(() => userDraft(currentUser, '', activeVessels));
-  const [shipDraft, setShipDraft] = useState<VesselDraft>(() => vesselDraft(activeVessels[0]));
+  const person = useManagementDraft<UserDraft>(() => userDraft(currentUser, '', activeVessels));
+  const personDraft=person.value, setPersonDraft=person.edit;
+  const ship = useManagementDraft<VesselDraft>(() => vesselDraft(activeVessels[0]));
+  const shipDraft=ship.value, setShipDraft=ship.edit;
   const [assignmentQuery, setAssignmentQuery] = useState('');
-  const [sitePassword, setSitePassword] = useState('');
+  const site = useManagementDraft(() => '');
+  const sitePassword=site.value, setSitePassword=site.edit;
   const [config, setConfig] = useState<SupabaseConfig>(() => getSupabaseConfig() || emptyConfig);
   const [ownerPanel, setOwnerPanel] = useState<'gate' | 'supabase' | 'cloud'>('gate');
   const [auditId, setAuditId] = useState(data.auditLogs[0]?.id || '');
   const [saveNotice, setSaveNotice] = useState('');
 
+  const viewEpoch=useRef(0), mounted=useRef(true), newUserId=useRef(''), newVesselId=useRef('');
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;viewEpoch.current++;};},[]);
+  const captureContinuation=()=>{const epoch=viewEpoch.current,valid=captureCommitContext();return()=>mounted.current&&epoch===viewEpoch.current&&valid();};
+  const capturePerson=()=>{const draft=person.capture(),current=captureContinuation();return {...draft,unchanged:()=>current()&&draft.unchanged(),sameEditor:()=>current()&&draft.sameEditor()};};
+  const captureShip=()=>{const draft=ship.capture(),current=captureContinuation();return {...draft,unchanged:()=>current()&&draft.unchanged(),sameEditor:()=>current()&&draft.sameEditor()};};
+
   useEffect(() => {
     if (creatingUser) return;
     const selected = data.users.find(u => u.id === selectedUserId);
-    if (selected) setPersonDraft(userDraft(selected, '', activeVessels));
+    if (selected) person.refresh(userDraft(selected, '', activeVessels));
   }, [selectedUserId, data.revision, creatingUser, currentUser.id, owner]);
   useEffect(() => {
     if (creatingVessel) return;
     const selected = data.vessels.find(v => v.id === selectedVesselId);
-    if (selected) setShipDraft(vesselDraft(selected));
+    if (selected) ship.refresh(vesselDraft(selected));
   }, [selectedVesselId, data.revision, creatingVessel]);
   useEffect(() => {
     if (!saveNotice) return;
@@ -98,6 +109,8 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
     if (next === 'audit' && !canViewAudit) return alert('目前角色未獲授權查看操作紀錄');
     if (next === 'data' && !canViewDataManagement) return alert('只有 Owner／管理員可以進入數據管理');
     if (next === 'owner' && !canManageSystem) return alert('只有 Owner 可以進入敏感設定');
+    viewEpoch.current++;
+    setSaveNotice('');
     setSection(next);
     setQuery('');
     if (next === 'people' && !canManageUsers) selectUser(currentUser.id);
@@ -107,7 +120,7 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
     if (!user) return;
     setCreatingUser(false);
     setSelectedUserId(id);
-    setPersonDraft(userDraft(user, '', activeVessels));
+    person.initialize(userDraft(user, '', activeVessels));
     setAssignmentQuery('');
   };
   const selectVessel = (id: string) => {
@@ -115,25 +128,28 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
     if (!vessel) return;
     setCreatingVessel(false);
     setSelectedVesselId(id);
-    setShipDraft(vesselDraft(vessel));
+    ship.initialize(vesselDraft(vessel));
     setAssignmentQuery('');
   };
   const startNewUser = () => {
     if (!canManageUsers) return alert('目前角色未獲授權新增人員');
+    newUserId.current=uid('user');
     setCreatingUser(true);
     setSelectedUserId('');
     const firstPersonnelDepartment = data.settings.departments.map(department => department.trim()).find(department => department && department !== '船舶帳戶') || '';
-    setPersonDraft(userDraft(undefined, firstPersonnelDepartment));
+    person.initialize(userDraft(undefined, firstPersonnelDepartment));
   };
   const startNewVessel = () => {
     if (!canManageVessels) return alert('目前角色未獲授權新增船舶');
+    newVesselId.current=uid('vessel');
     setCreatingVessel(true);
     setSelectedVesselId('');
-    setShipDraft(vesselDraft());
+    ship.initialize(vesselDraft());
   };
 
   const savePerson = async () => {
-    const targetUser = data.users.find(u => u.id === selectedUserId);
+    const continuation=capturePerson(), transaction=captureCommitContext();
+    const targetUser = data.users.find(u => u.id === (creatingUser ? newUserId.current : selectedUserId));
     if (!owner && (targetUser?.role === 'owner' || personDraft.role === 'owner')) return alert('管理員不可建立或修改 Owner 帳號');
     if (!personDraft.name.trim() || !personDraft.username.trim()) return alert('請填寫姓名與用戶名');
     if (personDraft.role === 'vessel' && personDraft.managedVesselIds.length !== 1) return alert('船舶帳戶必須且只能綁定一艘船舶');
@@ -141,22 +157,26 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
     const normalizedDepartment = personDraft.role === 'vessel' ? '船舶帳戶' : personDraft.department.trim();
     if (personDraft.role !== 'vessel' && (!normalizedDepartment || normalizedDepartment === '船舶帳戶' || !personnelDepartments.includes(normalizedDepartment))) return alert('請為人員角色選擇有效部門');
     if ((creatingUser || targetUser?.role !== personDraft.role) && (personDraft.role === 'owner' || personDraft.role === 'admin') && !personDraft.password.trim() && !targetUser?.passwordHash) return alert('請為 Owner／管理員設定密碼');
-    const duplicate = data.users.some(u => u.id !== selectedUserId && u.username.trim().toLowerCase() === personDraft.username.trim().toLowerCase());
+    const duplicate = data.users.some(u => u.id !== (creatingUser ? newUserId.current : selectedUserId) && u.username.trim().toLowerCase() === personDraft.username.trim().toLowerCase());
     if (duplicate) return alert('用戶名已存在');
     if (!owner && !canManageUsers) {
       if (creatingUser || selectedUserId !== currentUser.id) return alert('管理員只能修改自己的帳號');
       const selected = data.users.find(u => u.id === currentUser.id);
       if (!selected) return;
       const passwordHash = personDraft.password ? await sha256(personDraft.password) : selected.passwordHash;
-      commit(d => {
+      if(!transaction()||!continuation.sameEditor())return;
+      const saved=await commit(d => {
         const user = d.users.find(u => u.id === currentUser.id);
         if (user) Object.assign(user, { name: personDraft.name.trim(), username: personDraft.username.trim(), passwordHash, updatedAt: nowIso() });
-      }, '管理員更新自己的帳號', 'user', currentUser.id, personDraft.name.trim());
+      }, '管理員更新自己的帳號', 'user', currentUser.id, personDraft.name.trim(), transaction);
+      if(!saved||!continuation.unchanged())return;
+      continuation.clean();
+      person.refresh({ ...personDraft, password: '' });
       setSaveNotice('✓ 人員資料已保存');
       return;
     }
-    const id = creatingUser ? uid('user') : selectedUserId;
-    const selected = data.users.find(u => u.id === selectedUserId);
+    const id = creatingUser ? newUserId.current : selectedUserId;
+    const selected = targetUser;
     if (!creatingUser && !selected) return;
     if (selected?.id === currentUser.id && personDraft.role !== 'owner') return alert('目前登入的 Owner 不可降級自己');
     const passwordRequired = personDraft.role === 'owner' || personDraft.role === 'admin';
@@ -165,7 +185,8 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
     const delegateVessels = canManageVesselAssignments({ role: personDraft.role, isActive: personDraft.isActive })
       ? activeVessels.filter(v => !managedIds.includes(v.id) && personDraft.delegateVessels.some(delegate => delegate.vesselId === v.id)).map(v => ({ vesselId: v.id, isActive: Boolean(personDraft.delegateVessels.find(delegate => delegate.vesselId === v.id)?.isActive) }))
       : [];
-    commit(d => {
+    if(!transaction()||!continuation.sameEditor())return;
+    const saved=await commit(d => {
       let user = d.users.find(u => u.id === id);
       if (!user) {
         user = { id, createdAt: nowIso(), updatedAt: nowIso(), passwordHash, department: '', name: '', username: '', role: 'operator', isActive: true, managedVesselIds: [] };
@@ -180,44 +201,56 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
         const delegate = delegateVessels.find(item => item.vesselId === v.id);
         if (!assigned && delegate) v.delegateManagers.push({ userId: id, isActive: delegate.isActive });
       });
-    }, creatingUser ? '新增人員' : '更新人員', 'user', id, personDraft.name.trim());
+    }, creatingUser ? '新增人員' : '更新人員', 'user', id, personDraft.name.trim(), transaction);
+    if(!saved||!continuation.unchanged())return;
+    continuation.clean();
+    person.refresh({ ...personDraft, password: '' });
     setCreatingUser(false);
     setSelectedUserId(id);
     setSaveNotice(`✓ ${creatingUser ? '人員已建立' : '人員資料已保存'}`);
   };
 
-  const clearPersonPassword = () => {
+  const clearPersonPassword = async () => {
+    const continuation=capturePerson(), transaction=captureCommitContext();
     if (!canManageUsers || !selectedUserId || selectedUserId === currentUser.id) return alert('只有 Owner／管理員可以清除其他人員的密碼');
     const target = data.users.find(user => user.id === selectedUserId);
     if (!target || target.role === 'owner' || target.role === 'admin') return alert('Owner／管理員不可清除密碼');
     if (!window.confirm(`清除「${target.name}」的登入密碼後，該人員可無密碼登入。是否繼續？`)) return;
-    commit(draft => { const user = draft.users.find(item => item.id === selectedUserId); if (user) { user.passwordHash = ''; user.updatedAt = nowIso(); } }, '清除人員密碼', 'user', selectedUserId, `${target.name} 改為無密碼登入`);
-    setPersonDraft(previous => ({ ...previous, password: '' }));
+    const saved=await commit(draft => { const user = draft.users.find(item => item.id === selectedUserId); if (user) { user.passwordHash = ''; user.updatedAt = nowIso(); } }, '清除人員密碼', 'user', selectedUserId, `${target.name} 改為無密碼登入`, transaction);
+    if(!saved||!continuation.unchanged())return;
+    continuation.clean();
+    person.refresh({ ...personDraft, password: '' });
     setSaveNotice('✓ 密碼已清除，可無密碼登入');
   };
 
-  const disablePerson = () => {
+  const disablePerson = async () => {
+    const continuation=capturePerson(), transaction=captureCommitContext();
     if (!canManageUsers || !selectedUserId) return alert('目前角色未獲授權停用人員');
     if (selectedUserId === currentUser.id) return alert('不可停用目前登入的 Owner');
     const target = data.users.find(u => u.id === selectedUserId);
     if (!owner && target?.role === 'owner') return alert('管理員不可停用 Owner');
     if (!target || !confirm(`確定停用「${target.name}」？`)) return;
-    commit(d => {
+    if(!transaction()||!continuation.sameEditor())return;
+    const saved=await commit(d => {
       const user = d.users.find(u => u.id === selectedUserId);
       if (user) { user.isActive = false; user.updatedAt = nowIso(); }
       d.vessels.forEach(v => { v.assignedUserIds = v.assignedUserIds.filter(id => id !== selectedUserId); v.delegateManagers = (v.delegateManagers || []).filter(delegate => delegate.userId !== selectedUserId); });
-    }, '停用人員', 'user', selectedUserId, target.name);
+    }, '停用人員', 'user', selectedUserId, target.name, transaction);
+    if(!saved||!continuation.unchanged())return;
+    continuation.clean();
     const next = activeUsers.find(u => u.id !== selectedUserId);
     if (next) selectUser(next.id);
   };
 
-  const saveVessel = () => {
+  const saveVessel = async () => {
+    const continuation=captureShip(), transaction=captureCommitContext();
     if (!canManageVessels) return alert('目前角色未獲授權管理船舶');
     if (!shipDraft.shortName.trim() && !shipDraft.name.trim()) return alert('請填寫船名或簡稱');
-    const id = creatingVessel ? uid('vessel') : selectedVesselId;
+    const id = creatingVessel ? newVesselId.current : selectedVesselId;
     const assignedIds = activeUsers.filter(u => canManageVesselAssignments(u) && shipDraft.assignedUserIds.includes(u.id)).map(u => u.id);
     const delegateManagers = shipDraft.delegateManagers.filter(delegate => activeUsers.some(user => canManageVesselAssignments(user) && user.id === delegate.userId && !assignedIds.includes(user.id)));
-    commit(d => {
+    if(!transaction()||!continuation.sameEditor())return;
+    const saved=await commit(d => {
       let vessel = d.vessels.find(v => v.id === id);
       if (!vessel) {
         const at = nowIso();
@@ -238,18 +271,22 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
         u.managedVesselIds = assigned ? Array.from(new Set([...(u.managedVesselIds || []), id])) : (u.managedVesselIds || []).filter(vesselId => vesselId !== id);
         if (assigned) vessel.delegateManagers = (vessel.delegateManagers || []).filter(delegate => delegate.userId !== u.id);
       });
-    }, creatingVessel ? '新增船舶' : '更新船舶', 'vessel', id, vesselDisplayName(shipDraft));
+    }, creatingVessel ? '新增船舶' : '更新船舶', 'vessel', id, vesselDisplayName(shipDraft), transaction);
+    if(!saved||!continuation.unchanged())return;
+    continuation.clean();
     setCreatingVessel(false);
     setSelectedVesselId(id);
     setSaveNotice(`✓ ${creatingVessel ? '船舶已建立' : '船舶資料已保存'}`);
   };
 
-  const disableVessel = () => {
+  const disableVessel = async () => {
+    const continuation=captureShip(), transaction=captureCommitContext();
     if (!canManageVessels) return alert('目前角色未獲授權停用船舶');
     if (!selectedVesselId) return;
     const target = data.vessels.find(v => v.id === selectedVesselId);
     if (!target || !confirm(`確定停用「${vesselDisplayName(target)}」？`)) return;
-    commit(d => {
+    if(!transaction()||!continuation.sameEditor())return;
+    const saved=await commit(d => {
       const vessel = d.vessels.find(v => v.id === selectedVesselId);
       if (vessel) { vessel.isActive = false; vessel.updatedAt = nowIso(); }
       d.users.forEach(u => {
@@ -257,7 +294,9 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
         u.managedVesselIds = (u.managedVesselIds || []).filter(id => id !== selectedVesselId);
         if (wasBound && u.role === 'vessel') u.isActive = false;
       });
-    }, '停用船舶', 'vessel', selectedVesselId, vesselDisplayName(target));
+    }, '停用船舶', 'vessel', selectedVesselId, vesselDisplayName(target), transaction);
+    if(!saved||!continuation.unchanged())return;
+    continuation.clean();
     const next = activeVessels.find(v => v.id !== selectedVesselId);
     if (next) selectVessel(next.id);
   };
@@ -305,24 +344,24 @@ export default function ManagementView({ data, currentUser, commit, onSaveSupaba
 
       {section === 'people' && <>
         <div className="management-master"><MasterHeader title={canManageUsers ? '人員' : '我的帳號'} count={filteredPeople.length} query={query} setQuery={setQuery} action={canManageUsers ? { label: '＋ 新增', onClick: startNewUser } : undefined}/>{canManageUsers && <label className="management-department-filter"><span>人員部門篩選</span><select aria-label="人員部門篩選" value={departmentFilter} onChange={event => setDepartmentFilter(event.target.value)}><option value="all">全部部門</option>{personDepartments.map(department => <option key={department} value={department}>{department}</option>)}</select></label>}<div className="management-list">{filteredPeople.map(u => <button key={u.id} className={`management-list-item ${!creatingUser && selectedUserId === u.id ? 'active' : ''}`} onClick={() => selectUser(u.id)}><span className="management-avatar">{u.name.slice(0, 1)}</span><span><b>{u.name}</b><small>{u.department}｜{(u.managedVesselIds || []).length} 艘船</small></span><em className={`role-${u.role}`}>{roleLabel(u.role)}</em></button>)}</div></div>
-        <div className="management-detail"><PersonEditor draft={personDraft} setDraft={setPersonDraft} creating={creatingUser} owner={owner} manager={canManageUsers} currentUser={currentUser} selectedUserId={selectedUserId} departments={data.settings.departments} vessels={activeVessels} assignmentQuery={assignmentQuery} setAssignmentQuery={setAssignmentQuery} onSave={savePerson} onDisable={disablePerson} onClearPassword={clearPersonPassword}/></div>
+        <div className="management-detail"><PersonEditor draft={personDraft} setDraft={next=>{setSaveNotice('');setPersonDraft(next);}} creating={creatingUser} owner={owner} manager={canManageUsers} currentUser={currentUser} selectedUserId={selectedUserId} departments={data.settings.departments} vessels={activeVessels} assignmentQuery={assignmentQuery} setAssignmentQuery={setAssignmentQuery} onSave={savePerson} onDisable={disablePerson} onClearPassword={clearPersonPassword}/></div>
       </>}
 
       {section === 'vessels' && <>
         <div className="management-master"><MasterHeader title="船舶" count={filteredVessels.length} query={query} setQuery={setQuery} action={{ label: '＋ 新增', onClick: startNewVessel }}/><div className="management-list">{filteredVessels.map(v => <button key={v.id} className={`management-list-item ${!creatingVessel && selectedVesselId === v.id ? 'active' : ''}`} onClick={() => selectVessel(v.id)}><span className="management-avatar vessel">🚢</span><span><b>{vesselDisplayName(v)}</b><small>{v.shipType || '未填船型'}｜{v.fleetCategory}</small></span><em>{managerNames(activeUsers, v.assignedUserIds).length ? `${managerNames(activeUsers, v.assignedUserIds).length} 人` : '0 人'}</em></button>)}</div></div>
-        <div className="management-detail"><VesselEditor draft={shipDraft} setDraft={setShipDraft} creating={creatingVessel} users={activeUsers.filter(canManageVesselAssignments)} assignmentQuery={assignmentQuery} setAssignmentQuery={setAssignmentQuery} onSave={saveVessel} onDisable={disableVessel}/></div>
+        <div className="management-detail"><VesselEditor draft={shipDraft} setDraft={next=>{setSaveNotice('');setShipDraft(next);}} creating={creatingVessel} users={activeUsers.filter(canManageVesselAssignments)} assignmentQuery={assignmentQuery} setAssignmentQuery={setAssignmentQuery} onSave={saveVessel} onDisable={disableVessel}/></div>
       </>}
 
       {section === 'categories' && canManageCategories && <>
         <div className="management-master"><div className="management-master-heading"><div><h2>分類管理 <small>{data.settings.taskCategories.length + data.settings.meetingTaskCategories.length}</small></h2><small>要事分類與臨會/專題待辦分類完全分開</small></div></div><div className="management-list"><div className="management-list-item category-summary"><span className="management-avatar category">要</span><span><b>要事分類</b><small>{data.settings.taskCategories.length} 個；普通/早會來源待辦使用</small></span><em>{data.tasks.filter(task => !isMeetingTaskSource(task)).length} 件</em></div>{data.settings.taskCategories.map((category, index) => <div key={`task-${category}-${index}`} className="management-list-item category-summary"><span className="management-avatar category">≡</span><span><b>{category}</b><small>{WEEKLY_ATTENTION_CATEGORY_MAP[category] ? '自動點亮看板狀態' : '一般要事分類'}</small></span><em>{data.tasks.filter(task => !isMeetingTaskSource(task) && taskCategoriesOf(task).includes(category)).length} 件</em></div>)}<div className="management-list-item category-summary"><span className="management-avatar meeting">臨</span><span><b>臨會/專題待辦分類</b><small>{data.settings.meetingTaskCategories.length} 個；臨會來源待辦使用</small></span><em>{data.tasks.filter(task => isMeetingTaskSource(task)).length} 件</em></div>{data.settings.meetingTaskCategories.map((category, index) => <div key={`meeting-${category}-${index}`} className="management-list-item category-summary"><span className="management-avatar meeting">◇</span><span><b>{category}</b><small>臨會/專題待辦分類</small></span><em>{data.tasks.filter(task => isMeetingTaskSource(task) && taskCategoriesOf(task).includes(category)).length} 件</em></div>)}</div></div>
-        <div className="management-detail"><div className="management-category-stack"><TaskCategoryManager key={`task-${data.revision}`} title="要事分類" subtitle="只套用於普通要事／早會來源待辦；歷史要事分類不會被改寫。" categories={data.settings.taskCategories} tasks={data.tasks.filter(task=>!isMeetingTaskSource(task))} onSave={categories => { commit(d => { d.settings.taskCategories = categories; d.settings.taskCategorySchemaVersion = 2; }, '更新要事分類', 'settings', 'task-categories', categories.join('、')); setSaveNotice('要事分類已保存'); }}/><TaskCategoryManager key={`meeting-${data.revision}`} title="臨會/專題待辦分類" subtitle="只套用於臨會/專題來源待辦；不會混入普通要事分類。" categories={data.settings.meetingTaskCategories} tasks={data.tasks.filter(task=>isMeetingTaskSource(task))} onSave={categories => { commit(d => { d.settings.meetingTaskCategories = categories; d.settings.meetingTaskCategorySchemaVersion = 2; }, '更新臨會/專題待辦分類', 'settings', 'meeting-task-categories', categories.join('、')); setSaveNotice('臨會/專題待辦分類已保存'); }}/><EquipmentSubcategoryManager key={`equipment-${data.revision}`} categories={data.settings.equipmentFailureSubcategories} usage={value=>data.internalControlCases.filter(item=>item.equipmentSubcategory===value).length} onSave={categories=>{commit(d=>{d.settings.equipmentFailureSubcategories=categories;d.settings.equipmentFailureSubcategorySchemaVersion=1;},'更新內控設備故障細項','settings','internal-control-equipment-subcategories',categories.join('、'));setSaveNotice('設備故障細項已保存');}}/></div></div>
+        <div className="management-detail"><div className="management-category-stack"><TaskCategoryManager key="task" title="要事分類" subtitle="只套用於普通要事／早會來源待辦；歷史要事分類不會被改寫。" categories={data.settings.taskCategories} tasks={data.tasks.filter(task=>!isMeetingTaskSource(task))} onSave={async (categories,unchanged) => { const current=captureContinuation(); const saved=await commit(d => { d.settings.taskCategories = categories; d.settings.taskCategorySchemaVersion = 2; }, '更新要事分類', 'settings', 'task-categories', categories.join('、')); if(saved&&current()&&unchanged())setSaveNotice('要事分類已保存');return saved; }}/><TaskCategoryManager key="meeting" title="臨會/專題待辦分類" subtitle="只套用於臨會/專題來源待辦；不會混入普通要事分類。" categories={data.settings.meetingTaskCategories} tasks={data.tasks.filter(task=>isMeetingTaskSource(task))} onSave={async (categories,unchanged) => { const current=captureContinuation(); const saved=await commit(d => { d.settings.meetingTaskCategories = categories; d.settings.meetingTaskCategorySchemaVersion = 2; }, '更新臨會/專題待辦分類', 'settings', 'meeting-task-categories', categories.join('、')); if(saved&&current()&&unchanged())setSaveNotice('臨會/專題待辦分類已保存');return saved; }}/><EquipmentSubcategoryManager key="equipment" categories={data.settings.equipmentFailureSubcategories} usage={value=>data.internalControlCases.filter(item=>item.equipmentSubcategory===value).length} onSave={async(categories,unchanged)=>{const current=captureContinuation();const saved=await commit(d=>{d.settings.equipmentFailureSubcategories=categories;d.settings.equipmentFailureSubcategorySchemaVersion=1;},'更新內控設備故障細項','settings','internal-control-equipment-subcategories',categories.join('、'));if(saved&&current()&&unchanged())setSaveNotice('設備故障細項已保存');return saved;}}/></div></div>
       </>}
 
       {section === 'attention' && <><div className="management-master"><div className="management-master-heading"><div><h2>關注度規則</h2><small>自動下限與手動提高</small></div></div><div className="management-list"><div className="management-list-item category-summary"><span className="management-avatar">特</span><span><b>特別關注</b><small>最高人工關注</small></span></div><div className="management-list-item category-summary"><span className="management-avatar">急</span><span><b>存在急件</b><small>最高自動關注</small></span></div><div className="management-list-item category-summary"><span className="management-avatar">高</span><span><b>事故／異常／PSC</b><small>至少高關注</small></span></div><div className="management-list-item category-summary"><span className="management-avatar">中</span><span><b>其他狀態燈</b><small>至少中關注</small></span></div><div className="management-list-item category-summary"><span className="management-avatar">低</span><span><b>其餘情況</b><small>例行關注</small></span></div></div></div><div className="management-detail"><AttentionGuide/></div></>}
 
       {section === 'roles' && <><div className="management-master"><div className="management-master-heading"><div><h2>角色權限</h2><small>精細權限矩陣</small></div></div>{(['owner','admin','operator','vessel'] as UserRole[]).map(role => <div key={role} className="management-list-item"><span className="management-avatar">{roleLabel(role).slice(0,1)}</span><span><b>{roleLabel(role)}</b><small>{activeUsers.filter(u => u.role === role).length} 人</small></span></div>)}</div><div className="management-detail"><RolePermissionMatrix matrix={data.settings.rolePermissions} editable={owner} onChange={(role,key,value)=>commit(d=>{const next=structuredClone(d.settings.rolePermissions);next[role][key]=value;d.settings.rolePermissions=normalizeRolePermissions(next);},'更新角色權限','settings','role-permissions',`${roleLabel(role)}｜${PERMISSION_LABELS[key].label}｜${value?'開啟':'關閉'}`)}/></div></>}
 
-      {section === 'owner' && owner && <><div className="management-master"><div className="management-master-heading"><div><h2>Owner 與雲端</h2><small>敏感設定集中管理</small></div></div><div className="management-list"><button className={`management-list-item ${ownerPanel === 'gate' ? 'active' : ''}`} onClick={() => setOwnerPanel('gate')}><span className="management-avatar">🔐</span><span><b>進站密碼</b><small>網站第一道存取門</small></span></button><button className={`management-list-item ${ownerPanel === 'supabase' ? 'active' : ''}`} onClick={() => setOwnerPanel('supabase')}><span className="management-avatar">☁</span><span><b>Supabase 設定</b><small>工作區與資料表</small></span></button><button className={`management-list-item ${ownerPanel === 'cloud' ? 'active' : ''}`} onClick={() => setOwnerPanel('cloud')}><span className="management-avatar">↕</span><span><b>雲端資料</b><small>載入或保存主資料</small></span></button></div></div><div className="management-detail"><OwnerSettings panel={ownerPanel} sitePassword={sitePassword} setSitePassword={setSitePassword} config={config} setConfig={setConfig} data={data} commit={commit} onSaveSupabaseConfig={onSaveSupabaseConfig}/></div></>}
+      {section === 'owner' && owner && <><div className="management-master"><div className="management-master-heading"><div><h2>Owner 與雲端</h2><small>敏感設定集中管理</small></div></div><div className="management-list"><button className={`management-list-item ${ownerPanel === 'gate' ? 'active' : ''}`} onClick={() => {viewEpoch.current++;setOwnerPanel('gate');}}><span className="management-avatar">🔐</span><span><b>進站密碼</b><small>網站第一道存取門</small></span></button><button className={`management-list-item ${ownerPanel === 'supabase' ? 'active' : ''}`} onClick={() => {viewEpoch.current++;setOwnerPanel('supabase');}}><span className="management-avatar">☁</span><span><b>Supabase 設定</b><small>工作區與資料表</small></span></button><button className={`management-list-item ${ownerPanel === 'cloud' ? 'active' : ''}`} onClick={() => {viewEpoch.current++;setOwnerPanel('cloud');}}><span className="management-avatar">↕</span><span><b>雲端資料</b><small>載入或保存主資料</small></span></button></div></div><div className="management-detail"><OwnerSettings panel={ownerPanel} sitePassword={sitePassword} setSitePassword={setSitePassword} captureDraft={site.capture} captureContinuation={captureContinuation} captureCommitContext={captureCommitContext} config={config} setConfig={setConfig} data={data} commit={commit} onSaveSupabaseConfig={onSaveSupabaseConfig}/></div></>}
 
       {section === 'audit' && <><div className="management-master"><MasterHeader title="操作紀錄" count={data.auditLogs.length} query={query} setQuery={setQuery}/><div className="management-list">{filteredAuditLogs.slice(0,100).map(log => { const presented = presentAuditLog(log, data); return <button key={log.id} className={`management-list-item ${selectedAudit?.id === log.id ? 'active' : ''}`} onClick={() => setAuditId(log.id)}><span className="management-avatar audit">▤</span><span><b>{presented.operationText}</b><small>{log.actorName}｜{formatTaipeiDateTime(log.at)}｜IP {log.ipAddress || '未記錄'}</small></span></button>; })}</div></div><div className="management-detail">{selectedAudit && selectedAuditPresentation ? <div className="management-editor"><EditorHeading title={selectedAuditPresentation.actionLabel} subtitle="操作紀錄詳細資料"/><div className="management-summary-grid"><Summary label="操作者" value={selectedAudit.actorName}/><Summary label="角色" value={roleLabel(selectedAudit.actorRole)}/><Summary label="時間" value={formatTaipeiDateTime(selectedAudit.at)}/><Summary label="IP號碼" value={selectedAuditPresentation.ipAddressLabel}/><Summary label="IP歸屬地" value={selectedAuditPresentation.ipLocationLabel}/></div><EditorSection title="具體操作"><p><b>{selectedAuditPresentation.operationText}</b></p><p>{selectedAuditPresentation.detailText}</p></EditorSection><details className="audit-technical"><summary>技術識別資料</summary><p className="muted">{selectedAuditPresentation.technicalId}</p></details></div>:<EmptyDetail text="目前沒有操作紀錄"/>}</div></>}
 
@@ -409,9 +448,10 @@ function AssignmentPicker({ query, setQuery, count, onAll, onClear, children, de
   const selectedSummary = selectedNames.length ? `已選 ${count}｜${selectedNames.join('、')}` : `已選 ${count}`;
   return <div className="management-assignment"><div className="assignment-selected-summary" title={selectedSummary}>{selectedSummary}</div><div className="management-assignment-tools">{setDepartment && <label className="assignment-department-filter"><span>{departmentLabel}</span><select aria-label={departmentLabel} value={department || 'all'} onChange={event => setDepartment(event.target.value)}><option value="all">全部部門</option>{departments.map(item => <option key={item} value={item}>{item}</option>)}</select></label>}<input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋後勾選…"/><button className="btn small ghost" onClick={onAll}>全選</button><button className="btn small ghost" onClick={onClear}>清空</button></div><div className="management-assignment-grid">{children}</div></div>;
 }
-function TaskCategoryManager({ title, subtitle, categories, tasks, onSave }: { title:string; subtitle:string; categories:string[]; tasks:AppData['tasks']; onSave:(categories:string[])=>void }) {
-  const [draft, setDraft] = useState(() => [...categories]);
-  const [newCategory, setNewCategory] = useState('');
+function TaskCategoryManager({ title, subtitle, categories, tasks, onSave }: { title:string; subtitle:string; categories:string[]; tasks:AppData['tasks']; onSave:(categories:string[], unchanged:()=>boolean)=>Promise<boolean> }) {
+  const editor=useManagementDraft(()=>[...categories]), entry=useManagementDraft(()=>'');
+  const draft=editor.value,setDraft=editor.edit,newCategory=entry.value,setNewCategory=entry.edit;
+  useEffect(()=>editor.refresh([...categories]),[categories]);
   const usage = (category:string) => tasks.filter(task => taskCategoriesOf(task).includes(category)).length;
   const add = () => {
     const value = newCategory.trim();
@@ -438,18 +478,20 @@ function TaskCategoryManager({ title, subtitle, categories, tasks, onSave }: { t
     const clean = draft.map(category => category.trim());
     if (clean.some(category => !category)) return alert('分類名稱不可留空');
     if (new Set(clean.map(category => category.toLocaleLowerCase())).size !== clean.length) return alert('分類名稱不可重複');
-    onSave(clean);
+    const submitted=editor.capture(),pendingEntry=entry.capture();
+    void onSave(clean,()=>submitted.unchanged()&&pendingEntry.unchanged()).then(saved=>{if(saved&&submitted.unchanged()&&pendingEntry.unchanged())submitted.clean();});
   };
-  return <div className="management-editor task-category-editor"><EditorHeading title={title} subtitle={subtitle} actions={<button className="btn primary" onClick={save}>保存分類設定</button>}/><EditorSection title="分類順序與名稱"><div className="task-category-list">{draft.map((category, index) => <div className="task-category-row" key={`${index}-${category}`}><span className="task-category-order">{index + 1}</span><input aria-label={`${title} 分類 ${index + 1}`} value={category} onChange={event => setDraft(prev => prev.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}/><span className={`task-category-link ${WEEKLY_ATTENTION_CATEGORY_MAP[category] ? 'linked' : ''}`}>{WEEKLY_ATTENTION_CATEGORY_MAP[category] ? '自動點亮' : `${usage(category)} 件`}</span><button className="btn small ghost" title="上移" disabled={index === 0} onClick={() => move(index, -1)}>↑ 上移</button><button className="btn small ghost" title="下移" disabled={index === draft.length - 1} onClick={() => move(index, 1)}>↓ 下移</button><button className="btn small danger" onClick={() => remove(index)}>刪除</button></div>)}</div></EditorSection><EditorSection title="新增分類"><div className="task-category-add"><input aria-label={`${title} 新分類名稱`} value={newCategory} onChange={event => setNewCategory(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') add(); }} placeholder="輸入新的分類名稱"/><button className="btn primary" onClick={add}>新增分類</button></div><p className="muted">兩套分類彼此獨立：要事分類只服務普通/早會來源待辦；臨會/專題待辦分類只服務臨會來源待辦。</p></EditorSection></div>;
+  return <div className="management-editor task-category-editor"><EditorHeading title={title} subtitle={subtitle} actions={<button className="btn primary" onClick={save}>保存分類設定</button>}/><EditorSection title="分類順序與名稱"><div className="task-category-list">{draft.map((category, index) => <div className="task-category-row" key={index}><span className="task-category-order">{index + 1}</span><input aria-label={`${title} 分類 ${index + 1}`} value={category} onChange={event => setDraft(prev => prev.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}/><span className={`task-category-link ${WEEKLY_ATTENTION_CATEGORY_MAP[category] ? 'linked' : ''}`}>{WEEKLY_ATTENTION_CATEGORY_MAP[category] ? '自動點亮' : `${usage(category)} 件`}</span><button className="btn small ghost" title="上移" disabled={index === 0} onClick={() => move(index, -1)}>↑ 上移</button><button className="btn small ghost" title="下移" disabled={index === draft.length - 1} onClick={() => move(index, 1)}>↓ 下移</button><button className="btn small danger" onClick={() => remove(index)}>刪除</button></div>)}</div></EditorSection><EditorSection title="新增分類"><div className="task-category-add"><input aria-label={`${title} 新分類名稱`} value={newCategory} onChange={event => setNewCategory(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') add(); }} placeholder="輸入新的分類名稱"/><button className="btn primary" onClick={add}>新增分類</button></div><p className="muted">兩套分類彼此獨立：要事分類只服務普通/早會來源待辦；臨會/專題待辦分類只服務臨會來源待辦。</p></EditorSection></div>;
 }
 
-function EquipmentSubcategoryManager({ categories, usage, onSave }: { categories:string[]; usage:(value:string)=>number; onSave:(categories:string[])=>void }) {
-  const [draft,setDraft]=useState(()=>[...categories]);
-  const [newValue,setNewValue]=useState('');
+function EquipmentSubcategoryManager({ categories, usage, onSave }: { categories:string[]; usage:(value:string)=>number; onSave:(categories:string[], unchanged:()=>boolean)=>Promise<boolean> }) {
+  const editor=useManagementDraft(()=>[...categories]),entry=useManagementDraft(()=>'');
+  const draft=editor.value,setDraft=editor.edit,newValue=entry.value,setNewValue=entry.edit;
+  useEffect(()=>editor.refresh([...categories]),[categories]);
   const add=()=>{const value=newValue.trim();if(!value)return alert('請輸入設備故障細項');if(draft.some(item=>item.toLocaleLowerCase()===value.toLocaleLowerCase()))return alert('細項名稱不可重複');setDraft(prev=>[...prev,value]);setNewValue('');};
   const remove=(index:number)=>{const value=draft[index];const count=usage(value);if(count&&!window.confirm(`「${value}」已用於 ${count} 件內控案件。刪除後只會從新建選單移除，歷史資料仍會保留。是否繼續？`))return;setDraft(prev=>prev.filter((_,itemIndex)=>itemIndex!==index));};
-  const save=()=>{const clean=sanitizeEquipmentFailureSubcategories(draft);if(!clean.length)return alert('至少要保留一個設備故障細項');onSave(clean);};
-  return <div className="management-editor task-category-editor"><EditorHeading title="設備故障細項" subtitle="內控異常分類選擇「設備故障」時使用；歷史案件內容不會因設定變更而被改寫。" actions={<button className="btn primary" onClick={save}>保存設備細項</button>}/><EditorSection title="細項名稱"><div className="task-category-list">{draft.map((value,index)=><div className="task-category-row" key={`${index}-${value}`}><span className="task-category-order">{index+1}</span><input aria-label={`設備故障細項 ${index+1}`} value={value} onChange={event=>setDraft(prev=>prev.map((item,itemIndex)=>itemIndex===index?event.target.value:item))}/><span className="task-category-link">{usage(value)} 件</span><button className="btn small danger" onClick={()=>remove(index)}>刪除</button></div>)}</div></EditorSection><EditorSection title="新增或重設"><div className="task-category-add"><input aria-label="新增設備故障細項" value={newValue} onChange={event=>setNewValue(event.target.value)} onKeyDown={event=>{if(event.key==='Enter')add();}} placeholder="輸入新的設備故障細項"/><button className="btn primary" onClick={add}>新增細項</button><button className="btn ghost" onClick={()=>setDraft([...DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES])}>恢復預設</button></div></EditorSection></div>;
+  const save=()=>{const clean=sanitizeEquipmentFailureSubcategories(draft);if(!clean.length)return alert('至少要保留一個設備故障細項');const submitted=editor.capture(),pendingEntry=entry.capture();void onSave(clean,()=>submitted.unchanged()&&pendingEntry.unchanged()).then(saved=>{if(saved&&submitted.unchanged()&&pendingEntry.unchanged())submitted.clean();});};
+  return <div className="management-editor task-category-editor"><EditorHeading title="設備故障細項" subtitle="內控異常分類選擇「設備故障」時使用；歷史案件內容不會因設定變更而被改寫。" actions={<button className="btn primary" onClick={save}>保存設備細項</button>}/><EditorSection title="細項名稱"><div className="task-category-list">{draft.map((value,index)=><div className="task-category-row" key={index}><span className="task-category-order">{index+1}</span><input aria-label={`設備故障細項 ${index+1}`} value={value} onChange={event=>setDraft(prev=>prev.map((item,itemIndex)=>itemIndex===index?event.target.value:item))}/><span className="task-category-link">{usage(value)} 件</span><button className="btn small danger" onClick={()=>remove(index)}>刪除</button></div>)}</div></EditorSection><EditorSection title="新增或重設"><div className="task-category-add"><input aria-label="新增設備故障細項" value={newValue} onChange={event=>setNewValue(event.target.value)} onKeyDown={event=>{if(event.key==='Enter')add();}} placeholder="輸入新的設備故障細項"/><button className="btn primary" onClick={add}>新增細項</button><button className="btn ghost" onClick={()=>setDraft([...DEFAULT_EQUIPMENT_FAILURE_SUBCATEGORIES])}>恢復預設</button></div></EditorSection></div>;
 }
 
 function AttentionGuide() {
@@ -462,8 +504,8 @@ function RolePermissionMatrix({ matrix, editable, onChange }: { matrix:RolePermi
   return <div className="management-editor permission-editor"><EditorHeading title="角色權限矩陣" subtitle={editable ? '只有 Owner 可以調整；變更會寫入雲端主資料與操作紀錄。' : '目前為唯讀。只有 Owner 可以調整角色權限。'}/><div className="permission-legend"><span>● 可使用</span><span>○ 不可使用</span><span>🔒 固定安全規則</span></div>{(['業務內容','管理功能'] as const).map(group => <EditorSection key={group} title={group}><div className="permission-table"><div className="permission-row permission-head"><b>權限項目</b>{roles.map(role=><b key={role}>{roleLabel(role)}</b>)}</div>{PERMISSION_KEYS.filter(key=>PERMISSION_LABELS[key].group===group).map(key=><div className="permission-row" key={key}><span><b>{PERMISSION_LABELS[key].label}</b>{PERMISSION_LABELS[key].fixed&&<small>{PERMISSION_LABELS[key].fixed}</small>}</span>{roles.map(role=>{const fixed=isFixed(role,key);const checked=matrix[role][key];return <label key={role} className={`permission-switch ${checked?'enabled':''} ${fixed?'fixed':''}`} title={fixed?'固定安全規則':editable?'點擊切換':'僅 Owner 可調整'}><input type="checkbox" checked={checked} disabled={!editable||fixed} onChange={event=>onChange(role,key,event.target.checked)}/><i/><em>{fixed?'🔒':checked?'開':'關'}</em></label>;})}</div>)}</div></EditorSection>)}</div>;
 }
 
-function OwnerSettings({ panel, sitePassword, setSitePassword, config, setConfig, data, commit, onSaveSupabaseConfig }: { panel:'gate'|'supabase'|'cloud'; sitePassword:string; setSitePassword:(v:string)=>void; config:SupabaseConfig; setConfig:React.Dispatch<React.SetStateAction<SupabaseConfig>>; data:AppData; commit:Props['commit']; onSaveSupabaseConfig:Props['onSaveSupabaseConfig'] }) {
-  const saveGate = async () => { if (!sitePassword) return alert('請輸入新進站密碼'); const hash = await sha256(sitePassword); commit(d => { d.settings.sitePasswordHash = hash; }, '修改進站密碼', 'settings', 'site-password', 'Owner 更新進站密碼'); setSitePassword(''); alert('進站密碼已更新'); };
+function OwnerSettings({ panel, sitePassword, setSitePassword, captureDraft, captureContinuation, captureCommitContext, config, setConfig, data, commit, onSaveSupabaseConfig }: { panel:'gate'|'supabase'|'cloud'; sitePassword:string; setSitePassword:(v:string)=>void; captureDraft:()=>{unchanged:()=>boolean;sameEditor:()=>boolean}; captureContinuation:()=>()=>boolean; captureCommitContext:Props['captureCommitContext']; config:SupabaseConfig; setConfig:React.Dispatch<React.SetStateAction<SupabaseConfig>>; data:AppData; commit:Props['commit']; onSaveSupabaseConfig:Props['onSaveSupabaseConfig'] }) {
+  const saveGate = async () => { if (!sitePassword) return alert('請輸入新進站密碼'); const draft=captureDraft(),current=captureContinuation(),transaction=captureCommitContext(); const hash = await sha256(sitePassword); if(!transaction()||!current()||!draft.sameEditor())return; const saved=await commit(d => { d.settings.sitePasswordHash = hash; }, '修改進站密碼', 'settings', 'site-password', 'Owner 更新進站密碼',transaction); if(!saved||!current()||!draft.unchanged())return; setSitePassword(''); alert('進站密碼已更新'); };
   if (panel === 'gate') return <div className="management-editor"><EditorHeading title="進站密碼" subtitle="網站載入後的第一道存取門"/><EditorSection title="更新密碼"><div className="management-password"><div><b>新進站密碼</b><small>只保存 SHA-256 雜湊，不保存明文。</small></div><input type="password" value={sitePassword} onChange={e => setSitePassword(e.target.value)} placeholder="輸入新密碼"/><button className="btn primary" onClick={saveGate}>保存</button></div></EditorSection></div>;
   if (panel === 'supabase') return <div className="management-editor"><EditorHeading title="Supabase 設定" subtitle="設定保存於目前瀏覽器；部署版 public 設定仍具有優先權" actions={<button className="btn primary" onClick={() => void onSaveSupabaseConfig(config)}>保存設定並重新載入</button>}/><EditorSection title="連線資訊"><div className="management-form one"><label>Project URL<input value={config.supabaseUrl} onChange={e => setConfig(prev => ({...prev,supabaseUrl:e.target.value}))}/></label><label>Anon key<input type="password" value={config.supabaseAnonKey} onChange={e => setConfig(prev => ({...prev,supabaseAnonKey:e.target.value}))}/></label><label>工作區<input value={config.workspaceKey} onChange={e => setConfig(prev => ({...prev,workspaceKey:e.target.value}))}/></label><label>資料表<input value={config.tableName || ''} onChange={e => setConfig(prev => ({...prev,tableName:e.target.value}))}/></label></div></EditorSection></div>;
   return <div className="management-editor"><EditorHeading title="雲端資料" subtitle={`目前本機 revision ${data.revision}`}/><div className="management-cloud-actions"><article><b>同步與保存統一由頁首執行</b><p>請使用頁首「同步最新」或「保存修改」。系統會先檢查啟動版本與雲端 revision；偵測分歧時會阻止覆寫。</p></article></div></div>;

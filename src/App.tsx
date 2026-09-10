@@ -381,6 +381,11 @@ export default function App() {
   const vesselAttentionDirectSaveSnapshots=useRef(new WeakSet<AppData>());
   // Exact explicit batch snapshots only (case-only or task/mixed); later edits still debounce.
   const internalControlBatchDirectSaveSnapshots=useRef(new WeakSet<AppData>());
+  // Only Management intents serialize here; the shared per-entry queue stays unchanged.
+  const managementSaveTail=useRef<Promise<unknown>>(Promise.resolve());
+
+  const managementSaveState=useRef({cloudBootstrapped,cloudWriteBlocked,cloudSyncing,cloudInitializationAllowed});
+  managementSaveState.current={cloudBootstrapped,cloudWriteBlocked,cloudSyncing,cloudInitializationAllowed};
   const liveCreatingTaskId=useRef('');
   liveCreatingTaskId.current=creatingTask?.id||'';
   const activeCloudIdentity = useRef('');
@@ -1760,6 +1765,43 @@ export default function App() {
 
   const commit = (updater: (draft: AppData) => void, action: string, entityType: string, entityId: string, detail: string) => {
     setData(prev => { const d = clone(prev); updater(d); return withAudit(d, currentUser, action, entityType, entityId, detail); });
+  };
+  const captureManagementContext=()=>{
+    const actorId=liveCurrentUserId.current,generation=identitySessionGeneration.current,config=getSupabaseConfig();
+    const token=config?configIoCoordinator.current.begin(config):null;
+    return ()=>liveCurrentUserId.current===actorId&&identitySessionGeneration.current===generation&&
+      (token?configIoCoordinator.current.isCurrent(token,getSupabaseConfig()):!getSupabaseConfig());
+  };
+  const commitManagement=(updater:(draft:AppData)=>void,action:string,entityType:string,entityId:string,detail:string,isCurrent=captureManagementContext()):Promise<boolean>=>{
+    const actorId=liveCurrentUserId.current;
+    const operation=managementSaveTail.current.then(async()=>{
+      if(!isCurrent())return false;
+      const state=managementSaveState.current,config=getSupabaseConfig();
+      if(!state.cloudBootstrapped||state.cloudWriteBlocked||state.cloudSyncing||cloudSyncInFlight.current)throw new Error('雲端目前不可保存，請先同步最新或稍後重試');
+      // Flush already scheduled generic callers before capturing their complete local delta.
+      flushSync(()=>{});
+      const baseline=liveData.current,actor=baseline.users.find(user=>user.id===actorId&&user.isActive);
+      if(!actor)throw new Error('目前身份已失效，請重新登入');
+      const draft=clone(baseline);updater(draft);
+      const snapshot=withAudit(draft,actor,action,entityType,entityId,detail);
+      if(!config){
+        if(!mayPersistLocalSnapshot({cloudConfigured:false,...state,activeCloudIdentity:activeCloudIdentity.current,currentCloudIdentity:cloudIdentity(config),localInitializationAllowed:import.meta.env.DEV})||!saveLocal(snapshot))throw new Error('本機保存失敗：瀏覽器儲存空間不足或不可用');
+        if(!isCurrent())return false;
+        flushSync(()=>{liveData.current=snapshot;setData(snapshot);});
+        return true;
+      }
+      // No optimistic Management setData: no passive effect can autosave this
+      // snapshot. Leave every existing generic caller's timer and queued delta intact.
+      await enqueueCloudSave(snapshot,isCurrent,false);
+      if(!isCurrent())return false;
+      const confirmed=confirmedCloudData.current;
+      if(!confirmed)throw new Error('雲端未確認保存結果');
+      const next=mergeConfirmedCloudSnapshot({baseline,current:liveData.current,confirmed,actorUserId:actorId,at:nowIso()});
+      flushSync(()=>{liveData.current=next;setData(next);});
+      return true;
+    }).catch(error=>{if(isCurrent())reportCloudSaveFailure(error);return false;});
+    managementSaveTail.current=operation;
+    return operation;
   };
   const mutationLeaseIsOwned=(sectionKey:string)=>{
     const lock=activeEditLockRef.current;
@@ -4880,7 +4922,7 @@ export default function App() {
         data={roleVisibleData} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} setSelected={setAgendaSelection}
         canSaveDailyMorning={currentUser.role==='owner'||currentUser.role==='admin'} onSaveDailyMorning={saveDailyMorningHistory} onOpenPreview={openReportPreview} onOpenHistory={openHistoricalReport} onPrint={()=>void printReportCenter()}/>
       }
-      {tab==='management' && canEnterManagement && <ManagementView data={data} currentUser={currentUser} commit={commit} onSaveSupabaseConfig={saveCloudConfiguration} />}</>}
+      {tab==='management' && canEnterManagement && <ManagementView data={data} currentUser={currentUser} commit={commitManagement} captureCommitContext={captureManagementContext} onSaveSupabaseConfig={saveCloudConfiguration} />}</>}
     </main>
     {currentUser.role!=='vessel'&&canEditBusinessContent&&(vesselEditorLeaseAuthorized||Boolean(vesselLeaseIncidentForEditor))&&editingVesselId&&activeVessels.some(vessel=>vessel.id===editingVesselId) && <VesselEditModal vessel={editingOperationalVessel} data={roleVisibleData} currentUser={currentUser} leaseMode={vesselLeaseMode} leaseMessage={vesselLeaseIncidentForEditor?.message||''} close={()=>void closeVesselEditor(activeEditLockRef.current)} onSave={saveVesselEditorDraft} addTask={id=>{void addTaskForVessel(id,true).then(opened=>{if(opened)setEditingVesselId('');});}} editTask={id=>{const vesselId=editingVesselId;const task=data.tasks.find(item=>item.id===id);if(!task)return alert('找不到對應待辦');setEditingVesselId('');void (async()=>{const result=await openTask(task,vesselId,vesselId);if(result==='failed')void openVesselEditor(vesselId);})();}} />}
     {currentUser.role!=='vessel'&&canEditBusinessContent&&batchManagedOpen && <BatchManagedVesselModal vessels={effectiveBatchSessionVessels} lockedVesselIds={batchLockedVesselIds} readOnly={batchManagedWriteSuspended} saving={batchManagedClosing} save={saveBatchManagedDrafts} cancel={()=>void cancelBatchManagedDrafts(renderedBatchManagedAuthorization)} close={()=>void closeBatchManaged(renderedBatchManagedAuthorization)} discard={()=>void discardBatchManagedChanges(renderedBatchManagedAuthorization)} onAddTask={id=>{void addTaskForVessel(id,false,true,renderedBatchTaskReturnContext);}} />}
