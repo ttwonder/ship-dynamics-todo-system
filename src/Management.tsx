@@ -63,6 +63,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
   const [section, setSection] = useState<Section>('directory');
   const [query, setQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('all');
+  const [showInactiveVessels, setShowInactiveVessels] = useState(false);
   const [directoryKind, setDirectoryKind] = useState<DirectoryKind>('all');
   const [directorySelection, setDirectorySelection] = useState(() => `user:${currentUser.id}`);
   const [selectedUserId, setSelectedUserId] = useState(currentUser.id);
@@ -265,6 +266,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
       }
       Object.assign(vessel, { name: shipDraft.name.trim() || shipDraft.shortName.trim(), shortName: shipDraft.shortName.trim() || shipDraft.name.trim(), fullName: shipDraft.fullName.trim(), shipType: shipDraft.shipType.trim(), fleetCategory: shipDraft.fleetCategory, isActive: shipDraft.isActive, assignedUserIds: assignedIds, delegateManagers, updatedAt: nowIso() });
       d.users.forEach(u => {
+        if (!shipDraft.isActive && u.role === 'vessel' && u.managedVesselIds.includes(id)) u.isActive = false;
         if (u.role === 'owner') { u.managedVesselIds = []; return; }
         if (!canManageVesselAssignments(u)) { vessel.delegateManagers = (vessel.delegateManagers || []).filter(delegate => delegate.userId !== u.id); return; }
         const assigned = assignedIds.includes(u.id);
@@ -291,7 +293,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
       if (vessel) { vessel.isActive = false; vessel.updatedAt = nowIso(); }
       d.users.forEach(u => {
         const wasBound = (u.managedVesselIds || []).includes(selectedVesselId);
-        u.managedVesselIds = (u.managedVesselIds || []).filter(id => id !== selectedVesselId);
+        // Retain the binding and personnel assignments; activity gates current access.
         if (wasBound && u.role === 'vessel') u.isActive = false;
       });
     }, '停用船舶', 'vessel', selectedVesselId, vesselDisplayName(target), transaction);
@@ -309,7 +311,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
   }, [activeUsers, activeVessels, directoryKind, query]);
   const personDepartments = Array.from(new Set(activeUsers.map(user => user.department).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'zh-TW'));
   const filteredPeople = activeUsers.filter(u => canManageUsers ? (owner || u.role !== 'owner') : u.id === currentUser.id).filter(u => departmentFilter === 'all' || u.department === departmentFilter).filter(u => !query.trim() || `${u.name} ${u.department} ${u.username} ${roleLabel(u.role)}`.toLowerCase().includes(query.trim().toLowerCase()));
-  const filteredVessels = activeVessels.filter(v => !query.trim() || `${v.name} ${v.shortName} ${v.fullName} ${v.shipType}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const filteredVessels = data.vessels.filter(v => showInactiveVessels || v.isActive).filter(v => !query.trim() || `${v.name} ${v.shortName} ${v.fullName} ${v.shipType}`.toLowerCase().includes(query.trim().toLowerCase()));
   const selectedDirectory = directoryItems.find(item => item.key === directorySelection) || directoryItems[0];
   const selectedAudit = data.auditLogs.find(log => log.id === auditId) || data.auditLogs[0];
   const selectedAuditPresentation = selectedAudit ? presentAuditLog(selectedAudit, data) : undefined;
@@ -348,7 +350,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
       </>}
 
       {section === 'vessels' && <>
-        <div className="management-master"><MasterHeader title="船舶" count={filteredVessels.length} query={query} setQuery={setQuery} action={{ label: '＋ 新增', onClick: startNewVessel }}/><div className="management-list">{filteredVessels.map(v => <button key={v.id} className={`management-list-item ${!creatingVessel && selectedVesselId === v.id ? 'active' : ''}`} onClick={() => selectVessel(v.id)}><span className="management-avatar vessel">🚢</span><span><b>{vesselDisplayName(v)}</b><small>{v.shipType || '未填船型'}｜{v.fleetCategory}</small></span><em>{managerNames(activeUsers, v.assignedUserIds).length ? `${managerNames(activeUsers, v.assignedUserIds).length} 人` : '0 人'}</em></button>)}</div></div>
+        <div className="management-master"><MasterHeader title="船舶" count={filteredVessels.length} query={query} setQuery={setQuery} action={{ label: '＋ 新增', onClick: startNewVessel }}/><label className="management-department-filter"><input type="checkbox" checked={showInactiveVessels} onChange={event => setShowInactiveVessels(event.target.checked)}/>顯示停用船舶</label><div className="management-list">{filteredVessels.map(v => <button key={v.id} className={`management-list-item ${!creatingVessel && selectedVesselId === v.id ? 'active' : ''}`} onClick={() => selectVessel(v.id)}><span className="management-avatar vessel">🚢</span><span><b>{vesselDisplayName(v)}</b><small>{v.shipType || '未填船型'}｜{v.fleetCategory}</small></span><em>{managerNames(activeUsers, v.assignedUserIds).length ? `${managerNames(activeUsers, v.assignedUserIds).length} 人` : '0 人'}</em></button>)}</div></div>
         <div className="management-detail"><VesselEditor draft={shipDraft} setDraft={next=>{setSaveNotice('');setShipDraft(next);}} creating={creatingVessel} users={activeUsers.filter(canManageVesselAssignments)} assignmentQuery={assignmentQuery} setAssignmentQuery={setAssignmentQuery} onSave={saveVessel} onDisable={disableVessel}/></div>
       </>}
 

@@ -515,11 +515,11 @@ export function normalizeAppData(value: unknown): AppData | null {
       delete task.closedDate;
       delete task.closedBy;
     }
-    const canonicalVessel = normalized.vessels.find(vessel => vessel.id === task.vesselId && vessel.isActive);
+    const canonicalVessel = normalized.vessels.find(vessel => vessel.id === task.vesselId);
     const ownerUserIds = taskOwnerUserIdsWereProvided.get(task.id)
       ? task.ownerUserIds
       : canonicalVessel?.assignedUserIds || [];
-    task.ownerUserIds = canonicalVessel
+    task.ownerUserIds = canonicalVessel && !canonicalVessel.isActive ? ownerUserIds : canonicalVessel
       ? Array.from(new Set(ownerUserIds.filter(id => isEligibleTaskOwner(
           normalized.settings.rolePermissions,
           normalized.users.find(user => user.id === id),
@@ -602,7 +602,8 @@ export function normalizeAppData(value: unknown): AppData | null {
     }
   });
   const activeVesselIds = new Set(normalized.vessels.filter(vessel => vessel.isActive).map(vessel => vessel.id));
-  if (normalized.internalControlCases.some(item => !activeVesselIds.has(item.vesselId) || validateInternalControlCase(item).length || item.statusLogs[0]?.text.trim() !== item.status.trim())) return null;
+  const retainedVesselIds = new Set(normalized.vessels.map(vessel => vessel.id));
+  if (normalized.internalControlCases.some(item => !retainedVesselIds.has(item.vesselId) || validateInternalControlCase(item).length || item.statusLogs[0]?.text.trim() !== item.status.trim())) return null;
   if (!normalized.users.some(user => user.role === 'owner')) {
     const designatedOwner = normalized.users.find(user => user.name === '朱世毅');
     if (designatedOwner) designatedOwner.role = 'owner';
@@ -619,20 +620,20 @@ export function normalizeAppData(value: unknown): AppData | null {
   });
   normalized.users.filter(user => ownerUserIds.has(user.id)).forEach(user => { user.managedVesselIds = []; });
   normalized.users.filter(user => user.role === 'vessel').forEach(user => {
-    const managed = user.managedVesselIds.filter((id, index, ids) => activeVesselIds.has(id) && ids.indexOf(id) === index);
+    const managed = user.managedVesselIds.filter((id, index, ids) => retainedVesselIds.has(id) && ids.indexOf(id) === index);
     const assigned = normalized.vessels.filter(vessel => vessel.isActive && vessel.assignedUserIds.includes(user.id)).map(vessel => vessel.id);
-    const binding = [...managed, ...assigned].find((id, index, ids) => activeVesselIds.has(id) && ids.indexOf(id) === index);
+    const binding = [...managed, ...assigned].find((id, index, ids) => retainedVesselIds.has(id) && ids.indexOf(id) === index);
     user.department = '船舶帳戶';
     user.managedVesselIds = binding ? [binding] : [];
-    if (!binding) user.isActive = false;
+    if (!binding || !activeVesselIds.has(binding)) user.isActive = false;
   });
   normalized.vessels.forEach(vessel => {
     vessel.assignedUserIds = vessel.assignedUserIds.filter(userId => !vesselUserIds.has(userId) && !ownerUserIds.has(userId));
     vessel.delegateManagers = vessel.delegateManagers.filter(delegate => normalized.users.some(user => user.id === delegate.userId && user.isActive && (user.role === 'admin' || user.role === 'operator')) && !vessel.assignedUserIds.includes(delegate.userId));
   });
   normalized.users.filter(user => user.isActive && (user.role === 'admin' || user.role === 'operator')).forEach(user => {
-    const explicitManaged = user.managedVesselIds.filter((id, index, ids) => activeVesselIds.has(id) && ids.indexOf(id) === index);
-    const assigned = normalized.vessels.filter(vessel => vessel.isActive && vessel.assignedUserIds.includes(user.id)).map(vessel => vessel.id);
+    const explicitManaged = user.managedVesselIds.filter((id, index, ids) => retainedVesselIds.has(id) && ids.indexOf(id) === index);
+    const assigned = normalized.vessels.filter(vessel => vessel.assignedUserIds.includes(user.id)).map(vessel => vessel.id);
     user.managedVesselIds = Array.from(new Set([...explicitManaged, ...assigned]));
   });
   normalized.vessels.forEach(vessel => {

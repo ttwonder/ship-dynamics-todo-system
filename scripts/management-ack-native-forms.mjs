@@ -53,7 +53,7 @@ export async function runManagementAckForms({a,qa,read,call,until,wait,write,rec
     action='新增船舶';entityType='vessel';entityId=sent.id;detail=intent.name;
    }else if(kind.startsWith('vessel')){
     const vessel=expected.vessels.find(v=>v.id===intent.id),sent=entity('vessels',intent.id);vessel.updatedAt=bounded(sent.updatedAt);
-    if(kind==='vessel-update')vessel.fullName=intent.fullName;else{vessel.isActive=false;expected.users.forEach(u=>{const bound=u.managedVesselIds.includes(intent.id);u.managedVesselIds=u.managedVesselIds.filter(id=>id!==intent.id);if(bound&&u.role==='vessel')u.isActive=false;});}
+    if(kind==='vessel-update')vessel.fullName=intent.fullName;else{vessel.isActive=false;expected.users.forEach(u=>{const bound=u.managedVesselIds.includes(intent.id);if(bound&&u.role==='vessel')u.isActive=false;});}
     action=kind==='vessel-update'?'更新船舶':'停用船舶';entityType='vessel';entityId=intent.id;detail=vessel.fullName||vessel.name||vessel.shortName;
    }else{
     entityType='settings';

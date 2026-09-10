@@ -106,6 +106,7 @@ try{
   initial.meetings=[{...meeting,id:'stats-meeting',subject:'STATS MEETING',status:'追蹤中',isAbnormal:true,isInternalControl:false,vessels:['qa-v1','qa-v2'],vesselScopeMode:'vessels',statusLogs:logs('meeting'),taskItems:[{id:'stats-decision',description:'STATS D',categories:['船員管理'],distributeToVessels:true}]},{...meeting,id:'stats-unrepresented',subject:'STATS UNREPRESENTED',status:'追蹤中',isAbnormal:true,isInternalControl:false,vessels:['qa-v2'],vesselScopeMode:'vessels',taskItems:[],statusLogs:logs('unrepresented')}];
   initial.internalControlCases=[{...standalone,id:'stats-standalone',vesselId:'qa-v2',description:'STATS STANDALONE',linkedTaskId:undefined,isClosed:false,priority:'高',createdAt:at,statusLogs:logs('standalone')}];
   initial.agendaReports=[{id:'qa-report',title:'QA report',vesselIds:['qa-v1'],createdBy:'qa-owner',createdAt:at,taskCount:4,kind:'ad-hoc',snapshot:{vessels:structuredClone(initial.vessels),tasks:structuredClone(initial.tasks),meetings:structuredClone(initial.meetings),qaUnknown:'QA_UNLOADED_DETAIL_SENTINEL'.repeat(25000)}}];
+  if((process.env.QA_MGACK_MODE||'').startsWith('lifecycle'))(await import('./vessel-lifecycle-native.mjs')).prepareVesselLifecycle(initial);
  },databaseFactory:async()=>native.adapter});
  receipt.origin=qa.origin;assert.equal((await (await fetch(qa.origin+'/__qa/health')).json()).kind,'REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES');
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
@@ -146,7 +147,7 @@ try{
  const choose=async name=>a.activate(`[...document.querySelectorAll('.management-master .management-list button')].find(n=>n.querySelector('b')?.innerText===${JSON.stringify(name)})`);
  const nameField="[...document.querySelectorAll('.management-form label')].find(n=>n.textContent==='姓名')?.querySelector('input')";
  const mode=process.env.QA_MGACK_MODE||'held';receipt.mode=mode;
- if(mode.startsWith('forms')){await (await import('./management-ack-native-forms.mjs')).runManagementAckForms({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setRelease:value=>releaseCommit=value,mode});receipt.status='PASS';}else{
+ if(mode.startsWith('lifecycle')){await (await import('./vessel-lifecycle-native.mjs')).runVesselLifecycle({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setRelease:value=>releaseCommit=value,freshReadback,mode});receipt.status='PASS';}else if(mode.startsWith('forms')){await (await import('./management-ack-native-forms.mjs')).runManagementAckForms({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setRelease:value=>releaseCommit=value,mode});receipt.status='PASS';}else{
  const pass=id=>{receipt.cases.push({caseId:id,layer:'original-UI-native-PG',status:'PASS'});save();};
  await a.click('管理');await until(()=>a.eval("Boolean(document.querySelector('.management-view'))"),'management');await sub('人員');await choose('QA SPARE');
  const before=await read(),started=Date.now();let expected,held=false,readHeld=false,patches=0;

@@ -36,6 +36,7 @@ import { vesselDisplayName } from './vesselDisplay';
 import { applyItineraryOperationalWriteMask, applyVesselOperationalDraft, vesselOperationalDraftEquals } from './vesselOperationalDraft';
 import { applyItineraryProjectionSnapshot, buildItineraryProjectionSnapshot, resolveVesselWithItineraryProjection, type ItineraryProjectionSnapshot } from './itinerary/itineraryOperationalProjection';
 import { useItineraryOperationalProjection } from './itinerary/useItineraryOperationalProjection';
+import { selectOperationalTasks, selectOperationalCases } from './vesselLifecycle';
 import { taskHasVessel, taskReportShipTypeLabel, taskReportVesselLabel, taskShipTypeLabel, taskVesselIds, taskVesselLabel, taskVessels } from './taskVesselScope';
 import { buildTaskReadOnlyEditorData, type TaskReadOnlyEditorData } from './taskReadOnlyProjection';
 import { deriveVesselAttention, manualVesselAttentionAllowed } from './vesselAttention';
@@ -1850,7 +1851,7 @@ export default function App() {
   const batchTargetVessels = useMemo(()=>batchTargetVesselsFor(activeVessels,currentUser,batchSelectedVesselIds),[activeVessels,currentUser,batchSelectedVesselIds]);
   const batchSessionVessels = useMemo(()=>batchManagedOpen?batchSessionVesselsFor(activeVessels,batchTargetVesselIdsRef.current):[],[activeVessels,batchManagedOpen]);
   const taskVisibilityRelationships = useMemo(()=>({internalControlCases:data.internalControlCases,meetings:data.meetings,visibleVesselIds:activeVessels.map(vessel=>vessel.id)}),[data.internalControlCases,data.meetings,activeVessels]);
-  const roleVisibleTasks = useMemo(()=>selectTasksVisibleToUser(data.tasks,currentUser,taskVisibilityRelationships),[data.tasks,currentUser,taskVisibilityRelationships]);
+  const roleVisibleTasks = useMemo(()=>selectOperationalTasks(selectTasksVisibleToUser(data.tasks,currentUser,taskVisibilityRelationships),data.vessels),[data.tasks,data.vessels,currentUser,taskVisibilityRelationships]);
   const roleVisibleMeetings=useMemo(()=>{
     if(!currentUser)return [];
     if(currentUser.role==='owner'||currentUser.role==='admin')return data.meetings;
@@ -1863,8 +1864,8 @@ export default function App() {
     const retained=activeEditLock?.sectionKey.startsWith('internal-control:')&&relatedMutationHandoffMatchesCurrent(activeEditLock)
       ?confirmedCloudData.current?.internalControlCases.find(item=>internalControlEditLockKey(item.id)===activeEditLock.sectionKey):undefined;
     const cases=retained&&!data.internalControlCases.some(item=>item.id===retained.id)?[...data.internalControlCases,retained]:data.internalControlCases;
-    return selectInternalControlCasesVisibleToUser(cases,data.tasks,currentUser,activeVessels.map(vessel=>vessel.id));
-  },[data.internalControlCases,data.tasks,currentUser,activeVessels,activeEditLock,relatedMutationHandoffVersion]);
+    return selectOperationalCases(selectInternalControlCasesVisibleToUser(cases,data.tasks,currentUser,activeVessels.map(vessel=>vessel.id)),data.vessels);
+  },[data.internalControlCases,data.tasks,data.vessels,currentUser,activeVessels,activeEditLock,relatedMutationHandoffVersion]);
   const roleVisibleData=useMemo(()=>({...data,tasks:roleVisibleTasks,meetings:roleVisibleMeetings,internalControlCases:roleVisibleInternalControlCases,taskDismissals:currentUser?data.taskDismissals.filter(item=>item.userId===currentUser.id):[]}),[data,roleVisibleTasks,roleVisibleMeetings,roleVisibleInternalControlCases,currentUser?.id]);
   const taskLockIsAuthorized = (task: TaskItem) => canAcquireTaskEditLock(task,currentUser,canEditBusinessContent,activeVessels,data.settings.rolePermissions);
   const authorizedEditLockKeys=useMemo(()=>new Set<string>([
