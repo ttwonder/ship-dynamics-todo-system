@@ -104,6 +104,8 @@ export interface StatusLog {
   text: string;
 }
 
+export interface VesselResponsibility { vesselId: string; managerUserIds: string[]; }
+
 export interface TaskVesselProgress {
   vesselId: string;
   status: string;
@@ -116,6 +118,7 @@ export interface TaskVesselProgress {
 }
 
 export interface TaskItem {
+  vesselResponsibilities?: VesselResponsibility[];
   id: string;
   vesselId: string;
   vesselIds?: string[];
@@ -156,6 +159,7 @@ export interface TaskItem {
 }
 
 export interface InternalControlCase {
+  vesselResponsibilities?: VesselResponsibility[];
   id: string;
   vesselId: string;
   reportDate: string;
@@ -205,6 +209,7 @@ export interface MeetingTaskItem {
 }
 
 export interface TemporaryMeeting {
+  vesselResponsibilities?: VesselResponsibility[];
   id: string;
   subject: string;
   status?: TemporaryMeetingStatus;

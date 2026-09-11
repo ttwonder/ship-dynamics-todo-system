@@ -1,3 +1,4 @@
+import { rebindReopenedVesselResponsibilities, canRetainVesselCommonContact, meetingHandoverVesselIds } from './vesselManagerHandover';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { flushSync } from 'react-dom';
@@ -577,8 +578,10 @@ export default function TemporaryMeetingsPage({ loadMeetings, authorizationEpoch
       if(invalidParticipant){failure='與會人員已停用或不存在，請重新選擇';return prev;}
       const invalidTracking=requestedDraft.trackingUserIds.some(id=>!prev.users.some(user=>user.id===id&&user.isActive&&user.role!=='vessel'));
       if(invalidTracking){failure='追蹤窗口已停用或不存在，請重新選擇';return prev;}
+      const previousContacts=prev.meetings.find(item=>item.id===id);
+      const previousContactScope=previousContacts?meetingHandoverVesselIds(prev,previousContacts):[];
       const invalidResponsible=requestedDraft.responsibleUserIds.some(id=>liveScopeVessels.length
-        ? !isEligibleTaskOwner(prev.settings.rolePermissions,prev.users.find(user=>user.id===id),liveScopeVessels)
+        ? !(liveScopeVessels.every(v=>previousContactScope.includes(v.id))&&canRetainVesselCommonContact(previousContacts,id,previousContacts?.responsibleUserIds||[],prev.users.find(user=>user.id===id)))&&!isEligibleTaskOwner(prev.settings.rolePermissions,prev.users.find(user=>user.id===id),liveScopeVessels)
         : !prev.users.some(user=>user.id===id&&user.isActive&&user.role!=='vessel'));
       if(invalidResponsible){failure='负责人已停用或不具备全部涉船范围权限，请重新选择';return prev;}
       const liveMeeting=prev.meetings.find(item=>item.id===id);
@@ -707,6 +710,7 @@ export default function TemporaryMeetingsPage({ loadMeetings, authorizationEpoch
       }
       draftData.notifications=draftData.notifications.slice(0,1000);
       applied=true;
+      rebindReopenedVesselResponsibilities(prev,draftData);
       persistedDraft=effectiveDraft;
       persistedUpdatedAt=at;
       let auditedDraft=draftData;
@@ -873,6 +877,7 @@ export default function TemporaryMeetingsPage({ loadMeetings, authorizationEpoch
           target.latestStatus=statusText;
           target.statusLogs=[{id:uid('meeting-log'),at,by:liveUser.name,byUserId:liveUser.id,text:statusText},...(target.statusLogs||[])];
           target.updatedAt=at;
+          rebindReopenedVesselResponsibilities(prev,draftData);
           persistedMeeting=structuredClone(target);
           applied=true;
           draftData=withAudit(draftData,liveUser,transition==='complete'?'完成臨會/專題待辦':'重新開啟臨會/專題待辦','meeting',meeting.id,richTextToPlainText(targetItem.description)||itemId);
@@ -977,6 +982,7 @@ export default function TemporaryMeetingsPage({ loadMeetings, authorizationEpoch
           target.latestStatus=statusText;
           target.statusLogs=[{id:uid('meeting-log'),at,by:liveUser.name,byUserId:liveUser.id,text:statusText},...(target.statusLogs||[])];
           target.updatedAt=at;
+          rebindReopenedVesselResponsibilities(prev,draftData);
           persistedMeeting=structuredClone(target);
           applied=true;
           draftData=withAudit(draftData,liveUser,transition==='close'?'結案臨會/專題':'重新開啟臨會/專題','meeting',meeting.id,meeting.subject||meeting.id);

@@ -69,12 +69,15 @@ export function taskInternalControlCreationLockKeys(
   snapshot:Pick<TaskRelationSnapshot,'tasks'|'internalControlCases'>,
   candidate:TaskInternalControlCreationCandidate,
   meetingSource:boolean,
+  projectedCaseMayBeUnstored=false,
 ):string[]{
   if(meetingSource||!candidate.isInternalControl)return[];
   const existing=snapshot.tasks.find(task=>task.id===candidate.id);
   if(!existing)return[];
   const linkedCase=snapshot.internalControlCases.some(item=>item.id===existing.internalControlCaseId||item.linkedTaskId===existing.id);
-  return linkedCase?[]:[internalControlCreationLockKey(candidate.id)];
+  // Record reads may synthesize a legacy linked case before it exists in SQL.
+  // Keep the entity lease and also reserve this task's creation key; no global lock.
+  return linkedCase&&!projectedCaseMayBeUnstored?[]:[internalControlCreationLockKey(candidate.id)];
 }
 
 export function relatedEntityLockKeysForSection(snapshot:TaskRelationSnapshot,sectionKey:string):string[]{

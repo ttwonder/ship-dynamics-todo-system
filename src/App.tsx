@@ -1,3 +1,4 @@
+import { rebindReopenedVesselResponsibilities, changedVesselTeams, handoverReadTargets, applyVesselManagerHandover, canRetainVesselCommonContact, primaryVesselTeam } from './vesselManagerHandover';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import fpmcLogo from './assets/fpmc-logo.png';
@@ -131,7 +132,7 @@ type SavePhase='saved'|'dirty'|'queued'|'saving'|'error';
 type SaveToast={id:number;kind:'success'|'info'|'warning'|'error';title:string;detail:string};
 type CloudBlockLockGuard={section_key:string;locked_by:string};
 type RelatedMutationEditorHandoff=DurableRelatedMutationHandoff&{discardRejected?:()=>Promise<boolean>};
-type PendingCloudSaveIntent={snapshot:AppData;baseSnapshot:AppData|null;token:ReturnType<ReturnType<typeof createAsyncConfigCoordinator>['begin']>;savedBy:string;actorUserId:string;identityGeneration:number;lockGuards:CloudBlockLockGuard[];isCurrent:()=>boolean;canSubmit:()=>boolean;renderRebase:boolean;visibleBaseline:AppData|null};
+type PendingCloudSaveIntent={handoverReadRevision?:number;snapshot:AppData;baseSnapshot:AppData|null;token:ReturnType<ReturnType<typeof createAsyncConfigCoordinator>['begin']>;savedBy:string;actorUserId:string;identityGeneration:number;lockGuards:CloudBlockLockGuard[];isCurrent:()=>boolean;canSubmit:()=>boolean;renderRebase:boolean;visibleBaseline:AppData|null};
 
 export function selectCreationDraftForQuarantine(input:{ownerUserId:string;leaseOwnerId:string;currentTask:TaskItem|null;latest?:CreationDraftRecord;attempt?:CreationDraftRecord}){
   const retained=input.latest?.leaseOwnerId===input.leaseOwnerId?input.latest.task:input.attempt?.leaseOwnerId===input.leaseOwnerId?input.attempt.task:input.currentTask;
@@ -800,7 +801,7 @@ export default function App() {
     for(const {guard,config:guardConfig} of transientCloudBlockLockGuards.current.values())if(sameCloudConfig(guardConfig,config))guards.push(guard);
     return[...new Map(guards.map(guard=>[`${guard.section_key}|${guard.locked_by}`,guard])).values()];
   };
-  const enqueueCloudSave = (snapshot: AppData,isCurrent:()=>boolean=()=>true,renderRebase=true,canSubmit:()=>boolean=isCurrent): Promise<void> => {
+  const enqueueCloudSave = (snapshot: AppData,isCurrent:()=>boolean=()=>true,renderRebase=true,canSubmit:()=>boolean=isCurrent,handoverReadRevision?:number): Promise<void> => {
     if(!isCurrent()||(relatedMutationHandoffMatchesCurrent(activeEditLockRef.current)&&!mutationLeaseIsOwned(activeEditLockRef.current!.sectionKey)))return Promise.reject(new StaleAsyncConfigError());
     const requestConfig=getSupabaseConfig();
     if (!requestConfig||!hasCurrentCloudIdentity()) return Promise.reject(new Error('雲端工作區 identity 已變更'));
@@ -808,7 +809,7 @@ export default function App() {
     const requestActorUserId=currentUser?.id||'';
     const requestIdentityGeneration=identitySessionGeneration.current;
     hasUnsavedWork.current=true;
-    const completion=pendingCloudData.current.enqueue({snapshot,baseSnapshot:confirmedCloudData.current?clone(confirmedCloudData.current):null,token:requestToken,savedBy:currentUser?.name||'unknown',actorUserId:requestActorUserId,identityGeneration:requestIdentityGeneration,lockGuards:captureCloudBlockLockGuards(requestConfig),renderRebase,visibleBaseline:renderRebase?null:clone(liveData.current),isCurrent,canSubmit});
+    const completion=pendingCloudData.current.enqueue({handoverReadRevision,snapshot,baseSnapshot:confirmedCloudData.current?clone(confirmedCloudData.current):null,token:requestToken,savedBy:currentUser?.name||'unknown',actorUserId:requestActorUserId,identityGeneration:requestIdentityGeneration,lockGuards:captureCloudBlockLockGuards(requestConfig),renderRebase,visibleBaseline:renderRebase?null:clone(liveData.current),isCurrent,canSubmit});
     clearStaleSaveSuccessToast();
     const validateCompletion=()=>{if(!isCurrent()||liveCurrentUserId.current!==requestActorUserId||identitySessionGeneration.current!==requestIdentityGeneration||!configIoCoordinator.current.isCurrent(requestToken,getSupabaseConfig()))throw new StaleAsyncConfigError();};
     if (cloudSaveInFlight.current) return completion.then(validateCompletion);
@@ -907,7 +908,9 @@ export default function App() {
                 assertActorAuthorizedForAppDataChange(remote,candidate,actorUserId);
                 const actorGuard=actorStorageAuthorizationGuard(remote,storageRemote,actorUserId);
                 if(!actorGuard)throw new CloudRebaseConflictError(['authorization-domain']);
-                const strictAuthorizationGuard=appDataAuthorizationDomainChanged(remote,candidate)?authorizationDomainGuard(storageRemote):null;
+                const strictAuthorizationGuard=pending.handoverReadRevision!==undefined
+                  ? {...authorizationDomainGuard(storageRemote),handoverReadRevision:pending.handoverReadRevision}
+                  : appDataAuthorizationDomainChanged(remote,candidate)?authorizationDomainGuard(storageRemote):null;
                 const runWithCurrentRecoveryLocks=(run:(guards:CloudBlockLockGuard[])=>Promise<AppData>)=>runWithCloudSaveRecoveryLocks({
                   operations,
                   existingGuards:lockGuards,
@@ -1799,10 +1802,25 @@ export default function App() {
       if(!state.cloudBootstrapped||state.cloudWriteBlocked||state.cloudSyncing||cloudSyncInFlight.current)throw new Error('雲端目前不可保存，請先同步最新或稍後重試');
       // Flush already scheduled generic callers before capturing their complete local delta.
       flushSync(()=>{});
-      const baseline=liveData.current,actor=baseline.users.find(user=>user.id===actorId&&user.isActive);
+      let baseline=liveData.current;
+      const assignmentDraft=clone(baseline);updater(assignmentDraft);
+      const changedTeams=changedVesselTeams(baseline,assignmentDraft);
+      if(changedTeams.length&&config?.storageMode==='records-v1'){
+        if(!await loadRecordActionScope('home',isCurrent,true))return false;
+        const discovered=liveData.current;
+        const candidate=clone(discovered);updater(candidate);
+        const targets=handoverReadTargets(discovered,changedVesselTeams(discovered,candidate));
+        if(!await loadRecordActionScope({targets},isCurrent,true))return false;
+        if(liveData.current.revision!==discovered.revision)throw new Error('交接讀取期間資料已變更，請重新保存');
+        baseline=liveData.current;
+      }
+      const actor=baseline.users.find(user=>user.id===actorId&&user.isActive);
       if(!actor)throw new Error('目前身份已失效，請重新登入');
       const draft=clone(baseline);updater(draft);
-      const snapshot=withAudit(draft,actor,action,entityType,entityId,detail);
+      const handedOver=applyVesselManagerHandover(baseline,draft);
+      // Legacy snapshot/local saves retain their existing atomic save route.
+      const handoverDetail=handedOver.length?JSON.stringify(handedOver.map(vesselId=>({vesselId,before:primaryVesselTeam(baseline,vesselId),after:primaryVesselTeam(draft,vesselId),events:handoverReadTargets(draft,[vesselId]).filter(target=>{const previous=baseline[target.collection].find(row=>row.id===target.id),next=draft[target.collection].find(row=>row.id===target.id);return JSON.stringify((previous as {vesselResponsibilities?:unknown})?.vesselResponsibilities)!==JSON.stringify((next as {vesselResponsibilities?:unknown})?.vesselResponsibilities);} )} ))):'';
+      const snapshot=withAudit(draft,actor,action,entityType,entityId,handoverDetail?`${detail}\n逐船責任交接：${handoverDetail}`:detail);
       if(!config){
         if(!mayPersistLocalSnapshot({cloudConfigured:false,...state,activeCloudIdentity:activeCloudIdentity.current,currentCloudIdentity:cloudIdentity(config),localInitializationAllowed:import.meta.env.DEV})||!saveLocal(snapshot))throw new Error('本機保存失敗：瀏覽器儲存空間不足或不可用');
         if(!isCurrent())return false;
@@ -1811,7 +1829,7 @@ export default function App() {
       }
       // No optimistic Management setData: no passive effect can autosave this
       // snapshot. Leave every existing generic caller's timer and queued delta intact.
-      await enqueueCloudSave(snapshot,isCurrent,false);
+      await enqueueCloudSave(snapshot,isCurrent,false,isCurrent,config.storageMode==='records-v1'&&handedOver.length?baseline.revision:undefined);
       if(!isCurrent())return false;
       const confirmed=confirmedCloudData.current;
       if(!confirmed)throw new Error('雲端未確認保存結果');
@@ -2750,7 +2768,7 @@ export default function App() {
       if(!previous.syncToTask&&candidate.syncToTask&&!hasPermission(prev.settings.rolePermissions,liveUser,'createTasks')){failure='目前身份無權建立同步要事';return prev;}
       if(candidate.isClosed!==previous.isClosed&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')){failure='目前身份無權結案或重新開啟內控案件';return prev;}
       const draft=clone(prev);
-      try{updateInternalControlCase(draft,candidate,expectedUpdatedAt,liveUser,nowIso(),projection);}
+      try{updateInternalControlCase(draft,candidate,expectedUpdatedAt,liveUser,nowIso(),projection);rebindReopenedVesselResponsibilities(prev,draft);}
       catch(error:any){failure=error.message||String(error);return prev;}
       applied=true;
       return withAudit(draft,liveUser,candidate.isClosed&&!previous.isClosed?'結案內控異常':!candidate.isClosed&&previous.isClosed?'重新開啟內控異常':'更新內控異常','internal-control',candidate.id,richTextToPlainText(candidate.description)||candidate.id);
@@ -2974,7 +2992,7 @@ export default function App() {
       const savedScopeIds=taskVesselIds(saved);
       const savedScopeVessels=taskVessels(saved,prev.vessels);
       if(!savedScopeVessels.length||savedScopeVessels.length!==savedScopeIds.length||!canAccessAllVessels(prev.settings.rolePermissions,liveUser,savedScopeVessels)){failure='最終涉船範圍不存在或目前身份無權保存';return prev;}
-      if(saved.ownerUserIds.some(id=>!isEligibleTaskOwner(prev.settings.rolePermissions,prev.users.find(user=>user.id===id),savedScopeVessels))){failure='負責人已停用或不具備最終涉船範圍權限，請重新選擇';return prev;}
+      if(saved.ownerUserIds.some(id=>!( !creating&&savedScopeIds.every(vesselId=>taskVesselIds(previous).includes(vesselId))&&canRetainVesselCommonContact(previous,id,previous.ownerUserIds,prev.users.find(user=>user.id===id)))&&!isEligibleTaskOwner(prev.settings.rolePermissions,prev.users.find(user=>user.id===id),savedScopeVessels))){failure='負責人已停用或不具備最終涉船範圍權限，請重新選擇';return prev;}
       const kind=creating?'task_created':cancelled?'internal_control_cancelled':'task_updated';
       const previousNoticeVessels=creating?[]:cancelled?protectedVessels:taskVessels(previous,prev.vessels);
       const previousNoticeTask=creating?null:{
@@ -3005,6 +3023,7 @@ export default function App() {
       draft.taskDismissals=clearDismissalsForNewTaskAssignments(draft.taskDismissals,creating?undefined:previous,saved,previousAssigneeIds,nextAssigneeIds);
       try{reconcileInternalControlAfterTaskSave(draft,creating?undefined:previous,saved,liveUser,saveAt);}
       catch(error:any){failure=error.message||String(error);return prev;}
+      rebindReopenedVesselResponsibilities(prev,draft);
       const taskAttentionChangedVesselIds:string[]=[];
       draft.vessels.filter(item=>taskHasVessel(saved,item.id)).forEach(targetVessel=>{
         const attention=mergeAttentionFromCategories(targetVessel.weeklyAttention,saved.categories);
@@ -3258,7 +3277,7 @@ export default function App() {
           ...taskVesselIds(candidate)
             .filter(vesselId=>snapshot.vessels.some(vessel=>vessel.id===vesselId))
             .map(vesselId=>`vessel:${vesselId}`),
-          ...taskInternalControlCreationLockKeys(snapshot,candidate,isMeetingTaskSource(candidate)),
+          ...taskInternalControlCreationLockKeys(snapshot,candidate,isMeetingTaskSource(candidate),getSupabaseConfig()?.storageMode==='records-v1'),
         ],
       );
       if(!durable&&!applied)alert(failure);
@@ -3549,6 +3568,7 @@ export default function App() {
       }
       draft.notifications=[...notices,...draft.notifications].slice(0,1000);
       applied=true;
+      rebindReopenedVesselResponsibilities(prev,draft);
       let audited=withAudit(draft,liveUser,'更新單船進度','task',saved.id,`${vesselDisplayName(vessel)}｜${normalizedProgress.status||'未填狀態'}｜${normalizedProgress.isClosed?'已結案':'未結'}`);
       if(meetingLifecycleChanged&&liveMeeting)audited=withAudit(audited,liveUser,nextOverallClosed?'同步完成臨會/專題待辦':'同步重新開啟臨會/專題待辦','meeting',liveMeeting.id,richTextToPlainText(saved.description)||saved.id);
       return audited;
@@ -3925,6 +3945,7 @@ export default function App() {
         catch(error:any){failure=error.message||String(error);return prev;}
         draft.tasks[taskIndex]=updatedTask;
         draft.meetings[meetingIndex]=targetMeeting;
+        rebindReopenedVesselResponsibilities(prev,draft);
         if(!meetingDecisionLifecycleIsConsistent(targetMeeting,draft.tasks,taskId)){failure='父會議與關聯待辦狀態同步未完成';return prev;}
         const vessels=taskVessels(updatedTask,draft.vessels);
         const noticeTask={...updatedTask,ownerUserIds:updatedTask.ownerUserIds.filter(id=>isEligibleTaskOwner(draft.settings.rolePermissions,draft.users.find(user=>user.id===id),vessels))};

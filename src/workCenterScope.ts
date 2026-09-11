@@ -3,7 +3,7 @@ import { isMeetingAttentionTask, isVesselDelegatedMeetingTask } from './taskAtte
 import { userManagesInternalControlVessel } from './internalControlWorkflow';
 import { taskVesselIds } from './taskVesselScope';
 import { taskIsClosedForScope } from './taskVesselProgress';
-import { hasActiveVesselDelegation } from './vesselDelegation';
+import { vesselResponsibilityIncludes } from './vesselManagerHandover';
 import { isWorkCenterItemDismissed } from './taskDismissals';
 
 const meetingInvolvesUser = (meeting: TemporaryMeeting | undefined, userId: string) => Boolean(
@@ -24,7 +24,7 @@ export function taskBelongsToUserWorkCenter(
   const meeting = task.sourceMeetingId ? meetings.find(item => item.id === task.sourceMeetingId) : undefined;
   const scopeVessels = taskScopeVessels(task, visibleVessels);
   const assignedToScopedVessel = scopeVessels.some(vessel =>
-    vessel.assignedUserIds.includes(user.id) || user.managedVesselIds.includes(vessel.id) || hasActiveVesselDelegation(vessel, user.id),
+    vesselResponsibilityIncludes(task,vessel,user),
   );
   const explicitlyResponsible = task.ownerUserIds.includes(user.id);
 
@@ -56,6 +56,6 @@ export function selectUserWorkCenterInternalCases(
     if (isWorkCenterItemDismissed({ taskDismissals: data.taskDismissals || [] }, user.id, 'internal-control', item.id)) return false;
     if (item.isClosed || item.linkedTaskId) return false;
     const vessel = vesselMap.get(item.vesselId);
-    return Boolean(vessel && userManagesInternalControlVessel(user, vessel));
+    return Boolean(vessel && (user.role==='owner'||user.role==='admin' ? userManagesInternalControlVessel(user,vessel) : vesselResponsibilityIncludes(item,vessel,user)));
   });
 }

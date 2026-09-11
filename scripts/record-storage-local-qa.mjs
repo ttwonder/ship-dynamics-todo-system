@@ -10,7 +10,7 @@ import {shipExcelRpcArgs} from './ship-itinerary-excel-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,scopedRead=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null}={}) {
+export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,scopedRead=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
  if(preparePerformanceFixture&&!performanceTrace)throw new Error('Performance fixture requires explicit performanceTrace');
  // Opt-in private native QA supplies an already identity-verified connection.
  // The existing browser/PGlite default and migration/seed chain stay unchanged.
@@ -18,9 +18,10 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
  let origin='',http,vite,loseItineraryAck=false,loseReportAck=false,losePruneAck=false;
  let recordFault=null,uiMiddleware=null;
- const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:'records-v1',readMode:scopedRead?'scoped-v1':'delta-v1'});
+ const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:legacySnapshot?'legacy':'records-v1',readMode:legacySnapshot?'snapshot':scopedRead?'scoped-v1':'delta-v1'});
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
+  ...(legacySnapshot?{apply_ship_dynamics_block_patch_v2:requestArgs,get_ship_dynamics_block_patch_receipt:requestArgs}:{}),
   ...(shipExcel?shipExcelRpcArgs:{}),
   ...recordWriteArgs,
   ...(taskMember?Object.fromEntries(['save_ship_dynamics_task_member_v1','get_ship_dynamics_task_member_receipt_v1'].map(name=>[name,['p_workspace_key','p_operation_id','p_task_id','p_vessel_id','p_command:jsonb','p_expected:jsonb','p_actor_user_id','p_actor_guard:jsonb','p_lock_guards:jsonb']])):{}),
@@ -51,6 +52,8 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
   await db.exec('create role anon nologin;create role authenticated nologin;');
   for(const path of ['supabase/schema.sql','supabase/development/20260906_appdata_record_store.sql','supabase/development/20260906_appdata_record_delta.sql'])await db.exec(fs.readFileSync(path,'utf8'));
   if(taskMember)await db.exec(fs.readFileSync('supabase/development/20260909_task_member_protocol.sql','utf8'));
+  if(handoverMigrationFixture)await handoverMigrationFixture(db,'before');
+  else await db.exec(fs.readFileSync('supabase/development/20260911_vessel_manager_handover.sql','utf8'));
   if(scopedRead)await db.exec(fs.readFileSync('supabase/development/20260908_appdata_record_scoped_read.sql','utf8'));
   vite=await createViteServer({cacheDir:process.env.QA_VITE_CACHE_DIR,server:{middlewareMode:true,...(process.env.QA_HMR_PORT?{hmr:{port:Number(process.env.QA_HMR_PORT)}}:{})},logLevel:'silent',plugins:[{
    name:'isolated-record-qa-label',
@@ -67,8 +70,9 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
   if(dailyMorning)morningInput(initial);
   if(internalControl)await (await import('./record-internal-control-local-fixture.mjs')).internalControlInput(initial,vite);
   if(preparePerformanceFixture)await preparePerformanceFixture(initial,vite);
-  const imported=(await db.query('select import_ship_dynamics_records_v1($1,$2::jsonb) as result',[workspace,JSON.stringify(initial)])).rows[0].result;
-  if(!imported.ok)throw new Error(`QA import failed: ${imported.code}`);
+  if(!legacySnapshot){const imported=(await db.query('select import_ship_dynamics_records_v1($1,$2::jsonb) as result',[workspace,JSON.stringify(initial)])).rows[0].result;if(!imported.ok)throw new Error(`QA import failed: ${imported.code}`);}
+  if(legacySnapshot){const {normalizeAppData}=await vite.ssrLoadModule('/src/normalize.ts');const payload=normalizeAppData(initial);if(!payload)throw new Error('invalid legacy fixture');await db.query('insert into public.ship_dynamics_app_state(workspace_key,payload,revision,updated_by) values($1,$2::jsonb,1,$3)',[workspace,JSON.stringify(payload),'QA OWNER']);}
+  if(handoverMigrationFixture)await handoverMigrationFixture(db,'after-import');
   await installItineraryFixture(db);
   await seedItineraryFixture(db,vite,workspace,initial.vessels);
   await db.exec(fs.readFileSync(recordItinerarySql,'utf8'));
@@ -85,7 +89,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
    }
   }
   if(dailyMorning){await installMorningOracle(db);await seedMorningOracle(db,initial,workspace,{sortedFormal:dailyMorning==='browser'});if(fs.existsSync(schedulerSql))await db.exec(fs.readFileSync(schedulerSql,'utf8'));}
-  if(internalControl)await (await import('./record-internal-control-local-fixture.mjs')).seedInternalControlLegacy(db,workspace,initial);
+  if(internalControl&&!legacySnapshot)await (await import('./record-internal-control-local-fixture.mjs')).seedInternalControlLegacy(db,workspace,initial);
   const itineraryBaseline=await snapshotItineraryAuthority(db);
   const send=(res,status,value)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');res.end(JSON.stringify(value));};
   http=createHttpServer(async(req,res)=>{
@@ -98,6 +102,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
     if(url.pathname==='/__qa/health'){send(res,200,{ready:true,kind:db.qaKind||'REAL_UI_SYNTHETIC_DATA_LOCAL_PGLITE'});return;}
     if(url.pathname.startsWith('/rest/v1/')){
      const name=url.pathname.slice('/rest/v1/rpc/'.length),args=rpcArgs[name];
+     if(legacySnapshot&&req.method==='GET'&&url.pathname==='/rest/v1/ship_dynamics_app_state'&&url.searchParams.get('workspace_key')==='eq.'+workspace){const row=(await db.query('select payload,revision,updated_at,updated_by from public.ship_dynamics_app_state where workspace_key=$1',[workspace])).rows[0];metrics.push({rpc:'legacy-snapshot-read',status:'SQL_OK'});send(res,200,row??null);return;}
      if(req.method!=='POST'||!url.pathname.startsWith('/rest/v1/rpc/')||!args){metrics.push({rpc:name,status:'UNSUPPORTED'});send(res,404,{code:'PGRST202',message:`Internal QA does not implement ${name}; no success substituted`});return;}
      const chunks=[];let length=0;for await(const chunk of req){length+=chunk.length;if(length>12_000_000)throw new Error('QA body limit');chunks.push(chunk);}
      const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));

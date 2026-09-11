@@ -9,6 +9,7 @@ import {
 } from './internalControlWorkflow';
 import { isMeetingTaskSource } from './taskCategories';
 import { taskVesselIds } from './taskVesselScope';
+import { canRetainVesselCommonContact } from './vesselManagerHandover';
 import { isEligibleTaskOwner } from './permissions';
 import { taipeiDateKey } from './taipeiTime';
 
@@ -194,7 +195,7 @@ const taskProjection = (
   }
   const vessel = draft.vessels.find(entry => entry.id === item.vesselId && entry.isActive);
   if (!vessel) throw new Error('找不到有效船舶');
-  if (ownerUserIds.some(id => !isEligibleTaskOwner(draft.settings?.rolePermissions, draft.users.find(user => user.id === id), [vessel]))) {
+  if (ownerUserIds.some(id => !(existing?.vesselId===item.vesselId&&canRetainVesselCommonContact(existing,id,existing.ownerUserIds,draft.users.find(user=>user.id===id)))&&!isEligibleTaskOwner(draft.settings?.rolePermissions, draft.users.find(user => user.id === id), [vessel]))) {
     throw new Error('同步要事的追蹤窗口包含停用、船舶帳號或無最終船舶權限的人員');
   }
   return { categories, equipmentSubcategory, expectedDate: (input?.expectedDate ?? existing?.expectedDate ?? '').trim(), ownerUserIds, isAbnormal };

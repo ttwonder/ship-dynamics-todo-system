@@ -1,3 +1,4 @@
+import { retainedVesselResponsibilities } from './vesselManagerHandover';
 import type {
   AgendaReport,
   AppData,
@@ -140,6 +141,7 @@ function normalizeInternalControlCases(value: unknown, timestamp: string): Inter
       id,
       vesselId: text(item.vesselId),
       reportDate,
+      ...retainedVesselResponsibilities(item.vesselResponsibilities),
       reportSource: oneOf(item.reportSource, internalControlReportSources, '日常'),
       description: text(item.description),
       priority: oneOf(item.priority, priorities, '低'),
@@ -254,6 +256,7 @@ function normalizeMeetings(value: unknown, timestamp: string, meetingTaskCategor
     const trackingUserIds = Object.prototype.hasOwnProperty.call(item, 'trackingUserIds') ? strings(item.trackingUserIds) : [...responsibleUserIds];
     return {
       id,
+      ...retainedVesselResponsibilities(item.vesselResponsibilities),
       subject: text(item.subject),
       status: normalizeMeetingStatus(item.status),
       meetingDate: text(item.meetingDate),
@@ -462,6 +465,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       plannedDurationDays: normalizePlannedDurationDays(item.plannedDurationDays),
       departments: strings(item.departments),
       ownerUserIds: strings(item.ownerUserIds),
+      ...retainedVesselResponsibilities(item.vesselResponsibilities),
       isClosed,
       closedDate,
       closedBy,
@@ -519,7 +523,7 @@ export function normalizeAppData(value: unknown): AppData | null {
     const ownerUserIds = taskOwnerUserIdsWereProvided.get(task.id)
       ? task.ownerUserIds
       : canonicalVessel?.assignedUserIds || [];
-    task.ownerUserIds = canonicalVessel && !canonicalVessel.isActive ? ownerUserIds : canonicalVessel
+    task.ownerUserIds = task.isClosed || task.vesselResponsibilities !== undefined || (canonicalVessel && !canonicalVessel.isActive) ? ownerUserIds : canonicalVessel
       ? Array.from(new Set(ownerUserIds.filter(id => isEligibleTaskOwner(
           normalized.settings.rolePermissions,
           normalized.users.find(user => user.id === id),

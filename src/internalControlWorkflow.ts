@@ -265,6 +265,7 @@ export function taskToInternalControlCase(task: TaskItem, existing: InternalCont
     id,
     vesselId: task.vesselId,
     reportDate: task.reportDate || taipeiDateKey(task.createdAt),
+    ...(existing?.vesselResponsibilities ? {vesselResponsibilities:structuredClone(existing.vesselResponsibilities)} : task.vesselResponsibilities ? {vesselResponsibilities:structuredClone(task.vesselResponsibilities)} : {}),
     reportSource: existing?.reportSource || options.reportSource || '日常',
     description: task.description,
     priority: task.priority,

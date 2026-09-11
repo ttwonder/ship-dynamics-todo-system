@@ -36,7 +36,7 @@ assert.match(page, /!wasCreating&&\(!liveMeeting[\s\S]*未保存任何變更/, '
 assert.match(page,/liveMeeting!\.updatedAt!==baseMeetingUpdatedAt/,'会议保存必须执行版本冲突检测');
 assert.doesNotMatch(page,/prev\.revision!==baseRevision/,'雲端會議保存不得因無關實體 revision 產生假衝突');
 assert.match(page,/runDurableRelatedMutation\(sectionKey,'臨會\/專題保存',apply\)/,'會議保存必須在完整關聯鎖後走 durable block mutation');
-assert.match(page,/visibleVesselKey[\s\S]*\[selectedId, creating, editable, canViewAllMeetings, visibleVesselKey/,'会议编辑同步 effect 必须依赖稳定的船舶 ID 签名');
+assert.match(page,/visibleVesselKey[\s\S]*\[selectedId, creating, editable, editingSessionActive, canViewAllMeetings, visibleVesselKey, currentUser\.id, authorizationEpoch\]/,'会议编辑同步 effect 必须保留稳定船舶签名、原编辑会话及身份 epoch 依赖');
 assert.doesNotMatch(page,/\[selectedId, creating[^\]]*visibleVessels/,'会议编辑同步 effect 不得依赖每次资料更新都会重建的船舶数组引用');
 assert.match(app, /liveTask\.sourceMeetingId[\s\S]*meeting\.taskItems=meeting\.taskItems\.filter/, '明确删除会议关联待办时需同步移除会议事项，防止复活');
 assert.ok((app.match(/resolveMeetingTaskItemIdForDeletion\(/g)||[]).length>=2,'单笔与批量删除都必须执行会议事项关联消歧');
