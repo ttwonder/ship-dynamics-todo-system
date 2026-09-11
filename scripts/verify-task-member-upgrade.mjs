@@ -197,6 +197,12 @@ try{
  const remoteBeforeSync=await read();
  qa.setRecordFault({before:async({name,body})=>{if(name==='apply_ship_dynamics_record_patch_v1'){const sent=applyOutgoing(remoteBeforeSync.payload,body.p_operations);assert.notEqual(body.p_operation_id,oldRequest.p_operation_id,'snapshot reconstruction legitimately has a NEW operation ID');const wireExpected=structuredClone(expected);for(const row of wireExpected.auditLogs.filter(r=>!remoteBeforeSync.payload.auditLogs.some(old=>old.id===r.id))){delete row.ipAddress;delete row.ipCountryCode;}assert.deepEqual({...sent,revision:0,updatedAt:''},{...wireExpected,revision:0,updatedAt:''},'new original whole-task intent matches complete helper graph BEFORE SQL');fs.writeFileSync(path.join(run,'new-whole-intent-before-sql.json'),JSON.stringify({request:scrub(body),expected:scrub(expected)},null,2));}}});
  await n.sync();
+ // Read-idle is not save completion: recovery can still be awaiting its ACK.
+ if(upgrade==='conflict')await until(async()=>(await n.text()).includes('衝突'),'original conflict outcome');
+ else{
+  await until(()=>n.saved(),'snapshot recovery visibly saved');
+  if(upgrade!=='committed')await until(()=>{const request=outgoing.slice(stoppedAt).find(r=>r.body.p_operations);return request&&receipt.network.some(r=>r.rpc==='apply_ship_dynamics_record_patch_v1'&&r.operationId===request.body.p_operation_id&&r.ok===true&&r.finished);},'exact reconstructed operation ACK');
+ }
  const after=await read();if(upgrade==='committed')assert.deepEqual(after,remoteBeforeSync,'adopt exact server outcome and metadata with zero second mutation');
  if(upgrade==='conflict'){assert.deepEqual(after.payload,peerExpected);assert.deepEqual(await storage(n),oldStorage,'conflict retains ALL old L/B bytes');assert.equal(outgoing.length,stoppedAt,'conflict zero new business writes');assert.ok((await n.text()).includes('衝突'));receipt.cases.push({caseId:currentCase,status:'PASS',terminal:'existing user conflict resolution',zeroNewBusinessWrites:true});}else{
  assert.deepEqual({...after.payload,revision:0,updatedAt:''},{...expected,revision:0,updatedAt:''},'safe sync preserves complete old intent graph');
