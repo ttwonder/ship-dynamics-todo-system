@@ -18,15 +18,15 @@ fs.mkdirSync(root,{recursive:true});
 const run=fs.mkdtempSync(path.join(root,'ui-')),profile=path.join(run,'chrome');
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const receipt={kind:'original-App-native-PG-multi-context',inputHead:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),status:'RUNNING',cases:[],network:[],errors:[],blockedExternal:[],commands:[{command:'node scripts/verify-management-ack-browser.mjs',exit:null}],productionContacted:false};
-receipt.inputs=Object.fromEntries(['scripts/verify-management-ack-browser.mjs','scripts/global-save-feedback-native.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','scripts/management-scoped-save-oracle.mjs','scripts/management-ack-native-forms.mjs','src/managementDraft.ts','scripts/record-internal-control-local-fixture.mjs','src/main.tsx','src/App.tsx','src/Management.tsx','src/DataManagementPanel.tsx','src/dataAnalysisVesselAttention.ts','src/taskVesselProgress.ts','src/taskVesselScope.ts','src/taskCategories.ts','src/taskAttention.ts','src/vesselAttention.ts','src/meetingVesselAttention.ts','src/taipeiTime.ts','src/cloud.ts','src/cloudRecordScopes.ts','supabase/development/20260908_appdata_record_scoped_read.sql'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
+receipt.inputs=Object.fromEntries(['scripts/management-private-draft-native.mjs','scripts/verify-management-ack-browser.mjs','scripts/global-save-feedback-native.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','scripts/management-scoped-save-oracle.mjs','scripts/management-ack-native-forms.mjs','src/managementDraft.ts','scripts/record-internal-control-local-fixture.mjs','src/main.tsx','src/App.tsx','src/Management.tsx','src/DataManagementPanel.tsx','src/dataAnalysisVesselAttention.ts','src/taskVesselProgress.ts','src/taskVesselScope.ts','src/taskCategories.ts','src/taskAttention.ts','src/vesselAttention.ts','src/meetingVesselAttention.ts','src/taipeiTime.ts','src/cloud.ts','src/cloudRecordScopes.ts','supabase/development/20260908_appdata_record_scoped_read.sql'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
 const save=()=>fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const until=async(fn,label,timeout=25000)=>{const end=Date.now()+timeout;while(Date.now()<end){const v=await fn();if(v)return v;await wait(30);}throw new Error('QA timeout: '+label);};
 const field="[...document.querySelectorAll('[role=dialog] .field')].find(n=>n.querySelector('label')?.innerText==='近期／後續動態')?.querySelector('textarea')";
 const patchRpc='apply_ship_dynamics_record_patch_v1';
 let native,qa,browser,ws,failure,chromePort,releaseCommit,barrier=null,currentCase='setup',next=0;
-const pending=new Map(),actors=[],netRows=new Map(),paused=[];
-let rendezvous=false,releaseHeldRead;
+const pending=new Map(),actors=[],netRows=new Map(),paused=[],canceledRequests=new Set();
+let rendezvous=false,releaseHeldRead,privateDialogAccept=true;
 const outgoing=[];
 const call=(method,params={},session)=>new Promise((resolve,reject)=>{const id=++next,timer=setTimeout(()=>{pending.delete(id);reject(new Error('CDP timeout '+method));},15000);pending.set(id,{resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}});ws.send(JSON.stringify({id,method,params,...(session?{sessionId:session}:{})}));});
 const portClosed=port=>new Promise(resolve=>{const s=net.connect({host:'127.0.0.1',port});s.once('connect',()=>{s.destroy();resolve(false);});s.once('error',()=>resolve(true));s.setTimeout(1000,()=>{s.destroy();resolve(false);});});
@@ -51,10 +51,10 @@ async function makePage(actor,context){
  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},s);
  actors.push(p);return p;
 }
-async function login(p){
- await call('Page.navigate',{url:qa.origin},p.s);
+async function login(p,navigate=true){
+ if(navigate){await call('Page.navigate',{url:qa.origin},p.s);
  await until(async()=>(await p.text()).includes('請輸入管理者設定的進站密碼。'),'original site gate');
- await p.fill("document.querySelector('input[type=password]')",qa.password);await p.click('進入系統');
+ await p.fill("document.querySelector('input[type=password]')",qa.password);await p.click('進入系統');}
  await until(async()=>(await p.text()).includes('人員登入／切換'),'original personnel gate');
  if(p.actor==='qa-vessel'){await p.eval("document.querySelector('select[aria-label=登入部門]').focus()");await p.key('End');await p.key('Enter');await until(()=>p.eval("[...document.querySelector('select[aria-label=登入人員]').options].some(o=>o.value==='qa-vessel')"),'vessel roster');}
  if(p.actor==='qa-operator'){const selector="document.querySelector('select[aria-label=登入部門]')";const i=await p.eval(`(()=>{const n=${selector};n.focus();return [...n.options].findIndex(o=>o.value==='機務');})()`);assert.ok(i>=0);await p.key('Home');for(let n=0;n<i;n++)await p.key('ArrowDown');await p.key('Enter');}
@@ -115,10 +115,11 @@ try{
  ws=new WebSocket(`ws://127.0.0.1:${chromePort}${socketPath}`);await new Promise((r,j)=>{ws.addEventListener('open',r,{once:true});ws.addEventListener('error',j,{once:true});});
  ws.addEventListener('message',event=>{const m=JSON.parse(event.data);if(m.id){const p=pending.get(m.id);if(p){pending.delete(m.id);m.error?p.reject(new Error(m.error.message)):p.resolve(m.result);}return;}
   const handle=async()=>{
+   if(m.method==='Network.loadingFailed'&&m.params.canceled)canceledRequests.add(m.sessionId+':'+m.params.requestId);
    if(m.method==='Runtime.exceptionThrown')receipt.errors.push(m.params.exceptionDetails.text);
    if(m.method==='Page.javascriptDialogOpening'){
-    const {type,message}=m.params;receipt.dialogs??=[];receipt.dialogs.push(message);const accept=type==='beforeunload'||type==='confirm'&&['清除「','確定停用「','同步最新會保留本機修改','請盡量以船端修改為主','確定批量完成所選','確定結案會議','確定重新開啟會議','確定重新開啟此待辦'].some(t=>message.startsWith(t));
-    if(!accept&&message!=='進站密碼已更新')receipt.errors.push('unexpected dialog: '+message);await call('Page.handleJavaScriptDialog',{accept},m.sessionId);
+    const {type,message}=m.params;receipt.dialogs??=[];receipt.dialogs.push(message);const privatePrompt=message==='尚有未提交的管理表單修改。確定放棄這些修改並繼續？';const accept=privatePrompt||type==='beforeunload'?privateDialogAccept:type==='confirm'&&['清除「','確定停用「','同步最新會保留本機修改','請盡量以船端修改為主','確定批量完成所選','確定結案會議','確定重新開啟會議','確定重新開啟此待辦'].some(t=>message.startsWith(t));
+    if(!accept&&!privatePrompt&&type!=='beforeunload'&&message!=='進站密碼已更新'&&!(currentCase==='MG-PRIVATE-GENERIC-ACK'&&message==='個人密碼已更新；下次登入需使用新密碼。'))receipt.errors.push('unexpected dialog: '+message);await call('Page.handleJavaScriptDialog',{accept},m.sessionId);
    }
    if(m.method==='Fetch.requestPaused'){
     const u=new URL(m.params.request.url),allowed=u.origin===qa.origin||['data:','blob:'].includes(u.protocol);
@@ -127,13 +128,19 @@ try{
     if(allowed&&rendezvous&&u.pathname.endsWith('/rpc/'+patchRpc)){
      const body=JSON.parse(m.params.request.postData);paused.push({session:m.sessionId,requestId:m.params.requestId,operationId:body.p_operation_id,actor:body.p_actor_user_id,payloadHash:hash(body),auditExpected:body.p_operations.find(o=>o.kind==='order'&&o.collection==='auditLogs')?.expectedIds});save();return;
     }
-    await call(allowed?'Fetch.continueRequest':'Fetch.failRequest',allowed?{requestId:m.params.requestId}:{requestId:m.params.requestId,errorReason:'BlockedByClient'},m.sessionId);
+    try{await call(allowed?'Fetch.continueRequest':'Fetch.failRequest',allowed?{requestId:m.params.requestId}:{requestId:m.params.requestId,errorReason:'BlockedByClient'},m.sessionId);}
+    catch(e){
+     if(!allowed||e.message!=='Invalid InterceptionId.'||!m.params.networkId)throw e;
+     await until(()=>canceledRequests.has(m.sessionId+':'+m.params.networkId),'authoritative Network cancellation for stale interception',1500);
+     receipt.canceledInterceptions??=[];receipt.canceledInterceptions.push({path:u.pathname,networkCanceled:true,caseId:currentCase});
+    }
    }
    if(m.method==='Network.requestWillBeSent'&&m.params.request.url.startsWith(qa.origin+'/rest/v1/rpc/')){
     const b=JSON.parse(m.params.request.postData||'{}'),row={caseId:currentCase,actor:actors.find(p=>p.s===m.sessionId)?.actor,rpc:m.params.request.url.split('/').at(-1),operationId:b.p_operation_id,readScope:b.p_scope,targets:b.p_targets,request:scrub(b),payloadHash:hash(b),started:m.params.wallTime*1000};
     netRows.set(m.sessionId+':'+m.params.requestId,row);receipt.network.push(row);
    }
    const row=netRows.get(m.sessionId+':'+m.params.requestId);
+   if(m.method==='Network.loadingFailed'&&row)row.failure={canceled:Boolean(m.params.canceled),errorText:m.params.errorText};
    if(m.method==='Network.responseReceived'&&row)row.httpStatus=m.params.response.status;
    if(m.method==='Network.loadingFinished'&&row){const response=await call('Network.getResponseBody',{requestId:m.params.requestId},m.sessionId);const v=JSON.parse(response.base64Encoded?Buffer.from(response.body,'base64').toString():response.body);fs.writeFileSync(path.join(run,'response-'+receipt.network.indexOf(row)+'.json'),JSON.stringify(scrub(v),null,2));Object.assign(row,{containsUnloadedDetail:JSON.stringify(v).includes('QA_UNLOADED_DETAIL_SENTINEL'),containsOtherMeetingHistory:JSON.stringify(v).includes('QA_OTHER_MEETING_HISTORY'),finished:Date.now(),result:v?.ok===false?v.code:'SQL_OK',conflictKey:v?.conflict_key,revision:v?.revision});save();}
   };void handle().catch(e=>receipt.errors.push(e.message));
@@ -141,13 +148,15 @@ try{
 
 
 
- const contextA=(await call('Target.createBrowserContext')).browserContextId,a=await makePage('qa-owner',contextA);await login(a);
+ const contextA=(await call('Target.createBrowserContext')).browserContextId,a=await makePage('qa-owner',contextA);
+ if((process.env.QA_MGACK_MODE||'').includes('config-local'))await call('Page.addScriptToEvaluateOnNewDocument',{source:`Object.defineProperty(window,'SHIP_DYNAMICS_SUPABASE_CONFIG',{configurable:true,get:()=>undefined,set:value=>{if(!localStorage.getItem('ship-dynamics-supabase-config'))localStorage.setItem('ship-dynamics-supabase-config',JSON.stringify(value));}});`},a.s);
+ await login(a);
  const write=(name,v)=>fs.writeFileSync(path.join(run,name+'.json'),JSON.stringify(scrub(v),null,2));
  const sub=async label=>a.activate(`[...document.querySelectorAll('.management-sidebar button')].find(n=>n.textContent.endsWith(${JSON.stringify(label)}))`);
  const choose=async name=>a.activate(`[...document.querySelectorAll('.management-master .management-list button')].find(n=>n.querySelector('b')?.innerText===${JSON.stringify(name)})`);
  const nameField="[...document.querySelectorAll('.management-form label')].find(n=>n.textContent==='姓名')?.querySelector('input')";
  const mode=process.env.QA_MGACK_MODE||'held';receipt.mode=mode;
- if(mode==='global-feedback'){await (await import('./global-save-feedback-native.mjs')).runGlobalSaveFeedback({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setRelease:value=>releaseCommit=value,freshReadback});receipt.status='PASS';}else if(mode.startsWith('lifecycle')){await (await import('./vessel-lifecycle-native.mjs')).runVesselLifecycle({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setRelease:value=>releaseCommit=value,freshReadback,mode});receipt.status='PASS';}else if(mode.startsWith('forms')){await (await import('./management-ack-native-forms.mjs')).runManagementAckForms({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setRelease:value=>releaseCommit=value,mode});receipt.status='PASS';}else{
+ if(['private-config','private-config-other','private-config-local','private-config-local-other','private-config-local-navigation','private-disable','private-disable-newer','private-aba','private-generic'].includes(mode)){await (await import('./management-private-draft-native.mjs')).runManagementPrivateClosing({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setDialogAccept:value=>privateDialogAccept=value,setRelease:value=>releaseCommit=value,loginCurrent:()=>login(a,false),mode});receipt.status='PASS';}else if(mode==='private-draft'){await (await import('./management-private-draft-native.mjs')).runManagementPrivateDraft({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setDialogAccept:value=>privateDialogAccept=value});receipt.status='PASS';}else if(mode==='global-feedback'){await (await import('./global-save-feedback-native.mjs')).runGlobalSaveFeedback({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setRelease:value=>releaseCommit=value,freshReadback});receipt.status='PASS';}else if(mode.startsWith('lifecycle')){await (await import('./vessel-lifecycle-native.mjs')).runVesselLifecycle({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setRelease:value=>releaseCommit=value,freshReadback,mode});receipt.status='PASS';}else if(mode.startsWith('forms')){await (await import('./management-ack-native-forms.mjs')).runManagementAckForms({a,qa,read,call,until,wait,write,receipt,setCase:value=>currentCase=value,setRelease:value=>releaseCommit=value,mode});receipt.status='PASS';}else{
  const pass=id=>{receipt.cases.push({caseId:id,layer:'original-UI-native-PG',status:'PASS'});save();};
  await a.click('管理');await until(()=>a.eval("Boolean(document.querySelector('.management-view'))"),'management');await sub('人員');await choose('QA SPARE');
  const before=await read(),started=Date.now();let expected,held=false,readHeld=false,patches=0;
@@ -220,5 +229,5 @@ finally{
  if(ws?.readyState===WebSocket.OPEN){try{await call('Browser.close');}catch{}ws.close();}
  if(browser){try{await until(()=>browser.exitCode!==null||browser.signalCode!==null,'Chrome stopped',5000);}catch{spawnSync('taskkill',['/PID',String(browser.pid),'/T','/F'],{stdio:'ignore'});await until(()=>browser.exitCode!==null||browser.signalCode!==null,'forced owned Chrome exit event',5000);}}
  try{if(qa)await qa.close();if(native)await native.close();if(qa)await assert.rejects(()=>fetch(qa.origin+'/__qa/health'));if(chromePort)assert.equal(await portClosed(Number(chromePort)),true);assert.ok(!browser||browser.exitCode!==null||browser.signalCode!==null);fs.rmSync(profile,{recursive:true,force:true});receipt.cleanup={httpStopped:true,chromeStopped:true,chromePortClosed:true,profileRemoved:true,pgStopped:receipt.stopped,pgPortClosed:receipt.portClosed,ownedDataRemoved:receipt.ownedDataRemoved};}catch(e){failure??=e;receipt.cleanupError=e.message;receipt.status='FAIL';}
- receipt.commands[0].exit=failure?1:0;save();console.log(JSON.stringify({status:receipt.status,run,cases:receipt.cases.map(c=>c.caseId),cleanup:receipt.cleanup}));if(failure)process.exitCode=1;
+ if(!failure&&(receipt.errors.length||receipt.blockedExternal.length)){failure=new Error('browser error/egress envelope not clean');receipt.status='FAIL';}receipt.commands[0].exit=failure?1:0;save();console.log(JSON.stringify({status:receipt.status,run,cases:receipt.cases.map(c=>c.caseId),cleanup:receipt.cleanup}));if(failure)process.exitCode=1;
 }

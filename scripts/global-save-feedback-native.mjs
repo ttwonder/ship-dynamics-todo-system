@@ -22,7 +22,7 @@ export async function runGlobalSaveFeedback({a,qa,read,call,until,wait,write,rec
    if(mode==='rejected')body.p_lock_guards=[...body.p_lock_guards,{section_key:'vessel:qa-v1',locked_by:'qa-invalid-global-feedback-lease'}];
   },after:async({name})=>{if(name===patchRpc){held++;await new Promise(r=>{release=r;setRelease(r);});}return false;}});
   await a.fill(field,bName);
-  assert.ok((await state()).global,'A success must still be visible immediately before accepting B');
+  const bDraftState=await state();assert.equal(bDraftState.global,'','new private input already clears A success before accepting B');assert.ok(!bDraftState.strip.includes('saved'),'unsubmitted B is not safe-close');
   await a.eval("void(window.__gsoSuccesses=[]);void(window.__gsoWatch?.disconnect());void(window.__gsoWatch=new MutationObserver(()=>{if(document.querySelector('.save-toast.success'))window.__gsoSuccesses.push(Date.now());}));window.__gsoWatch.observe(document.body,{childList:true,subtree:true,characterData:true})");
   await a.click('保存變更');await until(()=>held===1,'after-RPC B ACK body held '+mode);
   const heldState=await state();write(id+'-held-feedback',heldState);await a.screen(id+'-held');
@@ -43,9 +43,9 @@ export async function runGlobalSaveFeedback({a,qa,read,call,until,wait,write,rec
    const s=await state();assert.equal(s.global,'');assert.equal(s.local,'');assert.equal(await a.eval(`(${field}).value`),bName);
    assert.equal(receipt.network.slice(networkStart).find(r=>r.rpc===patchRpc).result,'lock-conflict');
   }else{
-   await until(async()=>(await state()).strip.includes('saved'),'confirmed strip');
+   await until(async()=>{const strip=(await state()).strip;return mode==='newer'?!strip.includes('saving')&&!strip.includes('saved'):strip.includes('saved');},'confirmed operation versus newer private draft');
    const after=await read();assertManagementAfter(expected.base,after,expected.value,started);write(id+'-sql-after',after);
-   if(mode==='newer'){assert.equal((await state()).local,'');assert.equal(await a.eval(`(${field}).value`),'GSO UNSUBMITTED NEW DRAFT');assert.equal(await a.eval(`window.__gsoNode===(${field})`),true);}
+   if(mode==='newer'){assert.equal((await state()).local,'');assert.equal((await state()).global,'');assert.deepEqual(await a.eval('window.__gsoSuccesses'),[],'B ACK cannot briefly mark newer private draft safe');assert.equal(await a.eval(`(${field}).value`),'GSO UNSUBMITTED NEW DRAFT');assert.equal(await a.eval(`window.__gsoNode===(${field})`),true);}
    else{await until(async()=>Boolean((await state()).local),'matching local success');assert.ok((await state()).global,'final accepted ACK may show success');}
   }
   write(id+'-confirmed-feedback',await state());await a.screen(id+'-confirmed');
