@@ -24,6 +24,47 @@ create table if not exists public.sd_legacy_write_controls (
 alter table public.sd_legacy_write_controls enable row level security;
 revoke all on table public.sd_legacy_write_controls from public, anon, authenticated, service_role;
 
+-- Extend the installed original-App audit trigger without replacing its normal
+-- stamping logic or changing its owner/ACL. The private flag is visible only
+-- inside the verified service-role restore transaction for this workspace.
+do $audit_restore$
+declare
+  v_definition text;
+  v_anchor text := E'begin\n  if tg_op <> ''UPDATE''';
+  v_guard text := $guard$begin
+  -- sd_trusted_legacy_restore_v1
+  if current_setting('role', true) = 'service_role' then
+    if exists (
+      select 1 from public.sd_legacy_write_controls c
+      where c.workspace_key = new.workspace_key
+        and c.writes_frozen and c.restore_in_progress
+    ) then
+      return new;
+    end if;
+  end if;
+  -- end_sd_trusted_legacy_restore_v1
+  if tg_op <> 'UPDATE'$guard$;
+begin
+  if to_regprocedure('public.stamp_ship_dynamics_audit_network_context()') is not null then
+    select pg_get_functiondef('public.stamp_ship_dynamics_audit_network_context()'::regprocedure)
+    into v_definition;
+    if position('-- sd_trusted_legacy_restore_v1' in v_definition) = 0 then
+      -- Match the installed newline representation; leave its normal body intact.
+      v_guard := replace(v_guard, chr(13) || chr(10), chr(10));
+      if position(v_anchor in v_definition) = 0
+         and position(replace(v_anchor, chr(10), chr(13) || chr(10)) in v_definition) > 0 then
+        v_anchor := replace(v_anchor, chr(10), chr(13) || chr(10));
+        v_guard := replace(v_guard, chr(10), chr(13) || chr(10));
+      end if;
+      if length(v_definition) - length(replace(v_definition, v_anchor, '')) <> length(v_anchor) then
+        raise exception using errcode = 'P0001', message = 'legacy-audit-trigger-definition-unrecognized';
+      end if;
+      execute replace(v_definition, v_anchor, v_guard);
+    end if;
+  end if;
+end;
+$audit_restore$;
+
 create or replace function public.sd_legacy_jsonb_sha256(p_value jsonb)
 returns text
 language sql
@@ -280,6 +321,9 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_actual_hash text;
+  v_restored_hash text;
+  v_restored_revision bigint;
+  v_payload_equal boolean;
 begin
   if current_setting('role', true) is distinct from 'service_role' then
     raise exception using errcode = '42501', message = 'not-authorized';
@@ -318,6 +362,18 @@ begin
         revision = excluded.revision,
         updated_at = excluded.updated_at,
         updated_by = excluded.updated_by;
+
+  -- BEFORE triggers may transform the supplied row. Success describes the
+  -- actual persisted package, never merely the accepted input arguments.
+  select s.revision, public.sd_legacy_jsonb_sha256(s.payload), s.payload = p_legacy_payload
+  into v_restored_revision, v_restored_hash, v_payload_equal
+  from public.ship_dynamics_app_state s
+  where s.workspace_key = p_workspace_key;
+  if not found or v_payload_equal is not true
+     or v_restored_revision is distinct from p_legacy_revision
+     or v_restored_hash is distinct from v_actual_hash then
+    raise exception using errcode = 'P0001', message = 'restored-payload-mismatch';
+  end if;
 
   update public.sd_legacy_write_controls
   set expected_revision = p_legacy_revision,
