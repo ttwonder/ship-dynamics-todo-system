@@ -4,7 +4,7 @@ import { formatTaipeiDateTime } from './taipeiTime';
 import {
   useItineraryDailyReportContext,
   clearPendingManualItineraryReportSave,
-  createPendingManualItineraryReportSave,
+  capturePendingManualItineraryReportSave,
   itineraryDailyReportErrorMessage,
   ItineraryDailyReportRpcError,
   readPendingManualItineraryReportSave,
@@ -38,22 +38,23 @@ export default function ManualItineraryReportSaveButton({ actorUserId, onSaved }
     if (!isCurrent()) return;
     const actorAtSubmit = actorUserId;
     let envelope = pending || readPendingManualItineraryReportSave(config, actorAtSubmit);
-    if (!envelope) {
-      envelope = createPendingManualItineraryReportSave({
-        operationId:crypto.randomUUID(),
-        actorUserId:actorAtSubmit,
-      }, config);
-      try {
-        writePendingManualItineraryReportSave(envelope, config);
-      } catch {
-        window.alert('無法保存本次操作的對帳資料，因此尚未送出。請確認瀏覽器儲存空間後重試。');
-        return;
-      }
-      setPending(envelope);
-    }
-
     setSaving(true);
     try {
+      if (!envelope) {
+        envelope = await capturePendingManualItineraryReportSave({
+          operationId:crypto.randomUUID(),
+          actorUserId:actorAtSubmit,
+        }, config);
+        if (!isCurrent()) return;
+        try {
+          writePendingManualItineraryReportSave(envelope, config);
+        } catch {
+          window.alert('無法保存本次操作的對帳資料，因此尚未送出。請確認瀏覽器儲存空間後重試。');
+          return;
+        }
+        setPending(envelope);
+      }
+
       const result = await saveManualItineraryDailyReport(envelope, config);
       if (!isCurrent() || readPendingManualItineraryReportSave(config, actorAtSubmit)?.operationId !== envelope.operationId) return;
       clearPendingManualItineraryReportSave(config, actorAtSubmit);
@@ -68,7 +69,7 @@ export default function ManualItineraryReportSaveButton({ actorUserId, onSaved }
       if (definitive) clearPendingManualItineraryReportSave(config, actorAtSubmit);
       if (isCurrent()) {
         if (definitive) setPending(null);
-        else setPending(envelope);
+        else if (envelope) setPending(envelope);
         const suffix = definitive ? '' : '\n結果尚未確認；請按同一按鈕對帳，不會重複新增。';
         window.alert(`${itineraryDailyReportErrorMessage(error)}${suffix}`);
       }

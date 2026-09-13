@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { getSupabaseClient, getSupabaseConfig, type ResolvedSupabaseConfig } from './cloud';
+import { authorityConfig, readBrowserAuthority, sameAuthority, type BrowserAuthority } from './cloudSourceAuthority';
 import type { ItineraryRow } from './itinerary/itineraryTypes';
 
 export const ITINERARY_DAILY_REPORT_DELETE_BATCH_SIZE = 100;
@@ -116,6 +117,7 @@ export interface ManualItineraryReportSaveRequest {
 
 export interface PendingManualItineraryReportSave extends ManualItineraryReportSaveRequest {
   version: 1;
+  sourceAuthority?: BrowserAuthority;
   configIdentity: string;
   workspaceKey: string;
   createdAt: string;
@@ -223,7 +225,10 @@ async function runRpc(
   config?: ResolvedSupabaseConfig | null,
   suppliedClient?: ItineraryDailyReportRpcClient | null,
 ): Promise<Record<string, unknown>> {
-  const resolved = requiredConfig(config);
+  const raw = requiredConfig(config);
+  const reading = ['sd_itinerary_daily_report_list_v2', 'sd_itinerary_daily_report_locate_v2', 'sd_itinerary_daily_report_load_by_id'].includes(name);
+  const binding = reading && !suppliedClient ? await readBrowserAuthority(raw) : null;
+  const resolved = binding ? authorityConfig(raw, binding) : raw;
   const client = suppliedClient || getSupabaseClient(resolved) as unknown as ItineraryDailyReportRpcClient | null;
   if (!client) throw new ItineraryDailyReportRpcError('CLOUD_NOT_CONFIGURED', 'Supabase client 不可用。', true);
   const controller = new AbortController();
@@ -248,6 +253,9 @@ async function runRpc(
     if (value.ok !== true) {
       const code = asText(value.error || value.code, 'INVALID_RESPONSE');
       throw new ItineraryDailyReportRpcError(code, code, true, value);
+    }
+    if (binding && !sameAuthority(binding, await readBrowserAuthority(raw))) {
+      throw new ItineraryDailyReportRpcError('MANUAL_SAVE_CONTEXT_CHANGED', 'Report source changed during read.', false);
     }
     return value;
   } catch (error) {
@@ -450,11 +458,22 @@ export async function saveManualItineraryDailyReport(
   if (!isOperationId(request.operationId)) {
     throw new ItineraryDailyReportRpcError('INVALID_MANUAL_SAVE_ENVELOPE', 'Invalid manual Itinerary save operation.', true);
   }
+  // Missing binding means a pre-upgrade v1 envelope: preserve its raw source.
+  // Replays use the captured route even while paused; SQL is terminal-first.
+  const binding = request.sourceAuthority;
+  if (Object.prototype.hasOwnProperty.call(request, 'sourceAuthority') && (!binding || binding.workspace !== resolved.workspaceKey
+    || !['legacy', 'records-v1'].includes(binding.source)
+    || typeof binding.managed !== 'boolean'
+    || (binding.managed ? binding.source !== 'legacy' || binding.epoch !== 1 : binding.epoch !== 0 || binding.source !== (resolved.storageMode ?? 'legacy'))
+    || binding.admitted !== true || !['unmanaged', 'resumed'].includes(binding.pauseState))) {
+    throw new ItineraryDailyReportRpcError('INVALID_MANUAL_SAVE_ENVELOPE', 'Invalid captured report authority.', false);
+  }
+  const route = binding ? authorityConfig(resolved, binding) : resolved;
   const response = await runRpc('sd_save_manual_itinerary_report', {
     p_workspace_key:resolved.workspaceKey,
     p_actor_user_id:request.actorUserId,
     p_operation_id:request.operationId,
-  }, resolved, client);
+  }, route, client);
   const operationId = asText(response.operationId);
   const created = response.created;
   let report: ItineraryDailyReportSummary;
@@ -661,6 +680,15 @@ function pendingKey(prefix: string, config: ResolvedSupabaseConfig, actorUserId:
   return `${prefix}${encodeURIComponent(configIdentity(config))}:${encodeURIComponent(actorUserId)}`;
 }
 
+export async function capturePendingManualItineraryReportSave(
+  request: ManualItineraryReportSaveRequest,
+  config: ResolvedSupabaseConfig,
+): Promise<PendingManualItineraryReportSave> {
+  const binding = await readBrowserAuthority(config);
+  if (!binding.admitted) throw new ItineraryDailyReportRpcError('MANUAL_SAVE_CONTEXT_CHANGED', 'Report source is not admitted.', false);
+  return Object.freeze({ ...createPendingManualItineraryReportSave(request, config), sourceAuthority:binding });
+}
+
 export function createPendingManualItineraryReportSave(
   request: ManualItineraryReportSaveRequest,
   config: ResolvedSupabaseConfig,
@@ -690,6 +718,7 @@ export function readPendingManualItineraryReportSave(
     const parsed = asObject(JSON.parse(raw));
     const pending: PendingManualItineraryReportSave = {
       version:1,
+      ...(Object.prototype.hasOwnProperty.call(parsed, 'sourceAuthority') ? { sourceAuthority:parsed.sourceAuthority as BrowserAuthority } : {}),
       configIdentity:asText(parsed.configIdentity),
       workspaceKey:asText(parsed.workspaceKey),
       createdAt:asText(parsed.createdAt),

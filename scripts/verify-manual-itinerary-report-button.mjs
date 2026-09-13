@@ -25,7 +25,7 @@ try {
 
   const submitSource = component.slice(component.indexOf('const submit = async'), component.indexOf('return <button'));
   const readIndex = submitSource.indexOf('readPendingManualItineraryReportSave');
-  const createIndex = submitSource.indexOf('createPendingManualItineraryReportSave');
+  const createIndex = submitSource.indexOf('capturePendingManualItineraryReportSave');
   const writeIndex = submitSource.indexOf('writePendingManualItineraryReportSave');
   const saveIndex = submitSource.indexOf('saveManualItineraryDailyReport');
   const clearIndex = submitSource.lastIndexOf('clearPendingManualItineraryReportSave');

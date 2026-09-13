@@ -13,9 +13,11 @@ export async function run(){
  const host=document.createElement('div');document.body.append(host);let root=createRoot(host),saved=0,queue=[],alerts=[],calls=[],cases=[];
  const summary={reportId:'9007199254740993',businessDate:'2026-09-06',timezone:'Asia/Taipei',generatedAt:'2026-09-06T01:00:00Z',generatedBy:'manual',generatedByActorId:'owner',vesselCount:0,rowCount:0,sourceMaxRevision:7,logicalBytes:50};
  const page={ok:true,reports:[summary],page:1,pageSize:30,pageCount:1,total:1,dateTotal:1,reportTotal:1,setToken:'a'.repeat(32)};
- let hold='',currentPage=page;
+ let hold='',currentPage=page,authorityHold=false,authorityQueue=[];
  window.fetch=async(url,init)=>{
-  const name=new URL(url).pathname.split('/').pop(),body=JSON.parse(init.body);calls.push({name,body});
+  const name=new URL(url).pathname.split('/').pop(),body=JSON.parse(init.body);
+  if(name==='read_ship_dynamics_browser_authority_v1'){if(authorityHold)await new Promise(resolve=>authorityQueue.push(resolve));return new Response(JSON.stringify({workspace:body.p_workspace_key,managed:false,source:null,epoch:0,pauseState:'unmanaged',admitted:true}),{status:200,headers:{'Content-Type':'application/json'}});}
+  calls.push({name,body});
   let value=name.includes('list')?currentPage:name.includes('load')?{ok:true,report:{...summary,snapshot:{schemaVersion:1,businessDate:summary.businessDate,timezone:'Asia/Taipei',vessels:[]}}}:name.includes('delete')?{ok:true,operationId:body.p_operation_id,deletedReportIds:body.p_delete_report_ids,deletedCount:1,deletedBytes:50,remainingReportCount:0,remainingSetToken:'b'.repeat(32)}:{ok:true,operationId:body.p_operation_id,created:true,report:summary};
   if(hold&&name.includes(hold))await new Promise(resolve=>queue.push({resolve,name,body}));
   return new Response(JSON.stringify(value),{status:200,headers:{'Content-Type':'application/json'}});
@@ -26,6 +28,14 @@ export async function run(){
  const reset=()=>{flushSync(()=>root.unmount());host.replaceChildren();root=createRoot(host);hold='';queue=[];alerts=[];calls=[];currentPage=page;};
  const click=t=>{const n=[...host.querySelectorAll('button')].find(n=>n.textContent===t);assert(n,'missing '+t+' '+host.innerText);flushSync(()=>n.click());};
  try{
+  for(const change of ['mode','key','actor']){
+   reset();render(Manual);await tick();authorityHold=true;click('手動保存目前 Itinerary');await until(()=>authorityQueue.length===1,'deferred report source discovery');
+   const next=change==='mode'?{...cfg,storageMode:'records-v1'}:change==='key'?{...cfg,supabaseAnonKey:'rotated'}:cfg,actor=change==='actor'?'other-owner':'owner';
+   render(Manual,next,actor);await tick();const before=saved;authorityHold=false;authorityQueue.shift()();await tick();await tick();
+   assert(calls.length===0&&saved===before&&alerts.length===0,'stale source capture sent a report or published success');
+   assert(!api.readPendingManualItineraryReportSave(cfg,'owner'),'stale capture persisted new operation');
+   cases.push('mounted manual '+change+' switch during authority capture emits no operation');
+  }
   for(const change of ['mode','key','actor']){
    reset();render(Manual);await tick();const button=host.querySelector('button'),oldClick=button[Object.keys(button).find(k=>k.startsWith('__reactProps'))].onClick;hold='save_manual';click('手動保存目前 Itinerary');await until(()=>queue.length===1,'deferred manual RPC');
    const old=api.readPendingManualItineraryReportSave(cfg,'owner');assert(old,'old intent durable before RPC');

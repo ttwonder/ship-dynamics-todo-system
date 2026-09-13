@@ -10,7 +10,7 @@ import {shipExcelRpcArgs} from './ship-itinerary-excel-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({browserAuthority=false,dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,scopedRead=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
+export async function createRecordStorageLocalQa({manualReportAuthority=false,browserAuthority=false,dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,scopedRead=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
  if(preparePerformanceFixture&&!performanceTrace)throw new Error('Performance fixture requires explicit performanceTrace');
  // Opt-in private native QA supplies an already identity-verified connection.
  // The existing browser/PGlite default and migration/seed chain stay unchanged.
@@ -21,6 +21,13 @@ export async function createRecordStorageLocalQa({browserAuthority=false,dataMan
  const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:legacySnapshot?'legacy':'records-v1',readMode:legacySnapshot?'snapshot':scopedRead?'scoped-v1':'delta-v1'});
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
+  ...(manualReportAuthority?{
+   sd_itinerary_main_load_many:['p_workspace_key','p_vessel_ids:text[]','p_actor_user_id'],
+   sd_save_manual_itinerary_report:['p_workspace_key','p_actor_user_id','p_operation_id:uuid'],
+   sd_itinerary_daily_report_list_v2:['p_workspace_key','p_actor_user_id','p_page:integer','p_page_size:integer'],
+   sd_itinerary_daily_report_locate_v2:['p_workspace_key','p_business_date:date','p_actor_user_id','p_page_size:integer'],
+   sd_itinerary_daily_report_load_by_id:['p_workspace_key','p_report_id:bigint','p_actor_user_id'],
+  }:{}),
   ...(legacySnapshot?{apply_ship_dynamics_block_patch_v2:requestArgs,get_ship_dynamics_block_patch_receipt:requestArgs}:{}),
   ...(browserAuthority?{read_ship_dynamics_browser_authority_v1:['p_workspace_key'],apply_ship_dynamics_block_patch_v2:requestArgs,get_ship_dynamics_block_patch_receipt:requestArgs}:{}),
   ...(shipExcel?shipExcelRpcArgs:{}),
