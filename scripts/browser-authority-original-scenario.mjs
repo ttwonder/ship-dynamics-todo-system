@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import {isDeepStrictEqual} from 'node:util';
 import {randomUUID} from 'node:crypto';
 import {createAuthorityBOracle} from './browser-authority-b-oracle.mjs';
-export async function primary({a,qa,native,until,wait,read,receipt,save,hash,write,setCase,outgoing}) {
+import {reloadProbe} from './browser-authority-reload-scenario.mjs';
+export async function primary({a,qa,native,call,until,wait,read,receipt,save,hash,write,setCase,outgoing}) {
  const mode=process.env.QA_BROWSER_AUTHORITY_MODE||'direct';
- assert.ok(['direct','lost-ack','target-conflict','target-auth-conflict','lost-B-ack'].includes(mode));receipt.mode=mode;
+ assert.ok(['direct','lost-ack','target-conflict','target-auth-conflict','lost-B-ack','reload'].includes(mode));receipt.mode=mode;
  const vesselIntent=mode==='target-conflict';
  const patch='apply_ship_dynamics_record_patch_v1',field=`[...document.querySelectorAll('.management-form label')].find(n=>n.textContent===${JSON.stringify(vesselIntent?'完整船名':'姓名')})?.querySelector('input')`;
  const q=async(c,sql,args=[])=>(await c.query(sql,args)).rows[0]?.r;
@@ -102,6 +103,8 @@ export async function primary({a,qa,native,until,wait,read,receipt,save,hash,wri
   pass('A06-original-B-save-selected-route','original-UI-native-PG',{route:response.rpc,operationId:response.operationId,targetBCommitCount:mode==='target-auth-conflict'?0:1,sameDocument:true,sameNode:true,unchangedConfig:true,retiredSourceAndIndependentStoresUnchanged:true});
   receipt.status='PASS';
   write('operator-final-authority',await authority());eq(await full('final-after-observation'),finalFull,'QA_no_trailing_business_mutation');
-  receipt.noRefreshNoManualRebaseNoForcedTarget=true;save();
+  receipt.firstSequenceNoRefreshNoManualRebaseNoForcedTarget=true;save();
+  if(mode==='reload')await reloadProbe({a,qa,call,until,receipt,save,hash,legacy,full,before:finalFull,configHash,name:newerName,createAuthorityBOracle,native,setCase});
+  else receipt.noRefreshNoManualRebaseNoForcedTarget=true;save();
  } finally {release?.();qa.setRecordFault(null);try{await a.eval('window.__lateObserver?.disconnect()');}catch{}}
 }

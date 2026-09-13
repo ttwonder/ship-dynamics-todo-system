@@ -310,6 +310,7 @@ export default function App() {
   const actionScopeGeneration=useRef(0);
   const fetchCloudData=async(config?:ResolvedSupabaseConfig|null,signal?:AbortSignal,confirmed?:AppData)=>{
     const binding=originalAuthority.current;
+    if(config&&!binding)throw new BrowserAuthorityError('browser-authority-unavailable');
     const result=binding&&config?await readBoundCloudData(config,binding,signal,confirmed,recordReadScope.current):await fetchCloudDataRpc(config,signal,confirmed,recordReadScope.current);
     if(originalAuthority.current!==binding)throw new BrowserAuthorityError('browser-authority-stale-read');
     return result;
@@ -1137,20 +1138,23 @@ export default function App() {
     const hasLocalCache = localStorage.getItem(STORAGE_KEY) !== null;
     const identityChanged = Boolean(cachedIdentity && cachedIdentity !== identity);
     const unknownDirtyCache = !cachedIdentity && hasLocalCache;
-    const persistedConfirmedBase=parseConfirmedCloudBase(localStorage.getItem(CLOUD_CONFIRMED_BASE_KEY),identity);
-    confirmedCloudData.current=persistedConfirmedBase;
-    if(persistedConfirmedBase){
-      durableCloudRevisionFloors.current=updateDurableRevisionFloor(durableCloudRevisionFloors.current,identity,persistedConfirmedBase.revision);
-      try{localStorage.setItem(CLOUD_REVISION_FLOORS_KEY,serializeDurableRevisionFloors(durableCloudRevisionFloors.current));}catch{/* legacy base still supplies this session floor */}
-    }
-    const persistedDurableFloor=durableCloudRevisionFloors.current.get(identity)??-1;
-    // A dirty persisted AppData is an old global intent, not a home summary.
-    // Only this recovery bootstrap expands coverage; clean member opens stay scoped.
-    if(cfg.readMode==='scoped-v1'&&trustedLocalIdentity&&persistedConfirmedBase&&!appDataContentEqual(data,persistedConfirmedBase))recordReadScope.current=recordRecoveryReadScope(persistedConfirmedBase,data);
+    let persistedConfirmedBase:AppData|null=null;
+    let persistedDurableFloor=-1;
     let cancelled=false;
     setSavePhase('saving');
     setCloudStatus('正在載入雲端主資料...');
-    configIoCoordinator.current.run(bootstrapToken,getSupabaseConfig,fetchCloudData).then(remote => {
+    configIoCoordinator.current.run(bootstrapToken,getSupabaseConfig,async config=>{
+      const binding=await readBrowserAuthority(config);
+      if(cancelled||!configIoCoordinator.current.isCurrent(bootstrapToken,getSupabaseConfig()))throw new StaleAsyncConfigError();
+      const historyIdentity=authorityFloorIdentity(identity,binding);
+      const base=parseConfirmedCloudBase(localStorage.getItem(CLOUD_CONFIRMED_BASE_KEY),historyIdentity);
+      const floor=Math.max(durableCloudRevisionFloors.current.get(historyIdentity)??-1,base?.revision??-1);
+      // Discover source before interpreting persisted history; dirty old global
+      // intent may expand coverage, but never changes the connection or source.
+      const readScope=authorityConfig(config,binding).readMode==='scoped-v1'&&trustedLocalIdentity&&base&&!appDataContentEqual(data,base)?recordRecoveryReadScope(base,data):recordReadScope.current;
+      const remote=await readBoundCloudData(config,binding,undefined,undefined,readScope);
+      return {remote,binding,base,floor,readScope};
+    }).then(({remote,binding,base,floor,readScope}) => {
       if(cancelled||!configIoCoordinator.current.isCurrent(bootstrapToken,getSupabaseConfig()))return;
       const latestConfig = getSupabaseConfig();
       if (!latestConfig || cloudIdentity(latestConfig) !== identity) {
@@ -1160,9 +1164,17 @@ export default function App() {
         setCloudBootstrapped(true);
         return;
       }
+      originalAuthority.current=binding;
+      persistedConfirmedBase=base;
+      const boundHistoryIdentity=authorityFloorIdentity(identity,binding);
+      persistedDurableFloor=Math.max(floor,durableCloudRevisionFloors.current.get(boundHistoryIdentity)??-1);
+      // Keep the base-derived floor after fencing, even if rollback clears the merge base.
+      if(persistedDurableFloor>=0)durableCloudRevisionFloors.current.set(boundHistoryIdentity,persistedDurableFloor);
+      confirmedCloudData.current=base;
+      recordReadScope.current=readScope;
       if (remote) {
         lastCloudRevision.current=remote.revision||0;
-        const cleanCoverageTransition=cfg.readMode==='scoped-v1'&&Boolean(trustedLocalIdentity)&&cleanRecordHomeCacheMatches(data,persistedConfirmedBase,remote);
+        const cleanCoverageTransition=authorityConfig(cfg,binding).readMode==='scoped-v1'&&Boolean(trustedLocalIdentity)&&cleanRecordHomeCacheMatches(data,persistedConfirmedBase,remote);
         const localContentDiverged=hasLocalCache&&!appDataContentEqual(data,remote)&&!cleanCoverageTransition;
         const persistedRemoteRollback=remote.revision<persistedDurableFloor;
         const recoveredBase=!identityChanged&&!unknownDirtyCache?trustedPersistedBaseForRemote(persistedConfirmedBase,remote,appDataContentEqual):null;
@@ -4368,7 +4380,7 @@ export default function App() {
       const expectedRevision=lastCloudRevision.current;
       const baseSnapshot=confirmedCloudData.current;
       const hasLocalChanges=baseSnapshot?!appDataContentEqual(localSnapshot,baseSnapshot):localSnapshot.revision>expectedRevision;
-      const durableRevisionFloor=durableCloudRevisionFloors.current.get(syncIdentity)??-1;
+      const durableRevisionFloor=durableCloudRevisionFloors.current.get(authorityFloorIdentity(syncIdentity,originalAuthority.current))??-1;
       const workspaceChanged=Boolean(previousCloudIdentity&&previousCloudIdentity!==syncIdentity);
       if(workspaceChanged||hasUnboundLocalCache)throw new CloudRebaseConflictError([workspaceChanged?'雲端工作區已變更，不能把舊工作區的本機資料自動合併、覆蓋或初始化到新工作區':'本機快取來源未綁定，即使目標工作區空白也不能自動綁定、初始化或覆蓋']);
       if (remote) {
