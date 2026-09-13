@@ -84,6 +84,7 @@ export interface ItineraryDailyReportDeleteResult {
 
 export interface PendingItineraryDailyReportDelete extends ItineraryDailyReportDeleteRequest {
   version: 3;
+  sourceAuthority?: BrowserAuthority;
   configIdentity: string;
   workspaceKey: string;
   createdAt: string;
@@ -519,13 +520,23 @@ export async function deleteItineraryDailyReports(
       true,
     );
   }
+  // A pre-upgrade unbound v3 keeps its exact raw route. Never rediscover on replay.
+  const binding = request.sourceAuthority;
+  if (Object.prototype.hasOwnProperty.call(request, 'sourceAuthority') && (!binding
+    || binding.workspace !== resolved.workspaceKey || typeof binding.managed !== 'boolean'
+    || (binding.managed ? binding.source !== 'legacy' || binding.epoch !== 1 || binding.pauseState !== 'resumed'
+      : binding.epoch !== 0 || binding.source !== (resolved.storageMode ?? 'legacy') || !['unmanaged', 'resumed'].includes(binding.pauseState))
+    || binding.admitted !== true)) {
+    throw new ItineraryDailyReportRpcError('INVALID_DELETE_ENVELOPE', 'Invalid captured report authority.', false);
+  }
+  const route = binding ? authorityConfig(resolved, binding) : resolved;
   const response = await runRpc('delete_sd_itinerary_daily_report_records', {
     p_workspace_key:resolved.workspaceKey,
     p_actor_user_id:request.actorUserId,
     p_operation_id:request.operationId,
     p_expected_set_token:expectedSetToken,
     p_delete_report_ids:deleteReportIds,
-  }, resolved, client);
+  }, route, client);
   const operationId = asText(response.operationId);
   const deletedReportIds = strictReportIdSet(response.deletedReportIds);
   const deletedCount = strictNonNegativeInteger(response.deletedCount);
@@ -752,6 +763,12 @@ export function clearPendingManualItineraryReportSave(
   storage.removeItem(pendingKey(PENDING_MANUAL_SAVE_PREFIX, config, actorUserId));
 }
 
+export async function captureItineraryDailyReportDeleteAuthority(config: ResolvedSupabaseConfig): Promise<BrowserAuthority> {
+  const binding = await readBrowserAuthority(config);
+  if (!binding.admitted) throw new ItineraryDailyReportRpcError('DELETE_CONTEXT_CHANGED', 'Report source is not admitted.', false);
+  return binding;
+}
+
 export function createPendingItineraryDailyReportDelete(
   request: ItineraryDailyReportDeleteRequest,
   config: ResolvedSupabaseConfig,
@@ -788,6 +805,7 @@ export function readPendingItineraryDailyReportDelete(
     if (!expectedSetToken || !deleteReportIds) return null;
     const pending: PendingItineraryDailyReportDelete = {
       version:3,
+      ...(Object.prototype.hasOwnProperty.call(parsed, 'sourceAuthority') ? { sourceAuthority:parsed.sourceAuthority as BrowserAuthority } : {}),
       configIdentity:asText(parsed.configIdentity),
       workspaceKey:asText(parsed.workspaceKey),
       createdAt:asText(parsed.createdAt),
@@ -807,20 +825,37 @@ export function readPendingItineraryDailyReportDelete(
   }
 }
 
+export function assertNoPendingItineraryDailyReportDelete(
+  config: ResolvedSupabaseConfig,
+  actorUserId: string,
+  storage: Pick<Storage, 'getItem'> = window.localStorage,
+): void {
+  if ([PENDING_DELETE_PREFIX, PENDING_LEGACY_DELETE_PREFIX].some(prefix => storage.getItem(pendingKey(prefix, config, actorUserId)) !== null)) {
+    throw new ItineraryDailyReportRpcError('INVALID_DELETE_ENVELOPE', 'Pending report deletion must be reconciled before a new operation.', false);
+  }
+}
+
 export function writePendingItineraryDailyReportDelete(
   pending: PendingItineraryDailyReportDelete,
   config: ResolvedSupabaseConfig,
-  storage: Pick<Storage, 'setItem'> = window.localStorage,
+  storage: Pick<Storage, 'getItem' | 'setItem'> = window.localStorage,
 ): void {
+  assertNoPendingItineraryDailyReportDelete(config, pending.actorUserId, storage);
   storage.setItem(pendingKey(PENDING_DELETE_PREFIX, config, pending.actorUserId), JSON.stringify(pending));
 }
 
 export function clearPendingItineraryDailyReportDelete(
   config: ResolvedSupabaseConfig,
   actorUserId: string,
-  storage: Pick<Storage, 'removeItem'> = window.localStorage,
-): void {
+  storage: Pick<Storage, 'getItem' | 'removeItem'> = window.localStorage,
+  expected?: PendingItineraryDailyReportDelete,
+): boolean {
+  if (expected) {
+    const current = readPendingItineraryDailyReportDelete(config, actorUserId, storage);
+    if (!current || Object.keys(current).some(key => JSON.stringify(current[key as keyof typeof current]) !== JSON.stringify(expected[key as keyof typeof expected]))) return false;
+  }
   storage.removeItem(pendingKey(PENDING_DELETE_PREFIX, config, actorUserId));
+  return true;
 }
 
 export function readPendingLegacyItineraryDailyReportDelete(
@@ -845,7 +880,7 @@ export function readPendingLegacyItineraryDailyReportDelete(
       expectedSetToken,
       deleteDates,
     };
-    if (parsed.version !== 2
+    if (Object.prototype.hasOwnProperty.call(parsed, 'sourceAuthority') || parsed.version !== 2
       || pending.configIdentity !== configIdentity(config)
       || pending.workspaceKey !== config.workspaceKey
       || pending.actorUserId !== actorUserId
@@ -860,7 +895,13 @@ export function readPendingLegacyItineraryDailyReportDelete(
 export function clearPendingLegacyItineraryDailyReportDelete(
   config: ResolvedSupabaseConfig,
   actorUserId: string,
-  storage: Pick<Storage, 'removeItem'> = window.localStorage,
-): void {
+  storage: Pick<Storage, 'getItem' | 'removeItem'> = window.localStorage,
+  expected?: PendingLegacyItineraryDailyReportDelete,
+): boolean {
+  if (expected) {
+    const current = readPendingLegacyItineraryDailyReportDelete(config, actorUserId, storage);
+    if (!current || Object.keys(current).some(key => JSON.stringify(current[key as keyof typeof current]) !== JSON.stringify(expected[key as keyof typeof expected]))) return false;
+  }
   storage.removeItem(pendingKey(PENDING_LEGACY_DELETE_PREFIX, config, actorUserId));
+  return true;
 }

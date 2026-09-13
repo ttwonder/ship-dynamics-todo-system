@@ -6,6 +6,8 @@ import {
   clearPendingItineraryDailyReportDelete,
   clearPendingLegacyItineraryDailyReportDelete,
   createPendingItineraryDailyReportDelete,
+  captureItineraryDailyReportDeleteAuthority,
+  assertNoPendingItineraryDailyReportDelete,
   deleteItineraryDailyReports,
   itineraryDailyReportErrorMessage,
   ITINERARY_DAILY_REPORT_DELETE_BATCH_SIZE,
@@ -151,7 +153,7 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
     try {
       const result = await deleteItineraryDailyReports(envelope, config);
       if (!isCurrent()) return;
-      clearPendingItineraryDailyReportDelete(config, currentUser.id);
+      if (!clearPendingItineraryDailyReportDelete(config, currentUser.id, undefined, envelope)) return;
       setPending(null);
       setSelectedReports({});
       setSelectionSetToken(null);
@@ -159,9 +161,10 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
       await refresh(pageData.page);
     } catch (error) {
       if (!isCurrent()) return;
-      const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive;
+      const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive
+        && !['DELETE_CONTEXT_CHANGED', 'INVALID_DELETE_ENVELOPE', 'DAILY_ITINERARY_REPORTS_SQL_NOT_DEPLOYED'].includes(error.code);
       if (definitive) {
-        clearPendingItineraryDailyReportDelete(config, currentUser.id);
+        if (!clearPendingItineraryDailyReportDelete(config, currentUser.id, undefined, envelope)) return;
         setPending(null);
       } else setPending(envelope);
       if (definitive && error instanceof ItineraryDailyReportRpcError && error.code === 'REPORT_SET_CHANGED') {
@@ -186,7 +189,7 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
     try {
       const result = await reconcileLegacyItineraryDailyReportDelete(envelope, config);
       if (!isCurrent()) return;
-      clearPendingLegacyItineraryDailyReportDelete(config, currentUser.id);
+      if (!clearPendingLegacyItineraryDailyReportDelete(config, currentUser.id, undefined, envelope)) return;
       setLegacyPending(null);
       setSelectedReports({});
       setSelectionSetToken(null);
@@ -194,9 +197,10 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
       await refresh(pageData.page);
     } catch (error) {
       if (!isCurrent()) return;
-      const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive;
+      const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive
+        && !['DELETE_CONTEXT_CHANGED', 'INVALID_DELETE_ENVELOPE', 'DAILY_ITINERARY_REPORTS_SQL_NOT_DEPLOYED'].includes(error.code);
       if (definitive) {
-        clearPendingLegacyItineraryDailyReportDelete(config, currentUser.id);
+        if (!clearPendingLegacyItineraryDailyReportDelete(config, currentUser.id, undefined, envelope)) return;
         setLegacyPending(null);
       } else setLegacyPending(envelope);
       if (definitive && error instanceof ItineraryDailyReportRpcError && error.code === 'REPORT_SET_CHANGED') {
@@ -237,9 +241,13 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
     setErrorText('');
     setNotice('');
     try {
+      assertNoPendingItineraryDailyReportDelete(config, currentUser.id);
+      const sourceAuthority = await captureItineraryDailyReportDeleteAuthority(config);
+      if (!isCurrent()) return;
       for (let index = 0; index < chosen.length; index += ITINERARY_DAILY_REPORT_DELETE_BATCH_SIZE) {
         const batch = chosen.slice(index, index + ITINERARY_DAILY_REPORT_DELETE_BATCH_SIZE);
-        const envelope = createPendingItineraryDailyReportDelete({ operationId: crypto.randomUUID(), actorUserId: currentUser.id, expectedSetToken, deleteReportIds: batch }, config);
+        if (!isCurrent()) return;
+        const envelope = { ...createPendingItineraryDailyReportDelete({ operationId: crypto.randomUUID(), actorUserId: currentUser.id, expectedSetToken, deleteReportIds: batch }, config), sourceAuthority };
         try { writePendingItineraryDailyReportDelete(envelope, config); }
         catch { setErrorText(`已完成 ${completed}／${chosen.length} 份；下一批無法保存對帳資料，因此尚未送出。`); return; }
         setPending(envelope);
@@ -247,13 +255,14 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
         try { result = await deleteItineraryDailyReports(envelope, config); if (!isCurrent()) return; }
         catch (error) {
           if (!isCurrent()) return;
-          const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive;
-          if (definitive) { clearPendingItineraryDailyReportDelete(config, currentUser.id); setPending(null); }
+          const definitive = error instanceof ItineraryDailyReportRpcError && error.definitive
+        && !['DELETE_CONTEXT_CHANGED', 'INVALID_DELETE_ENVELOPE', 'DAILY_ITINERARY_REPORTS_SQL_NOT_DEPLOYED'].includes(error.code);
+          if (definitive) { if (!clearPendingItineraryDailyReportDelete(config, currentUser.id, undefined, envelope)) return; setPending(null); }
           const prefix = completed ? `已完成 ${completed}／${chosen.length} 份；` : '';
           setErrorText(`${prefix}${itineraryDailyReportErrorMessage(error)}`);
           return;
         }
-        clearPendingItineraryDailyReportDelete(config, currentUser.id);
+        if (!clearPendingItineraryDailyReportDelete(config, currentUser.id, undefined, envelope)) return;
         setPending(null);
         const deleted = new Set<string>(result.deletedReportIds);
         expectedSetToken = result.remainingSetToken;
@@ -270,6 +279,8 @@ export default function ItineraryReportDataView({ currentUser }: { currentUser: 
       if (!isCurrent()) return;
       setSelectionSetToken(null);
       setNotice(`每日 Itinerary 日快照已刪除：${completed} 份，邏輯量 ${formatDataBytes(deletedBytes)}。正式 Itinerary 未變更。`);
+    } catch (error) {
+      if (isCurrent()) setErrorText(itineraryDailyReportErrorMessage(error));
     } finally {
       if (isCurrent()) setActing(false);
     }
