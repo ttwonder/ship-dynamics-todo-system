@@ -308,10 +308,10 @@ export default function App() {
   useEffect(()=>()=>{void memberEditor.current?.dispose();},[]);
   const recordReadScope=useRef<RecordReadScope>('home');
   const actionScopeGeneration=useRef(0);
-  const fetchCloudData=async(config?:ResolvedSupabaseConfig|null,signal?:AbortSignal,confirmed?:AppData)=>{
+  const fetchCloudData=async(config?:ResolvedSupabaseConfig|null,signal?:AbortSignal,confirmed?:AppData,scope:RecordReadScope=recordReadScope.current)=>{
     const binding=originalAuthority.current;
     if(config&&!binding)throw new BrowserAuthorityError('browser-authority-unavailable');
-    const result=binding&&config?await readBoundCloudData(config,binding,signal,confirmed,recordReadScope.current):await fetchCloudDataRpc(config,signal,confirmed,recordReadScope.current);
+    const result=binding&&config?await readBoundCloudData(config,binding,signal,confirmed,scope):await fetchCloudDataRpc(config,signal,confirmed,scope);
     if(originalAuthority.current!==binding)throw new BrowserAuthorityError('browser-authority-stale-read');
     return result;
   };
@@ -2349,9 +2349,9 @@ export default function App() {
       if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
       if(!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current))await enqueueCloudSave(liveData.current);
       if(!isCurrent()||activeEditLockRef.current||batchManagedOpenRef.current)return false;
-      const before=liveData.current;
-      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,cfg=>fetchCloudDataRpc(cfg,undefined,undefined,scope));
-      if(!isCurrent()||liveData.current!==before||activeEditLockRef.current||batchManagedOpenRef.current)return false;
+      const before=liveData.current,binding=originalAuthority.current;
+      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,cfg=>fetchCloudData(cfg,undefined,undefined,scope));
+      if(!isCurrent()||originalAuthority.current!==binding||liveData.current!==before||activeEditLockRef.current||batchManagedOpenRef.current)return false;
       if(!remote)throw new Error('雲端工作區不存在');
       // Coverage changed, not business content. Still enforce the durable floor.
       assertRemoteExtendsDurableHistory(cloudIdentity(config),null,remote);
