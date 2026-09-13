@@ -22,7 +22,7 @@ export function pendingOperationForDocument(
   const signature = itineraryDocumentSignature(document);
   if (current && OPERATION_ID.test(current.id)
       && (current.signature === signature || current.signature === legacyEmptyAlternativeSignature(document))) {
-    return { id: current.id, signature };
+    return { ...current, id: current.id, signature };
   }
   return { id: createId(), signature };
 }

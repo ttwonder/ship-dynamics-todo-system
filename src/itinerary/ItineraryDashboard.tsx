@@ -6,12 +6,13 @@ import { changedTaskPlannedCalendarEvents, projectTaskPlannedCalendarEvents } fr
 import { createDemoItineraryDocuments } from './itineraryDemoData';
 import { createEmptyItineraryDocument, createItineraryId, createItineraryOperationId, type ItineraryDocument } from './itineraryTypes';
 import { LocalDemoItineraryBackend, type ItineraryLease } from './itineraryCollaboration';
-import { deleteItineraryDraft, itineraryDraftKey, readItineraryDraft, type ItineraryPendingOperation } from './itineraryDraftStore';
+import { deleteItineraryDraft, deleteItineraryDraftIfUnchanged, itineraryDraftKey, readItineraryDraft, type ItineraryPendingOperation } from './itineraryDraftStore';
 import ItineraryPanel from './ItineraryPanel';
 import ItineraryEditor from './ItineraryEditor';
 import ItineraryImportPreview, { type ItineraryImportApplyItem, type ItineraryImportApplyResult } from './ItineraryImportPreview';
 import ItineraryCalendar from './ItineraryCalendar';
 import { OfficeItineraryCloudRepository, type ItineraryMainActor } from './itineraryCloud';
+import { MainSessionItineraryRepository } from './itinerarySourceAuthority';
 import type { ParsedItineraryWorkbook } from './itineraryExcel';
 import { itineraryVesselDisplayName, projectItineraryDocumentsForDisplay, resolveItineraryEditorDocument, withItineraryVesselDisplayName } from './itineraryVesselDisplay';
 import { mergeLatestItineraryDocuments, selectLatestItineraryDocument } from './itineraryFreshness';
@@ -88,7 +89,7 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
   const cloudBackend = useMemo(() => {
     if (demoMode || typeof window === 'undefined') return null;
     if (operationalFeed?.backend) return operationalFeed.backend;
-    try { return cloudConfig ? new OfficeItineraryCloudRepository(actor, cloudConfig) : null; } catch { return null; }
+    try { return cloudConfig ? new MainSessionItineraryRepository(actor, cloudConfig) : null; } catch { return null; }
   }, [demoMode, actor.userId, cloudConfigKey, operationalFeed?.backend]);
   const backend = demoMode ? localBackend : cloudBackend;
   const leaseOwnerKey = JSON.stringify([demoMode, cloudBackend?.config.supabaseUrl, cloudBackend?.config.workspaceKey, actor.userId]);
@@ -191,6 +192,37 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
     setNotice('');
     const generation = openGenerationRef.current;
     const isCurrent = () => generation === openGenerationRef.current;
+    // A pending operation can already be committed even when the formal base
+    // advanced or new leases are paused. Reconcile it before any new admission.
+    if (cloudBackend instanceof MainSessionItineraryRepository) {
+      const key = itineraryDraftKey(cloudBackend.config.workspaceKey, vesselId, user.id);
+      const saved = await readItineraryDraft(key);
+      if (!isCurrent()) return;
+      if (saved?.pendingOperation) {
+        const result = await cloudBackend.recoverPending({ document: saved.document, expectedRevision: saved.baseRevision,
+          operationId: saved.pendingOperation.id, pendingOperation: saved.pendingOperation });
+        if (!isCurrent()) return;
+        if (result.ok === false) {
+          setNotice('保存結果仍無法確認；草稿與相同操作識別已保留，可重試相同內容。');
+          return;
+        }
+        if (!await deleteItineraryDraftIfUnchanged(saved, isCurrent).catch(() => false)) {
+          if (isCurrent()) setNotice('此瀏覽器有較舊 revision 的草稿；為避免覆蓋較新內容，本次未自動載入，草稿仍保留。');
+          return;
+        }
+        if (!isCurrent()) return;
+        setNotice(`已保存 ${itineraryVesselDisplayName(vessel)} Itinerary，Revision ${result.document.revision}。`);
+        // Publish a fresh formal read, not the historical receipt's older body.
+        try {
+          const latest = await cloudBackend.loadDocument(vesselId);
+          if (isCurrent() && latest) {
+            setDocuments(previous => mergeLatestItineraryDocuments(previous, { [vesselId]: latest }));
+            operationalFeed?.publishConfirmed(latest);
+          }
+        } catch { /* receipt remains authoritative; retain the current projection */ }
+        return;
+      }
+    }
     const claim = await backend.claimLease(vesselId, { holderId, holderLabel: user.name }, 75);
     if (!isCurrent()) {
       if (claim.ok) void backend.releaseLease(claim.lease);
@@ -341,7 +373,7 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
       lease={editor.lease}
       actorId={user.id}
       onRenewLease={async lease=>backend.renewLease(lease,75)}
-      onSave={async (candidate,lease,operationId)=>backend.save({document:candidate,expectedRevision:editor.document.revision,operationId,lease,actorLabel:user.name})}
+      onSave={async (candidate,lease,operationId,pendingOperation)=>{const generation=openGenerationRef.current;const result=await backend.save({document:candidate,expectedRevision:editor.document.revision,operationId,pendingOperation,lease,actorLabel:user.name});return generation===openGenerationRef.current?result:{ok:false,code:'unknown-outcome'};}}
       onCancel={async lease=>{await backend.releaseLease(lease);setEditor(null);}}
       onSaved={closeAfterSave}
     />}

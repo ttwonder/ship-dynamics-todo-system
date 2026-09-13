@@ -23,7 +23,7 @@ interface ItineraryEditorProps {
   initialPendingOperation?: ItineraryPendingOperation;
   lease: ItineraryLease;
   actorId: string;
-  onSave: (document: ItineraryDocument, lease: ItineraryLease, operationId: string) => Promise<ItinerarySaveResult>;
+  onSave: (document: ItineraryDocument, lease: ItineraryLease, operationId: string, pendingOperation?: ItineraryPendingOperation) => Promise<ItinerarySaveResult>;
   onRenewLease: (lease: ItineraryLease) => Promise<ItineraryLeaseRenewResult>;
   onCancel: (lease: ItineraryLease) => Promise<void>;
   onSaved: (document: ItineraryDocument) => void;
@@ -86,12 +86,18 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   const dirtyRef = useRef(dirty);
   const draftRef = useRef(draft);
   const pendingOperationRef = useRef<ItineraryPendingOperation | null>(initialPendingOperation || null);
+  const lifecycleRef = useRef({ active: true, closing: false, generation: 0 });
+  const isCurrent = (generation: number) => lifecycleRef.current.active && lifecycleRef.current.generation === generation;
+  useEffect(() => {
+    lifecycleRef.current.active = true;
+    return () => { lifecycleRef.current.active = false; lifecycleRef.current.generation++; };
+  }, []);
   dirtyRef.current = dirty;
   draftRef.current = draft;
 
   const touch = () => { lastActivity.current = Date.now(); setIdleWarning(false); };
   const updateDraft = (updater: (current: ItineraryDocument) => ItineraryDocument) => {
-    if (readOnly || saving) return;
+    if (readOnly || saving || lifecycleRef.current.closing) return;
     pendingOperationRef.current = null;
     setDraft(current => updater(current));
     setDirty(true);
@@ -105,7 +111,9 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
 
   useEffect(() => {
     if (!dirty) return;
+    const generation = lifecycleRef.current.generation;
     const timer = window.setTimeout(() => {
+      if (!isCurrent(generation) || lifecycleRef.current.closing) return;
       void saveItineraryDraft({ key: draftKey, workspaceKey: draft.workspaceKey, vesselId: draft.vesselId, actorId, baseRevision: document.revision, savedAt: new Date().toISOString(), document: cloneDocument(draft), pendingOperation: pendingOperationRef.current || undefined });
     }, 500);
     return () => window.clearTimeout(timer);
@@ -114,7 +122,10 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   useEffect(() => {
     if (readOnly) return;
     const timer = window.setInterval(() => {
+      if (!lifecycleRef.current.active || lifecycleRef.current.closing) return;
+      const generation = lifecycleRef.current.generation;
       void renewLeaseRef.current(lease).then(result => {
+        if (!isCurrent(generation)) return;
         if (result.ok) setLease(result.lease);
         else {
           setReadOnly(true);
@@ -129,6 +140,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   useEffect(() => {
     if (readOnly) return;
     const timer = window.setInterval(() => {
+      if (!lifecycleRef.current.active || lifecycleRef.current.closing) return;
       const idleMs = Date.now() - lastActivity.current;
       if (idleMs >= 10 * 60_000) {
         setReadOnly(true);
@@ -141,7 +153,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
 
   useEffect(() => {
     const warnBeforeClose = (event: BeforeUnloadEvent) => {
-      if (!dirtyRef.current) return;
+      if (!dirtyRef.current || !lifecycleRef.current.active || lifecycleRef.current.closing) return;
       event.preventDefault();
       event.returnValue = '';
       void saveItineraryDraft({ key: draftKey, workspaceKey: draftRef.current.workspaceKey, vesselId: draftRef.current.vesselId, actorId, baseRevision: document.revision, savedAt: new Date().toISOString(), document: cloneDocument(draftRef.current), pendingOperation: pendingOperationRef.current || undefined });
@@ -165,7 +177,8 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   });
 
   const submit = async () => {
-    if (readOnly || saving) return;
+    if (readOnly || saving || !lifecycleRef.current.active || lifecycleRef.current.closing) return;
+    const generation = lifecycleRef.current.generation;
     const candidate = { ...draft, rows: resequenceItineraryRows(draft.rows) };
     const validation = validateItineraryDocument(candidate);
     if (validation.ok === false) {
@@ -174,15 +187,20 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
     }
     setSaving(true);
     setMessage('正在保存並等待確認…');
-    pendingOperationRef.current = pendingOperationForDocument(candidate, pendingOperationRef.current);
+    const previousOperation = pendingOperationRef.current;
+    pendingOperationRef.current = pendingOperationForDocument(candidate, previousOperation);
+    if (!previousOperation && lease.sourceAuthority) pendingOperationRef.current.sourceAuthority = lease.sourceAuthority;
     const operationId = pendingOperationRef.current.id;
     await saveItineraryDraft({ key: draftKey, workspaceKey: candidate.workspaceKey, vesselId: candidate.vesselId, actorId, baseRevision: document.revision, savedAt: new Date().toISOString(), document: cloneDocument(candidate), pendingOperation: pendingOperationRef.current });
+    if (!isCurrent(generation)) return;
     try {
-      const result = await onSave(candidate, lease, operationId);
+      const result = await onSave(candidate, lease, operationId, previousOperation || undefined);
+      if (!isCurrent(generation)) return;
       if (result.ok === true) {
         pendingOperationRef.current = null;
         setDirty(false);
         await deleteItineraryDraft(draftKey);
+        if (!isCurrent(generation)) return;
         onSaved(result.document);
         return;
       }
@@ -190,23 +208,41 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
       if (result.code !== 'unknown-outcome') {
         pendingOperationRef.current = null;
         await saveItineraryDraft({ key: draftKey, workspaceKey: candidate.workspaceKey, vesselId: candidate.vesselId, actorId, baseRevision: document.revision, savedAt: new Date().toISOString(), document: cloneDocument(candidate) });
+        if (!isCurrent(generation)) return;
       }
       if (result.code === 'revision-conflict' || result.code === 'lease-expired' || result.code === 'lease-mismatch' || result.code === 'operation-mismatch') setReadOnly(true);
     } catch {
+      if (!isCurrent(generation)) return;
       setMessage('保存結果無法確認；未顯示成功，草稿已保留。請保持此視窗並重試相同內容。');
     } finally {
-      setSaving(false);
+      if (isCurrent(generation)) setSaving(false);
     }
   };
 
   const cancel = async () => {
+    if (lifecycleRef.current.closing) return;
     if (dirty && !window.confirm('取消將放棄這次尚未同步的修改；確定取消嗎？')) return;
-    await deleteItineraryDraft(draftKey);
-    await onCancel(lease);
+    lifecycleRef.current.closing = true;
+    const generation = ++lifecycleRef.current.generation;
+    try {
+      await deleteItineraryDraft(draftKey);
+      if (isCurrent(generation)) await onCancel(lease);
+    } catch (error) {
+      if (isCurrent(generation)) { lifecycleRef.current.closing = false; setSaving(false); }
+      throw error;
+    }
   };
   const closePreservingDraft = async () => {
-    await saveItineraryDraft({ key: draftKey, workspaceKey: draft.workspaceKey, vesselId: draft.vesselId, actorId, baseRevision: document.revision, savedAt: new Date().toISOString(), document: cloneDocument(draft), pendingOperation: pendingOperationRef.current || undefined });
-    await onCancel(lease);
+    if (lifecycleRef.current.closing) return;
+    lifecycleRef.current.closing = true;
+    const generation = ++lifecycleRef.current.generation;
+    try {
+      await saveItineraryDraft({ key: draftKey, workspaceKey: draft.workspaceKey, vesselId: draft.vesselId, actorId, baseRevision: document.revision, savedAt: new Date().toISOString(), document: cloneDocument(draft), pendingOperation: pendingOperationRef.current || undefined });
+      if (isCurrent(generation)) await onCancel(lease);
+    } catch (error) {
+      if (isCurrent(generation)) { lifecycleRef.current.closing = false; setSaving(false); }
+      throw error;
+    }
   };
 
   return <div className="modal-backdrop itinerary-editor-backdrop" role="presentation">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabaseConfig } from '../cloud';
 import { cloudConfigIdentity } from '../cloudRecovery';
 import { OfficeItineraryCloudRepository, type ItineraryMainActor } from './itineraryCloud';
+import { MainSessionItineraryRepository } from './itinerarySourceAuthority';
 import type { ItineraryDocument } from './itineraryTypes';
 import {
   markItineraryOperationalRecordError,
@@ -48,7 +49,7 @@ export function useItineraryOperationalProjection({ actor, vesselIds, enabled }:
   const identityVersion=identityVersionRef.current.version;
   const backendState = useMemo(() => {
     if (!enabled || !actor || !config) return { backend: null as OfficeItineraryCloudRepository | null, error: '' };
-    try { return { backend: new OfficeItineraryCloudRepository(actor, config), error: '' }; }
+    try { return { backend: new MainSessionItineraryRepository(actor, config), error: '' }; }
     catch (error) { return { backend: null as OfficeItineraryCloudRepository | null, error: errorMessage(error) }; }
   }, [enabled, actor?.userId, configKey]);
   const [records, setRecords] = useState<Record<string, ItineraryOperationalFeedRecord>>({});

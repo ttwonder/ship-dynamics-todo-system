@@ -1,5 +1,7 @@
 import { createItineraryId, type ItineraryDocument } from './itineraryTypes';
 import { validateItineraryDocument } from './itineraryValidation';
+import type { BrowserAuthority } from '../cloudSourceAuthority';
+import type { ItineraryPendingOperation } from './itineraryDraftStore';
 
 export interface ItineraryStorage {
   getItem(key: string): string | null;
@@ -13,6 +15,7 @@ export interface ItineraryLeaseActor {
 }
 
 export interface ItineraryLease {
+  sourceAuthority?: BrowserAuthority;
   workspaceKey: string;
   vesselId: string;
   leaseId: string;
@@ -32,6 +35,7 @@ export type ItineraryLeaseRenewResult =
   | { ok: false; code: 'lease-mismatch' | 'lease-expired' };
 
 export interface ItinerarySaveInput {
+  pendingOperation?: ItineraryPendingOperation;
   document: ItineraryDocument;
   expectedRevision: number;
   operationId: string;

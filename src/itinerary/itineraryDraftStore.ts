@@ -1,4 +1,5 @@
 import type { ItineraryDocument } from './itineraryTypes';
+import type { BrowserAuthority } from '../cloudSourceAuthority';
 
 const DATABASE_NAME = 'ship-dynamics-itinerary-drafts-v1';
 const STORE_NAME = 'drafts';
@@ -16,6 +17,7 @@ export interface ItineraryDraftRecord {
 }
 
 export interface ItineraryPendingOperation {
+  sourceAuthority?: BrowserAuthority;
   id: string;
   signature: string;
 }
@@ -91,6 +93,31 @@ export async function deleteItineraryDraft(key: string): Promise<void> {
     });
   } catch { /* still remove fallback */ }
   try { localStorage.removeItem(fallbackKey(key)); } catch { /* no-op */ }
+}
+
+// Only delete the exact IndexedDB record that was reconciled. A fallback
+// record is retained: the two stores cannot provide one atomic compare/delete.
+export async function deleteItineraryDraftIfUnchanged(expected: ItineraryDraftRecord, isCurrent: () => boolean): Promise<boolean> {
+  const fallbackAbsent = () => {
+    try { return localStorage.getItem(fallbackKey(expected.key)) === null; } catch { return false; }
+  };
+  if (!isCurrent() || !fallbackAbsent()) return false;
+  let database: IDBDatabase;
+  try { database = await openDatabase(); } catch { return false; }
+  if (!isCurrent()) { database.close(); return false; }
+  return new Promise<boolean>(resolve => {
+    const transaction = database.transaction(STORE_NAME, 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    let deleted = false;
+    transaction.oncomplete = () => { database.close(); resolve(deleted && isCurrent() && fallbackAbsent()); };
+    transaction.onerror = transaction.onabort = () => { database.close(); resolve(false); };
+    const read = store.get(expected.key);
+    read.onsuccess = () => {
+      if (!isCurrent() || !fallbackAbsent() || JSON.stringify(read.result) !== JSON.stringify(expected)) return;
+      const removal = store.delete(expected.key);
+      removal.onsuccess = () => { deleted = true; };
+    };
+  });
 }
 
 export const ITINERARY_DRAFT_STORAGE_PREFIX = FALLBACK_PREFIX;

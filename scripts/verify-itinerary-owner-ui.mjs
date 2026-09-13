@@ -54,7 +54,9 @@ try {
   assert.match(dashboardSource, /返回船舶卡片/);
   assert.match(dashboardSource, /<ItineraryDashboard[\s\S]*actor=\{itineraryActor\}[\s\S]*vessels=\{visible\}/);
   assert.match(itineraryDashboardSource, /const UNRESTRICTED_ITINERARY_PERMISSIONS[\s\S]*view:\s*true[\s\S]*edit:\s*true[\s\S]*import:\s*true[\s\S]*export:\s*true[\s\S]*calendar:\s*true/);
-  assert.match(itineraryDashboardSource, /new OfficeItineraryCloudRepository\(actor, cloudConfig\)/);
+  assert.match(itineraryDashboardSource, /new MainSessionItineraryRepository\(actor, cloudConfig\)/);
+  const authorityRepositorySource = fs.readFileSync(new URL('../src/itinerary/itinerarySourceAuthority.ts', import.meta.url), 'utf8');
+  assert.match(authorityRepositorySource, /class MainSessionItineraryRepository extends OfficeItineraryCloudRepository/, 'source-aware repository retains the original main-session actor protocol');
     assert.match(itineraryDashboardSource, /cloudConfigIdentity\(cloudConfig\)/);
     assert.match(itineraryDashboardSource, /\[demoMode, actor.userId, cloudConfigKey, operationalFeed\?\.backend\]/);
   assert.match(itineraryDashboardSource, /backend&&displayMode==='table'/, 'the cloud repository must mount the same production table path as local demo');
