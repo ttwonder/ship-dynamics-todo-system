@@ -1,6 +1,6 @@
 import { authorityConfig, readBrowserAuthority, sameAuthority, parseBrowserAuthority, type BrowserAuthority } from '../cloudSourceAuthority';
 import { OfficeItineraryCloudRepository } from './itineraryCloud';
-import type { ItineraryLease, ItinerarySaveInput, ItinerarySaveResult } from './itineraryCollaboration';
+import type { ItineraryLease, ItinerarySaveInput, ItinerarySavePreparationResult, ItinerarySaveResult } from './itineraryCollaboration';
 import { usesRecordStorage } from '../cloudRecords';
 import { pendingOperationForDocument } from './itineraryOperation';
 import { validateItineraryDocument } from './itineraryValidation';
@@ -50,6 +50,35 @@ export class MainSessionItineraryRepository extends OfficeItineraryCloudReposito
     return this.bound(lease.sourceAuthority).releaseLease(lease);
   }
 
+  async prepareFreshSave(input: Pick<ItinerarySaveInput, 'document' | 'expectedRevision' | 'lease'>): Promise<ItinerarySavePreparationResult> {
+    try {
+      if (input.document.workspaceKey !== this.config.workspaceKey || input.lease.workspaceKey !== this.config.workspaceKey
+        || input.lease.vesselId !== input.document.vesselId) return { ok: false, code: 'operation-mismatch' };
+      const authority = await readBrowserAuthority(this.config);
+      if (!authority.admitted) return { ok: false, code: 'unknown-outcome', notDispatched: true };
+      const base = this.bases.get(input.document.vesselId);
+      if (!base || base.revision !== input.expectedRevision) return { ok: false, code: 'revision-conflict', currentRevision: base?.revision };
+      if (input.lease.sourceAuthority && sameAuthority(input.lease.sourceAuthority, authority) && sameAuthority(base.authority, authority)) {
+        return { ok: true, lease: input.lease };
+      }
+      // Source changes do not create a new formal store. Verify the shared
+      // revision and renew the very same physical lease; never claim a new one.
+      const target = this.bound(authority);
+      const current = await target.loadDocument(input.document.vesselId);
+      if (!current || current.revision !== input.expectedRevision) return { ok: false, code: 'revision-conflict', currentRevision: current?.revision };
+      const renewal = await target.renewLease(input.lease, 75);
+      if (!renewal.ok) return renewal;
+      if (renewal.lease.leaseId !== input.lease.leaseId || renewal.lease.holderId !== input.lease.holderId
+        || renewal.lease.fence !== input.lease.fence) return { ok: false, code: 'lease-mismatch' };
+      const latest = await readBrowserAuthority(this.config);
+      if (!latest.admitted || !sameAuthority(authority, latest)) return { ok: false, code: 'unknown-outcome', notDispatched: true };
+      this.bases.set(input.document.vesselId, { revision: current.revision, authority });
+      return { ok: true, lease: { ...renewal.lease, sourceAuthority: authority } };
+    } catch {
+      return { ok: false, code: 'unknown-outcome', notDispatched: true };
+    }
+  }
+
   async recoverPending(input: Pick<ItinerarySaveInput, 'document' | 'expectedRevision' | 'operationId' | 'pendingOperation'>): Promise<ItinerarySaveResult> {
     if (!input.pendingOperation) return { ok: false, code: 'unknown-outcome' };
     try {
@@ -88,6 +117,7 @@ export class MainSessionItineraryRepository extends OfficeItineraryCloudReposito
     // An old pending id/signature has no source envelope. Retain its raw route;
     // never reinterpret it using a freshly acquired lease or today's authority.
     const authority = input.pendingOperation ? input.pendingOperation.sourceAuthority : input.lease.sourceAuthority;
+    let dispatched = false;
     try {
       const backend = this.bound(authority);
       if (authority) {
@@ -96,13 +126,14 @@ export class MainSessionItineraryRepository extends OfficeItineraryCloudReposito
         if (!latest.admitted || !sameAuthority(authority, latest)
           || !input.lease.sourceAuthority || !sameAuthority(authority, input.lease.sourceAuthority)
           || !base || base.revision !== input.expectedRevision || !sameAuthority(authority, base.authority)) {
-          return { ok: false, code: 'unknown-outcome', message: 'browser-authority-continuity-unproven' };
+          return { ok: false, code: 'unknown-outcome', message: 'browser-authority-continuity-unproven', notDispatched: true };
         }
       }
       // This immutable adapter captures both save and its same-operation status.
+      dispatched = true;
       return await backend.save(input);
     } catch {
-      return { ok: false, code: 'unknown-outcome', message: 'browser-authority-unavailable' };
+      return { ok: false, code: 'unknown-outcome', message: 'browser-authority-unavailable', ...(!dispatched ? { notDispatched: true as const } : {}) };
     }
   }
 }

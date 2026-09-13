@@ -92,6 +92,8 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
     try { return cloudConfig ? new MainSessionItineraryRepository(actor, cloudConfig) : null; } catch { return null; }
   }, [demoMode, actor.userId, cloudConfigKey, operationalFeed?.backend]);
   const backend = demoMode ? localBackend : cloudBackend;
+  const currentBackendRef = useRef(backend);
+  currentBackendRef.current = backend;
   const leaseOwnerKey = JSON.stringify([demoMode, cloudBackend?.config.supabaseUrl, cloudBackend?.config.workspaceKey, actor.userId]);
   const openGenerationRef = useRef(0);
   const openIdentity = `${demoMode ? 'demo' : cloudConfigKey}\u0000${actor.userId}`;
@@ -100,6 +102,7 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
     openIdentityRef.current = openIdentity;
     openGenerationRef.current += 1;
   }
+  const editorGeneration = openGenerationRef.current;
   const displayDocuments = useMemo(() => projectItineraryDocumentsForDisplay(documents, vessels), [documents, vessels]);
   const visibleIds = vessels.map(vessel => vessel.id);
   const everyVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedVesselIds.includes(id));
@@ -372,6 +375,8 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
       initialPendingOperation={editor.initialPendingOperation}
       lease={editor.lease}
       actorId={user.id}
+      isSaveContextCurrent={() => editorGeneration===openGenerationRef.current&&currentBackendRef.current===backend&&editorRef.current===editor&&(demoMode||cloudConfigIdentity(getSupabaseConfig())===cloudConfigKey)}
+      onPrepareSave={backend instanceof MainSessionItineraryRepository?async (candidate,lease)=>{const generation=openGenerationRef.current;const result=await backend.prepareFreshSave({document:candidate,expectedRevision:editor.document.revision,lease});return generation===openGenerationRef.current&&currentBackendRef.current===backend&&editorRef.current===editor?result:{ok:false,code:'unknown-outcome'};}:undefined}
       onRenewLease={async lease=>backend.renewLease(lease,75)}
       onSave={async (candidate,lease,operationId,pendingOperation)=>{const generation=openGenerationRef.current;const result=await backend.save({document:candidate,expectedRevision:editor.document.revision,operationId,pendingOperation,lease,actorLabel:user.name});return generation===openGenerationRef.current?result:{ok:false,code:'unknown-outcome'};}}
       onCancel={async lease=>{await backend.releaseLease(lease);setEditor(null);}}

@@ -45,7 +45,11 @@ export interface ItinerarySaveInput {
 
 export type ItinerarySaveResult =
   | { ok: true; document: ItineraryDocument; replayed: boolean }
-  | { ok: false; code: 'operation-mismatch' | 'lease-mismatch' | 'lease-expired' | 'revision-conflict' | 'invalid-document' | 'unknown-outcome'; currentRevision?: number; message?: string };
+  | { ok: false; code: 'operation-mismatch' | 'lease-mismatch' | 'lease-expired' | 'revision-conflict' | 'invalid-document' | 'unknown-outcome'; currentRevision?: number; message?: string; notDispatched?: true };
+
+export type ItinerarySavePreparationResult =
+  | { ok: true; lease: ItineraryLease }
+  | Exclude<ItinerarySaveResult, { ok: true }>;
 
 interface StoredOperationReceipt {
   requestSignature: string;

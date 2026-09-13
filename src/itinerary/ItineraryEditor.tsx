@@ -5,7 +5,7 @@ import { resequenceItineraryRows } from './itineraryDomain';
 import { instantToWallTime, wallTimeToInstant } from './itineraryTime';
 import { deleteItineraryDraft, itineraryDraftKey, saveItineraryDraft, type ItineraryPendingOperation } from './itineraryDraftStore';
 import { validateItineraryDocument } from './itineraryValidation';
-import type { ItineraryLease, ItineraryLeaseRenewResult, ItinerarySaveResult } from './itineraryCollaboration';
+import type { ItineraryLease, ItineraryLeaseRenewResult, ItinerarySavePreparationResult, ItinerarySaveResult } from './itineraryCollaboration';
 import UtcOffsetSelect from './UtcOffsetSelect';
 import ItineraryOperationOptions from './ItineraryOperationOptions';
 import ItineraryDateInput from './ItineraryDateInput';
@@ -23,6 +23,8 @@ interface ItineraryEditorProps {
   initialPendingOperation?: ItineraryPendingOperation;
   lease: ItineraryLease;
   actorId: string;
+  isSaveContextCurrent?: () => boolean;
+  onPrepareSave?: (document: ItineraryDocument, lease: ItineraryLease) => Promise<ItinerarySavePreparationResult>;
   onSave: (document: ItineraryDocument, lease: ItineraryLease, operationId: string, pendingOperation?: ItineraryPendingOperation) => Promise<ItinerarySaveResult>;
   onRenewLease: (lease: ItineraryLease) => Promise<ItineraryLeaseRenewResult>;
   onCancel: (lease: ItineraryLease) => Promise<void>;
@@ -71,7 +73,7 @@ function saveError(result: Exclude<ItinerarySaveResult, { ok: true }>): string {
   return result.message || '文件驗證未通過，本次未保存。';
 }
 
-export default function ItineraryEditor({ document, initialDocument, initialPendingOperation, lease: initialLease, actorId, onSave, onRenewLease, onCancel, onSaved }: ItineraryEditorProps) {
+export default function ItineraryEditor({ document, initialDocument, initialPendingOperation, lease: initialLease, actorId, isSaveContextCurrent, onPrepareSave, onSave, onRenewLease, onCancel, onSaved }: ItineraryEditorProps) {
   const [draft, setDraft] = useState<ItineraryDocument>(() => cloneDocument(initialDocument || document));
   const [lease, setLease] = useState(initialLease);
   const [dirty, setDirty] = useState(Boolean(initialDocument));
@@ -179,6 +181,10 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   const submit = async () => {
     if (readOnly || saving || !lifecycleRef.current.active || lifecycleRef.current.closing) return;
     const generation = lifecycleRef.current.generation;
+    // Capture this render's context predicate, never the latest callback after
+    // an await. Component lifetime alone does not identify actor/config scope.
+    const isSaveCurrent = () => isCurrent(generation) && (!isSaveContextCurrent || isSaveContextCurrent());
+    if (!isSaveCurrent()) return;
     const candidate = { ...draft, rows: resequenceItineraryRows(draft.rows) };
     const validation = validateItineraryDocument(candidate);
     if (validation.ok === false) {
@@ -188,34 +194,64 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
     setSaving(true);
     setMessage('正在保存並等待確認…');
     const previousOperation = pendingOperationRef.current;
-    pendingOperationRef.current = pendingOperationForDocument(candidate, previousOperation);
-    if (!previousOperation && lease.sourceAuthority) pendingOperationRef.current.sourceAuthority = lease.sourceAuthority;
-    const operationId = pendingOperationRef.current.id;
-    await saveItineraryDraft({ key: draftKey, workspaceKey: candidate.workspaceKey, vesselId: candidate.vesselId, actorId, baseRevision: document.revision, savedAt: new Date().toISOString(), document: cloneDocument(candidate), pendingOperation: pendingOperationRef.current });
-    if (!isCurrent(generation)) return;
+    let operationStarted = false;
+    const preserveCandidate = (pendingOperation?: ItineraryPendingOperation) => saveItineraryDraft({ key: draftKey, workspaceKey: candidate.workspaceKey, vesselId: candidate.vesselId, actorId, baseRevision: document.revision, savedAt: new Date().toISOString(), document: cloneDocument(candidate), ...(pendingOperation ? { pendingOperation } : {}) });
     try {
-      const result = await onSave(candidate, lease, operationId, previousOperation || undefined);
-      if (!isCurrent(generation)) return;
+      let dispatchLease = lease;
+      if (!previousOperation && onPrepareSave) {
+        // Preserve the draft, not an invented pending operation, while reading
+        // the current source. A prior pending operation never enters this path.
+        await preserveCandidate();
+        if (!isSaveCurrent()) return;
+        const prepared = await onPrepareSave(candidate, lease);
+        if (!isSaveCurrent()) return;
+        if (prepared.ok === false) {
+          setMessage(prepared.code === 'unknown-outcome' ? '保存結果無法確認；未顯示成功，草稿已保留。請保持此視窗並重試相同內容。' : saveError(prepared));
+          if (prepared.code === 'revision-conflict' || prepared.code === 'lease-expired' || prepared.code === 'lease-mismatch' || prepared.code === 'operation-mismatch') setReadOnly(true);
+          return;
+        }
+        dispatchLease = prepared.lease;
+        setLease(dispatchLease);
+      }
+      pendingOperationRef.current = pendingOperationForDocument(candidate, previousOperation);
+      if (!previousOperation && dispatchLease.sourceAuthority) pendingOperationRef.current.sourceAuthority = Object.freeze(structuredClone(dispatchLease.sourceAuthority));
+      const operationId = pendingOperationRef.current.id;
+      await preserveCandidate(pendingOperationRef.current);
+      if (!isSaveCurrent()) return;
+      operationStarted = true;
+      const result = await onSave(candidate, dispatchLease, operationId, previousOperation || undefined);
+      if (!isSaveCurrent()) return;
       if (result.ok === true) {
         pendingOperationRef.current = null;
         setDirty(false);
         await deleteItineraryDraft(draftKey);
-        if (!isCurrent(generation)) return;
+        if (!isSaveCurrent()) return;
         onSaved(result.document);
         return;
       }
-      setMessage(saveError(result));
-      if (result.code !== 'unknown-outcome') {
+      const notDispatched = !previousOperation && result.notDispatched === true;
+      setMessage(notDispatched ? '保存結果無法確認；未顯示成功，草稿已保留。請保持此視窗並重試相同內容。' : saveError(result));
+      if (result.code !== 'unknown-outcome' || notDispatched) {
         pendingOperationRef.current = null;
         await saveItineraryDraft({ key: draftKey, workspaceKey: candidate.workspaceKey, vesselId: candidate.vesselId, actorId, baseRevision: document.revision, savedAt: new Date().toISOString(), document: cloneDocument(candidate) });
-        if (!isCurrent(generation)) return;
+        if (!isSaveCurrent()) return;
       }
       if (result.code === 'revision-conflict' || result.code === 'lease-expired' || result.code === 'lease-mismatch' || result.code === 'operation-mismatch') setReadOnly(true);
     } catch {
-      if (!isCurrent(generation)) return;
+      if (!isSaveCurrent()) return;
+      if (!operationStarted && !previousOperation) {
+        pendingOperationRef.current = null;
+        try { await preserveCandidate(); } catch { /* The visible draft remains dirty. */ }
+        if (!isSaveCurrent()) return;
+      }
       setMessage('保存結果無法確認；未顯示成功，草稿已保留。請保持此視窗並重試相同內容。');
     } finally {
-      if (isCurrent(generation)) setSaving(false);
+      if (isCurrent(generation)) {
+        setSaving(false);
+        // End only this still-mounted attempt's busy feedback. Do not clear or
+        // rebind its pending record when the configuration/actor has changed.
+        if (!isSaveCurrent()) setMessage('保存結果無法確認；未顯示成功，草稿已保留。請保持此視窗並重試相同內容。');
+      }
     }
   };
 
