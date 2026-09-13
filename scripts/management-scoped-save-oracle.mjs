@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 // Expected business state is constructed and frozen before allowing actual SQL.
-export async function managementExpected(before,request,qa,intent,started){
+export async function managementExpected(before,request,qa,intent,started,concurrentAuditIds=[]){
  const {applyCloudBlockPatch}=await qa.loadModule('/src/cloudBlockPatch.ts');
  const {vesselDisplayName}=await qa.loadModule('/src/vesselDisplay.ts');
  assert.equal(request.p_actor_user_id,'qa-owner');
@@ -12,6 +12,10 @@ export async function managementExpected(before,request,qa,intent,started){
   const user=expected.users.find(u=>u.id===intent.id),sent=entity('users',intent.id);
   user.name=intent.name;user.updatedAt=bounded(sent.updatedAt);
   action='更新人員';entityType='user';entityId=intent.id;detail=intent.name;
+ }else if(intent.kind==='vessel-name'){
+  const vessel=expected.vessels.find(v=>v.id===intent.id),sent=entity('vessels',intent.id);
+  vessel.fullName=intent.name;vessel.updatedAt=bounded(sent.updatedAt);
+  action='更新船舶';entityType='vessel';entityId=intent.id;detail=vesselDisplayName(vessel);
  }else{
   const vessel=expected.vessels.find(v=>v.id===intent.id),sent=entity('vessels',intent.id);
   vessel.assignedUserIds=[intent.userId];vessel.delegateManagers=vessel.delegateManagers.filter(d=>d.userId!==intent.userId);vessel.updatedAt=bounded(sent.updatedAt);
@@ -21,7 +25,10 @@ export async function managementExpected(before,request,qa,intent,started){
  const audits=ops.filter(o=>o.kind==='entity'&&o.collection==='auditLogs');assert.equal(audits.length,1);
  const audit=audits[0].value;assert.ok(audit.id.length>10&&!expected.auditLogs.some(a=>a.id===audit.id));
  const expectedAudit={id:audit.id,at:bounded(audit.at),actorId:'qa-owner',actorName:'QA OWNER',actorRole:'owner',action,entityType,entityId,detail};
- assert.deepEqual(audit,expectedAudit,'exact independently named audit');expected.auditLogs=[expectedAudit,...expected.auditLogs].slice(0,500);
+ assert.deepEqual(audit,expectedAudit,'exact independently named audit');
+ const concurrent=expected.auditLogs.filter(row=>concurrentAuditIds.includes(row.id));
+ const untouched=expected.auditLogs.filter(row=>!concurrentAuditIds.includes(row.id));
+ expected.auditLogs=[...[expectedAudit,...concurrent].sort((a,b)=>String(b.at).localeCompare(String(a.at))||a.id.localeCompare(b.id)),...untouched].slice(0,500);
  assert.deepEqual(applyCloudBlockPatch(before.payload,ops),expected,'whole requested graph equals explicit intent BEFORE SQL');
  expectedAudit.ipAddress='192.0.2.30';expectedAudit.ipCountryCode='TW';return expected;
 }

@@ -10,7 +10,7 @@ import {shipExcelRpcArgs} from './ship-itinerary-excel-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,scopedRead=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
+export async function createRecordStorageLocalQa({browserAuthority=false,dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,scopedRead=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
  if(preparePerformanceFixture&&!performanceTrace)throw new Error('Performance fixture requires explicit performanceTrace');
  // Opt-in private native QA supplies an already identity-verified connection.
  // The existing browser/PGlite default and migration/seed chain stay unchanged.
@@ -22,6 +22,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
   ...(legacySnapshot?{apply_ship_dynamics_block_patch_v2:requestArgs,get_ship_dynamics_block_patch_receipt:requestArgs}:{}),
+  ...(browserAuthority?{read_ship_dynamics_browser_authority_v1:['p_workspace_key'],apply_ship_dynamics_block_patch_v2:requestArgs,get_ship_dynamics_block_patch_receipt:requestArgs}:{}),
   ...(shipExcel?shipExcelRpcArgs:{}),
   ...recordWriteArgs,
   ...(taskMember?Object.fromEntries(['save_ship_dynamics_task_member_v1','get_ship_dynamics_task_member_receipt_v1'].map(name=>[name,['p_workspace_key','p_operation_id','p_task_id','p_vessel_id','p_command:jsonb','p_expected:jsonb','p_actor_user_id','p_actor_guard:jsonb','p_lock_guards:jsonb']])):{}),
@@ -102,7 +103,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
     if(url.pathname==='/__qa/health'){send(res,200,{ready:true,kind:db.qaKind||'REAL_UI_SYNTHETIC_DATA_LOCAL_PGLITE'});return;}
     if(url.pathname.startsWith('/rest/v1/')){
      const name=url.pathname.slice('/rest/v1/rpc/'.length),args=rpcArgs[name];
-     if(legacySnapshot&&req.method==='GET'&&url.pathname==='/rest/v1/ship_dynamics_app_state'&&url.searchParams.get('workspace_key')==='eq.'+workspace){const row=(await db.query('select payload,revision,updated_at,updated_by from public.ship_dynamics_app_state where workspace_key=$1',[workspace])).rows[0];metrics.push({rpc:'legacy-snapshot-read',status:'SQL_OK'});send(res,200,row??null);return;}
+     if((legacySnapshot||browserAuthority)&&req.method==='GET'&&url.pathname==='/rest/v1/ship_dynamics_app_state'&&url.searchParams.get('workspace_key')==='eq.'+workspace){const row=(await db.query('select payload,revision,updated_at,updated_by from public.ship_dynamics_app_state where workspace_key=$1',[workspace])).rows[0];metrics.push({rpc:'legacy-snapshot-read',status:'SQL_OK'});send(res,200,row??null);return;}
      if(req.method!=='POST'||!url.pathname.startsWith('/rest/v1/rpc/')||!args){metrics.push({rpc:name,status:'UNSUPPORTED'});send(res,404,{code:'PGRST202',message:`Internal QA does not implement ${name}; no success substituted`});return;}
      const chunks=[];let length=0;for await(const chunk of req){length+=chunk.length;if(length>12_000_000)throw new Error('QA body limit');chunks.push(chunk);}
      const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -114,7 +115,7 @@ export async function createRecordStorageLocalQa({dataManagement=false,dailyMorn
      try{
       const value=await db.transaction(async tx=>{
        if(trace)trace.sqlStartedMs=performance.timeOrigin+performance.now();
-       if(shipExcel&&Object.hasOwn(shipExcelRpcArgs,name))await tx.exec('set local role anon');
+       if(browserAuthority&&name==='read_ship_dynamics_browser_authority_v1'||shipExcel&&Object.hasOwn(shipExcelRpcArgs,name))await tx.exec('set local role anon');
        await tx.query("select set_config('request.headers',$1,true)",[JSON.stringify({'x-forwarded-for':'192.0.2.30','cf-ipcountry':'TW'})]);
        const params=args.map(arg=>{const[key,type]=arg.split(':');if(body[key]==null)return null;return type==='jsonb'?JSON.stringify(body[key]):body[key];});
        const result=(await tx.query(`select public.${name}(${args.map((arg,index)=>`$${index+1}::${arg.split(':')[1]||'text'}`).join(',')}) as result`,params)).rows[0].result;

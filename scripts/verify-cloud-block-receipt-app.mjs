@@ -20,9 +20,9 @@ for (const symbol of [
 const operationId = saveSource.indexOf("const operationId=uid('cloud-block-operation')");
 const protocol = saveSource.indexOf('runCloudBlockPatchWithReceipt({', operationId);
 const v2Submit = saveSource.indexOf('applyCloudBlockPatchV2(id,operations', protocol);
-const receiptLookup = saveSource.indexOf('getCloudBlockPatchReceipt(id,operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,config,signal)', v2Submit);
+const receiptLookup = saveSource.indexOf('getCloudBlockPatchReceipt(id,operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,commandConfig,signal)', v2Submit);
 const authoritativeFetch = saveSource.indexOf("'原子保存後權威資料讀回'", receiptLookup);
-const historyCheck = saveSource.indexOf('assertRemoteExtendsDurableHistory(activeCloudIdentity.current,remote,authoritative)', authoritativeFetch);
+const historyCheck = saveSource.indexOf('assertRemoteExtendsDurableHistory(activeCloudIdentity.current,remote,authoritative,pending.authority)', authoritativeFetch);
 const v2Fallback = saveSource.indexOf('if(!(error instanceof CloudBlockPatchV2UnavailableError))throw error;', historyCheck);
 const v1Fallback = saveSource.indexOf('applyCloudBlockPatchRpc(operations', v2Fallback);
 const legacyUnavailable = saveSource.indexOf('if(error instanceof CloudBlockPatchUnavailableError){', v1Fallback);
@@ -44,3 +44,6 @@ assert.equal((saveSource.match(/uid\('cloud-block-operation'\)/g) || []).length,
 assert.equal((saveSource.match(/await acquireLegacyCloudSaveTurn\(\);/g) || []).length, 1, 'compact/v1 paths must never acquire the whole-state turn');
 
 console.log('cloud_block_receipt_app_wiring=PASS');
+assert.ok(saveSource.includes('assertAuthorityAdmission(token.config,pending.authority)'), 'new submissions validate admission independently');
+assert.ok(saveSource.includes('fetchCloudDataRpc(commandConfig,signal,undefined,recordReadScope.current)'), 'historical receipt readback stays on its original command source');
+assert.ok(saveSource.includes('pending.authorityOwner!==originalAuthority.current'), 'queued snapshots cannot be transplanted across authority adoption');

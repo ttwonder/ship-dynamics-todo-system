@@ -132,7 +132,9 @@ type SavePhase='saved'|'dirty'|'queued'|'saving'|'error';
 type SaveToast={id:number;kind:'success'|'info'|'warning'|'error';title:string;detail:string};
 type CloudBlockLockGuard={section_key:string;locked_by:string};
 type RelatedMutationEditorHandoff=DurableRelatedMutationHandoff&{discardRejected?:()=>Promise<boolean>};
-type PendingCloudSaveIntent={handoverReadRevision?:number;snapshot:AppData;baseSnapshot:AppData|null;token:ReturnType<ReturnType<typeof createAsyncConfigCoordinator>['begin']>;savedBy:string;actorUserId:string;identityGeneration:number;lockGuards:CloudBlockLockGuard[];isCurrent:()=>boolean;canSubmit:()=>boolean;renderRebase:boolean;visibleBaseline:AppData|null};
+import { BrowserAuthorityError, readBrowserAuthority, sameAuthority, authorityConfig, authorityFloorIdentity, readBoundCloudData, assertAuthorityAdmission, assertAuthorityBridge, type BrowserAuthority } from './cloudSourceAuthority';
+
+type PendingCloudSaveIntent={authority?:BrowserAuthority;authorityOwner:BrowserAuthority|null;handoverReadRevision?:number;snapshot:AppData;baseSnapshot:AppData|null;token:ReturnType<ReturnType<typeof createAsyncConfigCoordinator>['begin']>;savedBy:string;actorUserId:string;identityGeneration:number;lockGuards:CloudBlockLockGuard[];isCurrent:()=>boolean;canSubmit:()=>boolean;renderRebase:boolean;visibleBaseline:AppData|null};
 
 export function selectCreationDraftForQuarantine(input:{ownerUserId:string;leaseOwnerId:string;currentTask:TaskItem|null;latest?:CreationDraftRecord;attempt?:CreationDraftRecord}){
   const retained=input.latest?.leaseOwnerId===input.leaseOwnerId?input.latest.task:input.attempt?.leaseOwnerId===input.leaseOwnerId?input.attempt.task:input.currentTask;
@@ -299,13 +301,19 @@ function taskMatchesFilters(t: TaskItem, filters: FilterState, vesselMap: Record
 }
 
 export default function App() {
+  const originalAuthority=useRef<BrowserAuthority|null>(null);
   const memberEditor=useRef<TaskMemberEditor|null>(null);
   const memberScopeGeneration=useRef(0);
   const [,setMemberEditorVersion]=useState(0);
   useEffect(()=>()=>{void memberEditor.current?.dispose();},[]);
   const recordReadScope=useRef<RecordReadScope>('home');
   const actionScopeGeneration=useRef(0);
-  const fetchCloudData=(config?:ResolvedSupabaseConfig|null,signal?:AbortSignal,confirmed?:AppData)=>fetchCloudDataRpc(config,signal,confirmed,recordReadScope.current);
+  const fetchCloudData=async(config?:ResolvedSupabaseConfig|null,signal?:AbortSignal,confirmed?:AppData)=>{
+    const binding=originalAuthority.current;
+    const result=binding&&config?await readBoundCloudData(config,binding,signal,confirmed,recordReadScope.current):await fetchCloudDataRpc(config,signal,confirmed,recordReadScope.current);
+    if(originalAuthority.current!==binding)throw new BrowserAuthorityError('browser-authority-stale-read');
+    return result;
+  };
   const [data, setData] = useState<AppData>(() => normalizeAppData(loadLocal()) || createInitialData());
   const [siteUnlocked, setSiteUnlocked] = useState(() => sessionStorage.getItem(SESSION_SITE_UNLOCK) === '1');
   const [currentUserId, setCurrentUserIdState] = useState(() => localStorage.getItem(CURRENT_USER_KEY) || '');
@@ -595,6 +603,7 @@ export default function App() {
     showSaveToast('error','尚未保存到雲端',detail);
   };
   const confirmCloudSnapshot=(identity:string,snapshot:AppData)=>{
+    identity=authorityFloorIdentity(identity,originalAuthority.current);
     confirmedCloudData.current=snapshot;
     if(identity){
       durableCloudRevisionFloors.current=updateDurableRevisionFloor(durableCloudRevisionFloors.current,identity,snapshot.revision);
@@ -685,7 +694,8 @@ export default function App() {
     if(!parsed.valid){durableRevisionFloorRegistryValid.current=false;return false;}
     return true;
   };
-  const assertRemoteExtendsDurableHistory=(identity:string,base:AppData|null,remote:AppData)=>{
+  const assertRemoteExtendsDurableHistory=(identity:string,base:AppData|null,remote:AppData,binding=originalAuthority.current)=>{
+    identity=authorityFloorIdentity(identity,binding);
     if(!durableRevisionFloorRegistryIsValid())throw new CloudRebaseConflictError(['durable revision floor registry損壞，無法證明雲端歷程']);
     const floor=durableCloudRevisionFloors.current.get(identity)??-1;
     if(remote.revision<floor)throw new CloudRebaseConflictError([`雲端revision ${remote.revision}低於已確認的durable floor ${floor}，疑似rollback`]);
@@ -801,7 +811,7 @@ export default function App() {
     for(const {guard,config:guardConfig} of transientCloudBlockLockGuards.current.values())if(sameCloudConfig(guardConfig,config))guards.push(guard);
     return[...new Map(guards.map(guard=>[`${guard.section_key}|${guard.locked_by}`,guard])).values()];
   };
-  const enqueueCloudSave = (snapshot: AppData,isCurrent:()=>boolean=()=>true,renderRebase=true,canSubmit:()=>boolean=isCurrent,handoverReadRevision?:number): Promise<void> => {
+  const enqueueCloudSave = (snapshot: AppData,isCurrent:()=>boolean=()=>true,renderRebase=true,canSubmit:()=>boolean=isCurrent,handoverReadRevision?:number,authoritySave?:{binding:BrowserAuthority;base:AppData}): Promise<void> => {
     if(!isCurrent()||(relatedMutationHandoffMatchesCurrent(activeEditLockRef.current)&&!mutationLeaseIsOwned(activeEditLockRef.current!.sectionKey)))return Promise.reject(new StaleAsyncConfigError());
     const requestConfig=getSupabaseConfig();
     if (!requestConfig||!hasCurrentCloudIdentity()) return Promise.reject(new Error('雲端工作區 identity 已變更'));
@@ -809,7 +819,7 @@ export default function App() {
     const requestActorUserId=currentUser?.id||'';
     const requestIdentityGeneration=identitySessionGeneration.current;
     hasUnsavedWork.current=true;
-    const completion=pendingCloudData.current.enqueue({handoverReadRevision,snapshot,baseSnapshot:confirmedCloudData.current?clone(confirmedCloudData.current):null,token:requestToken,savedBy:currentUser?.name||'unknown',actorUserId:requestActorUserId,identityGeneration:requestIdentityGeneration,lockGuards:captureCloudBlockLockGuards(requestConfig),renderRebase,visibleBaseline:renderRebase?null:clone(liveData.current),isCurrent,canSubmit});
+    const completion=pendingCloudData.current.enqueue({authority:authoritySave?.binding??originalAuthority.current??undefined,authorityOwner:originalAuthority.current,handoverReadRevision,snapshot,baseSnapshot:authoritySave?clone(authoritySave.base):confirmedCloudData.current?clone(confirmedCloudData.current):null,token:requestToken,savedBy:currentUser?.name||'unknown',actorUserId:requestActorUserId,identityGeneration:requestIdentityGeneration,lockGuards:captureCloudBlockLockGuards(requestConfig),renderRebase,visibleBaseline:renderRebase?null:clone(liveData.current),isCurrent,canSubmit});
     clearStaleSaveSuccessToast();
     const validateCompletion=()=>{if(!isCurrent()||liveCurrentUserId.current!==requestActorUserId||identitySessionGeneration.current!==requestIdentityGeneration||!configIoCoordinator.current.isCurrent(requestToken,getSupabaseConfig()))throw new StaleAsyncConfigError();};
     if (cloudSaveInFlight.current) return completion.then(validateCompletion);
@@ -881,6 +891,9 @@ export default function App() {
               const pending=pendingEntry.value;
               try{
               const {snapshot:next,baseSnapshot:base,token,savedBy,actorUserId,identityGeneration,lockGuards,isCurrent,canSubmit}=pending;
+              if(pending.authorityOwner!==originalAuthority.current)throw new BrowserAuthorityError('browser-authority-queued-intent-stale');
+              const commandConfig=pending.authority?authorityConfig(token.config,pending.authority):token.config;
+              const readCommandBase=(config:ResolvedSupabaseConfig)=>pending.authority?readBoundCloudData(config,pending.authority,undefined,undefined,recordReadScope.current):fetchCloudData(config);
               const pendingActorIsCurrent=()=>identitySessionGeneration.current===identityGeneration&&liveCurrentUserId.current===actorUserId;
               if(!isCurrent()||!pendingActorIsCurrent())throw new StaleAsyncConfigError();
               if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
@@ -889,7 +902,7 @@ export default function App() {
               if(!base)throw new CloudRebaseConflictError(['缺少可信的雲端合併基線']);
               const nextForSave=repairPendingCompanyLevelNotificationOverflow(base,next);
               if(appDataContentEqual(nextForSave,base)){pendingEntry.resolve();pendingEntry=pendingCloudData.current.shift();continue;}
-              let remote=await configIoCoordinator.current.run(token,getSupabaseConfig,fetchCloudData);
+              let remote=await configIoCoordinator.current.run(token,getSupabaseConfig,readCommandBase);
               if(!remote)throw new CloudRebaseConflictError(['雲端工作區不存在']);
               let persisted:AppData|null=null;
               let mergedRemoteChanges=false;
@@ -897,13 +910,13 @@ export default function App() {
                 if(!isCurrent()||!pendingActorIsCurrent())break;
                 if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!hasCurrentCloudIdentity())throw new StaleAsyncConfigError();
                 assertSaveTurnActive();
-                assertRemoteExtendsDurableHistory(activeCloudIdentity.current,base,remote);
+                assertRemoteExtendsDurableHistory(activeCloudIdentity.current,base,remote,pending.authority);
                 const candidate=appDataContentEqual(base,remote)
                   ?{...sanitizeAppDataForStorage(nextForSave),revision:remote.revision+1,updatedAt:nowIso()}
                   :sanitizeAppDataForStorage(rebaseDisjointAppData(base,nextForSave,remote,nowIso(),actorUserId));
                 mergedRemoteChanges=mergedRemoteChanges||!appDataContentEqual(base,remote);
                 const storageRemote=cloudStoragePayloadFor(remote);
-                const operations=token.config.readMode==='scoped-v1'?buildRecordScopePatch(remote,candidate,storageRemote,recordReadScope.current):buildCloudBlockPatch(remote,candidate,storageRemote);
+                const operations=commandConfig.readMode==='scoped-v1'?buildRecordScopePatch(remote,candidate,storageRemote,recordReadScope.current):buildCloudBlockPatch(remote,candidate,storageRemote);
                 if(!operations.length){persisted=remote;break;}
                 assertActorAuthorizedForAppDataChange(remote,candidate,actorUserId);
                 const actorGuard=actorStorageAuthorizationGuard(remote,storageRemote,actorUserId);
@@ -931,14 +944,14 @@ export default function App() {
                       try{
                         const receipt=await runCloudBlockPatchWithReceipt({
                           operationId,
-                          submit:id=>{if(!canSubmit())throw new StaleAsyncConfigError();return configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
+                          submit:async id=>{if(!canSubmit())throw new StaleAsyncConfigError();if(pending.authority)await assertAuthorityAdmission(token.config,pending.authority);assertOperationCurrent();return configIoCoordinator.current.run(token,getSupabaseConfig,()=>runCloudSaveQueueRpc(
                             'compact 原子區塊保存',
-                            signal=>applyCloudBlockPatchV2(id,operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,config,signal),
+                            signal=>applyCloudBlockPatchV2(id,operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,commandConfig,signal),
                             12_000,
                           ));},
-                          lookup:id=>configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
+                          lookup:id=>configIoCoordinator.current.run(token,getSupabaseConfig,()=>runCloudSaveQueueRpc(
                             '原子保存 receipt 確認',
-                            signal=>getCloudBlockPatchReceipt(id,operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,config,signal),
+                            signal=>getCloudBlockPatchReceipt(id,operations,savedBy,actorUserId,actorGuard,strictAuthorizationGuard,guards,commandConfig,signal),
                             8_000,
                           )),
                           shouldReconcile:error=>!(error instanceof CloudBlockPatchV2UnavailableError||error instanceof CloudBlockPatchRejectedError||error instanceof CloudBlockPatchConflictError||error instanceof StaleAsyncConfigError),
@@ -948,11 +961,11 @@ export default function App() {
                         try{
                           const authoritative=await configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
                             '原子保存後權威資料讀回',
-                            signal=>fetchCloudData(config,signal),
+                            signal=>fetchCloudDataRpc(commandConfig,signal,undefined,recordReadScope.current),
                             12_000,
                           ));
                           if(!authoritative||authoritative.revision<receipt.revision)throw new CloudBlockPatchConfirmedRefreshError(receipt);
-                          assertRemoteExtendsDurableHistory(activeCloudIdentity.current,remote,authoritative);
+                          assertRemoteExtendsDurableHistory(activeCloudIdentity.current,remote,authoritative,pending.authority);
                           return authoritative;
                         }catch(error){
                           if(error instanceof StaleAsyncConfigError||error instanceof CloudBlockPatchConfirmedRefreshError)throw error;
@@ -960,6 +973,7 @@ export default function App() {
                         }
                       }catch(error){
                         if(!(error instanceof CloudBlockPatchV2UnavailableError))throw error;
+                        if(pending.authority?.managed)throw error;
                         assertOperationCurrent();
                         if(!canSubmit())throw new StaleAsyncConfigError();
                         return configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
@@ -985,7 +999,7 @@ export default function App() {
                     if(!(error instanceof CloudBlockPatchConflictError))throw error;
                     if(error.blockKey==='authorization-domain')throw new CloudRebaseConflictError(['authorization-domain']);
                     if(++rebaseAttempts>3)throw new CloudRebaseConflictError([`區塊 ${error.blockKey} 在短時間內連續變動`]);
-                    remote=await configIoCoordinator.current.run(token,getSupabaseConfig,fetchCloudData);
+                    remote=await configIoCoordinator.current.run(token,getSupabaseConfig,readCommandBase);
                     if(!remote)throw new CloudRebaseConflictError(['雲端工作區不存在']);
                   }
                 }else{
@@ -1005,6 +1019,8 @@ export default function App() {
               if(!persisted||!isCurrent()||!pendingActorIsCurrent())throw new StaleAsyncConfigError();
               if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
               rebaseAttempts=0;
+              if(pending.authorityOwner!==originalAuthority.current)throw new BrowserAuthorityError('browser-authority-confirmation-stale');
+              if(pending.authority)originalAuthority.current=pending.authority;
               lastCloudRevision.current = persisted.revision;
               confirmCloudSnapshot(activeCloudIdentity.current,persisted);
               setStaleBrowserRecoveryOffered(false);
@@ -1803,8 +1819,32 @@ export default function App() {
       // Flush already scheduled generic callers before capturing their complete local delta.
       flushSync(()=>{});
       let baseline=liveData.current;
+      const visibleBaseline=baseline;
+      let authoritySave:{binding:BrowserAuthority;base:AppData}|undefined;
+      if(config){
+        const latest=await readBrowserAuthority(config);
+        if(!isCurrent())return false;
+        if(!latest.admitted)throw new BrowserAuthorityError('browser-authority-not-admitted');
+        const previous=originalAuthority.current;
+        if(previous&&!sameAuthority(previous,latest)){
+          // Only a new manual intent may cross the proven stage. Existing queued
+          // snapshots/unknown operations stay pinned and are never transplanted.
+          if(cloudSaveInFlight.current||pendingCloudData.current.size()||!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current))throw new BrowserAuthorityError('browser-authority-pending-intent');
+          const source=await fetchCloudDataRpc({...authorityConfig(config,previous),readMode:'snapshot'});
+          const target=await readBoundCloudData(config,latest);
+          if(!isCurrent()||originalAuthority.current!==previous||liveData.current!==visibleBaseline)throw new BrowserAuthorityError('browser-authority-preparation-stale');
+          if(!source||!target)throw new BrowserAuthorityError('browser-authority-data-unavailable');
+          assertRemoteExtendsDurableHistory(activeCloudIdentity.current,null,source,previous);
+          assertAuthorityBridge(cloudStoragePayloadFor(source),cloudStoragePayloadFor(target));
+          baseline=target;authoritySave={binding:latest,base:target};
+        }else{
+          if(!previous&&latest.managed)throw new BrowserAuthorityError('browser-authority-reload-recovery-required');
+          if(!previous)originalAuthority.current=latest;
+        }
+      }
       const assignmentDraft=clone(baseline);updater(assignmentDraft);
       const changedTeams=changedVesselTeams(baseline,assignmentDraft);
+      if(authoritySave&&changedTeams.length)throw new BrowserAuthorityError('browser-authority-linked-handover-not-verified');
       if(changedTeams.length&&config?.storageMode==='records-v1'){
         if(!await loadRecordActionScope('home',isCurrent,true))return false;
         const discovered=liveData.current;
@@ -1829,11 +1869,11 @@ export default function App() {
       }
       // No optimistic Management setData: no passive effect can autosave this
       // snapshot. Leave every existing generic caller's timer and queued delta intact.
-      await enqueueCloudSave(snapshot,isCurrent,false,isCurrent,config.storageMode==='records-v1'&&handedOver.length?baseline.revision:undefined);
+      await enqueueCloudSave(snapshot,isCurrent,false,isCurrent,config.storageMode==='records-v1'&&handedOver.length?baseline.revision:undefined,authoritySave);
       if(!isCurrent())return false;
       const confirmed=confirmedCloudData.current;
       if(!confirmed)throw new Error('雲端未確認保存結果');
-      const next=mergeConfirmedCloudSnapshot({baseline,current:liveData.current,confirmed,actorUserId:actorId,at:nowIso()});
+      const next=mergeConfirmedCloudSnapshot({baseline:authoritySave?visibleBaseline:baseline,current:liveData.current,confirmed,actorUserId:actorId,at:nowIso()});
       flushSync(()=>{liveData.current=next;setData(next);});
       return true;
     }).catch(error=>{if(isCurrent())reportCloudSaveFailure(error);return false;});
