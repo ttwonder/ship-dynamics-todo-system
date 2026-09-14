@@ -1,8 +1,8 @@
 {
-  "kind": "BOUNDED_PREFLIGHT_PARTIAL_HANDOFF",
-  "productHead": "854802a770419d4edb6b0d362b5dbd0642819ef1",
-  "productTree": "a14b93bd5bdfd3a5758f1598d1aa7eb96ab58c97",
-  "localAcceptance": "NOT_COMPLETE",
+  "kind": "BOUNDED_LOCAL_COVERAGE_RESUME_CLOSED",
+  "productHead": "6a25fa28fea5458f7b364d49ccc2f879c256e736",
+  "productTree": "4e54d19399f89bd32f76fccb4ddfc19c1e17df90",
+  "localAcceptance": "PASS_LOCAL_SCOPED",
   "productChanges": false,
   "productionReadsWritesPushDeploy": false,
   "summary": {
@@ -10,41 +10,27 @@
     "byStatus": {
       "REUSED_PASS": 47,
       "HOSTED_ONLY": 2,
-      "LOCAL_EVIDENCE_GAP": 13,
-      "EXCLUDED": 1,
-      "NEW_PASS": 2
+      "NEW_PASS": 15,
+      "EXCLUDED": 1
     },
     "localRows": 62,
-    "openLocalIds": [
-      "REL-02",
-      "REL-09",
-      "REL-11",
-      "REL-12",
-      "REL-13",
-      "REL-14",
-      "REL-15",
-      "REL-19",
-      "REL-23",
-      "OP-03",
-      "CA-01",
-      "CA-03",
-      "CA-04"
-    ],
+    "openLocalIds": [],
     "navigationEntries": 10,
     "appDataFields": 12,
     "countMeaning": "規則表行數，不能當功能數/測試數/完成百分比；重疊測試不加總。"
   },
-  "fullLedger": {
-    "path": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/coverage-ledger.json",
-    "sha256": "ea50fbd6bd9192fb44da97448196ad5e8ec6d5d44e101ee232b2262babae15d2"
-  },
+  "fullLedger": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\coverage-ledger-final.json",
   "newVerifiedEvidence": {
     "path": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/parent-verified-new-evidence.json",
     "sha256": "250b5ef5d4294de19f44bc3d76c54b6412d5c4fbe7097b2149473d715261958a"
   },
   "finalOwnedCleanup": {
-    "path": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/final-owned-cleanup.json",
-    "sha256": "220ede984990131f42965515e440871a91299df1d96b836d62a8f60996fbdab4"
+    "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\owned-cleanup-final.json",
+    "ownedProcesses": 0,
+    "closedPorts": 46,
+    "profilesRemoved": 2,
+    "junctionsRemoved": 4,
+    "humanTrial14695Touched": false
   },
   "rows": [
     {
@@ -173,7 +159,6 @@
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "relations"
     },
     {
@@ -182,11 +167,18 @@
       "evidenceLevel": [
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-TASK"
-      ],
-      "domain": "relations"
+      "status": "NEW_PASS",
+      "domain": "relations",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-b2oc0p\\evidence.json",
+          "sha256": "8f60891839d2d26bbfd79aa15606cc48ac0e0a30fe5c2ff70d2861af90ec0377",
+          "case": "GT-01",
+          "caseStatus": "PASS",
+          "runStatus": "PASS",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "REL-03",
@@ -196,7 +188,6 @@
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "relations"
     },
     {
@@ -207,10 +198,7 @@
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
-      "domain": "relations",
-      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
-      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+      "domain": "relations"
     },
     {
       "id": "REL-05",
@@ -220,10 +208,7 @@
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
-      "domain": "relations",
-      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
-      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+      "domain": "relations"
     },
     {
       "id": "REL-06",
@@ -232,10 +217,7 @@
         "ORIGINAL_APP_LOOPBACK_PGLITE"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
-      "domain": "relations",
-      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
-      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+      "domain": "relations"
     },
     {
       "id": "REL-07",
@@ -244,10 +226,7 @@
         "ORIGINAL_APP_LOOPBACK_PGLITE"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
-      "domain": "relations",
-      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
-      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+      "domain": "relations"
     },
     {
       "id": "REL-08",
@@ -256,22 +235,26 @@
         "ORIGINAL_APP_LOOPBACK_PGLITE"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
-      "domain": "relations",
-      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
-      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+      "domain": "relations"
     },
     {
       "id": "REL-09",
       "outcome": "要事來源內控建立與撤回限制",
       "evidenceLevel": [
-        "ORIGINAL_APP_LOOPBACK_PGLITE"
+        "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-TASK"
-      ],
-      "domain": "relations"
+      "status": "NEW_PASS",
+      "domain": "relations",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-Eh1yob\\evidence.json",
+          "sha256": "3c32d1f30c55acb82c65e984a04fe152ae8b7b8f72901a33a88326b906882e42",
+          "case": "GT-02",
+          "caseStatus": "PASS",
+          "runStatus": "FAIL",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "REL-10",
@@ -280,59 +263,99 @@
         "ORIGINAL_APP_LOOPBACK_PGLITE"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
-      "domain": "relations",
-      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
-      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+      "domain": "relations"
     },
     {
       "id": "REL-11",
       "outcome": "專題會議新增/編輯與關聯同步",
       "evidenceLevel": [
-        "ORIGINAL_APP_LOOPBACK_PGLITE"
+        "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-MEETING"
-      ],
-      "domain": "relations"
+      "status": "NEW_PASS",
+      "domain": "relations",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-JaGrQ0\\evidence.json",
+          "sha256": "d7d1e4a2d142d0c14e44417a4fc0c644d0386d8d2e2c73c3b2d15d65322e2264",
+          "case": "GM-LINK",
+          "caseStatus": "PASS",
+          "runStatus": "FAIL",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "REL-12",
       "outcome": "移除會議決議≠刪整場",
       "evidenceLevel": [
-        "ORIGINAL_APP_LOOPBACK_PGLITE"
+        "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-MEETING"
-      ],
-      "domain": "relations"
+      "status": "NEW_PASS",
+      "domain": "relations",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-gHHV10\\evidence.json",
+          "sha256": "03a26d066d1936a9a85ca6ca1867550e91234cd79a70d239cbec2b3a496aed56",
+          "case": "GM-REMOVE",
+          "caseStatus": "PASS",
+          "runStatus": "FAIL",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        },
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-Qk95eo\\evidence.json",
+          "sha256": "24ae63b0d4168d72626de98e073608c4cc9a20cf10278e256b7cf4d22e5a9e2a",
+          "case": "GM-02",
+          "caseStatus": "PASS",
+          "runStatus": "PASS",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "REL-13",
       "outcome": "決議完成/重開/關聯修復",
       "evidenceLevel": [
-        "ORIGINAL_APP_LOOPBACK_PGLITE",
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-MEETING"
-      ],
-      "domain": "relations"
+      "status": "NEW_PASS",
+      "domain": "relations",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-JaGrQ0\\evidence.json",
+          "sha256": "d7d1e4a2d142d0c14e44417a4fc0c644d0386d8d2e2c73c3b2d15d65322e2264",
+          "case": "GM-LINK-LIFECYCLE",
+          "caseStatus": "PASS",
+          "runStatus": "FAIL",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        },
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-zqAtzA\\evidence.json",
+          "sha256": "8de20f436c79a045cff4eb639ace40cd52e53fb2b94db90be789ba9b443d7e76",
+          "case": "GM-REPAIR",
+          "caseStatus": "PASS",
+          "runStatus": "PASS",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "REL-14",
       "outcome": "無涉船決議完成與重開",
       "evidenceLevel": [
-        "SOURCE_ONLY"
+        "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-MEETING"
-      ],
-      "domain": "relations"
+      "status": "NEW_PASS",
+      "domain": "relations",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-BORdvB\\evidence.json",
+          "sha256": "d6c697fe233067416167b28878fbcc4bd2972ce2aefd28c9658587f75fd8aa28",
+          "case": "GM-01",
+          "caseStatus": "PASS",
+          "runStatus": "PASS",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "REL-15",
@@ -340,11 +363,18 @@
       "evidenceLevel": [
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-MEETING"
-      ],
-      "domain": "relations"
+      "status": "NEW_PASS",
+      "domain": "relations",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-BORdvB\\evidence.json",
+          "sha256": "d6c697fe233067416167b28878fbcc4bd2972ce2aefd28c9658587f75fd8aa28",
+          "case": "GM-01",
+          "caseStatus": "PASS",
+          "runStatus": "PASS",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "REL-16",
@@ -354,10 +384,7 @@
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
-      "domain": "relations",
-      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
-      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+      "domain": "relations"
     },
     {
       "id": "REL-17",
@@ -366,7 +393,6 @@
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "relations"
     },
     {
@@ -377,20 +403,27 @@
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "relations"
     },
     {
       "id": "REL-19",
       "outcome": "會議歷程新增/保留/合法刪除與actor",
       "evidenceLevel": [
-        "ORIGINAL_APP_NATIVE_POSTGRES"
+        "ORIGINAL_APP_NATIVE_POSTGRES",
+        "EXECUTED_ORIGINAL_HISTORY_SANITIZER"
       ],
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-MEETING"
-      ],
-      "domain": "relations"
+      "status": "NEW_PASS",
+      "domain": "relations",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-BORdvB\\evidence.json",
+          "sha256": "d6c697fe233067416167b28878fbcc4bd2972ce2aefd28c9658587f75fd8aa28",
+          "case": "GM-04",
+          "caseStatus": "PASS",
+          "runStatus": "PASS",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "REL-20",
@@ -399,10 +432,7 @@
         "ORIGINAL_APP_LOOPBACK_PGLITE"
       ],
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
-      "domain": "relations",
-      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
-      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+      "domain": "relations"
     },
     {
       "id": "REL-21",
@@ -411,7 +441,6 @@
         "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
       "status": "EXCLUDED",
-      "missingLocalAcceptance": [],
       "domain": "relations"
     },
     {
@@ -421,27 +450,41 @@
         "SOURCE_ONLY"
       ],
       "status": "HOSTED_ONLY",
-      "missingLocalAcceptance": [],
       "domain": "relations"
     },
     {
       "id": "REL-23",
       "outcome": "會議內控取消與涉船縮減的保護",
       "evidenceLevel": [
-        "ORIGINAL_APP_LOOPBACK_PGLITE"
+        "EXECUTED_ORIGINAL_HELPER_ZERO_SQL_DELTA",
+        "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-MEETING"
-      ],
-      "domain": "relations"
+      "status": "NEW_PASS",
+      "domain": "relations",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-JaGrQ0\\evidence.json",
+          "sha256": "d7d1e4a2d142d0c14e44417a4fc0c644d0386d8d2e2c73c3b2d15d65322e2264",
+          "case": "GM-GUARDS-UI",
+          "caseStatus": "PASS",
+          "runStatus": "FAIL",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        },
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\relations\\record-meeting-browser-gHHV10\\evidence.json",
+          "sha256": "03a26d066d1936a9a85ca6ca1867550e91234cd79a70d239cbec2b3a496aed56",
+          "case": "GM-05",
+          "caseStatus": "PASS",
+          "runStatus": "FAIL",
+          "evidenceLevel": "EXECUTED_ORIGINAL_HELPER_ZERO_SQL_DELTA"
+        }
+      ]
     },
     {
       "id": "IT-01",
       "outcome": "UTC儲存、每欄fixed offset顯示與Excel往返",
       "evidenceLevel": "HELPER + ORIGINAL_UI_NATIVE_XLSX",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -449,7 +492,6 @@
       "outcome": "L/U多選及A:/F:吃水文字保留",
       "evidenceLevel": "HELPER + ORIGINAL_UI_NATIVE_XLSX",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -457,7 +499,6 @@
       "outcome": "保留原自動/手動ETA/B/C/D計算",
       "evidenceLevel": "HELPER + SSR",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -465,7 +506,6 @@
       "outcome": "刪首列時上一港承接已刪列港名",
       "evidenceLevel": "HELPER + SOURCE_WIRING",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -473,7 +513,6 @@
       "outcome": "備選同document最多5個、船端編輯瀏覽",
       "evidenceLevel": "HELPER + SSR + PGLITE + NATIVE_READ_EXPORT",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -481,33 +520,20 @@
       "outcome": "正式首列ETA起算live聯動備選",
       "evidenceLevel": "原船端UI＋native PostgreSQL獨立讀回；僅G-ALT指定流程",
       "status": "NEW_PASS",
-      "missingLocalAcceptance": [],
-      "domain": "itinerary",
-      "parentDisposition": "新增備選及正式起算日期／offset修改後，備選即時共享起算；人工保存前SQL零變動。",
-      "newReceipt": {
-        "path": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/parent-verified-new-evidence.json",
-        "sha256": "250b5ef5d4294de19f44bc3d76c54b6412d5c4fbe7097b2149473d715261958a"
-      }
+      "domain": "itinerary"
     },
     {
       "id": "IT-07",
       "outcome": "備選轉正式僅複製草稿、人工保存且保留備選",
       "evidenceLevel": "原船端UI＋native PostgreSQL獨立讀回；僅G-ALT指定流程",
       "status": "NEW_PASS",
-      "missingLocalAcceptance": [],
-      "domain": "itinerary",
-      "parentDisposition": "原確認帶入只換新正式rowId、保上一港/起算與全部備選；人工保存後revision8，獨立SQL及fresh portal讀回一致。",
-      "newReceipt": {
-        "path": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/parent-verified-new-evidence.json",
-        "sha256": "250b5ef5d4294de19f44bc3d76c54b6412d5c4fbe7097b2149473d715261958a"
-      }
+      "domain": "itinerary"
     },
     {
       "id": "IT-08",
       "outcome": "同document保存備選可推進revision並留history",
       "evidenceLevel": "PGLITE + ORIGINAL_UI_NATIVE",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -515,7 +541,6 @@
       "outcome": "船端保存的人工三項確認",
       "evidenceLevel": "HELPER + ORIGINAL_PORTAL_NATIVE",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -523,7 +548,6 @@
       "outcome": "正式sortOrder首列完整bundle投影",
       "evidenceLevel": "HELPER + PGLITE",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -531,63 +555,96 @@
       "outcome": "首次無正式整組fallback、之後stale不倒退",
       "evidenceLevel": "HELPER",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
       "id": "OP-03",
       "outcome": "原保存後營運船卡/行事曆消費同一確認版本",
-      "evidenceLevel": "SOURCE + HELPER；native只證保存/讀回，不代證所有下游DOM",
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-PROJ"
+      "evidenceLevel": [
+        "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "domain": "itinerary"
+      "status": "NEW_PASS",
+      "domain": "itinerary",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\itinerary\\native-gap-6RdYDe\\evidence.json",
+          "sha256": "6838b3453ed27265cd1f29947ca64dcb2b52aac9d71fee43ca3a3b1dd61dd1bc",
+          "case": "G-PROJ-main-save-card-calendar",
+          "caseStatus": "PASS",
+          "runStatus": "GAP_FAILED",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "CA-01",
       "outcome": "登入四原角色可進Calendar且不擴可選船",
-      "evidenceLevel": "SSR + SOURCE_WIRING；不是四角色Calendar browser",
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-CAL"
+      "evidenceLevel": [
+        "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "domain": "itinerary"
+      "status": "NEW_PASS",
+      "domain": "itinerary",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\itinerary\\native-gap-6RdYDe\\evidence.json",
+          "sha256": "6838b3453ed27265cd1f29947ca64dcb2b52aac9d71fee43ca3a3b1dd61dd1bc",
+          "case": "G-CAL-four-original-role-entry",
+          "caseStatus": "PASS",
+          "runStatus": "GAP_FAILED",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "CA-02",
       "outcome": "ETA–ETD預勾、hover六行完整欄位",
       "evidenceLevel": "SSR + HELPER",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
       "id": "CA-03",
       "outcome": "有效執行排程才投影且DL獨立",
-      "evidenceLevel": "0.5 helper確有S1 PASS；全duration/DL測試僅找到source",
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-CAL"
+      "evidenceLevel": [
+        "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "domain": "itinerary"
+      "status": "NEW_PASS",
+      "domain": "itinerary",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\itinerary\\native-gap-QjokDH\\evidence.json",
+          "sha256": "2185ac2995a93b9a3c392d5cda8c3772bd87cfcf13780af1bccfc457a0254efb",
+          "case": "G-CAL-original-schedule-DL-duration",
+          "caseStatus": "PASS",
+          "runStatus": "GAP_FAILED",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "CA-04",
       "outcome": "停用單船事件隱藏、跨船保有效部分且關係不刪",
-      "evidenceLevel": "CURRENT_SOURCE_ONLY；未找到停用Calendar原UI receipt",
-      "status": "LOCAL_EVIDENCE_GAP",
-      "missingLocalAcceptance": [
-        "G-CAL"
+      "evidenceLevel": [
+        "ORIGINAL_APP_NATIVE_POSTGRES"
       ],
-      "domain": "itinerary"
+      "status": "NEW_PASS",
+      "domain": "itinerary",
+      "resumeEvidence": [
+        {
+          "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\itinerary\\native-gap-2DU1il\\evidence.json",
+          "sha256": "0c77eb34297d1e8a7be08e221d1a5cb9a250408fcd48cc055c943039a7c44ad2",
+          "case": "G-CAL-original-deactivate-reactivate",
+          "caseStatus": "PASS",
+          "runStatus": "PASS",
+          "evidenceLevel": "ORIGINAL_APP_NATIVE_POSTGRES"
+        }
+      ]
     },
     {
       "id": "CA-05",
       "outcome": "備選不進Calendar/報告/email",
       "evidenceLevel": "HELPER + SOURCE + ORIGINAL_UI_REPORT/XLSX",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -595,7 +652,6 @@
       "outcome": "岸端只匯出選中正式行程與完整metadata",
       "evidenceLevel": "ORIGINAL_APP_NATIVE + XLSX/ZIP_XML + EXCEL_COM",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -603,7 +659,6 @@
       "outcome": "岸端preview取消零保存、只套用勾船",
       "evidenceLevel": "ORIGINAL_APP_NATIVE",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -611,7 +666,6 @@
       "outcome": "岸端ACK/未知結果/鎖競爭保留逐船語意",
       "evidenceLevel": "ORIGINAL_APP_NATIVE + REAL_XLSX",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -619,7 +673,6 @@
       "outcome": "匿名船端正式-only及正式＋備選分開匯出",
       "evidenceLevel": "ORIGINAL_PORTAL_NATIVE + REAL_XLSX/ZIP_XML",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -627,7 +680,6 @@
       "outcome": "船端匯入先草稿、拒錯船/多分頁、人工保存",
       "evidenceLevel": "ORIGINAL_PORTAL_NATIVE + REAL_XLSX",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -635,7 +687,6 @@
       "outcome": "手動報告凍結正式快照、ACK後成功",
       "evidenceLevel": "ORIGINAL_APP_NATIVE + PGLITE",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -643,7 +694,6 @@
       "outcome": "歷史page/date/exact-ID與不可變正式預覽",
       "evidenceLevel": "ORIGINAL_APP_PGLITE_PREVIEW + NATIVE_CLIENT_READBACK + HELPER/SSR",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     },
     {
@@ -651,9 +701,39 @@
       "outcome": "每日09:00正式日快照保留本機SQL證據",
       "evidenceLevel": "PGLITE + SOURCE_CRON_CONFIGURATION",
       "status": "REUSED_PASS",
-      "missingLocalAcceptance": [],
       "domain": "itinerary"
     }
   ],
-  "unknownObservation": "G-PROJ continued to show itinerary read failed after initial fixture ordering correction. Cause not classified as product or QA; missing runtime response/validator evidence retained."
+  "unknownObservation": "G-PROJ continued to show itinerary read failed after initial fixture ordering correction. Cause not classified as product or QA; missing runtime response/validator evidence retained.",
+  "resumeAcceptance": {
+    "receipt": "C:\\Users\\tuotu\\AppData\\Local\\hermes\\cache\\ship-preflight-6a25fa2-resume\\acceptance.json",
+    "sha256": "b29e36f0ffe431b31c67b7817d51abcf22bccacb4640e18e690cefb9f3f35c12",
+    "closedRules": [
+      "CA-01",
+      "CA-03",
+      "CA-04",
+      "OP-03",
+      "REL-02",
+      "REL-09",
+      "REL-11",
+      "REL-12",
+      "REL-13",
+      "REL-14",
+      "REL-15",
+      "REL-19",
+      "REL-23"
+    ],
+    "rawSourceFiles": 655,
+    "rawGitEqual": 361,
+    "eolOnlyGitDifferences": 294,
+    "sqlInputChecks": 112,
+    "newRunnerInputChecks": 15,
+    "seedBindings": 4,
+    "evidenceLimits": [
+      "Case PASS in a later-failed run is reused only with completed assertions and preserved readbacks; run FAIL remains FAIL.",
+      "GM-05 is executed original helper, not native UI business mutation; paired with GM-GUARDS-UI native positives.",
+      "Repair uses isolated legacy conflict fixture; actual repair action uses original UI and native SQL.",
+      "No production, hosted, physical-mobile, whole-site rereview, or new performance claim."
+    ]
+  }
 }
