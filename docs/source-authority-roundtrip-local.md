@@ -61,6 +61,12 @@ QA_SOURCE_ROUNDTRIP=1 QA_BROWSER_AUTHORITY_MODE=direct QA_EVIDENCE_ROOT="C:/path
 
 [岸端原六項 Excel 驗收](office-excel-native-post-roundtrip-local.md) 已補真 PostgreSQL、來源往返後的原下載／原 file-input、取消零保存、逐船 ACK、lost-ACK 同操作對帳、持鎖部分成功及新 document 再匯出；三個實際 XLSX 經 Microsoft Excel 唯讀開檔，父核對收據與完整非目標 ledger 通過。僅 Vite 原 App 入口，不是 production bundle、匿名船端或本人試用。
 
+## 追加：匿名船端 Excel 與本人本機試用入口
+
+[匿名船端原十項 Excel 驗收](ship-excel-native-post-roundtrip-local.md) 已補 native PostgreSQL、來源往返後的免登入 public RPC、草稿／取消／確認、held/lost ACK及新document匯出；兩次實際保存、同operation對帳、完整非目標ledger與四個原XLSX已父核SCOPED_PASS。是Vite原船端入口，不將它說成production-bundle全船端Excel驗收。
+
+[本機持續試用站](local-human-trial-handoff.md) 已使用原App的production build、隔離SQL及合成資料，核對四種原角色登入、兩人分船保存／另一身份與新context讀回、船端入口、編譯資產與正常重啟資料保留；準備交給本人操作，本人尚未驗收。
+
 ## 尚不能宣稱
 
-此處只補同一原管理表單的雙向熱切換保存，不是所有頁面的熱切換、全角色多人多船完整驗收或 hosted Supabase ACL/PostgREST/Realtime/scheduler 驗收，也不是本人持續試用站。舊 unbound v2/v3 的已提交／回覆遺失情境已另經 [原 UI 恢復驗收](historical-report-delete-recovery-local.md)，不是全部歷史恢復。沒有正式 SQL／Push／部署。正式操作包、維護時窗、其他原 UI 流程及本人試用仍分開交付。
+以上都是明確分項證據，並非所有頁面熱切換、全部自然dirty/unknown恢復、完整角色操作矩陣或hosted Supabase Auth/ACL/PostgREST/Realtime/scheduler驗收。舊unbound v2/v3的已提交／回覆遺失情境另經[原UI恢復驗收](historical-report-delete-recovery-local.md)，不是全部歷史恢復。沒有本次正式SQL／Push／部署。本人試用之後仍需[真雲端目標與正式切換交接](pre-push-release-checkpoints.md)；正式可執行SQL包尚未生成，不能把development addon或交接順序文件冒充正式完成。
