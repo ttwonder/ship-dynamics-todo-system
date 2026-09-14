@@ -1,0 +1,659 @@
+{
+  "kind": "BOUNDED_PREFLIGHT_PARTIAL_HANDOFF",
+  "productHead": "854802a770419d4edb6b0d362b5dbd0642819ef1",
+  "productTree": "a14b93bd5bdfd3a5758f1598d1aa7eb96ab58c97",
+  "localAcceptance": "NOT_COMPLETE",
+  "productChanges": false,
+  "productionReadsWritesPushDeploy": false,
+  "summary": {
+    "rows": 65,
+    "byStatus": {
+      "REUSED_PASS": 47,
+      "HOSTED_ONLY": 2,
+      "LOCAL_EVIDENCE_GAP": 13,
+      "EXCLUDED": 1,
+      "NEW_PASS": 2
+    },
+    "localRows": 62,
+    "openLocalIds": [
+      "REL-02",
+      "REL-09",
+      "REL-11",
+      "REL-12",
+      "REL-13",
+      "REL-14",
+      "REL-15",
+      "REL-19",
+      "REL-23",
+      "OP-03",
+      "CA-01",
+      "CA-03",
+      "CA-04"
+    ],
+    "navigationEntries": 10,
+    "appDataFields": 12,
+    "countMeaning": "規則表行數，不能當功能數/測試數/完成百分比；重疊測試不加總。"
+  },
+  "fullLedger": {
+    "path": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/coverage-ledger.json",
+    "sha256": "ea50fbd6bd9192fb44da97448196ad5e8ec6d5d44e101ee232b2262babae15d2"
+  },
+  "newVerifiedEvidence": {
+    "path": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/parent-verified-new-evidence.json",
+    "sha256": "250b5ef5d4294de19f44bc3d76c54b6412d5c4fbe7097b2149473d715261958a"
+  },
+  "finalOwnedCleanup": {
+    "path": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/final-owned-cleanup.json",
+    "sha256": "220ede984990131f42965515e440871a91299df1d96b836d62a8f60996fbdab4"
+  },
+  "rows": [
+    {
+      "id": "BASE-01",
+      "outcome": "原App登入、角色入口、導航順序；匿名船端入口獨立",
+      "evidenceLevel": "ORIGINAL_APP_PRODUCTION_BUILD_NATIVE_PG + CONTROLLED_BOOTSTRAP",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-02",
+      "outcome": "船隊看板/船詳情、篩選與單筆完整讀取，返回不降級已載內容",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + CONTROLLED_COMPONENT",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-03",
+      "outcome": "船舶原快速更新與多人分船保存；未选資料不跟著改",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-04",
+      "outcome": "管理人員/船舶/分類/角色/進站密碼沿原表單保存，ACK後本地成功",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + CONTROLLED_CALLBACKS",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-05",
+      "outcome": "停用保全部資料/關係，原管理勾選啟用再顯示；不連帶重啟帳戶",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + SELECTOR",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-06",
+      "outcome": "分管逐船交接：未完成工作跟接任者、其他船/共用協辦/歷史/已結案保留",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + NATIVE_SQL_UPGRADE",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-07",
+      "outcome": "私稿只有真正丟稿才確認；取消保留、確認放棄，原表單保存不由頁首代送",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + CONTROLLED_CALLBACKS",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-08",
+      "outcome": "全域保存成功須有確認；較新輸入/舊回覆不清稿或冒成功",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + CONTROLLED_CALLBACKS",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-09",
+      "outcome": "啟動/設定/同步/恢復保身份與草稿，來源未知不沿舊入口亂寫",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + CONTROLLED_MODULES",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-10",
+      "outcome": "早會工作台原議程、篩選、保存/讀歷史與目前資料分離",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + NATIVE_MODEL_ORIGINAL_COMPONENT",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-11",
+      "outcome": "數據分析保整體/部門/人員與原可見範圍，返回/同步讀取不污染看板",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + NATIVE_MODEL_ORIGINAL_COMPONENT",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-12",
+      "outcome": "PDF/手機沿原畫面與列印內容，不為額外字級門檻改版面",
+      "evidenceLevel": "REAL_CHROMIUM_PDF + ORIGINAL_APP_PRODUCTION_BUILD_NATIVE_PG",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-13",
+      "outcome": "定向保存保關聯/通知/audit/歷史與未選資料，重送同操作不重覆效果",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + NATIVE_SQL",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-14",
+      "outcome": "不同船/逐船進度可独立保存，同筆CAS/lease衝突不覆資料",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + NATIVE_TWO_CONNECTION_SQL",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-15",
+      "outcome": "最新資料雙向切換與保存回覆遺失保持同操作，非舊備份覆新資料",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE_PG + NATIVE_SQL + CONTROLLED_MODULES",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-16",
+      "outcome": "全部標記已讀只更新本人未讀，包含篩選外；他人通知/audit/業務資料保留",
+      "evidenceLevel": "ORIGINAL_APP_LOOPBACK_PGLITE",
+      "status": "REUSED_PASS",
+      "domain": "base"
+    },
+    {
+      "id": "BASE-17",
+      "outcome": "真雲端權限/HTTP RPC/Realtime重連/scheduler與正式資料切換、備份回退、部署讀回",
+      "evidenceLevel": "NOT_HOSTED_VERIFIED",
+      "status": "HOSTED_ONLY",
+      "domain": "base"
+    },
+    {
+      "id": "REL-01",
+      "outcome": "一般要事新增與更新",
+      "evidenceLevel": [
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-02",
+      "outcome": "一般要事整體結案、重開、刪除",
+      "evidenceLevel": [
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-TASK"
+      ],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-03",
+      "outcome": "內控新增同步/不建子要事",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE",
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-04",
+      "outcome": "內控↔要事雙向內容與進度保存",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE",
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations",
+      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
+      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+    },
+    {
+      "id": "REL-05",
+      "outcome": "內控兩端結案與原 closed-list 重開",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE",
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations",
+      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
+      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+    },
+    {
+      "id": "REL-06",
+      "outcome": "撤回同步與再同步",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations",
+      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
+      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+    },
+    {
+      "id": "REL-07",
+      "outcome": "取消內控不是撤回",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations",
+      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
+      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+    },
+    {
+      "id": "REL-08",
+      "outcome": "刪除兩端的非對稱原規則",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations",
+      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
+      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+    },
+    {
+      "id": "REL-09",
+      "outcome": "要事來源內控建立與撤回限制",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE"
+      ],
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-TASK"
+      ],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-10",
+      "outcome": "內控批量新增/結案/刪除只作用選取",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations",
+      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
+      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+    },
+    {
+      "id": "REL-11",
+      "outcome": "專題會議新增/編輯與關聯同步",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE"
+      ],
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-MEETING"
+      ],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-12",
+      "outcome": "移除會議決議≠刪整場",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE"
+      ],
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-MEETING"
+      ],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-13",
+      "outcome": "決議完成/重開/關聯修復",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE",
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-MEETING"
+      ],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-14",
+      "outcome": "無涉船決議完成與重開",
+      "evidenceLevel": [
+        "SOURCE_ONLY"
+      ],
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-MEETING"
+      ],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-15",
+      "outcome": "整場會議結案與重開",
+      "evidenceLevel": [
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-MEETING"
+      ],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-16",
+      "outcome": "逐船進度、最後一船與整體軸",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE",
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations",
+      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
+      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+    },
+    {
+      "id": "REL-17",
+      "outcome": "逐船等待ACK的較新輸入與清除",
+      "evidenceLevel": [
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-18",
+      "outcome": "通知/audit/歷史/未選資料是完整效果",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE",
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-19",
+      "outcome": "會議歷程新增/保留/合法刪除與actor",
+      "evidenceLevel": [
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-MEETING"
+      ],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-20",
+      "outcome": "個人移除與共享完成/永久刪除",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE"
+      ],
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "relations",
+      "parentDisposition": "舊逐動作原UI/PGlite及native business evidence保留；withdraw/delete/batch callback與相應leaf未改。唯有hand-over保common contact/逐船responsibility的domain delta已被後續native handover final驗。共用App/source/SQL接線以当前相同App bytes的POST-RT-M1/M2含完整關聯圖及fresh读回補綁。不是所有舊case在本HEAD重跑的聲稱。",
+      "bridgeReceipt": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/bridge-reconciliation.json"
+    },
+    {
+      "id": "REL-21",
+      "outcome": "原無單船 Delete／任意link-unlink不列缺碼",
+      "evidenceLevel": [
+        "ORIGINAL_APP_NATIVE_POSTGRES"
+      ],
+      "status": "EXCLUDED",
+      "missingLocalAcceptance": [],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-22",
+      "outcome": "真雲端邊界單列",
+      "evidenceLevel": [
+        "SOURCE_ONLY"
+      ],
+      "status": "HOSTED_ONLY",
+      "missingLocalAcceptance": [],
+      "domain": "relations"
+    },
+    {
+      "id": "REL-23",
+      "outcome": "會議內控取消與涉船縮減的保護",
+      "evidenceLevel": [
+        "ORIGINAL_APP_LOOPBACK_PGLITE"
+      ],
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-MEETING"
+      ],
+      "domain": "relations"
+    },
+    {
+      "id": "IT-01",
+      "outcome": "UTC儲存、每欄fixed offset顯示與Excel往返",
+      "evidenceLevel": "HELPER + ORIGINAL_UI_NATIVE_XLSX",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "IT-02",
+      "outcome": "L/U多選及A:/F:吃水文字保留",
+      "evidenceLevel": "HELPER + ORIGINAL_UI_NATIVE_XLSX",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "IT-03",
+      "outcome": "保留原自動/手動ETA/B/C/D計算",
+      "evidenceLevel": "HELPER + SSR",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "IT-04",
+      "outcome": "刪首列時上一港承接已刪列港名",
+      "evidenceLevel": "HELPER + SOURCE_WIRING",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "IT-05",
+      "outcome": "備選同document最多5個、船端編輯瀏覽",
+      "evidenceLevel": "HELPER + SSR + PGLITE + NATIVE_READ_EXPORT",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "IT-06",
+      "outcome": "正式首列ETA起算live聯動備選",
+      "evidenceLevel": "原船端UI＋native PostgreSQL獨立讀回；僅G-ALT指定流程",
+      "status": "NEW_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary",
+      "parentDisposition": "新增備選及正式起算日期／offset修改後，備選即時共享起算；人工保存前SQL零變動。",
+      "newReceipt": {
+        "path": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/parent-verified-new-evidence.json",
+        "sha256": "250b5ef5d4294de19f44bc3d76c54b6412d5c4fbe7097b2149473d715261958a"
+      }
+    },
+    {
+      "id": "IT-07",
+      "outcome": "備選轉正式僅複製草稿、人工保存且保留備選",
+      "evidenceLevel": "原船端UI＋native PostgreSQL獨立讀回；僅G-ALT指定流程",
+      "status": "NEW_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary",
+      "parentDisposition": "原確認帶入只換新正式rowId、保上一港/起算與全部備選；人工保存後revision8，獨立SQL及fresh portal讀回一致。",
+      "newReceipt": {
+        "path": "C:/Users/tuotu/AppData/Local/hermes/cache/ship-preflight-854802a/parent-verified-new-evidence.json",
+        "sha256": "250b5ef5d4294de19f44bc3d76c54b6412d5c4fbe7097b2149473d715261958a"
+      }
+    },
+    {
+      "id": "IT-08",
+      "outcome": "同document保存備選可推進revision並留history",
+      "evidenceLevel": "PGLITE + ORIGINAL_UI_NATIVE",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "IT-09",
+      "outcome": "船端保存的人工三項確認",
+      "evidenceLevel": "HELPER + ORIGINAL_PORTAL_NATIVE",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "OP-01",
+      "outcome": "正式sortOrder首列完整bundle投影",
+      "evidenceLevel": "HELPER + PGLITE",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "OP-02",
+      "outcome": "首次無正式整組fallback、之後stale不倒退",
+      "evidenceLevel": "HELPER",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "OP-03",
+      "outcome": "原保存後營運船卡/行事曆消費同一確認版本",
+      "evidenceLevel": "SOURCE + HELPER；native只證保存/讀回，不代證所有下游DOM",
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-PROJ"
+      ],
+      "domain": "itinerary"
+    },
+    {
+      "id": "CA-01",
+      "outcome": "登入四原角色可進Calendar且不擴可選船",
+      "evidenceLevel": "SSR + SOURCE_WIRING；不是四角色Calendar browser",
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-CAL"
+      ],
+      "domain": "itinerary"
+    },
+    {
+      "id": "CA-02",
+      "outcome": "ETA–ETD預勾、hover六行完整欄位",
+      "evidenceLevel": "SSR + HELPER",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "CA-03",
+      "outcome": "有效執行排程才投影且DL獨立",
+      "evidenceLevel": "0.5 helper確有S1 PASS；全duration/DL測試僅找到source",
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-CAL"
+      ],
+      "domain": "itinerary"
+    },
+    {
+      "id": "CA-04",
+      "outcome": "停用單船事件隱藏、跨船保有效部分且關係不刪",
+      "evidenceLevel": "CURRENT_SOURCE_ONLY；未找到停用Calendar原UI receipt",
+      "status": "LOCAL_EVIDENCE_GAP",
+      "missingLocalAcceptance": [
+        "G-CAL"
+      ],
+      "domain": "itinerary"
+    },
+    {
+      "id": "CA-05",
+      "outcome": "備選不進Calendar/報告/email",
+      "evidenceLevel": "HELPER + SOURCE + ORIGINAL_UI_REPORT/XLSX",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "EX-01",
+      "outcome": "岸端只匯出選中正式行程與完整metadata",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE + XLSX/ZIP_XML + EXCEL_COM",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "EX-02",
+      "outcome": "岸端preview取消零保存、只套用勾船",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "EX-03",
+      "outcome": "岸端ACK/未知結果/鎖競爭保留逐船語意",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE + REAL_XLSX",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "EX-04",
+      "outcome": "匿名船端正式-only及正式＋備選分開匯出",
+      "evidenceLevel": "ORIGINAL_PORTAL_NATIVE + REAL_XLSX/ZIP_XML",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "EX-05",
+      "outcome": "船端匯入先草稿、拒錯船/多分頁、人工保存",
+      "evidenceLevel": "ORIGINAL_PORTAL_NATIVE + REAL_XLSX",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "RP-01",
+      "outcome": "手動報告凍結正式快照、ACK後成功",
+      "evidenceLevel": "ORIGINAL_APP_NATIVE + PGLITE",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "RP-02",
+      "outcome": "歷史page/date/exact-ID與不可變正式預覽",
+      "evidenceLevel": "ORIGINAL_APP_PGLITE_PREVIEW + NATIVE_CLIENT_READBACK + HELPER/SSR",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    },
+    {
+      "id": "RP-03",
+      "outcome": "每日09:00正式日快照保留本機SQL證據",
+      "evidenceLevel": "PGLITE + SOURCE_CRON_CONFIGURATION",
+      "status": "REUSED_PASS",
+      "missingLocalAcceptance": [],
+      "domain": "itinerary"
+    }
+  ],
+  "unknownObservation": "G-PROJ continued to show itinerary read failed after initial fixture ordering correction. Cause not classified as product or QA; missing runtime response/validator evidence retained."
+}
