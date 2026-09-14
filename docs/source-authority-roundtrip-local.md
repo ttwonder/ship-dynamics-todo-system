@@ -53,6 +53,10 @@ QA_SOURCE_ROUNDTRIP=1 QA_BROWSER_AUTHORITY_MODE=direct QA_EVIDENCE_ROOT="C:/path
 
 [POST-RT-M1／M2 本機驗收](mixed-workflows-post-roundtrip-local.md) 已另驗來源往返後，兩人並發新增一般要事／同步內控，以及更新一般要事／結案內控和關聯要事。原完整圖與歷史 oracle 不變；自動衝突重試、實際 ACK、原文件 reload 及自有服務清理已核對。這是登入前完成往返的整合情境，不是多人未保存表單跨維護的熱切換證據。
 
+## 追加：本機編譯產物 PDF／手機內容
+
+[真實 PDF 與390px內容驗收](browser-print-mobile-compat-local.md) 已補所選待辦列印、Owner／操作員原同步及實際內容畫面；會議PDF完整性與原樣另核，既有7.5pt狀態標籤不擅改，嚴格全字形8pt未符合紀錄保留。這些結果不取代其他頁面、全部角色或本人試用。
+
 ## 尚不能宣稱
 
 此處只補同一原管理表單的雙向熱切換保存，不是所有頁面的熱切換、全角色多人多船完整驗收或 hosted Supabase ACL/PostgREST/Realtime/scheduler 驗收，也不是本人持續試用站。舊 unbound v2/v3 的已提交／回覆遺失情境已另經 [原 UI 恢復驗收](historical-report-delete-recovery-local.md)，不是全部歷史恢復。沒有正式 SQL／Push／部署。正式操作包、維護時窗、其他原 UI 流程及本人試用仍分開交付。

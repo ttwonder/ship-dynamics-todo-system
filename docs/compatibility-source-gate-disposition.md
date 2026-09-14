@@ -24,3 +24,5 @@
 上述是來源契約、SSR/helper 與 source counterfactual 證據。**不是**瀏覽器真實 PDF 下載／列印、手機、Excel、全角色或 hosted Supabase 驗收，也不取代本人隔離試用。
 
 既有函式／原 UI 行為沒有為了讓測試綠燈而改動。測試仍屬來源型 contract，不保證任何未涵蓋的未來重構；後續產品變更仍須對其實際可達流程驗證。
+
+後續 [本機編譯產物的 PDF／手機驗收](browser-print-mobile-compat-local.md) 另記真實瀏覽器結果：所選待辦PDF、Owner／操作員390px內容已完成有界驗收；會議PDF原有狀態標籤7.5pt與嚴格門檻差異仍明列。不得回填成上述八項來源／SSR本身已證明了實際輸出。
