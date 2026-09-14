@@ -30,6 +30,25 @@
 - 既有 manual report 15、delete 21、原 App bootstrap 14、action preread 17 個 controlled 案例通過。原本「epoch 2 必定錯」的兩個 assertion 改為「小數 epoch 錯」；新增矩陣另外明確測 epoch 2/3 及兩種來源。
 - `npm run typecheck`、`npm run build` 通過；build 仍有既有大 chunk 提示，未為此改架構。
 
+## 追加：原管理表單熱切換保存（本機）
+
+入口仍為 `src/main.tsx → App`，以原登入、原「姓名」欄位及原「保存變更」操作。`scripts/verify-browser-authority-original.mjs` 的 `QA_SOURCE_ROUNDTRIP=1` 是預設關閉的 QA 模式；新增 `scripts/source-roundtrip-original-scenario.mjs`。舊預設情境／assertions 不变，只在開啟此模式時加裝 roundtrip addon。
+
+- `UI-RT-FWD`：同一頁、同一欄位已有未提交 C，legacy → records epoch 2 後手動保存，實際 record RPC 一次 ACK。
+- `UI-RT-REV`：再輸入未提交 D，records → legacy epoch 3 後手動保存，實際 legacy RPC 一次 ACK。
+- pause／stage／publish 三個暫停點均驗草稿、身份、頁面及設定不變，零使用者業務寫入；不刷新、不改設定、不清 storage、不注入 React 或保存 helper。
+- stage 比較完整來源與只映射指定 metadata 的目標；手動保存以原 request＋原 audit builder 先建立完整 expected，再核 SQL ACK、exact receipt、fresh connection 全圖及 retired／independent stores。既有 receipt 保留，新增 receipt 與 read-base 另作精確比對。
+- 兩個新情境不是把原 setup、原 controls 或多次執行加總。子執行前兩輪為 QA ledger／receipt 分類錯誤，保留失敗收據；修正後通過，沒有修改產品。父將相同 scenario 接回專案後，另跑專案內 QA 入口。
+- 人員表單有密碼，故僅 DOM 證據，沒有截圖。診斷 SHA 使用非 canonical `JSON.stringify`，JSONB／JS 物件 key 順序可能令 hashes 不同；完整業務一致由未降級的 `assert.deepEqual` 判定，陣列順序和值仍嚴格保留。
+
+重現（隔離本機、非正式環境；先提供已驗證的 PG runtime／pg module 環境變數）：
+
+```bash
+QA_SOURCE_ROUNDTRIP=1 QA_BROWSER_AUTHORITY_MODE=direct QA_EVIDENCE_ROOT="C:/path/outside-repo/unique-evidence" node scripts/verify-browser-authority-original.mjs
+```
+
+`QA_AUTHORITY_BASELINE`、`QA_MGACK_MODE`、`QA_HANDOVER_UPGRADE` 應未設定。每次使用獨立 evidence／Vite cache／HMR port；結束核對自有 PG／HTTP／Chrome／HMR 關閉。收據及原始失敗留在 repo 外，不包含實際名冊或憑證。
+
 ## 尚不能宣稱
 
-上述不是原 UI 熱切換 E2E、全角色多人多船完整驗收、舊 unbound v2/v3 恢復驗收、hosted Supabase ACL/PostgREST/Realtime/scheduler 驗收，也不是本人持續試用站。沒有正式 SQL／Push／部署。正式操作包、維護時窗、原 UI 端到端演練及本人試用仍分開交付。
+此處只補同一原管理表單的雙向熱切換保存，不是所有頁面的熱切換、全角色多人多船完整驗收、舊 unbound v2/v3 恢復驗收、hosted Supabase ACL/PostgREST/Realtime/scheduler 驗收，也不是本人持續試用站。沒有正式 SQL／Push／部署。正式操作包、維護時窗、其他原 UI 流程及本人試用仍分開交付。
