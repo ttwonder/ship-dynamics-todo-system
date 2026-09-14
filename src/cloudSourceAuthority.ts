@@ -10,10 +10,10 @@ export function parseBrowserAuthority(value:unknown, config:ResolvedSupabaseConf
   const v=value as Record<string,unknown>|null;
   if(!v||v.workspace!==config.workspaceKey||typeof v.managed!=='boolean'||typeof v.admitted!=='boolean'
     ||!['unmanaged','paused','resumed'].includes(String(v.pauseState))
-    ||(v.managed?(v.source!=='legacy'||v.epoch!==1||v.pauseState==='unmanaged'):(v.source!==null||v.epoch!==0))
+    ||(v.managed?((v.source!=='legacy'&&v.source!=='records-v1')||!Number.isSafeInteger(v.epoch)||(v.epoch as number)<1||v.pauseState==='unmanaged'):(v.source!==null||v.epoch!==0))
     ||(v.pauseState==='paused'&&v.admitted)||(!v.managed&&v.admitted!==(v.pauseState!=='paused')))
     throw new BrowserAuthorityError('browser-authority-invalid-response');
-  const source=v.managed?'legacy':config.storageMode??'legacy';
+  const source=v.managed?v.source:config.storageMode??'legacy';
   if(source!=='legacy'&&source!=='records-v1')throw new BrowserAuthorityError('browser-authority-invalid-source');
   return Object.freeze({workspace:config.workspaceKey,managed:v.managed,source,epoch:v.epoch as number,pauseState:v.pauseState as BrowserAuthority['pauseState'],admitted:v.admitted});
 }

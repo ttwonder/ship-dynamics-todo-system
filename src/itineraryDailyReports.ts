@@ -465,7 +465,7 @@ export async function saveManualItineraryDailyReport(
   if (Object.prototype.hasOwnProperty.call(request, 'sourceAuthority') && (!binding || binding.workspace !== resolved.workspaceKey
     || !['legacy', 'records-v1'].includes(binding.source)
     || typeof binding.managed !== 'boolean'
-    || (binding.managed ? binding.source !== 'legacy' || binding.epoch !== 1 : binding.epoch !== 0 || binding.source !== (resolved.storageMode ?? 'legacy'))
+    || (binding.managed ? !Number.isSafeInteger(binding.epoch) || binding.epoch < 1 || binding.pauseState !== 'resumed' : binding.epoch !== 0 || binding.source !== (resolved.storageMode ?? 'legacy'))
     || binding.admitted !== true || !['unmanaged', 'resumed'].includes(binding.pauseState))) {
     throw new ItineraryDailyReportRpcError('INVALID_MANUAL_SAVE_ENVELOPE', 'Invalid captured report authority.', false);
   }
@@ -524,7 +524,7 @@ export async function deleteItineraryDailyReports(
   const binding = request.sourceAuthority;
   if (Object.prototype.hasOwnProperty.call(request, 'sourceAuthority') && (!binding
     || binding.workspace !== resolved.workspaceKey || typeof binding.managed !== 'boolean'
-    || (binding.managed ? binding.source !== 'legacy' || binding.epoch !== 1 || binding.pauseState !== 'resumed'
+    || (binding.managed ? !['legacy', 'records-v1'].includes(binding.source) || !Number.isSafeInteger(binding.epoch) || binding.epoch < 1 || binding.pauseState !== 'resumed'
       : binding.epoch !== 0 || binding.source !== (resolved.storageMode ?? 'legacy') || !['unmanaged', 'resumed'].includes(binding.pauseState))
     || binding.admitted !== true)) {
     throw new ItineraryDailyReportRpcError('INVALID_DELETE_ENVELOPE', 'Invalid captured report authority.', false);
