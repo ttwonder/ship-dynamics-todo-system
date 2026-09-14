@@ -19,4 +19,4 @@ Native 的情境與執行器保存在本機 QA 證據包，不把上述兩個標
 
 ## 仍未證實
 
-舊未綁定 v2／v3 待確認操作在完整來源切換後的 native 恢復可達性仍待驗證；「保留且不誤送」不等於「已恢復完成」。沒有宣稱 Supabase hosted 權限、Realtime、完整正反切換或整版發布已通過。這一批沒有 Push、部署或正式資料庫操作。
+舊未綁定 v2／v3 的 **COMMITTED＋回覆遺失**，在完整舊 App 自然產生 pending、切換來源後由目前原 UI 對帳的兩個 native 情境，已補跑並經父層接受；見 [歷史刪除恢復](historical-report-delete-recovery-local.md)。未提交／無法識別 pending 及全部歷史恢復仍未完整驗收；「保留且不誤送」不能一概稱為「已恢復完成」。沒有宣稱 Supabase hosted 權限、Realtime 或整版發布已通過，也沒有 Push、部署或正式資料庫操作。

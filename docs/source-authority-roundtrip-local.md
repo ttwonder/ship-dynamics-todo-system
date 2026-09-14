@@ -51,4 +51,4 @@ QA_SOURCE_ROUNDTRIP=1 QA_BROWSER_AUTHORITY_MODE=direct QA_EVIDENCE_ROOT="C:/path
 
 ## 尚不能宣稱
 
-此處只補同一原管理表單的雙向熱切換保存，不是所有頁面的熱切換、全角色多人多船完整驗收、舊 unbound v2/v3 恢復驗收、hosted Supabase ACL/PostgREST/Realtime/scheduler 驗收，也不是本人持續試用站。沒有正式 SQL／Push／部署。正式操作包、維護時窗、其他原 UI 流程及本人試用仍分開交付。
+此處只補同一原管理表單的雙向熱切換保存，不是所有頁面的熱切換、全角色多人多船完整驗收或 hosted Supabase ACL/PostgREST/Realtime/scheduler 驗收，也不是本人持續試用站。舊 unbound v2/v3 的已提交／回覆遺失情境已另經 [原 UI 恢復驗收](historical-report-delete-recovery-local.md)，不是全部歷史恢復。沒有正式 SQL／Push／部署。正式操作包、維護時窗、其他原 UI 流程及本人試用仍分開交付。
