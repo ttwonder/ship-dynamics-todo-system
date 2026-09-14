@@ -21,6 +21,18 @@ assert.match(compactPrint, /\.meeting-print-grid\{[^}]*grid-template-columns:rep
 assert.match(compactPrint, /\.meeting-print-grid \.meeting-print-section\.card-like\{[^}]*padding:1\.8mm 2\.2mm[^}]*box-shadow:none/, '基本資訊格必須移除大型卡片陰影並縮減內距');
 assert.match(compactPrint, /\.meeting-print-page>\.meeting-print-section\.card-like\.wide\{[^}]*break-inside:auto/, '召開緣由、決議及待辦長內容必須能自然跨頁，避免整區被推到下一頁');
 assert.match(compactPrint, /\.meeting-print-page>\.meeting-print-section\.card-like\{[^}]*margin:0 0 2mm[^}]*padding:2mm 2\.5mm/, '核心區塊必須縮減間距與內距');
-assert.doesNotMatch(compactPrint, /font-size:[0-7](?:\.|pt)/, 'PDF 壓縮不得以低於 8pt 的極端小字換頁數');
+// Only the meeting-detail namespace owns this font contract. Other report
+// types deliberately have different typography; still inspect later overrides.
+const meetingRules=[...styles.replace(/\/\*[\s\S]*?\*\//g,'').matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+  .filter(([,selectors])=>selectors.split(',').some(selector=>selector.trim()==='body.printing-meeting-detail'||selector.trim().startsWith('body.printing-meeting-detail ')));
+assert.ok(meetingRules.length>0,'會議列印字級檢查不可在缺少目標樣式時默默通過');
+let checkedFonts=0;
+for(const [,selectors,declarations] of meetingRules)for(const [,value] of declarations.matchAll(/(?:^|;)\s*font-size\s*:\s*([^;}!]+)/g)){
+  const size=value.trim().match(/^(\d+(?:\.\d+)?)(pt|px)$/);
+  assert.ok(size,`會議 PDF 字級單位必須可明確核對：${selectors.trim()}`);
+  const points=Number(size[1])*(size[2]==='px'?0.75:1);checkedFonts++;
+  assert.ok(points>=8,'PDF 壓縮不得以低於 8pt 的極端小字換頁數');
+}
+assert.ok(checkedFonts>0,'會議列印字級檢查必須實際核對字級');
 
 console.log('Compact A4 portrait meeting-detail PDF contracts passed.');
