@@ -1,13 +1,13 @@
 # 本人試用後：正式發布決策與停止點
 
-**這是按現有證據整理的交接順序，不是可直接貼到正式資料庫執行的 SQL 包。** 本人未試用通過、目標環境未核定、正式 migration 未完成套用／readback 前，不進入 Push 或部署。
+**這份文件保留最初交接順序；最新資料庫交付與證據以 [增量更新包](production-record-release.md) 為準。** 本人已回報試用正常並選正式更新路線、不另建測試專案；完整備份已不再作前置。正式 migration/readback、前端啟用設定與部署尚未完成，不能直接 Push。
 
 ## 當前固定資料
 
 - 產品候選：`6c57b5c42590a2c726e3386ddada5c133fa07035`；branch `development/normalized-storage`。
-- [原 App 本機試用站](local-human-trial-handoff.md) 已交付；本人試用結果未取得。
+- [原 App 本機試用站](local-human-trial-handoff.md) 已交付；本人已回報正常，本輪不重做全站試用。
 - [雙向最新資料控制](source-authority-roundtrip-local.md)已本機驗證，`supabase/development/20260914_source_authority_roundtrip.sql` 仍是 development addon，不能單獨當正式 migration 執行。
-- 本輪不查遠端 main／Pages／正式版本，不藉 branch 隔離之名連正式資料庫。正式目標的目前 schema、版本、權限及資料水位仍待下一次獲准後核對。
+- 此前正式唯讀盤點／首包已完成，本次依盤點在本機驗證增量；本輪未查遠端 main／Pages 或連正式資料庫。Run 前仍核對即時目標與狀態，不能把舊盤點水位用作新切換來源。
 
 ## 正式動作前的順序與停止點
 
@@ -47,4 +47,4 @@
 
 完整正式 migration 與唯讀 readback 分開。Hermes Preview 顯示經 immutable commit blob 核對的完整 readonly textarea；本人手動 Ctrl+A／Ctrl+C、貼到 SQL Editor、Run。助手不代貼、不操作剪貼簿 API、不代執行正式 SQL。`Success. No rows returned` 只算執行回覆，下一步仍是獨立唯讀讀回。
 
-**剩餘不是已證實的產品缺碼，而是真雲端目標／證據、正式包編排及使用者控制的操作。正式包目前尚未生成為可執行交付物，不用這份順序文件冒充完成。**
+**增量 installer、readback 與分步控制 SQL 已生成並 native 驗證，見新交付文件。** 正式 SQL/讀回、client storageMode/readMode 啟用核對、Push/部署與正式驗收仍分開；此資料庫交付不宣告後者完成。

@@ -1,0 +1,418 @@
+[
+  {
+    "name": "apply_ship_dynamics_block_patch",
+    "types": "text, jsonb, text, text, jsonb, jsonb, jsonb",
+    "args": "p_workspace_key text, p_operations jsonb, p_saved_by text, p_actor_user_id text, p_actor_guard jsonb, p_authorization_guard jsonb, p_lock_guards jsonb",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260806183000_audit_request_context.sql"
+  },
+  {
+    "name": "apply_ship_dynamics_block_patch_v2",
+    "types": "text, text, jsonb, text, text, jsonb, jsonb, jsonb",
+    "args": "p_workspace_key text, p_operation_id text, p_operations jsonb, p_saved_by text, p_actor_user_id text, p_actor_guard jsonb, p_authorization_guard jsonb, p_lock_guards jsonb",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260904161000_appdata_compact_ack_receipts.sql"
+  },
+  {
+    "name": "apply_ship_dynamics_record_patch_v1",
+    "types": "text, text, jsonb, text, text, jsonb, jsonb, jsonb",
+    "args": "p_workspace_key text, p_operation_id text, p_operations jsonb, p_saved_by text, p_actor_user_id text, p_actor_guard jsonb, p_authorization_guard jsonb, p_lock_guards jsonb",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_appdata_record_store.sql"
+  },
+  {
+    "name": "claim_ship_dynamics_edit_lock",
+    "types": "text, text, text, text, integer",
+    "args": "p_workspace_key text, p_section_key text, p_locked_by text, p_locked_by_name text, p_ttl_seconds integer",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/development/20260909_task_member_protocol.sql"
+  },
+  {
+    "name": "delete_sd_itinerary_daily_report_records",
+    "types": "text, text, uuid, text, jsonb",
+    "args": "p_workspace_key text, p_actor_user_id text, p_operation_id uuid, p_expected_set_token text, p_delete_report_ids jsonb",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260905200000_manual_itinerary_daily_reports.sql"
+  },
+  {
+    "name": "delete_sd_itinerary_daily_reports",
+    "types": "text, text, uuid, text, jsonb",
+    "args": "p_workspace_key text, p_actor_user_id text, p_operation_id uuid, p_expected_set_token text, p_delete_dates jsonb",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260905210000_manual_itinerary_legacy_compatibility.sql"
+  },
+  {
+    "name": "get_ship_dynamics_block_patch_receipt",
+    "types": "text, text, jsonb, text, text, jsonb, jsonb, jsonb",
+    "args": "p_workspace_key text, p_operation_id text, p_operations jsonb, p_saved_by text, p_actor_user_id text, p_actor_guard jsonb, p_authorization_guard jsonb, p_lock_guards jsonb",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260904161000_appdata_compact_ack_receipts.sql"
+  },
+  {
+    "name": "get_ship_dynamics_record_receipt_v1",
+    "types": "text, text, jsonb, text, text, jsonb, jsonb, jsonb",
+    "args": "p_workspace_key text, p_operation_id text, p_operations jsonb, p_saved_by text, p_actor_user_id text, p_actor_guard jsonb, p_authorization_guard jsonb, p_lock_guards jsonb",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_appdata_record_store.sql"
+  },
+  {
+    "name": "get_ship_dynamics_record_storage_stats_v1",
+    "types": "text, text",
+    "args": "p_workspace_key text, p_actor_user_id text",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_appdata_record_data_management.sql"
+  },
+  {
+    "name": "get_ship_dynamics_storage_stats",
+    "types": "text, text",
+    "args": "p_workspace_key text, p_actor_user_id text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260818003000_data_management_storage_timeout_fix.sql"
+  },
+  {
+    "name": "get_ship_dynamics_task_member_receipt_v1",
+    "types": "text, text, text, text, jsonb, jsonb, text, jsonb, jsonb",
+    "args": "p_workspace_key text, p_operation_id text, p_task_id text, p_vessel_id text, p_command jsonb, p_expected jsonb, p_actor_user_id text, p_actor_guard jsonb, p_lock_guards jsonb",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260909_task_member_protocol.sql"
+  },
+  {
+    "name": "prune_ship_dynamics_record_revision_history_v1",
+    "types": "text, text, uuid, jsonb, jsonb",
+    "args": "p_workspace_key text, p_actor_user_id text, p_operation_id uuid, p_expected_revisions jsonb, p_delete_revisions jsonb",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_appdata_record_data_management.sql"
+  },
+  {
+    "name": "prune_ship_dynamics_revision_history",
+    "types": "text, text, uuid, jsonb, jsonb",
+    "args": "p_workspace_key text, p_actor_user_id text, p_operation_id uuid, p_expected_revisions jsonb, p_delete_revisions jsonb",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260818154500_data_management_prune_batch_limit.sql"
+  },
+  {
+    "name": "read_ship_dynamics_browser_authority_v1",
+    "types": "text",
+    "args": "p_workspace_key text",
+    "existing": false,
+    "security": "DEFINER",
+    "source": "supabase/development/20260912_browser_source_authority.sql"
+  },
+  {
+    "name": "read_ship_dynamics_record_delta_v1",
+    "types": "text, integer, text",
+    "args": "p_workspace_key text, p_base_revision integer, p_base_token text",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_appdata_record_delta.sql"
+  },
+  {
+    "name": "read_ship_dynamics_record_scopes_v1",
+    "types": "text, text, jsonb, jsonb",
+    "args": "p_workspace_key text, p_scope text, p_versions jsonb, p_targets jsonb",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260908_appdata_record_scoped_read.sql"
+  },
+  {
+    "name": "read_ship_dynamics_records_v1",
+    "types": "text",
+    "args": "p_workspace_key text",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_appdata_record_store.sql"
+  },
+  {
+    "name": "read_ship_dynamics_task_member_v1",
+    "types": "text, text, text, text",
+    "args": "p_workspace_key text, p_task_id text, p_vessel_id text, p_actor_user_id text",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260909_task_member_protocol.sql"
+  },
+  {
+    "name": "release_ship_dynamics_edit_lock",
+    "types": "text, text, text",
+    "args": "p_workspace_key text, p_section_key text, p_locked_by text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/development/20260909_task_member_protocol.sql"
+  },
+  {
+    "name": "release_ship_dynamics_task_member_lock_v1",
+    "types": "text, text, text, text",
+    "args": "p_workspace_key text, p_section_key text, p_locked_by text, p_lease_version text",
+    "existing": false,
+    "security": "DEFINER",
+    "source": "supabase/development/20260909_task_member_protocol.sql"
+  },
+  {
+    "name": "renew_ship_dynamics_edit_lock",
+    "types": "text, text, text, integer",
+    "args": "p_workspace_key text, p_section_key text, p_locked_by text, p_ttl_seconds integer",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/development/20260909_task_member_protocol.sql"
+  },
+  {
+    "name": "renew_ship_dynamics_task_member_lock_v1",
+    "types": "text, text, text, text, integer",
+    "args": "p_workspace_key text, p_section_key text, p_locked_by text, p_lease_version text, p_ttl_seconds integer",
+    "existing": false,
+    "security": "DEFINER",
+    "source": "supabase/development/20260909_task_member_protocol.sql"
+  },
+  {
+    "name": "save_ship_dynamics_task_member_v1",
+    "types": "text, text, text, text, jsonb, jsonb, text, jsonb, jsonb",
+    "args": "p_workspace_key text, p_operation_id text, p_task_id text, p_vessel_id text, p_command jsonb, p_expected jsonb, p_actor_user_id text, p_actor_guard jsonb, p_lock_guards jsonb",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260909_task_member_protocol.sql"
+  },
+  {
+    "name": "sd_itinerary_claim_public_lease",
+    "types": "text, text, text, text, integer",
+    "args": "p_workspace_key text, p_vessel_id text, p_actor_key text, p_holder_session text, p_ttl_seconds integer",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260831090000_itinerary_subsystem.sql"
+  },
+  {
+    "name": "sd_itinerary_daily_report_list_v2",
+    "types": "text, text, integer, integer",
+    "args": "p_workspace_key text, p_actor_user_id text, p_page integer, p_page_size integer",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260905200000_manual_itinerary_daily_reports.sql"
+  },
+  {
+    "name": "sd_itinerary_daily_report_load_by_id",
+    "types": "text, bigint, text",
+    "args": "p_workspace_key text, p_report_id bigint, p_actor_user_id text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260905200000_manual_itinerary_daily_reports.sql"
+  },
+  {
+    "name": "sd_itinerary_daily_report_locate_v2",
+    "types": "text, date, text, integer",
+    "args": "p_workspace_key text, p_business_date date, p_actor_user_id text, p_page_size integer",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260905200000_manual_itinerary_daily_reports.sql"
+  },
+  {
+    "name": "sd_itinerary_main_claim_lease",
+    "types": "text, text, text, text, integer, text",
+    "args": "p_workspace_key text, p_vessel_id text, p_holder_session text, p_holder_label text, p_ttl_seconds integer, p_actor_user_id text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260902134143_itinerary_main_session_access.sql"
+  },
+  {
+    "name": "sd_itinerary_main_load_many",
+    "types": "text, text[], text",
+    "args": "p_workspace_key text, p_vessel_ids text[], p_actor_user_id text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260902134143_itinerary_main_session_access.sql"
+  },
+  {
+    "name": "sd_itinerary_main_operation_status",
+    "types": "text, uuid, text",
+    "args": "p_workspace_key text, p_operation_id uuid, p_actor_user_id text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260902134143_itinerary_main_session_access.sql"
+  },
+  {
+    "name": "sd_itinerary_main_release_lease",
+    "types": "text, text, uuid, text, bigint, text",
+    "args": "p_workspace_key text, p_vessel_id text, p_lease_id uuid, p_holder_session text, p_fencing_token bigint, p_actor_user_id text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260902134143_itinerary_main_session_access.sql"
+  },
+  {
+    "name": "sd_itinerary_main_renew_lease",
+    "types": "text, text, uuid, text, bigint, integer, text",
+    "args": "p_workspace_key text, p_vessel_id text, p_lease_id uuid, p_holder_session text, p_fencing_token bigint, p_ttl_seconds integer, p_actor_user_id text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260902134143_itinerary_main_session_access.sql"
+  },
+  {
+    "name": "sd_itinerary_main_save",
+    "types": "text, text, bigint, uuid, jsonb, uuid, text, bigint, text, text, jsonb",
+    "args": "p_workspace_key text, p_vessel_id text, p_expected_revision bigint, p_operation_id uuid, p_rows jsonb, p_lease_id uuid, p_holder_session text, p_fencing_token bigint, p_actor_label text, p_actor_user_id text, p_alternative_plans jsonb",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260903190000_itinerary_alternative_plans.sql"
+  },
+  {
+    "name": "sd_itinerary_operation_status_public",
+    "types": "text, uuid, text",
+    "args": "p_workspace_key text, p_operation_id uuid, p_actor_key text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260831090000_itinerary_subsystem.sql"
+  },
+  {
+    "name": "sd_itinerary_public_list_vessels",
+    "types": "text",
+    "args": "p_workspace_key text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260901122500_itinerary_public_vessel_full_names.sql"
+  },
+  {
+    "name": "sd_itinerary_public_load",
+    "types": "text, text",
+    "args": "p_workspace_key text, p_vessel_id text",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260831090000_itinerary_subsystem.sql"
+  },
+  {
+    "name": "sd_itinerary_record_claim_lease_v1",
+    "types": "text, text, text, text, integer, text",
+    "args": "p_workspace_key text, p_vessel_id text, p_holder_session text, p_holder_label text, p_ttl_seconds integer, p_actor_user_id text",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_write.sql"
+  },
+  {
+    "name": "sd_itinerary_record_load_many_v1",
+    "types": "text, text[], text",
+    "args": "p_workspace_key text, p_vessel_ids text[], p_actor_user_id text",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_read.sql"
+  },
+  {
+    "name": "sd_itinerary_record_operation_status_v1",
+    "types": "text, uuid, text",
+    "args": "p_workspace_key text, p_operation_id uuid, p_actor_user_id text",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_write.sql"
+  },
+  {
+    "name": "sd_itinerary_record_release_lease_v1",
+    "types": "text, text, uuid, text, bigint, text",
+    "args": "p_workspace_key text, p_vessel_id text, p_lease_id uuid, p_holder_session text, p_fencing_token bigint, p_actor_user_id text",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_write.sql"
+  },
+  {
+    "name": "sd_itinerary_record_renew_lease_v1",
+    "types": "text, text, uuid, text, bigint, integer, text",
+    "args": "p_workspace_key text, p_vessel_id text, p_lease_id uuid, p_holder_session text, p_fencing_token bigint, p_ttl_seconds integer, p_actor_user_id text",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_write.sql"
+  },
+  {
+    "name": "sd_itinerary_record_report_delete_dates_v1",
+    "types": "text, text, uuid, text, jsonb",
+    "args": "p_workspace_key text, p_actor_user_id text, p_operation_id uuid, p_expected_set_token text, p_delete_dates jsonb",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_reports.sql"
+  },
+  {
+    "name": "sd_itinerary_record_report_delete_ids_v1",
+    "types": "text, text, uuid, text, jsonb",
+    "args": "p_workspace_key text, p_actor_user_id text, p_operation_id uuid, p_expected_set_token text, p_delete_report_ids jsonb",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_reports.sql"
+  },
+  {
+    "name": "sd_itinerary_record_report_list_v1",
+    "types": "text, text, integer, integer",
+    "args": "p_workspace_key text, p_actor_user_id text, p_page integer, p_page_size integer",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_reports.sql"
+  },
+  {
+    "name": "sd_itinerary_record_report_load_v1",
+    "types": "text, bigint, text",
+    "args": "p_workspace_key text, p_report_id bigint, p_actor_user_id text",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_reports.sql"
+  },
+  {
+    "name": "sd_itinerary_record_report_locate_v1",
+    "types": "text, date, text, integer",
+    "args": "p_workspace_key text, p_business_date date, p_actor_user_id text, p_page_size integer",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_reports.sql"
+  },
+  {
+    "name": "sd_itinerary_record_report_save_manual_v1",
+    "types": "text, text, uuid",
+    "args": "p_workspace_key text, p_actor_user_id text, p_operation_id uuid",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_reports.sql"
+  },
+  {
+    "name": "sd_itinerary_record_save_v1",
+    "types": "text, text, bigint, uuid, jsonb, uuid, text, bigint, text, text, jsonb",
+    "args": "p_workspace_key text, p_vessel_id text, p_expected_revision bigint, p_operation_id uuid, p_rows jsonb, p_lease_id uuid, p_holder_session text, p_fencing_token bigint, p_actor_label text, p_actor_user_id text, p_alternative_plans jsonb",
+    "existing": false,
+    "security": "INVOKER",
+    "source": "supabase/development/20260906_itinerary_record_write.sql"
+  },
+  {
+    "name": "sd_itinerary_release_public_lease",
+    "types": "text, text, uuid, text, text, bigint",
+    "args": "p_workspace_key text, p_vessel_id text, p_lease_id uuid, p_actor_key text, p_holder_session text, p_fencing_token bigint",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260831090000_itinerary_subsystem.sql"
+  },
+  {
+    "name": "sd_itinerary_renew_public_lease",
+    "types": "text, text, uuid, text, text, bigint, integer",
+    "args": "p_workspace_key text, p_vessel_id text, p_lease_id uuid, p_actor_key text, p_holder_session text, p_fencing_token bigint, p_ttl_seconds integer",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260831090000_itinerary_subsystem.sql"
+  },
+  {
+    "name": "sd_itinerary_save_public",
+    "types": "text, text, bigint, uuid, jsonb, uuid, text, text, bigint, jsonb",
+    "args": "p_workspace_key text, p_vessel_id text, p_expected_revision bigint, p_operation_id uuid, p_rows jsonb, p_lease_id uuid, p_actor_key text, p_holder_session text, p_fencing_token bigint, p_alternative_plans jsonb",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260903190000_itinerary_alternative_plans.sql"
+  },
+  {
+    "name": "sd_save_manual_itinerary_report",
+    "types": "text, text, uuid",
+    "args": "p_workspace_key text, p_actor_user_id text, p_operation_id uuid",
+    "existing": true,
+    "security": "DEFINER",
+    "source": "supabase/migrations/20260905200000_manual_itinerary_daily_reports.sql"
+  }
+]

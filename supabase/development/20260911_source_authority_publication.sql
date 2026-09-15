@@ -233,7 +233,11 @@ begin
    if length(copy)-length(replace(copy,'public.sd_itinerary_save_internal(',''))<>length('public.sd_itinerary_save_internal(') then raise exception 'source-authority-wrapper-source-mismatch';end if;
    copy:=replace(copy,'public.sd_itinerary_save_internal(','ship_dynamics_authority_private.itinerary_'||route||'_v1(');
    -- Gate before DECLARE actor/authorization evaluation, never on actor helpers.
-   copy:=replace(copy,E'declare\n',E'declare\n  authority_gate boolean := ship_dynamics_authority_private.gate_v1(); -- authority_wrapper_lock_v1\n');
+   -- pg_get_functiondef preserves the installed body's LF/CRLF representation.
+   -- Match that exact declaration only; do not normalize business string bytes.
+   needle:=case when position(E'declare\n' in copy)>0 then E'declare\n' else E'declare\r\n' end;
+   if length(copy)-length(replace(copy,needle,''))<>length(needle) then raise exception 'source-authority-wrapper-declaration-mismatch';end if;
+   copy:=replace(copy,needle,needle||'  authority_gate boolean := ship_dynamics_authority_private.gate_v1(); -- authority_wrapper_lock_v1'||substring(needle from 8));
    if position('-- authority_wrapper_lock_v1' in copy)=0 then raise exception 'source-authority-wrapper-declaration-mismatch';end if;
    execute copy;
   end if;
@@ -259,9 +263,17 @@ end $$;
 select ship_dynamics_quiescence_private.splice_terminal_v1('public.prune_ship_dynamics_revision_history(text,text,uuid,jsonb,jsonb)'::regprocedure,
  E'  select * into current_row\n  from public.ship_dynamics_app_state',
  E'  -- authority_legacy_prune_v1\n  perform ship_dynamics_authority_private.assert_source_v1(p_workspace_key,''legacy'');\n','-- authority_legacy_prune_v1');
-select ship_dynamics_quiescence_private.splice_terminal_v1('public.ship_dynamics_run_daily_morning_snapshots()'::regprocedure,
- '    v_report_id := ''daily-morning-'' || v_business_date::text;',
- E'    -- authority_legacy_scheduler_v1\n    perform ship_dynamics_authority_private.assert_source_v1((select legacy_key from public.sd_workspaces where id=v_workspace.id),''legacy'');\n','-- authority_legacy_scheduler_v1');
+-- The legacy scheduled snapshot runner is optional and absent in the observed
+-- production predecessor. Do not install/enable a new legacy scheduler here.
+-- If present, it must receive the same authority guard; never silently skip drift.
+do $legacy_scheduler$
+begin
+ if to_regprocedure('public.ship_dynamics_run_daily_morning_snapshots()') is not null then
+  perform ship_dynamics_quiescence_private.splice_terminal_v1('public.ship_dynamics_run_daily_morning_snapshots()'::regprocedure,
+   '    v_report_id := ''daily-morning-'' || v_business_date::text;',
+   E'    -- authority_legacy_scheduler_v1\n    perform ship_dynamics_authority_private.assert_source_v1((select legacy_key from public.sd_workspaces where id=v_workspace.id),''legacy'');\n','-- authority_legacy_scheduler_v1');
+ end if;
+end $legacy_scheduler$;
 -- Formal scheduled Itinerary uses UUID + formal documents only, no AppData
 -- source actor. It remains neutral, protected by existing pause row guards.
 revoke all on all functions in schema ship_dynamics_authority_private from public,anon,authenticated,service_role;

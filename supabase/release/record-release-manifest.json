@@ -1,0 +1,101 @@
+{
+  "kind": "ship-record-additive-release-v1",
+  "full_backup_required": false,
+  "components": [
+    {
+      "path": "supabase/development/20260906_appdata_record_store.sql",
+      "sha256": "d12af8a7605a260c69149b6be0a448c35329c5a3f34484478cf77201d979da0b",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260906_appdata_record_delta.sql",
+      "sha256": "7f7b6f06f5e68b122ba57584958fe0112eee08f113bd5367c2568c68c01085c5",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260909_task_member_protocol.sql",
+      "sha256": "62ef6d9e3d12b6e9629b7809793d8887e18baab9cc272935e677c5549243c618",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260911_vessel_manager_handover.sql",
+      "sha256": "e8129f0fc8599a72fe57fa5de8bdceac6a23ac3e8cdd369895f0f08d265ea682",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260908_appdata_record_scoped_read.sql",
+      "sha256": "3abea78bbb1aa6e9fdedd258d8fc0254d28df9cd8f581dc658daf006b064e0bf",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260906_itinerary_record_read.sql",
+      "sha256": "57849eab8da48ed8626f2df1ce41d428f8bb0485286f039b7680c609973da68a",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260906_itinerary_record_write.sql",
+      "sha256": "ef2cf4750add2bc397f2491db0ec5f963684e366124bfcad579e2e8ee2fcc3c3",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260906_itinerary_record_reports.sql",
+      "sha256": "4719601c4000258d7cacfb4c49c32ed422c7641e18779a65d1e29ae4bff2fcab",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260906_appdata_record_data_management.sql",
+      "sha256": "cce6f11c510a345b552bdd991df05f7fe3120d09c58c26aee4e6ba33b60dd915",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260906_record_daily_morning_scheduler.sql",
+      "sha256": "232658500a5585b81bb4d07bb0b8952c1d2748a4bd8260731f5d42f39e6118ce",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/normalized-legacy-cutover.sql",
+      "sha256": "58359abee497989d205cd9d273f19fcb75fc91f731e75bb7e6a750b6c19cbd55",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260911_legacy_report_workspace_binding.sql",
+      "sha256": "fb468912de4ad6da00c013f4e7c793ae6fb3ab6b5e4c3e78b5e75d5941744342",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260911_business_quiescence.sql",
+      "sha256": "bf750910ca6321768b6868024a417f61083099c44260ee19dd020c8d0c0c8595",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260911_paused_record_legacy_transfer.sql",
+      "sha256": "5d35ded04a494b82f378e5ded57855596c310e978170f48556103e2a402c6e93",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260911_source_authority_publication.sql",
+      "sha256": "d60c6e01668c7b2c2a2c66f69f465ebfddccca3640cfc64e429c88940663f770",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260912_browser_source_authority.sql",
+      "sha256": "9b85e5a6b1a029bd76e0c745ab615f34fe9ece6eb4df1723158cfcf1d08c0efa",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    },
+    {
+      "path": "supabase/development/20260914_source_authority_roundtrip.sql",
+      "sha256": "a6edbebb3f4040b9653c884208b01e3c3231a7ce4753388c7d6cc58574b0a2e3",
+      "representation": "UTF-8 LF (same bytes used by composer)"
+    }
+  ],
+  "api_contract_sha256": "15ab54e9fc8037819dd965528192c3f2a14ad9a2b00e96c0540fe099caf26261",
+  "outputs": {
+    "05_install_record_storage.sql": "a09dc7a4700c2ee3fa3bcb0d003a34c488f4de7a540f53e18cf1a5415db62126",
+    "06_verify_record_storage.sql": "e0de35b7a48de9592be217bf21793a35b1dc3bec555c218b575c32495b8da120"
+  },
+  "boundaries": [
+    "No seed, no import, no cutover, no deployment.",
+    "58 old table physical row vectors unchanged inside the atomic install.",
+    "Native provider emulation is not hosted PostgREST/Auth/Realtime proof."
+  ]
+}
