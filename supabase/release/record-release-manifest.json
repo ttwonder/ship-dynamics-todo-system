@@ -90,12 +90,12 @@
   ],
   "api_contract_sha256": "15ab54e9fc8037819dd965528192c3f2a14ad9a2b00e96c0540fe099caf26261",
   "outputs": {
-    "05_install_record_storage.sql": "a09dc7a4700c2ee3fa3bcb0d003a34c488f4de7a540f53e18cf1a5415db62126",
+    "05_install_record_storage.sql": "2b9f109b1ab6137d88db6a78c30c9861ef26595a00f6ff0d9ab74ba53433516f",
     "06_verify_record_storage.sql": "e900156b4c60cbfa394f5fcb89ef5d7fe9ee8691e293169d03b03afdbe42d4a6"
   },
   "boundaries": [
     "No seed, no import, no cutover, no deployment.",
-    "58 old table physical row vectors unchanged inside the atomic install.",
+    "58 old tables protected: physical vectors except exact old lock values when adding lease_version; new fences must be positive and unique.",
     "Native provider emulation is not hosted PostgREST/Auth/Realtime proof."
   ]
 }

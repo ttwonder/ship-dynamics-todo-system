@@ -27,18 +27,26 @@ BEGIN
   RAISE EXCEPTION 'release-public-schema-not-trusted';
  END IF;
 END $release_preflight$;
-CREATE TEMP TABLE release_existing_rows(relation regclass PRIMARY KEY,n bigint,stamp text) ON COMMIT DROP;
+CREATE TEMP TABLE release_existing_rows(relation regclass PRIMARY KEY,n bigint,stamp text,old_lock_fields boolean NOT NULL) ON COMMIT DROP;
 CREATE TEMP TABLE release_existing_functions ON COMMIT DROP AS
  SELECT p.oid FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public';
 DO $release_pin$
-DECLARE t record; n bigint; stamp text;
+DECLARE t record; n bigint; stamp text; old_lock_fields boolean;
 BEGIN
  FOR t IN SELECT c.oid,c.oid::regclass AS relation FROM pg_class c JOIN pg_namespace ns ON ns.oid=c.relnamespace
  WHERE ns.nspname='public' AND c.relkind='r' AND c.relname ~ '^(ship_dynamics_|sd_)' ORDER BY c.oid LOOP
   EXECUTE format('LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE',t.relation);
-  -- Physical row identities only: never sort/aggregate historical JSON payloads.
-  EXECUTE format('SELECT count(*),md5(coalesce(string_agg(ctid::text||'':''||xmin::text,'','' ORDER BY ctid),'''')) FROM %s',t.relation) INTO n,stamp;
-  INSERT INTO pg_temp.release_existing_rows VALUES(t.relation,n,stamp);
+  old_lock_fields:=t.oid='public.ship_dynamics_edit_locks'::regclass AND NOT EXISTS(
+   SELECT FROM pg_attribute WHERE attrelid=t.oid AND attname='lease_version' AND attnum>0 AND NOT attisdropped);
+  IF old_lock_fields THEN
+   -- ADD COLUMN with nextval rewrites a nonempty lock table. Pin ALL old values,
+   -- not physical tuple IDs; only the intentionally added column is excluded.
+   EXECUTE format('SELECT count(*),md5(coalesce(string_agg((to_jsonb(x)-''lease_version'')::text,chr(10) ORDER BY workspace_key,section_key),'''')) FROM %s x',t.relation) INTO n,stamp;
+  ELSE
+   -- All other tables retain physical guards; no historical payload aggregation.
+   EXECUTE format('SELECT count(*),md5(coalesce(string_agg(ctid::text||'':''||xmin::text,'','' ORDER BY ctid),'''')) FROM %s',t.relation) INTO n,stamp;
+  END IF;
+  INSERT INTO pg_temp.release_existing_rows VALUES(t.relation,n,stamp,old_lock_fields);
  END LOOP;
  IF (SELECT count(*) FROM pg_temp.release_existing_rows)<>58 THEN RAISE EXCEPTION 'release-predecessor-table-set-drift';END IF;
 END $release_pin$;
@@ -5010,7 +5018,15 @@ DO $release_unchanged$
 DECLARE t record;n bigint;stamp text;
 BEGIN
  FOR t IN SELECT * FROM pg_temp.release_existing_rows LOOP
-  EXECUTE format('SELECT count(*),md5(coalesce(string_agg(ctid::text||'':''||xmin::text,'','' ORDER BY ctid),'''')) FROM %s',t.relation) INTO n,stamp;
+  IF t.old_lock_fields THEN
+   EXECUTE format('SELECT count(*),md5(coalesce(string_agg((to_jsonb(x)-''lease_version'')::text,chr(10) ORDER BY workspace_key,section_key),'''')) FROM %s x',t.relation) INTO n,stamp;
+   IF EXISTS(SELECT FROM public.ship_dynamics_edit_locks WHERE lease_version IS NULL OR lease_version<=0)
+    OR (SELECT count(*)<>count(DISTINCT lease_version) FROM public.ship_dynamics_edit_locks) THEN
+    RAISE EXCEPTION 'release-invalid-added-lock-fences';
+   END IF;
+  ELSE
+   EXECUTE format('SELECT count(*),md5(coalesce(string_agg(ctid::text||'':''||xmin::text,'','' ORDER BY ctid),'''')) FROM %s',t.relation) INTO n,stamp;
+  END IF;
   IF n IS DISTINCT FROM t.n OR stamp IS DISTINCT FROM t.stamp THEN
    RAISE EXCEPTION 'release-existing-business-rows-changed: %',t.relation;
   END IF;
