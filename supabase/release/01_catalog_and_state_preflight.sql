@@ -100,6 +100,11 @@ report AS (
     'server_version', current_setting('server_version'),
     'transaction_read_only', current_setting('transaction_read_only'),
     'transaction_isolation', current_setting('transaction_isolation'),
+    'reader_context', jsonb_build_object(
+      'current_role', current_user,
+      'bypass_rls', (SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = current_user),
+      'row_security', current_setting('row_security')
+    ),
     'business_payloads_exported', false,
     'state_spec_count', (SELECT count(*) FROM state_specs),
     'state', (SELECT jsonb_object_agg(name,value ORDER BY name) FROM state_results),
