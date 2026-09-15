@@ -781,10 +781,15 @@ export default function App() {
       realtimeRefreshInFlight.current=false;
     }
   };
+  const realtimeAuthority=originalAuthority.current;
   useEffect(()=>{
-    const config=getSupabaseConfig();
-    if(!cloudBootstrapped||!config)return;
-    const queueRevision=(revision:number)=>setCloudWakeupRevision(previous=>Math.max(previous,revision));
+    const rawConfig=getSupabaseConfig();
+    if(!cloudBootstrapped||!rawConfig||!realtimeAuthority)return;
+    const config=authorityConfig(rawConfig,realtimeAuthority);
+    const queueRevision=(revision:number)=>{
+      if(originalAuthority.current!==realtimeAuthority||!sameCloudConfig(rawConfig,getSupabaseConfig()))return;
+      setCloudWakeupRevision(previous=>Math.max(previous,revision));
+    };
     const unsubscribe=subscribeToCloudRevision(queueRevision,undefined,config);
     const onFocus=()=>queueRevision(Number.MAX_SAFE_INTEGER);
     const onOnline=()=>queueRevision(Number.MAX_SAFE_INTEGER);
@@ -795,7 +800,7 @@ export default function App() {
       window.removeEventListener('focus',onFocus);
       window.removeEventListener('online',onOnline);
     };
-  },[cloudBootstrapped,currentUserId]);
+  },[cloudBootstrapped,currentUserId,realtimeAuthority]);
   useEffect(()=>{
     if(cloudWakeupRevision<0)return;
     void refreshFromCloudWakeup(cloudWakeupRevision,cloudWakeupRevision===Number.MAX_SAFE_INTEGER?(navigator.onLine?'focus':'online'):'realtime');
@@ -1857,7 +1862,8 @@ export default function App() {
       const assignmentDraft=clone(baseline);updater(assignmentDraft);
       const changedTeams=changedVesselTeams(baseline,assignmentDraft);
       if(authoritySave&&changedTeams.length)throw new BrowserAuthorityError('browser-authority-linked-handover-not-verified');
-      if(changedTeams.length&&config?.storageMode==='records-v1'){
+      const recordHandover=Boolean(config&&(authoritySave?.binding??originalAuthority.current)?.source==='records-v1');
+      if(changedTeams.length&&recordHandover){
         if(!await loadRecordActionScope('home',isCurrent,true))return false;
         const discovered=liveData.current;
         const candidate=clone(discovered);updater(candidate);
@@ -1881,7 +1887,7 @@ export default function App() {
       }
       // No optimistic Management setData: no passive effect can autosave this
       // snapshot. Leave every existing generic caller's timer and queued delta intact.
-      await enqueueCloudSave(snapshot,isCurrent,false,isCurrent,config.storageMode==='records-v1'&&handedOver.length?baseline.revision:undefined,authoritySave);
+      await enqueueCloudSave(snapshot,isCurrent,false,isCurrent,recordHandover&&handedOver.length?baseline.revision:undefined,authoritySave);
       if(!isCurrent())return false;
       const confirmed=confirmedCloudData.current;
       if(!confirmed)throw new Error('雲端未確認保存結果');
@@ -2031,9 +2037,10 @@ export default function App() {
       if(!confirmed)throw new Error('沒有可驗證的已保存雲端基線');
       const token=configIoCoordinator.current.begin(leaseConfig);
       const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('internal-control:')?{targets:[{collection:'internalControlCases',id:sectionKey.slice('internal-control:'.length)}]}:sectionKey.startsWith('meeting:')?{targets:[{collection:'meetings',id:sectionKey.slice('meeting:'.length)}]}:sectionKey.startsWith('vessel:')||isTaskCreationLockKey(sectionKey)||isInternalControlCreationLockKey(sectionKey)||isMeetingCreationLockKey(sectionKey)?recordReadScope.current:'full';
-      const coverageChanged=leaseConfig.readMode==='scoped-v1'&&recordScopeKey(scope)!==recordScopeKey(recordReadScope.current);
-      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,coverageChanged?config=>fetchCloudDataRpc(config,undefined,undefined,scope):vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
-      if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!claimStillCurrent())return null;
+      const leaseAuthority=originalAuthority.current;
+      const coverageChanged=Boolean(leaseAuthority&&authorityConfig(leaseConfig,leaseAuthority).readMode==='scoped-v1'&&recordScopeKey(scope)!==recordScopeKey(recordReadScope.current));
+      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,coverageChanged?config=>fetchCloudData(config,undefined,undefined,scope):vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
+      if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!claimStillCurrent()||originalAuthority.current!==leaseAuthority)return null;
       if(!remote)throw new Error('雲端工作區尚未建立，不能開啟多人單項編輯');
       assertRemoteExtendsDurableHistory(cloudWorkspaceIdentity(leaseConfig),coverageChanged?null:confirmed,remote);
       const resolution=resolveItemEditSession({
@@ -2341,7 +2348,7 @@ export default function App() {
     if(!ownerIsCurrent())return false;
     const generation=++actionScopeGeneration.current;
     const config=getSupabaseConfig();
-    if(config?.readMode!=='scoped-v1'||(!forceFresh&&recordScopeKey(recordReadScope.current)===recordScopeKey(scope)))return true;
+    if(!config||(!forceFresh&&(config.readMode!=='scoped-v1'||recordScopeKey(recordReadScope.current)===recordScopeKey(scope))))return true;
     const actor=liveCurrentUserId.current,session=identitySessionGeneration.current;
     const token=configIoCoordinator.current.begin(config);
     const isCurrent=()=>ownerIsCurrent()&&generation===actionScopeGeneration.current&&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig());
@@ -2491,16 +2498,16 @@ export default function App() {
       return openTaskReadOnly(task.id,'目前身份僅具只讀權限',requestGeneration,vesselId,null);
     }
     if(!authorizedEditLockKeys.has(`task:${task.id}`)){if(requestIsCurrent())alert('目前身份無權編輯此待辦');return requestIsCurrent()?'failed':'cancelled';}
-    const memberConfig=getSupabaseConfig();
-    if(memberConfig?.storageMode==='records-v1'&&usesPerVesselProgress(task)){
+    const memberConfig=getSupabaseConfig(),memberAuthority=originalAuthority.current;
+    if(memberConfig&&memberAuthority?.source==='records-v1'&&usesPerVesselProgress(task)){
       const openingActor=currentUser.id,openingSession=identitySessionGeneration.current,openingEpoch=authorizationEpoch;
-      const openingIsCurrent=()=>requestIsCurrent()&&openingActor===liveCurrentUserId.current&&openingSession===identitySessionGeneration.current&&openingEpoch===liveAuthorizationEpoch.current&&sameCloudConfig(memberConfig,getSupabaseConfig());
-      try{await ensureMemberGlobalDurable(openingIsCurrent);}catch(error:any){if(openingIsCurrent())alert(error.message||String(error));return 'failed';}
+      const openingIsCurrent=()=>requestIsCurrent()&&openingActor===liveCurrentUserId.current&&openingSession===identitySessionGeneration.current&&openingEpoch===liveAuthorizationEpoch.current&&sameCloudConfig(memberConfig,getSupabaseConfig())&&originalAuthority.current===memberAuthority;
+      try{await ensureMemberGlobalDurable(openingIsCurrent);if(!openingIsCurrent())return 'cancelled';await assertAuthorityAdmission(memberConfig,memberAuthority);}catch(error:any){if(openingIsCurrent())alert(error.message||String(error));return 'failed';}
       if(!openingIsCurrent())return 'cancelled';
       if(activeEditLockRef.current&&!await releaseExclusiveItemLease(activeEditLockRef.current.sectionKey))return 'failed';
       const actor=currentUser.id,session=identitySessionGeneration.current,epoch=authorizationEpoch;
       const scope=vesselId||taskVesselIds(task).find(id=>activeVessels.some(v=>v.id===id))||'';
-      const editor=new TaskMemberEditor(memberConfig,actor,currentUser.name,task.id,()=>requestIsCurrent()&&liveCurrentUserId.current===actor&&identitySessionGeneration.current===session&&liveAuthorizationEpoch.current===epoch&&sameCloudConfig(memberConfig,getSupabaseConfig()),()=>setMemberEditorVersion(v=>v+1),()=>requestIsCurrent()&&liveCurrentUserId.current===actor&&identitySessionGeneration.current===session&&liveAuthorizationEpoch.current===epoch);
+      const editor=new TaskMemberEditor(memberConfig,actor,currentUser.name,task.id,()=>requestIsCurrent()&&liveCurrentUserId.current===actor&&identitySessionGeneration.current===session&&liveAuthorizationEpoch.current===epoch&&sameCloudConfig(memberConfig,getSupabaseConfig())&&originalAuthority.current===memberAuthority,()=>setMemberEditorVersion(v=>v+1),()=>requestIsCurrent()&&liveCurrentUserId.current===actor&&identitySessionGeneration.current===session&&liveAuthorizationEpoch.current===epoch);
       memberEditor.current=editor;
       const selected=await editor.select(scope);
       if(!selected||!requestIsCurrent()){await editor.close();if(memberEditor.current===editor)memberEditor.current=null;return 'failed';}
@@ -2546,7 +2553,7 @@ export default function App() {
     return member.select(scope);
   };
   const openTask = async (task: TaskItem, vesselId = '', returnVesselId = ''):Promise<TaskOpenResult> => {
-    if(!(getSupabaseConfig()?.storageMode==='records-v1'&&usesPerVesselProgress(task))&&!await loadRecordActionScope(isMorningRecordScope(recordReadScope.current)?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:task.id}]}):{targets:[{collection:'tasks',id:task.id}]}))return 'failed';
+    if(!(getSupabaseConfig()&&originalAuthority.current?.source==='records-v1'&&usesPerVesselProgress(task))&&!await loadRecordActionScope(isMorningRecordScope(recordReadScope.current)?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:task.id}]}):{targets:[{collection:'tasks',id:task.id}]}))return 'failed';
     const requestGeneration=taskOpenRequests.current.begin({vesselId:returnVesselId,batchManaged:false});
     const requestIsCurrent=()=>taskOpenRequests.current.isCurrent(requestGeneration);
     const visibleTask=roleVisibleTasks.some(item=>item.id===task.id)?liveData.current.tasks.find(item=>item.id===task.id):undefined;
@@ -3329,7 +3336,7 @@ export default function App() {
           ...taskVesselIds(candidate)
             .filter(vesselId=>snapshot.vessels.some(vessel=>vessel.id===vesselId))
             .map(vesselId=>`vessel:${vesselId}`),
-          ...taskInternalControlCreationLockKeys(snapshot,candidate,isMeetingTaskSource(candidate),getSupabaseConfig()?.storageMode==='records-v1'),
+          ...taskInternalControlCreationLockKeys(snapshot,candidate,isMeetingTaskSource(candidate),Boolean(getSupabaseConfig()&&originalAuthority.current?.source==='records-v1')),
         ],
       );
       if(!durable&&!applied)alert(failure);
@@ -3716,7 +3723,8 @@ export default function App() {
     const actorName=currentUser?.name||'';
     const expectedAuthorizationEpoch=authorizationEpoch;
     const listOrigin=(tab==='total'||tab==='closed'||tab==='work')?listBatchContext:null;
-    const sessionIsCurrent=()=>Boolean(actorId&&liveCurrentUserId.current===actorId&&liveAuthorizationEpoch.current===expectedAuthorizationEpoch&&sameCloudConfig(getSupabaseConfig(),config)&&(!listOrigin||listOrigin.isCurrent()));
+    let mutationAuthority:BrowserAuthority|null|undefined;
+    const sessionIsCurrent=()=>Boolean(actorId&&liveCurrentUserId.current===actorId&&liveAuthorizationEpoch.current===expectedAuthorizationEpoch&&sameCloudConfig(getSupabaseConfig(),config)&&(!listOrigin||listOrigin.isCurrent())&&(mutationAuthority===undefined||originalAuthority.current===mutationAuthority));
     try{
       const confirmed=confirmedCloudData.current;
       if(!confirmed||!appDataContentEqual(liveData.current,confirmed))await enqueueCloudSave(liveData.current,sessionIsCurrent);
@@ -3725,20 +3733,22 @@ export default function App() {
       return false;
     }
     if(!sessionIsCurrent())return false;
+    mutationAuthority=originalAuthority.current;
+    const mutationConfig=mutationAuthority?authorityConfig(config,mutationAuthority):config;
     let planningRemote:AppData;
     let plannedLockKeys:string[];
     let mutationScope:RecordReadScope=recordReadScope.current;
-    const fetchMutationScope=(cfg:ResolvedSupabaseConfig)=>fetchCloudDataRpc(cfg,undefined,undefined,mutationScope);
+    const fetchMutationScope=(cfg:ResolvedSupabaseConfig)=>fetchCloudData(cfg,undefined,undefined,mutationScope);
     try{
       const base=confirmedCloudData.current;
-      if(config.readMode==='scoped-v1'){
+      if(mutationConfig.readMode==='scoped-v1'){
         const extra=additionalLockKeys(liveData.current);
         mutationScope={targets:[...uniqueIds.map(id=>({collection:'tasks' as const,id})),...extra.flatMap(key=>key.startsWith('internal-control:')?[{collection:'internalControlCases' as const,id:key.slice('internal-control:'.length)}]:[])]};
       }
       const fetched=await fetchMutationScope(config);
       if(!base||!fetched)throw new Error('缺少可信雲端基線');
       if(!sessionIsCurrent())throw new StaleAsyncConfigError();
-      assertRemoteExtendsDurableHistory(cloudIdentity(config),config.readMode==='scoped-v1'?null:base,fetched);
+      assertRemoteExtendsDurableHistory(cloudIdentity(config),mutationConfig.readMode==='scoped-v1'?null:base,fetched);
       const remoteActor=fetched.users.find(user=>user.id===actorId&&user.isActive);
       const visibleTaskIds=new Set(remoteActor?selectTasksVisibleToUser(fetched.tasks,remoteActor,{internalControlCases:fetched.internalControlCases,meetings:fetched.meetings,visibleVesselIds:[...batchVisibleVesselIds(fetched,remoteActor)]}).map(task=>task.id):[]);
       if(!remoteActor||uniqueIds.some(id=>!visibleTaskIds.has(id)))throw new Error('最新雲端身份或涉船範圍已無權處理至少一筆要事');
@@ -3803,7 +3813,7 @@ export default function App() {
       const remote=await fetchMutationScope(config);
       if(!base||!remote)throw new Error('缺少可信雲端基線');
       assertBundleActive();
-      assertRemoteExtendsDurableHistory(cloudIdentity(config),config.readMode==='scoped-v1'?null:base,remote);
+      assertRemoteExtendsDurableHistory(cloudIdentity(config),mutationConfig.readMode==='scoped-v1'?null:base,remote);
       const sameLockKeySet=(left:readonly string[],right:readonly string[])=>left.length===right.length&&left.every((key,index)=>key===right[index]);
       const refreshedLockKeys=[...new Set([...taskRelationLockKeys(remote,uniqueIds),...additionalLockKeys(remote)])].sort((left,right)=>left.localeCompare(right));
       if(!sameLockKeySet(refreshedLockKeys,plannedLockKeys))throw new Error('關聯資料在取得鎖期間已變更，請重新執行');
@@ -3814,7 +3824,7 @@ export default function App() {
       confirmCloudSnapshot(cloudIdentity(config),remote);
       liveData.current=remote;
       flushSync(()=>setData(remote));
-      if(config.readMode==='scoped-v1')recordReadScope.current=mutationScope;
+      if(mutationConfig.readMode==='scoped-v1')recordReadScope.current=mutationScope;
       mutationApplied=mutation(remote);
       if(!mutationApplied){await releaseAll();return false;}
       assertBundleActive();
