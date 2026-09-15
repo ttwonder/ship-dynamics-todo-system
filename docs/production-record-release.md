@@ -4,7 +4,7 @@
 
 這次交付的是 **可執行、已在隔離 native PostgreSQL 演練的增量資料庫包**，不是重建資料庫。完整備份依使用者決定不再作為前置；已取得的首包和未提交備份草稿保留，不混入這次 commit。
 
-**最新正式狀態：修正版 05 已經 06 catalog 讀回驗收；07 已凍結。08 因歷史摘要排序發生 `53100 / No space left on device` 而失敗。其後 12 原始 CSV 已確認 freeze 仍有效、pause／records／authority／stage 均未建立，主資料 revision 8818 及完整 hash 與 06／07 一致。** 尚未 Push／merge／部署／轉入／恢復保存。08 資源修補只在本機完成，正式 08a／08b 尚待使用者操作。不要把本文件或本機 PASS 當成正式切換成功。原 App 本人試用已回報正常，本輪未重跑全站／手機／PDF。`src/`、`public/`、原入口、UI 和 Pages workflow 均未修改。
+**最新正式狀態：06 catalog、07 freeze、08a helper 修補及 08b 獨立驗收已通過。修補後重新執行 08 顯示 upstream timeout；最新 12 CSV 仍見 freeze=true、主資料 revision 8818/hash 不變，pause／records／authority／stage 均為 null。這只證明讀回時沒有可見已提交的 pause，不證明前次 SQL 已結束或回滾。** 不重跑 08、不進 09、不 Push／merge／部署／恢復保存。08a／08b 不再重做。原 App 本人試用的舊候選證據保留；四處 client 接線的後續候選須另驗，不以舊試用或本機 PASS 冒充正式切換成功。
 
 ### 已完成的 05 非空鎖表修正
 
@@ -39,6 +39,7 @@
 | `10_publish_records_paused.sql` | 讀回當前 transition 的 exact stage receipt，發布 records 來源，仍保持 paused |
 | `11_resume_published_source.sql` | 只恢復当前 published-paused 的 exact publication；必須先核對網站版本／設定 |
 | `12_control_readback.sql` | 獨立唯讀 current source/epoch/pause/freeze/revision/hash/stage receipt；不輸出 payload |
+| `12a_upstream_timeout_diagnostic.sql` | 超時後單一 metadata SELECT：觀察其他 backend、交易/等待/直接 blocker；不再次暫停、不掃業務歷史、不取消或終止連線 |
 | `13_stage_latest_records_back.sql` | 在新 pause 下，把**切換後最新** records 帶回 legacy，不讀舊備份 |
 | `14_publish_legacy_paused.sql` | 發布剛剛逆向 stage 的 legacy 來源，仍保持 paused |
 
