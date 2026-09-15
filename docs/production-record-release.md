@@ -53,7 +53,7 @@ native predecessor 首次安裝真實重現兩項中止：
 - **相關既有往返回歸**：`verify-source-roundtrip-native.mjs` 15 個案例 PASS，包含安裝時有 legacy scheduler 的分支、舊目標已存在、角色／錯誤 proof／晚端 rollback／排空與 exact replay。
 - **包裝檢查**：`verify-production-release-package.py` 11 項 PASS；control generator `--check` PASS。這不是 11 個 E2E。
 
-私有證據存放 `ship-release-predecessor` cache，未提交 Git。首次完整交付檔最後一輪：`release-native-H7Ln4j/receipt.json`；原有往返回歸：`legacy-roundtrip-regression/roundtrip-native-JWP3c3/receipt.json`。保留此前 FAIL 收據，不把它們抹成 PASS。
+私有證據存放 `ship-release-predecessor` cache，未提交 Git。首次完整交付檔最後一輪：`release-native-VTG9Xb/receipt.json`（另驗證唯讀輸出不帶任意函式設定值）；原有往返回歸：`legacy-roundtrip-regression/roundtrip-native-JWP3c3/receipt.json`。保留此前 FAIL 收據，不把它們抹成 PASS。
 
 Native PG 17.11；正式先前盤點 PG 17.6。本機 provider 模擬含最小 auth.uid/users、角色、空 publication；**沒有真 hosted Auth/PostgREST/Realtime/pg_cron 證據**。未主張完整 ACL grantor/policy/sequence options 或 publication membership 等同正式。已驗新 API role 執行與禁止 browser control/table access，不等全部 hosted RPC 網路路徑通過。
 

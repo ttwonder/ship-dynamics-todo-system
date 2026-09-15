@@ -148,7 +148,7 @@ WITH expected(signature,args) AS (VALUES
  pg_get_function_identity_arguments(to_regprocedure(e.signature))=e.args AS argument_names_match,
  has_function_privilege('anon',to_regprocedure(e.signature),'EXECUTE') AS anon_execute,
  has_function_privilege('authenticated',to_regprocedure(e.signature),'EXECUTE') AS authenticated_execute,
- p.prosecdef AS security_definer,p.proconfig
+ p.prosecdef AS security_definer,ARRAY(SELECT setting FROM unnest(coalesce(p.proconfig,'{}'::text[])) setting WHERE setting LIKE 'search_path=%') AS search_path
  FROM expected e LEFT JOIN pg_proc p ON p.oid=to_regprocedure(e.signature)
 ), data_privileges AS (
  SELECT c.relname,c.relrowsecurity AS rls,
