@@ -4,13 +4,21 @@
 
 這次交付的是 **可執行、已在隔離 native PostgreSQL 演練的增量資料庫包**，不是重建資料庫。完整備份依使用者決定不再作為前置；已取得的首包和未提交備份草稿保留，不混入這次 commit。
 
-**正式首次 05 已執行但失敗：`P0001 release-existing-business-rows-changed: ship_dynamics_edit_locks`。尚未 Push／merge／部署；修正版未執行，正式回滾狀態待 05a 唯讀核對。** 不要把本文件或本機 PASS 當成正式切換成功。原 App 本人試用已回報正常，本輪未重跑全站／手機／PDF。`src/`、`public/`、原入口、UI 和 Pages workflow 均未修改。
+**最新正式狀態：修正版 05 已經 06 catalog 讀回驗收；07 已凍結。08 因歷史摘要排序發生 `53100 / No space left on device` 而失敗。其後 12 原始 CSV 已確認 freeze 仍有效、pause／records／authority／stage 均未建立，主資料 revision 8818 及完整 hash 與 06／07 一致。** 尚未 Push／merge／部署／轉入／恢復保存。08 資源修補只在本機完成，正式 08a／08b 尚待使用者操作。不要把本文件或本機 PASS 當成正式切換成功。原 App 本人試用已回報正常，本輪未重跑全站／手機／PDF。`src/`、`public/`、原入口、UI 和 Pages workflow 均未修改。
 
-### 本次錯誤修正
+### 已完成的 05 非空鎖表修正
 
 舊安裝包 `77d9e0c` 不可重跑。非空編輯鎖表新增 `lease_version DEFAULT nextval(...)` 會重寫資料列，原先的 CTID/xmin 檢查將這個正常升級誤判成資料改動。先前 fixture 鎖表為空，未涵蓋此情境。已用有效及過期舊鎖重現相同錯誤，再修正為僅該表新增欄位時比較所有原有欄位，另驗新序號正值／唯一；沒有刪鎖、停用 RLS 或取消原資料保護。
 
-目前先執行 **05a_failed_install_readback.sql**，取得新增物件是否存在、目前舊資料 revision/hash／數量及鎖數。`ADDON_MARKERS_ABSENT` 僅表示符合尚未安裝或已撤回狀態，不冒稱已逐筆證實失敗前後資料相等，也不自動授權重跑。核對後才交修正版 05。
+05a 失敗後讀回、修正版 05、06 獨立 catalog 驗收均已完成；不要重跑 05a／05／06 來修 08。06 核對 52 API、10 records 表的 RLS／browser 禁止直接存取及 main hash，不代表 hosted 業務保存全驗。
+
+### 當前 08 資源修補
+
+交付獨立 **08a_fix_watermark_resource.sql**，只替換既有私有 watermark helper 的聚合行：先計算每筆完整資料的 MD5，再按固定 C 排序短摘要並聚合。全部表、欄位、筆數與重複列 multiplicity 仍參與比較，不刪歷史、不擴容、不調正式記憶體／磁碟限額、不改 ACL／RLS 或保存規則。
+
+新旧摘要不能互相比較，因此 08a 持有既有 global maintenance mutex，並要求**所有 workspace 的 8 張 pause／publication 控制表皆空**；任何既存 transition／stage／receipt 均拒絕，不改寫舊 watermark。原 function body 與 tables contract 必須精確吻合已驗前置；OID、owner、ACL、完整 function settings 在交易內逐值不變，末端失敗會撤回 helper 更新。
+
+順序固定：**08a 修補 → 新 query 的 08b 唯讀函式驗收 → 核對通過後才重新交付 08**。05 保持已安裝的原 bytes；08a 是必要 follow-up，不能漏掉，也不能用重跑 05 代替。12 讀回的 `admitted:true` 是未受 managed authority 管理的來源狀態，並不撤銷獨立 legacy freeze。
 
 目標線索：Supabase `ship-dynamics-todo-system` / `main PRODUCTION`，project ref `cyzpcvvhmoiihsqvjspp`，workspace `ship-dynamics-main`。正式 Run 前仍須核對當前 Dashboard；本包不接受或存放連線密碼。
 
@@ -24,6 +32,8 @@
 | `05a_failed_install_readback.sql` | 失敗後獨立唯讀核對；不改資料、不清鎖，不因標記不存在就宣稱完整資料恢復 |
 | `06_verify_record_storage.sql` | 新查詢中的獨立唯讀 catalog／API／RLS／舊資料 revision/hash 核對 |
 | `07_freeze_latest_legacy.sql` | 讀取執行當下最新 legacy revision/hash 後凍結舊來源保存 |
+| `08a_fix_watermark_resource.sql` | 已安裝 05 的單一 helper 資源修補；所有控制表須空，不凍結／解凍／轉入／恢復 |
+| `08b_verify_watermark_resource.sql` | 新 query 中唯讀函式 body hash／metadata／EXECUTE／控制表未使用核對；不計算大歷史 watermark |
 | `08_pause_business.sql` | 依現有機制排空業務保存，建立新 transition/watermark；已 paused 時拒絕重做 |
 | `09_stage_first_records.sql` | 只接受首次尚無 records workspace；由當下凍結資料轉入，target revision/hash 均 NULL |
 | `10_publish_records_paused.sql` | 讀回當前 transition 的 exact stage receipt，發布 records 來源，仍保持 paused |
@@ -33,6 +43,8 @@
 | `14_publish_legacy_paused.sql` | 發布剛剛逆向 stage 的 legacy 來源，仍保持 paused |
 
 生成器：`scripts/build-production-release.py`、`scripts/build-production-control.py`。源檔列表、UTF-8 LF hash、輸出 hash 與順序位於兩份 release manifest。來源 addon 的 development 歷史註解保留；正式交付入口是 **05 原子包**，不可改成逐一貼 addon。
+
+08a／08b 由 `scripts/build-watermark-resource-repair.py` 及 `watermark-repair-manifest.json` 單獨追蹤；`--check` 為唯讀產物一致性檢查，不重寫 SQL。
 
 ## 安裝保證與限制
 
@@ -60,6 +72,8 @@ native predecessor 首次安裝真實重現兩項中止：
 - **失敗狀態唯讀核對**：`verify-release-failure-readback-native.mjs` 3 項 PASS，包含未安裝、部分新增物件、READ ONLY 拒絕注入修改；不回傳鎖持有人或業務本文。
 - **相關既有往返回歸**：`verify-source-roundtrip-native.mjs` 15 個案例 PASS，包含安裝時有 legacy scheduler 的分支、舊目標已存在、角色／錯誤 proof／晚端 rollback／排空與 exact replay。
 - **包裝檢查**：`verify-production-release-package.py` 11 項 PASS；control generator `--check` PASS。這不是 11 個 E2E。
+- **08 已安裝前置修補回歸**：`verify-production-release-native.mjs --watermark-hotfix` 共 21 案例 PASS，包含原 12 項及 9 項修補驗證；私有收據 `release-native-tJzk2B/receipt.json`。同一測試先重現原 pause 的 `53400`（低 temp budget 代理，不冒稱正式 `53100` 原碼重現），再驗原樣 08a／獨立 08b、其他 workspace 有控制紀錄時拒絕、未知 body 拒絕、晚端回滾、CRLF／OID／ACL／secret-setting canary 不變、內容變更偵測、真 pause/read/resume，以及最新資料往返保留。
+- **寬大資料資源檢查**：470 筆合成寬列、完整列文字共 492903932 bytes；僅測量讀取／watermark 時強制 `work_mem=64kB`、`temp_file_limit=1MB`，通過。fixture 建立使用一般記憶體，避免把既有 INSERT row guard 的暫存開銷誤算成 watermark。最初寬列 fixture 準備在過低限額下失敗的 `release-native-PUm9Pz` 收據保留；另保留修補檔尚不存在時的 RED `release-native-qqxzYm`。這不是正式資料／主機／效能等價驗證。
 
 私有證據存放 `ship-release-predecessor` cache，未提交 Git。本次同症狀 RED：`release-native-HcfRHp/receipt.json`；修正後 GREEN：`release-native-5SPApV/receipt.json`；唯讀核對：`failure-readback-4u8koo/receipt.json`。原有往返回歸 `legacy-roundtrip-regression/roundtrip-native-JWP3c3/receipt.json` 的 17 個 addon bytes 未改，未重跑；舊空鎖表通過收據 `release-native-VTG9Xb/receipt.json` 僅保留為歷史，不再作非空升級證據。所有此前 FAIL 都保留。
 
@@ -72,15 +86,17 @@ python -B scripts/build-production-release.py --check
 python -B scripts/build-production-control.py --check
 python -B scripts/verify-production-release-package.py
 node scripts/verify-production-release-native.mjs
+python -B scripts/build-watermark-resource-repair.py --check
+node scripts/verify-production-release-native.mjs --watermark-hotfix
 ```
 
 ## 正式交接：一次只走眼前的關卡
 
 1. 核對當前 Supabase 專案及角色，安排本次安裝的短暫停止保存。之前曾通知停錄，不等於現在仍停錄，也不是 server freeze 的證明。
-   本次已有失敗回報，先由使用者在新查詢 Run 05a 並交原 CSV，核對當前狀態後才進修正版 05。
+   以下 05／06／07 是已完成步驟的流程說明，本次不能倒退重跑；眼前是 08a 修補交接。
 2. Hermes Preview 顯示經 commit blob 核對的 **05 全文 readonly textarea**。使用者 Ctrl+A／Ctrl+C，貼入新 SQL Editor query，自行 Run；助手不代貼、不用剪貼簿 API、不執行正式 SQL。
 3. 不論畫面只有 Success 或空 Results，都不重 Run 05；改交 **06 獨立唯讀**並核原始回傳。若 05 明確失敗或 outcome 不明，先診斷當前物件，不能直接進切換。
-4. 核對通過後才決定切換時窗，逐步 07 → 08 → 09 → 12。**07 之後 legacy 保存已凍結，08 之後業務保存 paused。** 每步使用新的交易，結果和當前状态分開。
+4. 核對通過後才決定切換時窗，逐步 07 → 08a → 08b → 08 → 09 → 12。**07 之後 legacy 保存已凍結，08 成功之後業務保存才是 paused。** 本次 08 曾失敗且已用 12 讀回，先修補／驗收，不盲重 Run。每步使用新的交易，結果和當前状态分開。
 5. 10 發布仍 paused；12 核對 source/epoch、stage binding。**網站版本／runtime 設定與新來源相容、使用者決定 Push／部署後，才另行執行 11 恢復。** 這是決策界線，不能把 manifest 次序當自動腳本。
 6. 11 後再 12＋正式原網站登入／保存／重新讀回與同步驗收。readback 的 stage hash 是歷史證據，resume 後的新保存可以合法改變 current hash；不要為追求舊 hash 相等而覆回。
 

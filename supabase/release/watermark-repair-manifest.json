@@ -1,0 +1,27 @@
+{
+  "kind": "ship-watermark-resource-repair-v1",
+  "predecessor_body_sha256": "4f938cef3106561703bd6bb0b09553a0b0459c6222c20fe423b0962f0ba9aff2",
+  "target_body_sha256": "ceca3c40bef08143552d168b3df5cdd947903eabee75841f1458dbfb692f95a7",
+  "table_contract_sha256": "49b4c41955be879d3c1df20a7f34965cbd7dee36d421dcfde20ae199dddff4af",
+  "control_tables": [
+    "ship_dynamics_authority_private.current_v1",
+    "ship_dynamics_authority_private.forward_row_context_v1",
+    "ship_dynamics_authority_private.forward_stages_v1",
+    "ship_dynamics_authority_private.receipts_v1",
+    "ship_dynamics_quiescence_private.stage_context_v1",
+    "ship_dynamics_quiescence_private.stages_v1",
+    "ship_dynamics_quiescence_private.transitions",
+    "ship_dynamics_quiescence_private.workspaces"
+  ],
+  "sources": {
+    "supabase/development/20260911_business_quiescence.sql": "bf750910ca6321768b6868024a417f61083099c44260ee19dd020c8d0c0c8595",
+    "supabase/development/20260911_paused_record_legacy_transfer.sql": "5d35ded04a494b82f378e5ded57855596c310e978170f48556103e2a402c6e93",
+    "supabase/development/20260911_source_authority_publication.sql": "d60c6e01668c7b2c2a2c66f69f465ebfddccca3640cfc64e429c88940663f770",
+    "supabase/development/20260914_source_authority_roundtrip.sql": "a6edbebb3f4040b9653c884208b01e3c3231a7ce4753388c7d6cc58574b0a2e3"
+  },
+  "outputs": {
+    "supabase/release/08a_fix_watermark_resource.sql": "0fbe709cddab5ae8cf29cff4be4f01c46e487f42323d8c4711fd1416e7b664be",
+    "supabase/release/08b_verify_watermark_resource.sql": "3940fb18f34c44f85249e3a972af5243b82b5c56a6d46ea09dd30aaf017992b0"
+  },
+  "production_write_executed": false
+}

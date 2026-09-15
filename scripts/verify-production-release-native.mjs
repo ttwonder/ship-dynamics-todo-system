@@ -7,6 +7,7 @@ import {createNativeRecordQa} from './record-storage-native-qa.mjs';
 import {seedItineraryFixture} from './record-itinerary-local-fixture.mjs';
 import {seedQuiescenceLinkedGraph} from './business-quiescence-remainder-qa.mjs';
 const predecessor=process.env.QA_PREDECESSOR_MODULE;
+const watermarkHotfix=process.argv.includes('--watermark-hotfix');
 assert.ok(predecessor&&path.isAbsolute(predecessor),'Explicit private predecessor module required');
 const root=path.dirname(predecessor),run=fs.mkdtempSync(path.join(root,'release-native-'));
 const receipt={kind:'production-additive-first-install-native',status:'RUNNING',run,productionContacted:false,cases:[]};
@@ -14,6 +15,7 @@ const controlManifest=JSON.parse(fs.readFileSync('supabase/release/control-relea
 const files=['scripts/build-production-release.py','scripts/build-production-control.py','scripts/verify-production-release-native.mjs','scripts/record-storage-native-qa.mjs','scripts/record-itinerary-local-fixture.mjs','scripts/business-quiescence-remainder-qa.mjs','supabase/release/05_install_record_storage.sql','supabase/release/06_verify_record_storage.sql','supabase/release/record-release-api.json','supabase/release/record-release-manifest.json','supabase/release/control-release-manifest.json',...Object.keys(controlManifest.outputs).map(f=>'supabase/release/'+f)];
 const hash=b=>createHash('sha256').update(b).digest('hex');
 receipt.inputs=Object.fromEntries(files.map(f=>[f,hash(fs.readFileSync(f))]));
+if(watermarkHotfix){receipt.mode='installed-watermark-hotfix';for(const f of ['scripts/build-watermark-resource-repair.py','scripts/watermark-hotfix-native-qa.mjs','supabase/release/08a_fix_watermark_resource.sql','supabase/release/08b_verify_watermark_resource.sql','supabase/release/watermark-repair-manifest.json'])if(fs.existsSync(f)){files.push(f);receipt.inputs[f]=hash(fs.readFileSync(f));}}
 receipt.predecessorInputs=Object.fromEntries(['predecessor.mjs','private-schema-input.json','trusted-provenance.json'].map(f=>[f,hash(fs.readFileSync(path.join(root,f)))]));
 const save=()=>fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));
 const check=async(id,fn)=>{try{await fn();receipt.cases.push({id,status:'PASS'});save();}catch(e){receipt.cases.push({id,status:'FAIL',code:e.code??'ASSERT',message:e.message});save();throw e;}};
@@ -52,6 +54,7 @@ try{
  await check('NI02C-invalid-new-lock-fence-is-rejected',async()=>{const injected=install.replace('DO $release_unchanged$',()=>"UPDATE public.ship_dynamics_edit_locks SET lease_version=0 WHERE section_key='qa-release-preserve-1';\nDO $release_unchanged$");assert.notEqual(injected,install);await assert.rejects(()=>observer.query(injected),e=>e.message==='release-invalid-added-lock-fences');await observer.query('rollback');assert.deepEqual(await ledger(),before);});
  await check('NI02-atomic-installer-preserves-all-58-legacy-tables',async()=>{await observer.query(install);assert.deepEqual(await ledger(),before);assert.equal(await q(observer,'select count(*)::int r from ship_dynamics_record_workspaces'),0);const fences=await q(observer,'select jsonb_build_object(\'n\',count(*),\'unique\',count(distinct lease_version),\'positive\',bool_and(lease_version>0)) r from ship_dynamics_edit_locks');assert.deepEqual(fences,{n:3,unique:3,positive:true});});
  await check('NI03-independent-readback-and-rerun-refusal',async()=>{await observer.query("alter function public.read_ship_dynamics_records_v1(text) set qa.private_canary='qa-readback-canary-omit'");const rs=await a.query(fs.readFileSync('supabase/release/06_verify_record_storage.sql','utf8'));const out=rs.flatMap(r=>r.rows??[]).find(r=>r.install_readback)?.install_readback;assert.ok(out);assert.equal(JSON.stringify(out).includes('qa-readback-canary-omit'),false,'readback excludes arbitrary function settings');await observer.query('alter function public.read_ship_dynamics_records_v1(text) reset qa.private_canary');assert.equal(out.api_count,52);assert.deepEqual(out.api_missing_or_invalid,[]);assert.equal(out.record_tables_private,true);receipt.installReadback=out;await assert.rejects(()=>observer.query(install),e=>e.message==='release-records-already-present-use-readback');await observer.query('rollback');assert.deepEqual(await ledger(),before);});
+ if(watermarkHotfix)await(await import('./watermark-hotfix-native-qa.mjs')).verifyWatermarkHotfix({native,check,receipt,workspace:w});
  const legacy=()=>q(observer,'select to_jsonb(t) r from ship_dynamics_app_state t where workspace_key=$1',[w]);
  const records=()=>q(observer,'select read_ship_dynamics_records_v1($1) r',[w]);
  const digest=p=>q(observer,'select sd_legacy_jsonb_sha256($1::jsonb) r',[JSON.stringify(p)]);
