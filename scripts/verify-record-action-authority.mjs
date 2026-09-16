@@ -50,7 +50,9 @@ function setup(options={}){
   setData:data=>state.publications.push(data),alert:message=>state.alerts.push(String(message)),
  };
  vm.createContext(context);vm.runInContext(compiled,context);context.configIoCoordinator={current:context.makeCoordinator()};
- return {context,state,base,remote,run:(scope='full',owner=()=>true,force=false)=>context.loadRecordActionScope(scope,owner,force)};
+ // Force freshness for authority/floor/race probes: managed legacy is already
+ // complete and now correctly skips ordinary coverage-only expansion.
+ return {context,state,base,remote,run:(scope='full',owner=()=>true,force=true)=>context.loadRecordActionScope(scope,owner,force)};
 }
 const cases=[];
 async function check(caseId,fn){try{await fn();cases.push({caseId,status:'PASS'});}catch(error){cases.push({caseId,status:'FAIL',error:error.message});}}
@@ -111,7 +113,7 @@ await check('AS-10-failed-queue-does-not-read-over-draft',async()=>{
 });
 await check('AS-11-existing-early-return-and-explicit-scope',async()=>{
  const x=setup();assert.equal(await x.run('full',()=>false),false);assert.equal(x.state.reads.length,0);
- assert.equal(await x.run('home'),true);assert.equal(x.state.reads.length,0);
+ assert.equal(await x.run('home',()=>true,false),true);assert.equal(x.state.reads.length,0);
  assert.equal(await x.run('home',()=>true,true),true);assert.equal(x.state.reads[0].scope,'home');
 });
 assert.equal(new Set(cases.map(x=>x.caseId)).size,cases.length);

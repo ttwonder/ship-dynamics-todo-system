@@ -44,7 +44,7 @@ function setup(options={}){
 const cases=[];
 async function check(caseId,fn){try{await fn();cases.push({caseId,status:'PASS'});}catch(e){cases.push({caseId,status:'FAIL',error:e.message});}}
 await check('MR-B01-raw-absent-managed-records-both-prereads',async()=>{
- const x=setup();await x.run();assert.equal(x.state.mutations,1);assert.equal(x.state.reads.length,2);assert.ok(x.state.reads.every(r=>r.storageMode==='records-v1'&&r.readMode==='snapshot'));assert.equal(x.state.releases,1);
+ const x=setup();await x.run();assert.equal(x.state.mutations,1);assert.equal(x.state.reads.length,2);assert.ok(x.state.reads.every(r=>r.storageMode==='records-v1'&&r.readMode==='scoped-v1'),'managed records must use existing scoped reads even when raw config has no mode');assert.equal(x.state.releases,1);
 });
 await check('MR-B02-raw-records-managed-legacy-reverse',async()=>{
  const x=setup({source:'legacy',raw:{storageMode:'records-v1',readMode:'scoped-v1'}});await x.run();assert.equal(x.state.mutations,1);assert.equal(x.state.reads.length,2);assert.ok(x.state.reads.every(r=>r.storageMode==='legacy'&&r.readMode==='snapshot'));assert.equal(x.env.recordReadScope.current,'home');
@@ -81,6 +81,45 @@ await check('MR-H02-managed-legacy-does-not-send-record-handover-guard',async()=
 });
 await check('MR-H03-paused-authority-no-new-save',async()=>{
  const x=management();x.state.binding={...x.state.binding,admitted:false,pauseState:'paused'};assert.equal(await x.run(),false);assert.equal(x.state.queued,0);
+});
+for(const scope of ['full',{targets:[{collection:'meetings',id:'meeting-a'}]}])await check(`MR-S01-raw-absent-action-${typeof scope==='string'?scope:'targets'}`,async()=>{
+ const x=management(),raw=copy(x.state.config);Object.freeze(x.state.config);
+ assert.equal(await x.env.loadRecordActionScope(scope),true);
+ assert.equal(x.state.reads.length,1,'effective managed scope must expand even without raw readMode');
+ assert.equal(x.state.reads[0].readMode,'scoped-v1');assert.deepEqual(copy(x.state.reads[0].scope),scope);
+ assert.deepEqual(x.state.config,raw,'read routing must not rewrite raw config or draft identity');assert.equal(x.env.recordReadScope.current,scope);
+});
+await check('MR-S02-managed-legacy-ignores-raw-scoped-shortcut',async()=>{
+ const x=management({source:'legacy',raw:{storageMode:'records-v1',readMode:'scoped-v1'}});
+ assert.equal(await x.env.loadRecordActionScope('full'),true);assert.equal(x.state.reads.length,0,'legacy already has a complete snapshot');
+ assert.equal(x.env.recordReadScope.current,'home');
+});
+for(const readMode of [undefined,'snapshot','delta-v1','scoped-v1'])await check(`MR-S03-unmanaged-retains-${readMode??'absent'}`,async()=>{
+ const x=setup({raw:{storageMode:'records-v1',readMode}}),binding={...x.state.binding,managed:false,epoch:0,pauseState:'unmanaged'};
+ const effective=vm.runInContext('authorityConfig',x.env)(x.state.config,binding);
+ assert.equal(effective.readMode,readMode);assert.equal(effective.storageMode,'records-v1');assert.equal(x.state.config.readMode,readMode);
+});
+for(const target of ['records-v1','legacy'])await check(`MR-S04-bridge-complete-comparison-${target}`,async()=>{
+ const x=management({source:target}),e=x.env,previous={...x.state.binding,source:target==='records-v1'?'legacy':'records-v1',epoch:1};
+ e.originalAuthority.current=previous;e.changedVesselTeams=()=>[];e.applyVesselManagerHandover=()=>[];e.cloudStoragePayloadFor=copy;
+ vm.runInContext(compile(`const canonical=${authority.local('canonical')};${authority.decl('assertAuthorityBridge')}`),e);
+ assert.equal(await x.run(),true);assert.equal(x.state.reads.length,2);assert.equal(x.state.reads[0].readMode,'snapshot');assert.equal(x.state.reads[1].scope,'full');
+ assert.equal(x.state.saveArgs[5].binding,x.state.binding);assert.equal(x.state.saveArgs[5].base.body,'base');
+});
+for(const bridge of [false,true])await check(`MR-S05-save-read-coverage-${bridge?'bridge':'same-authority'}`,async()=>{
+ const x=setup(),e=x.env;e.token={config:x.state.config};e.pending={authority:x.state.binding,authorityOwner:bridge?{...x.state.binding,source:'legacy',epoch:1}:x.state.binding};
+ const start=source.indexOf('              const commandConfig='),end=source.indexOf('              const pendingActorIsCurrent=',start);assert.ok(start>=0&&end>start);
+ vm.runInContext(compile(`${source.slice(start,end)}globalThis.commandRead=readCommandBase;`),e);
+ await e.commandRead(x.state.config);assert.equal(x.state.reads[0].scope,bridge?'full':'home','a full bridge baseline must not rebase against a home summary');
+ e.remote=x.base;e.candidate=x.base;e.storageRemote=x.base;e.buildRecordScopePatch=(base,next,raw,scope)=>{x.state.patchScope=scope;return [];};e.buildCloudBlockPatch=()=>{throw new Error('managed scoped save used whole snapshot patch');};
+ const operations=source.match(/const operations=(commandConfig\.readMode[^;\r\n]+);/);assert.ok(operations);
+ vm.runInContext(compile(operations[0]),e);assert.equal(x.state.patchScope,bridge?'full':'home');
+ const ackAst=ts.createSourceFile('App.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),acks=[];
+ const scan=n=>{if(ts.isCallExpression(n)&&n.expression.getText(ackAst)==='fetchCloudDataRpc'&&n.arguments[0]?.getText(ackAst)==='commandConfig')acks.push(n.parent.getText(ackAst));ts.forEachChild(n,scan);};scan(ackAst);assert.equal(acks.length,1);
+ vm.runInContext(compile(`globalThis.readAfterAck=${acks[0]};`),e);await e.readAfterAck();assert.equal(x.state.reads[1].scope,bridge?'full':'home');
+ e.originalAuthority.current=e.pending.authorityOwner;
+ const publishStart=source.indexOf("              if(pending.authorityOwner!==originalAuthority.current)throw new BrowserAuthorityError('browser-authority-confirmation-stale');"),publishEnd=source.indexOf('              lastCloudRevision.current =',publishStart);assert.ok(publishStart>=0&&publishEnd>publishStart);
+ vm.runInContext(compile(source.slice(publishStart,publishEnd)),e);assert.equal(e.originalAuthority.current,x.state.binding);assert.equal(e.recordReadScope.current,bridge?'full':'home');
 });
 function member(options={}){
  const x=setup(options),e=x.env;
@@ -139,7 +178,7 @@ function leaseRefresh(options={}){
 }
 for(const target of ['records-v1','legacy'])await check(`MR-L01-lease-read-effective-${target}`,async()=>{
  const x=leaseRefresh({source:target,raw:{storageMode:target==='records-v1'?'legacy':'records-v1',readMode:'scoped-v1'}});
- assert.ok(await x.run());assert.equal(x.state.reads.length,1);assert.equal(x.state.reads[0].storageMode,target);assert.equal(x.state.reads[0].readMode,'snapshot');assert.equal(x.env.recordReadScope.current,'home');
+ assert.ok(await x.run());assert.equal(x.state.reads.length,1);assert.equal(x.state.reads[0].storageMode,target);assert.equal(x.state.reads[0].readMode,target==='records-v1'?'scoped-v1':'snapshot');assert.deepEqual(copy(x.env.recordReadScope.current),target==='records-v1'?{targets:[{collection:'tasks',id:'task-a'}]}:'home');
 });
 await check('MR-L02-lease-unresolved-no-raw-read',async()=>{const x=leaseRefresh({unresolved:true,raw:{readMode:'scoped-v1'}});assert.equal(await x.run(),null);assert.equal(x.state.reads.length,0);assert.equal(x.state.publications.length,0);});
 await check('MR-L03-lease-outer-return-binding-drift-no-publication',async()=>{
@@ -155,5 +194,5 @@ for(const target of ['records-v1','legacy'])await check(`MR-C01-projected-case-e
  assert.deepEqual(Array.from(e.result),target==='records-v1'?['internal-control-create:task-a']:[]);
 });
 assert.equal(new Set(cases.map(c=>c.caseId)).size,cases.length);
-console.log(JSON.stringify({status:cases.every(c=>c.status==='PASS')?'PASS':'FAIL',layer:'actual-App-actions-controlled-IO',sourceSha256:createHash('sha256').update(source).digest('hex'),caseCount:cases.length,cases,nativeOrMountedClaim:false}));
+console.log(JSON.stringify({status:cases.every(c=>c.status==='PASS')?'PASS':'FAIL',layer:'actual-App-actions-controlled-IO',sourceSha256:createHash('sha256').update(source).digest('hex'),authoritySourceSha256:createHash('sha256').update(authoritySource).digest('hex'),caseCount:cases.length,cases,nativeOrMountedClaim:false}));
 if(cases.some(c=>c.status!=='PASS'))process.exitCode=1;

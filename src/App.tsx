@@ -899,7 +899,10 @@ export default function App() {
               const {snapshot:next,baseSnapshot:base,token,savedBy,actorUserId,identityGeneration,lockGuards,isCurrent,canSubmit}=pending;
               if(pending.authorityOwner!==originalAuthority.current)throw new BrowserAuthorityError('browser-authority-queued-intent-stale');
               const commandConfig=pending.authority?authorityConfig(token.config,pending.authority):token.config;
-              const readCommandBase=(config:ResolvedSupabaseConfig)=>pending.authority?readBoundCloudData(config,pending.authority,undefined,undefined,recordReadScope.current):fetchCloudData(config);
+              const authorityTransition=Boolean(pending.authority&&pending.authorityOwner&&!sameAuthority(pending.authority,pending.authorityOwner));
+              // A cross-source intent was prepared against complete snapshots.
+              const commandReadScope:RecordReadScope=authorityTransition?'full':recordReadScope.current;
+              const readCommandBase=(config:ResolvedSupabaseConfig)=>pending.authority?readBoundCloudData(config,pending.authority,undefined,undefined,commandReadScope):fetchCloudData(config,undefined,undefined,commandReadScope);
               const pendingActorIsCurrent=()=>identitySessionGeneration.current===identityGeneration&&liveCurrentUserId.current===actorUserId;
               if(!isCurrent()||!pendingActorIsCurrent())throw new StaleAsyncConfigError();
               if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
@@ -922,7 +925,7 @@ export default function App() {
                   :sanitizeAppDataForStorage(rebaseDisjointAppData(base,nextForSave,remote,nowIso(),actorUserId));
                 mergedRemoteChanges=mergedRemoteChanges||!appDataContentEqual(base,remote);
                 const storageRemote=cloudStoragePayloadFor(remote);
-                const operations=commandConfig.readMode==='scoped-v1'?buildRecordScopePatch(remote,candidate,storageRemote,recordReadScope.current):buildCloudBlockPatch(remote,candidate,storageRemote);
+                const operations=commandConfig.readMode==='scoped-v1'?buildRecordScopePatch(remote,candidate,storageRemote,commandReadScope):buildCloudBlockPatch(remote,candidate,storageRemote);
                 if(!operations.length){persisted=remote;break;}
                 assertActorAuthorizedForAppDataChange(remote,candidate,actorUserId);
                 const actorGuard=actorStorageAuthorizationGuard(remote,storageRemote,actorUserId);
@@ -967,7 +970,7 @@ export default function App() {
                         try{
                           const authoritative=await configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
                             '原子保存後權威資料讀回',
-                            signal=>fetchCloudDataRpc(commandConfig,signal,undefined,recordReadScope.current),
+                            signal=>fetchCloudDataRpc(commandConfig,signal,undefined,commandReadScope),
                             12_000,
                           ));
                           if(!authoritative||authoritative.revision<receipt.revision)throw new CloudBlockPatchConfirmedRefreshError(receipt);
@@ -1027,6 +1030,7 @@ export default function App() {
               rebaseAttempts=0;
               if(pending.authorityOwner!==originalAuthority.current)throw new BrowserAuthorityError('browser-authority-confirmation-stale');
               if(pending.authority)originalAuthority.current=pending.authority;
+              if(authorityTransition)recordReadScope.current=commandReadScope;
               lastCloudRevision.current = persisted.revision;
               confirmCloudSnapshot(activeCloudIdentity.current,persisted);
               setStaleBrowserRecoveryOffered(false);
@@ -2348,7 +2352,7 @@ export default function App() {
     if(!ownerIsCurrent())return false;
     const generation=++actionScopeGeneration.current;
     const config=getSupabaseConfig();
-    if(!config||(!forceFresh&&(config.readMode!=='scoped-v1'||recordScopeKey(recordReadScope.current)===recordScopeKey(scope))))return true;
+    if(!config||(!forceFresh&&originalAuthority.current&&(authorityConfig(config,originalAuthority.current).readMode!=='scoped-v1'||recordScopeKey(recordReadScope.current)===recordScopeKey(scope))))return true;
     const actor=liveCurrentUserId.current,session=identitySessionGeneration.current;
     const token=configIoCoordinator.current.begin(config);
     const isCurrent=()=>ownerIsCurrent()&&generation===actionScopeGeneration.current&&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current&&configIoCoordinator.current.isCurrent(token,getSupabaseConfig());
@@ -4375,7 +4379,7 @@ export default function App() {
       let remote = await configIoCoordinator.current.run(syncToken, getSupabaseConfig, fetchCloudData);
       if(!syncOwnerIsCurrent())throw new StaleAsyncConfigError();
       const recoveryBase=confirmedCloudData.current;
-      if(remote&&syncConfig.readMode==='scoped-v1'&&recoveryBase&&!appDataContentEqual(liveData.current,recoveryBase)){
+      if(remote&&originalAuthority.current&&authorityConfig(syncConfig,originalAuthority.current).readMode==='scoped-v1'&&recoveryBase&&!appDataContentEqual(liveData.current,recoveryBase)){
         // Changed home previews can slide old history out of their bounded window.
         // Hydrate those targets before the unchanged append-only B/L/R guard.
         const scope=unionRecordScopes(recordReadScope.current,recordRecoveryReadScope(recoveryBase,remote));

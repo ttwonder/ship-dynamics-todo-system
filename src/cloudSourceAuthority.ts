@@ -22,7 +22,7 @@ export const authorityFloorIdentity=(identity:string,binding:BrowserAuthority|nu
 export function authorityConfig(config:ResolvedSupabaseConfig,binding:BrowserAuthority):ResolvedSupabaseConfig {
   if(config.workspaceKey!==binding.workspace)throw new BrowserAuthorityError('browser-authority-workspace-mismatch');
   // A route parameter, never a replacement connection/config/actor identity.
-  return {...config,storageMode:binding.source,readMode:binding.managed?'snapshot':config.readMode};
+  return {...config,storageMode:binding.source,readMode:binding.managed?(binding.source==='records-v1'?'scoped-v1':'snapshot'):config.readMode};
 }
 export async function readBrowserAuthority(config:ResolvedSupabaseConfig,signal?:AbortSignal):Promise<BrowserAuthority>{
   const client=getSupabaseClient(config);
