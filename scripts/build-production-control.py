@@ -98,7 +98,7 @@ ROLLBACK;
 """
 def build():
  steps={'07_freeze_latest_legacy.sql':FREEZE,'08_pause_business.sql':PAUSE,'09_stage_first_records.sql':FORWARD,'10_publish_records_paused.sql':publish('records-v1','ship_dynamics_authority_private.forward_stages_v1'),'11_resume_published_source.sql':RESUME,'13_stage_latest_records_back.sql':BACKWARD,'14_publish_legacy_paused.sql':publish('legacy','ship_dynamics_quiescence_private.stages_v1')}
- result={name:HEADER+body+TAIL for name,body in steps.items()};result['12_control_readback.sql']=READBACK
+ result={name:(HEADER.replace("SET LOCAL statement_timeout='45s';", "SET LOCAL statement_timeout='8min';") if name=='11_resume_published_source.sql' else HEADER)+body+TAIL for name,body in steps.items()};result['12_control_readback.sql']=READBACK
  result['control-release-manifest.json']=json.dumps({'kind':'ship-manual-control-package-v1','source':'current database only; no seed/snapshot input','outputs':{k:hashlib.sha256(v.encode()).hexdigest() for k,v in result.items()},'forward':['07_freeze_latest_legacy.sql','08_pause_business.sql','09_stage_first_records.sql','12_control_readback.sql','10_publish_records_paused.sql','12_control_readback.sql','11_resume_published_source.sql','12_control_readback.sql'],'reverse':['08_pause_business.sql','13_stage_latest_records_back.sql','12_control_readback.sql','14_publish_legacy_paused.sql','12_control_readback.sql','11_resume_published_source.sql','12_control_readback.sql'],'warning':'Each phase needs its own operator/readback/client-version decision; never auto-run the list.'},indent=2)+'\n'
  return result
 if __name__=='__main__':

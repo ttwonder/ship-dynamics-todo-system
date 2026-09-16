@@ -1,7 +1,7 @@
 -- MANUAL OPERATOR STEP. Target ship-dynamics-main. NOT A BACKUP RESTORE.
 -- Run only this step when requested. ERROR/unknown result: STOP, then 12 readback.
 BEGIN ISOLATION LEVEL READ COMMITTED;
-SET LOCAL statement_timeout='45s';
+SET LOCAL statement_timeout='8min';
 SET LOCAL lock_timeout='5s';
 CREATE TEMP TABLE release_step_result(result jsonb) ON COMMIT DROP;
 DO $release_step$

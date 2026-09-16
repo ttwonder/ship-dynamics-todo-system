@@ -6,7 +6,7 @@
     "08_pause_business.sql": "8b6a387911cb9e00f073bc41e8d9d604b74b7b5bb28d2dbca5c7f56775321a60",
     "09_stage_first_records.sql": "74b799036dd9c7d92ca2361d39c1c6da3ad9eb9f0f7736dc096369daf935a53f",
     "10_publish_records_paused.sql": "6b3cb5aef051584f7f2c502d85d44ab593001f925c6f296ce89bd94534acf5ae",
-    "11_resume_published_source.sql": "64fd41a96ac1c9bb9f8940ec35fe6e2f1b7c1ca0c212d453c805c85d41accf09",
+    "11_resume_published_source.sql": "5d1609672eed36ae00d174c33041ac97378f73b45f8a8ce36771673f847a42c6",
     "13_stage_latest_records_back.sql": "8e7b8f3c39ba29e6343d27a60e8a284f352abd01028ecf3e1d47c7b2ad33928b",
     "14_publish_legacy_paused.sql": "400e665538bd4fd90daf2ecff4bd2c4f17a422d9316f9b723062d21cf26d49a9",
     "12_control_readback.sql": "64956f949507187b64f6efc5551b130c3a263987533314c8a61234351e7ad261"
