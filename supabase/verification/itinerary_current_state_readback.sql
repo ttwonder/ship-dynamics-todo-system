@@ -2,6 +2,7 @@
 -- Target: the same Supabase project used for the additive migration.
 -- Migration source: 4471e32ff65d1256f0c0a086deb223a6b6e56f63
 -- Stop on any error or FAIL. Do not rerun the installation automatically.
+-- v2: normalize CR on BOTH sides of the multiline guard comparison.
 begin transaction read only;
 set local statement_timeout = '15s';
 set local lock_timeout = '2s';
@@ -51,7 +52,7 @@ facts(check_name, ok) as (
   union all
   select 'ship_only_guard: ' || e.signature,
     case when p.oid is null then not e.required else
-      position($expected_guard$
+      position(replace($expected_guard$
   -- current_vessel_state_ship_only_v1
   if (p_rows->0) ? 'currentVesselState' then
     if p_actor_kind <> 'public' and p_rows->0->'currentVesselState' is distinct from
@@ -62,7 +63,7 @@ facts(check_name, ok) as (
     p_rows := jsonb_set(p_rows,'{0,currentVesselState}',
       (select rows_payload->0->'currentVesselState' from public.sd_itinerary_documents where workspace_id=v_workspace and vessel_id=p_vessel_id),true);
   end if;
-$expected_guard$ in replace(p.prosrc,chr(13),''))>0 end
+$expected_guard$,chr(13),'') in replace(p.prosrc,chr(13),''))>0 end
   from save_routes e left join pg_proc p on p.oid=to_regprocedure(e.signature)
   union all
   select 'installed_builder_projection: ' || e.signature,
@@ -102,7 +103,9 @@ select case when bool_and(coalesce(ok,false)) then 'PASS' else 'FAIL' end as ove
   count(*) as check_count,
   count(*) filter (where ok is not true) as failed_count,
   coalesce(jsonb_agg(check_name order by check_name) filter (where ok is not true),'[]'::jsonb) as failed_checks,
-  'current-state-readback-v1' as readback_id,
+  'current-state-readback-v2' as readback_id,
+  position(chr(13) in $copy_format$
+$copy_format$)>0 as copied_sql_contains_cr,
   to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as checked_at_utc
 from facts;
 commit;
