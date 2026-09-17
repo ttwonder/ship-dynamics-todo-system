@@ -5,6 +5,7 @@ import { printItineraryDailyReportPdf } from './itineraryDailyReportPdf';
 import type { ItineraryDailyReport, ItineraryDailyReportVesselSnapshot } from './itineraryDailyReports';
 import { formatItineraryUtcOffset, instantToWallTime } from './itinerary/itineraryTime';
 import { formatItineraryOperation, resolveItineraryTimeZone, type ItineraryRow } from './itinerary/itineraryTypes';
+import { itineraryExportSummary } from './itinerary/itineraryExportSummary';
 
 interface Props {
   report: ItineraryDailyReport;
@@ -59,10 +60,10 @@ function VesselItinerary({ vessel }: { vessel: ItineraryDailyReportVesselSnapsho
     Number(left.sortOrder || 0) - Number(right.sortOrder || 0)
       || text(left.rowId, '').localeCompare(text(right.rowId, '')),
   ), [vessel.rows]);
-  const previousPort = rows[0]?.previousPortName?.trim() || '未填';
+  const summary = itineraryExportSummary(rows);
   return <section className="itinerary-daily-report-vessel">
     <header>
-      <div><h2>{vessel.vesselName}</h2><span>上一港：{previousPort}</span></div>
+      <div><h2>{vessel.vesselName}</h2><span className="itinerary-daily-report-vessel-summary">{summary.map(field => <span key={field.key}>{field.label}：{field.value}</span>)}</span></div>
       <p>正式 Rev.{vessel.revision || 0}｜更新：{vessel.updatedAt ? formatTaipeiDateTime(vessel.updatedAt, false) : '尚無正式保存'}</p>
     </header>
     {rows.length ? <table className="itinerary-daily-report-table">

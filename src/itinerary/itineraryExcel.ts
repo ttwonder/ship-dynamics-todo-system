@@ -1,5 +1,6 @@
 import type ExcelJS from 'exceljs';
 import { recalculateItineraryRows } from './itineraryDomain';
+import { itineraryExportSummary } from './itineraryExportSummary';
 import { addHoursToInstant, formatUtcOffsetMinutes, instantToWallTime, isValidItineraryTimeZone, parseUtcOffsetMinutes, UTC_OFFSET_OPTIONS, wallTimeToInstant } from './itineraryTime';
 import { createBlankItineraryRow, createItineraryId, formatItineraryOperation, ITINERARY_SCHEMA_VERSION, ITINERARY_TIME_ZONE_FIELDS, normalizeItineraryOperation, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryOperation, type ItineraryRow } from './itineraryTypes';
 
@@ -155,7 +156,7 @@ function copyTemplateLayout(source: ExcelJS.Worksheet, target: ExcelJS.Worksheet
       if (rowNumber <= 3 && column <= 14) to.value = from.value;
     }
   }
-  for (const range of ['A1:N1', 'A2:B2', 'C2:D2', 'L2:M2']) target.mergeCells(range);
+  for (const range of ['A1:N1', 'A2:B2', 'C2:J2', 'L2:M2']) target.mergeCells(range);
 }
 
 function wallDate(instant: string | null, timeZone: string): Date | null {
@@ -278,7 +279,25 @@ function applyDocumentPresentation(worksheet: ExcelJS.Worksheet, lastRow: number
   }
 }
 
-function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocument): void {
+function fillDocumentSummary(worksheet: ExcelJS.Worksheet, rows: readonly ItineraryRow[]): void {
+  const fields = itineraryExportSummary(rows);
+  const format = (indices: number[]) => indices.map(index => `${fields[index].label}：${fields[index].value}`).join('｜');
+  const lines = [format([0, 1, 5]), format([2, 3, 4])];
+  const cell = worksheet.getCell('C2');
+  cell.value = lines.join('\n');
+  cell.font = exportFont(10);
+  cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+  worksheet.getCell('A2').alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+  // Merged Excel cells do not auto-fit. Reserve space for wrapped CJK/long values
+  // without moving the existing header/data rows or changing formula addresses.
+  const textWidth = (value: string) => Array.from(value).reduce((width, character) => width + (/[^\x00-\x7f]/.test(character) ? 2 : 1), 0);
+  const capacity = VISIBLE_COLUMN_WIDTHS.slice(2, 10).reduce<number>((sum, width) => sum + width, 0) * 0.9;
+  const lineCount = lines.reduce((count, line) => count + Math.max(1, Math.ceil(textWidth(line) / capacity)), 0);
+  const nameLines = Math.ceil(textWidth(worksheet.getCell('A2').text) / (VISIBLE_COLUMN_WIDTHS[0] + VISIBLE_COLUMN_WIDTHS[1] - 4));
+  worksheet.getRow(2).height = Math.max(36, Math.max(lineCount, nameLines) * 14 + 8);
+}
+
+function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocument, summaryRows: readonly ItineraryRow[]): void {
   worksheet.getCell('A1').value = "Ship's Itinerary";
   worksheet.getCell('A2').value = `Vsl name: ${document.vesselName}`;
   worksheet.getCell('K2').value = 'Update Date:';
@@ -367,6 +386,7 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
 
   const lastRow = 3 + document.rows.length * 2;
   applyDocumentPresentation(worksheet, lastRow);
+  fillDocumentSummary(worksheet, summaryRows);
   worksheet.pageSetup.printArea = `A1:N${lastRow}`;
   worksheet.pageSetup.fitToPage = true;
   worksheet.pageSetup.fitToWidth = 1;
@@ -379,6 +399,7 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
 interface ItineraryWorkbookSheetSource {
   sheetName: string;
   document: ItineraryDocument;
+  summaryRows?: readonly ItineraryRow[];
 }
 
 async function buildItineraryWorkbookFromSheets(sources: ItineraryWorkbookSheetSource[], template: ArrayBuffer, onStage?: (stage: ItineraryExcelBuildStage) => void): Promise<ArrayBuffer> {
@@ -405,7 +426,7 @@ async function buildItineraryWorkbookFromSheets(sources: ItineraryWorkbookSheetS
     const maxRow = 3 + exportDocument.rows.length * 2;
     const worksheet = workbook.addWorksheet(sheetName);
     copyTemplateLayout(templateSheet, worksheet, maxRow);
-    fillDocumentSheet(worksheet, exportDocument);
+    fillDocumentSheet(worksheet, exportDocument, source.summaryRows ?? source.document.rows);
     metadata.push({ sheetName, document: exportDocument });
   }
 
@@ -444,6 +465,7 @@ export async function buildItineraryWorkbookWithAlternatives(document: Itinerary
     { sheetName: '正式方案', document },
     ...alternatives.map((plan, index) => ({
       sheetName: `備選方案${index + 1}`,
+      summaryRows: document.rows,
       document: {
         ...document,
         rows: plan.rows.map(row => ({ ...row, previousPortName: '' })),

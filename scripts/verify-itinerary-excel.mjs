@@ -162,7 +162,9 @@ try {
   const expectedVisibleWidths = [10, 20, 18, 22, 15, 15, 18, 15, 15, 14, 14, 14, 14, 28, 12, 10, 12, 15, 18, 18, 14, 14, 18, 16, 20, 20, 16, 16, 16, 16, 22, 18];
   expectedVisibleWidths.forEach((width, index) => assert.equal(workbook.worksheets[0].getColumn(index + 1).width, width, `visible column ${index + 1} must use the readable layout width`));
   assert.equal(workbook.worksheets[0].getRow(1).height, 28);
-  assert.equal(workbook.worksheets[0].getRow(2).height, 22);
+  assert.ok(workbook.worksheets[0].getRow(2).height >= 36, 'ship metadata needs room for two wrapped lines');
+  assert.equal(workbook.worksheets[0].getCell('C2').alignment.wrapText, true);
+  assert.ok(workbook.worksheets[0].model.merges.includes('C2:J2'));
   assert.equal(workbook.worksheets[0].getRow(3).height, 60, 'wrapped headers need enough height to remain fully visible');
   for (let row = 4; row <= 7; row += 1) assert.equal(workbook.worksheets[0].getRow(row).height, 24, `data row ${row} must use the compact readable height`);
   assert.equal(workbook.worksheets[0].getCell('A1').font.bold, true);
