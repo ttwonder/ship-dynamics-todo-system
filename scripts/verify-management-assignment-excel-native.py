@@ -23,11 +23,17 @@ try:
             ship, people = book.Worksheets(1), book.Worksheets(2)
             assert ship.Name == '船舶分管' and people.Name == '人員分管'
             assert ship.UsedRange.Rows.Count == 4 + evidence['rowCount']
-            assert ship.UsedRange.Columns.Count == 4 + len(evidence['departments'])
-            assert ship.Range('E5').Value == '測試督導甲、林督乙 （代理：測試代理丙）'
+            assert ship.UsedRange.Columns.Count == 6 + len(evidence['departments'])
+            assert ship.Range('E5').Value == '測試督導甲、林督乙 （測試代理丙）'
             assert ship.Range('E5').WrapText is False and ship.Range('E5').ShrinkToFit is True
             assert not ship.Range('E5').HasFormula
             assert ship.Columns(5).ColumnWidth > ship.Columns(6).ColumnWidth * 2
+            assert 0 < ship.Columns(5).ColumnWidth < 13, 'native font metrics differ from OOXML width; still the narrowed supervisor column'
+            assert ship.Cells(3, ship.UsedRange.Columns.Count-1).Value == '年分'
+            assert ship.Cells(3, ship.UsedRange.Columns.Count).Value == '噸數'
+            assert ship.Cells(5, ship.UsedRange.Columns.Count-1).Value == '2021.06'
+            assert ship.Cells(5, ship.UsedRange.Columns.Count).Value == '2.0萬'
+            assert ship.Range('F7').MergeArea.Rows.Count == evidence['rowCount'] - 3, 'native office cell merge follows all adjacent extra vessels'
             setup = ship.PageSetup
             assert setup.Orientation == 1 and setup.PaperSize == 9
             assert setup.Zoom is False and setup.FitToPagesWide == 1 and setup.FitToPagesTall == 1

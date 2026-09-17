@@ -1,0 +1,302 @@
+{
+  "source": "20260624船東督導(3).pdf",
+  "sha256": "21607ba68ebbb38f3a1935cc23c409f3502032346d6954a3f7eb57ec0973732c",
+  "sourceDate": "2026-06-24",
+  "rows": [
+    {
+      "chineseName": "安華輪",
+      "englishName": "FPMC S AMBER",
+      "yearLabel": "2021.06",
+      "tonnageLabel": "2.0萬",
+      "sourceRow": 1
+    },
+    {
+      "chineseName": "康華輪",
+      "englishName": "FPMC S EMERALD",
+      "yearLabel": "2021.08",
+      "tonnageLabel": "2.0萬",
+      "sourceRow": 2
+    },
+    {
+      "chineseName": "恆華輪",
+      "englishName": "FPMC S RUBY",
+      "yearLabel": "2021.11",
+      "tonnageLabel": "2.0萬",
+      "sourceRow": 3
+    },
+    {
+      "chineseName": "福華輪",
+      "englishName": "FPMC S SAPPHIRE",
+      "yearLabel": "2022.02",
+      "tonnageLabel": "2.0萬",
+      "sourceRow": 4
+    },
+    {
+      "chineseName": "台塑27號",
+      "englishName": "FPMC 27",
+      "yearLabel": "2011.09",
+      "tonnageLabel": "5萬",
+      "sourceRow": 5
+    },
+    {
+      "chineseName": "台塑28號",
+      "englishName": "FPMC 28",
+      "yearLabel": "2011.11",
+      "tonnageLabel": "5萬",
+      "sourceRow": 6
+    },
+    {
+      "chineseName": "台塑29號",
+      "englishName": "FPMC 29",
+      "yearLabel": "2011.12",
+      "tonnageLabel": "5萬",
+      "sourceRow": 7
+    },
+    {
+      "chineseName": "台塑30號",
+      "englishName": "FPMC 30",
+      "yearLabel": "2012.01",
+      "tonnageLabel": "5萬",
+      "sourceRow": 8
+    },
+    {
+      "chineseName": "台塑31號",
+      "englishName": "FPMC 31",
+      "yearLabel": "2019.05",
+      "tonnageLabel": "5萬",
+      "sourceRow": 9
+    },
+    {
+      "chineseName": "台塑32號",
+      "englishName": "FPMC 32",
+      "yearLabel": "2019.07",
+      "tonnageLabel": "5萬",
+      "sourceRow": 10
+    },
+    {
+      "chineseName": "台塑33號",
+      "englishName": "FPMC 33",
+      "yearLabel": "2019.09",
+      "tonnageLabel": "5萬",
+      "sourceRow": 11
+    },
+    {
+      "chineseName": "台塑34號",
+      "englishName": "FPMC 34",
+      "yearLabel": "2019.11",
+      "tonnageLabel": "5萬",
+      "sourceRow": 12
+    },
+    {
+      "chineseName": "台塑35號",
+      "englishName": "FPMC 35",
+      "yearLabel": "2020.03",
+      "tonnageLabel": "5萬",
+      "sourceRow": 13
+    },
+    {
+      "chineseName": "台塑36號",
+      "englishName": "FPMC 36",
+      "yearLabel": "2020.06",
+      "tonnageLabel": "5萬",
+      "sourceRow": 14
+    },
+    {
+      "chineseName": "台塑25號",
+      "englishName": "FPMC 25",
+      "yearLabel": "2011.05",
+      "tonnageLabel": "4.6萬",
+      "sourceRow": 15
+    },
+    {
+      "chineseName": "台塑26號",
+      "englishName": "FPMC 26",
+      "yearLabel": "2011.06",
+      "tonnageLabel": "4.6萬",
+      "sourceRow": 16
+    },
+    {
+      "chineseName": "英善輪",
+      "englishName": "FPMC P HERO",
+      "yearLabel": "2011.11",
+      "tonnageLabel": "11萬",
+      "sourceRow": 17
+    },
+    {
+      "chineseName": "理善輪",
+      "englishName": "FPMC P IDEAL",
+      "yearLabel": "2012.03",
+      "tonnageLabel": "11萬",
+      "sourceRow": 18
+    },
+    {
+      "chineseName": "智善輪",
+      "englishName": "FPMC C INTELLIGENCE",
+      "yearLabel": "2010.04",
+      "tonnageLabel": "28萬",
+      "sourceRow": 19
+    },
+    {
+      "chineseName": "真善輪",
+      "englishName": "FPMC C JADE",
+      "yearLabel": "2010.07",
+      "tonnageLabel": "28萬",
+      "sourceRow": 20
+    },
+    {
+      "chineseName": "君善輪",
+      "englishName": "FPMC C LORD",
+      "yearLabel": "2011.05",
+      "tonnageLabel": "30萬",
+      "sourceRow": 21
+    },
+    {
+      "chineseName": "悅善輪",
+      "englishName": "FPMC C MELODY",
+      "yearLabel": "2011.12",
+      "tonnageLabel": "30萬",
+      "sourceRow": 22
+    },
+    {
+      "chineseName": "崇善輪",
+      "englishName": "FPMC C NOBLE",
+      "yearLabel": "2012.05",
+      "tonnageLabel": "30萬",
+      "sourceRow": 23
+    },
+    {
+      "chineseName": "亞善輪",
+      "englishName": "FPMC C ORIENT",
+      "yearLabel": "2012.06",
+      "tonnageLabel": "30萬",
+      "sourceRow": 24
+    },
+    {
+      "chineseName": "長輝輪",
+      "englishName": "FPMC B FOREVER",
+      "yearLabel": "2010.11",
+      "tonnageLabel": "18萬",
+      "sourceRow": 25
+    },
+    {
+      "chineseName": "守輝輪",
+      "englishName": "FPMC B GUARD",
+      "yearLabel": "2011.07",
+      "tonnageLabel": "18萬",
+      "sourceRow": 26
+    },
+    {
+      "chineseName": "和輝輪",
+      "englishName": "FPMC B HARMONY",
+      "yearLabel": "2012.06",
+      "tonnageLabel": "18萬",
+      "sourceRow": 27
+    },
+    {
+      "chineseName": "映輝輪",
+      "englishName": "FPMC B IMAGE",
+      "yearLabel": "2012.02",
+      "tonnageLabel": "20.5萬",
+      "sourceRow": 28
+    },
+    {
+      "chineseName": "正輝輪",
+      "englishName": "FPMC B JUSTICE",
+      "yearLabel": "2012.03",
+      "tonnageLabel": "20.5萬",
+      "sourceRow": 29
+    },
+    {
+      "chineseName": "皇輝輪",
+      "englishName": "FPMC B KINGDOM",
+      "yearLabel": "2013.02",
+      "tonnageLabel": "20.5萬",
+      "sourceRow": 30
+    },
+    {
+      "chineseName": "祥輝輪",
+      "englishName": "FPMC B LUCK",
+      "yearLabel": "2013.06",
+      "tonnageLabel": "20.5萬",
+      "sourceRow": 31
+    },
+    {
+      "chineseName": "君輝輪",
+      "englishName": "FPMC B MAJESTY",
+      "yearLabel": "2015.03",
+      "tonnageLabel": "20.5萬",
+      "sourceRow": 32
+    },
+    {
+      "chineseName": "純輝輪",
+      "englishName": "FPMC B NATURE",
+      "yearLabel": "2015.08",
+      "tonnageLabel": "20.5萬",
+      "sourceRow": 33
+    },
+    {
+      "chineseName": "台塑105號",
+      "englishName": "FPMC B 105",
+      "yearLabel": "2011.11",
+      "tonnageLabel": "9.25萬",
+      "sourceRow": 34
+    },
+    {
+      "chineseName": "台塑106號",
+      "englishName": "FPMC B 106",
+      "yearLabel": "2012.01",
+      "tonnageLabel": "9.25萬",
+      "sourceRow": 35
+    },
+    {
+      "chineseName": "台塑107號",
+      "englishName": "FPMC B 107",
+      "yearLabel": "2012.02",
+      "tonnageLabel": "9.25萬",
+      "sourceRow": 36
+    },
+    {
+      "chineseName": "台塑108號",
+      "englishName": "FPMC B 108",
+      "yearLabel": "2012.03",
+      "tonnageLabel": "9.25萬",
+      "sourceRow": 37
+    },
+    {
+      "chineseName": "台塑201號",
+      "englishName": "FPMC B 201",
+      "yearLabel": "2011.12",
+      "tonnageLabel": "3.7萬",
+      "sourceRow": 38
+    },
+    {
+      "chineseName": "台塑202號",
+      "englishName": "FPMC B 202",
+      "yearLabel": "2011.12",
+      "tonnageLabel": "3.7萬",
+      "sourceRow": 39
+    },
+    {
+      "chineseName": "華海航1號",
+      "englishName": "Hua HAI Hang 1",
+      "yearLabel": "1998",
+      "tonnageLabel": "7萬",
+      "sourceRow": 40
+    },
+    {
+      "chineseName": "華海航2號",
+      "englishName": "Hua HAI Hang 2",
+      "yearLabel": "2013",
+      "tonnageLabel": "8.2萬",
+      "sourceRow": 41
+    },
+    {
+      "chineseName": "華海航3號",
+      "englishName": "Hua HAI Hang 3",
+      "yearLabel": "2013",
+      "tonnageLabel": "8.2萬",
+      "sourceRow": 42
+    }
+  ],
+  "usage": "Editor suggestions only. A user must review and save; never seed cloud/current exports automatically."
+}

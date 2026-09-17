@@ -521,7 +521,7 @@ begin
     and public.ship_dynamics_changed_fields_within(
       p_expected,
       p_value,
-      array['id','name','shortName','fullName','fleet','fleetId','fleetCategory','shipType','isActive','assignedUserIds','managedByUserIds','delegateManagers','updatedAt','updatedBy']
+      array['id','name','shortName','fullName','fleet','fleetId','fleetCategory','shipType','yearLabel','tonnageLabel','isActive','assignedUserIds','managedByUserIds','delegateManagers','updatedAt','updatedBy']
     )
   then return true; end if;
 

@@ -4,9 +4,9 @@ import { hasActiveVesselDelegation } from './vesselDelegation';
 import { pdfVesselDisplayName, vesselDisplayName } from './vesselDisplay';
 import { formatTaipeiDateTime } from './taipeiTime';
 
-export interface AssignmentCell { direct: string[]; delegates: string[] }
+export interface AssignmentCell { direct: string[]; delegates: string[]; mergeKey: string }
 export interface AssignmentVesselRow {
-  id: string; fleet: string; shipType: string; chineseName: string; englishName: string; cells: AssignmentCell[];
+  id: string; fleet: string; shipType: string; chineseName: string; englishName: string; yearLabel: string; tonnageLabel: string; cells: AssignmentCell[];
 }
 export interface AssignmentPersonRow {
   id: string; name: string; department: string; directVessels: string[]; delegateVessels: string[];
@@ -47,10 +47,17 @@ export function buildManagementAssignmentReport(data: Pick<AppData, 'vessels' | 
         id: vessel.id, fleet: ({ 'tanker fleet': '油輪船隊', 'bulk fleet': '散貨船隊' } as Record<string, string>)[vessel.fleetCategory] || vessel.fleetCategory || '未設定船隊',
         shipType: vessel.shipType || '未設定船型', chineseName,
         englishName: displayName === chineseName ? '' : displayName,
-        cells: departments.map(value => ({
-          direct: people.filter(user => department(user) === value && direct(vessel, user)).map(name),
-          delegates: people.filter(user => department(user) === value && delegated(vessel, user)).map(name),
-        })),
+        yearLabel: vessel.yearLabel || '', tonnageLabel: vessel.tonnageLabel || '',
+        cells: departments.map(value => {
+          const directPeople = people.filter(user => department(user) === value && direct(vessel, user));
+          const delegatePeople = people.filter(user => department(user) === value && delegated(vessel, user));
+          return {
+            direct: directPeople.map(name), delegates: delegatePeople.map(name),
+            // Same display name is not proof of the same person or responsibility.
+            mergeKey: directPeople.length || delegatePeople.length
+              ? JSON.stringify([directPeople.map(user => user.id).sort(), delegatePeople.map(user => user.id).sort()]) : '',
+          };
+        }),
       };
     }),
     people: people.map(user => ({
@@ -62,12 +69,28 @@ export function buildManagementAssignmentReport(data: Pick<AppData, 'vessels' | 
 }
 
 export function assignmentCellText(cell: AssignmentCell, separator = '\n'): string {
-  return [cell.direct.join('、'), cell.delegates.length ? `（代理：${cell.delegates.join('、')}）` : ''].filter(Boolean).join(separator) || '—';
+  return [cell.direct.join('、'), cell.delegates.length ? `（${cell.delegates.join('、')}）` : ''].filter(Boolean).join(separator) || '—';
+}
+
+/** Shared PDF/Excel span plan: zero denotes a covered cell; empty cells stay separate. */
+export function assignmentRowSpans(report: ManagementAssignmentReport): number[][] {
+  const spans = report.vessels.map(() => report.departments.map(() => 1));
+  for (let column = 0; column < report.departments.length; column++) {
+    for (let row = 0; row < report.vessels.length;) {
+      const key = report.vessels[row].cells[column].mergeKey;
+      let end = row + 1;
+      while (key && end < report.vessels.length && report.vessels[end].cells[column].mergeKey === key) end++;
+      spans[row][column] = end - row;
+      for (let covered = row + 1; covered < end; covered++) spans[covered][column] = 0;
+      row = end;
+    }
+  }
+  return spans;
 }
 
 /** Shared relative PDF widths / Excel character widths; keep supervisor names together. */
 export function assignmentColumnWidths(departments: string[]): number[] {
-  return [9, 7, 9, 16, ...departments.map(department => department.includes('督導') ? 30 : 7)];
+  return [9, 7, 9, 16, ...departments.map(department => department.includes('督導') ? 15 : 7), 8, 7];
 }
 
 export function assignmentReportFileName(report: ManagementAssignmentReport, extension: 'pdf' | 'xlsx'): string {

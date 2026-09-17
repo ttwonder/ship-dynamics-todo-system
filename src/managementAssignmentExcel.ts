@@ -1,5 +1,5 @@
 import type ExcelJS from 'exceljs';
-import { assignmentCellText, assignmentColumnWidths, assignmentReportFileName, type ManagementAssignmentReport } from './managementAssignmentReport';
+import { assignmentCellText, assignmentColumnWidths, assignmentRowSpans, assignmentReportFileName, type ManagementAssignmentReport } from './managementAssignmentReport';
 import { formatTaipeiDateTime } from './taipeiTime';
 
 function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = false): void {
@@ -46,17 +46,24 @@ export async function buildManagementAssignmentWorkbook(report: ManagementAssign
   workbook.creator = 'Ship Dynamics';
   const summary = `匯出時間（台北）：${formatTaipeiDateTime(report.generatedAt)}｜全部啟用船舶 ${report.vessels.length} 艘\n僅列已啟用代理，不代表一對一職務代理關係`;
   const ships = workbook.addWorksheet('船舶分管');
-  const columns = 4 + report.departments.length;
+  const departmentEnd = 4 + report.departments.length, columns = departmentEnd + 2;
   ships.mergeCells(1, 1, 1, columns); ships.getCell('A1').value = '目前船舶分管表';
   ships.mergeCells(2, 1, 2, columns); ships.getCell('A2').value = summary;
   ships.mergeCells('A3:A4'); ships.getCell('A3').value = '船隊';
   ships.mergeCells('B3:B4'); ships.getCell('B3').value = '船型';
   ships.mergeCells('C3:D3'); ships.getCell('C3').value = '船名';
-  if (columns > 5) ships.mergeCells(3, 5, 3, columns);
+  if (report.departments.length > 1) ships.mergeCells(3, 5, 3, departmentEnd);
+  for (const [index, label] of ['年分', '噸數'].entries()) {
+    const column = departmentEnd + index + 1;
+    ships.mergeCells(3, column, 4, column); ships.getCell(3, column).value = label;
+  }
   ships.getCell('E3').value = '分管部門／人員';
   ['中文', '英文', ...report.departments].forEach((value, index) => { ships.getCell(4, index + 3).value = value; });
-  for (const vessel of report.vessels) ships.addRow([vessel.fleet, vessel.shipType, vessel.chineseName || '—', vessel.englishName || '—', ...vessel.cells.map(cell => assignmentCellText(cell, ' '))]);
+  for (const vessel of report.vessels) ships.addRow([vessel.fleet, vessel.shipType, vessel.chineseName || '—', vessel.englishName || '—', ...vessel.cells.map(cell => assignmentCellText(cell, ' ')), vessel.yearLabel || '—', vessel.tonnageLabel || '—']);
   if (!report.vessels.length) ships.getCell('A5').value = '目前無啟用船舶';
+  assignmentRowSpans(report).forEach((spans, row) => spans.forEach((span, column) => {
+    if (span > 1) ships.mergeCells(row + 5, column + 5, row + 4 + span, column + 5);
+  }));
   styleSheet(ships, assignmentColumnWidths(report.departments).map(width => width * 0.84), true);
 
   const people = workbook.addWorksheet('人員分管');

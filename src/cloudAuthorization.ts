@@ -92,7 +92,7 @@ const assertEntityScope=(data:AppData,actor:UserAccount,collection:CloudBlockCol
   if(ids.some(id=>!visible.has(id)))throw new CloudPatchAuthorizationError(`out-of-scope-${collection}`);
 };
 
-const VESSEL_MANAGEMENT_FIELDS=new Set(['id','name','shortName','fullName','fleet','fleetId','fleetCategory','shipType','isActive','assignedUserIds','managedByUserIds','delegateManagers']);
+const VESSEL_MANAGEMENT_FIELDS=new Set(['id','name','shortName','fullName','fleet','fleetId','fleetCategory','shipType','yearLabel','tonnageLabel','isActive','assignedUserIds','managedByUserIds','delegateManagers']);
 const VESSEL_NON_COLLABORATIVE_FIELDS=new Set([...VESSEL_MANAGEMENT_FIELDS,'updatedAt','updatedBy']);
 const VESSEL_AUTHORIZATION_FIELDS=new Set(['isActive','assignedUserIds','delegateManagers']);
 const STATUS_FIELDS=new Set(['status','statusLogs','isClosed','closedDate','closedBy','reopenedAt','reopenedBy']);

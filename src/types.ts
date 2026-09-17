@@ -81,6 +81,9 @@ export interface Vessel {
   shortName: string;
   fullName: string;
   shipType: string;
+  /** Display labels maintained in Management; absent legacy values may be suggested, '' is an explicit saved clear. */
+  yearLabel?: string;
+  tonnageLabel?: string;
   fleetCategory: 'tanker fleet' | 'bulk fleet' | string;
   fleetTags: string[];
   assignedUserIds: string[];

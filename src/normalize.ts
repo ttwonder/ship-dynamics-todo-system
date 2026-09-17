@@ -376,6 +376,8 @@ export function normalizeAppData(value: unknown): AppData | null {
         shortName: text(item.shortName, text(item.name)),
         fullName: text(item.fullName, text(item.name)),
         shipType: text(item.shipType),
+        ...(typeof item.yearLabel === 'string' ? { yearLabel: item.yearLabel } : {}),
+        ...(typeof item.tonnageLabel === 'string' ? { tonnageLabel: item.tonnageLabel } : {}),
         fleetCategory: text(item.fleetCategory),
         fleetTags: strings(item.fleetTags),
         assignedUserIds: strings(item.assignedUserIds),

@@ -83,7 +83,7 @@ try {
   await until(() => evaluate("!!document.querySelector('.management-assignment-paper')"), 'PDF preview');
   evidence.rowCount = await evaluate("document.querySelectorAll('.management-assignment-paper tbody tr').length");
   assert.equal(evidence.rowCount, await evaluate('window.__qaData.vessels.filter(v=>v.isActive).length'));
-  assert.match(await evaluate("document.querySelector('.management-assignment-paper').innerText"), /測試督導甲、林督乙 （代理：測試代理丙）/);
+  assert.match(await evaluate("document.querySelector('.management-assignment-paper').innerText"), /測試督導甲、林督乙 （測試代理丙）/);
   assert.ok(!(await evaluate("document.querySelector('.management-assignment-paper').innerText")).includes('QA UNSAVED NAME'));
   assert.ok(!(await evaluate("document.querySelector('.management-assignment-paper').innerText")).includes('來源版本'));
   assert.ok(await evaluate("document.querySelector('.management-assignment-modal').innerText.includes('A4 直向・單頁')"));
@@ -91,7 +91,10 @@ try {
   evidence.expectedNames = await evaluate("window.__qaData.vessels.filter(v=>v.isActive).map(v=>({chinese:v.name,english:v.fullName}))");
   evidence.departments = ['船東督導', '管理組', '資材組', '營業組', '航運處', '船員組', '海技組'];
   evidence.layout = await evaluate(`(()=>{const paper=document.querySelector('.management-assignment-paper');const cells=[...paper.querySelectorAll('tbody tr:first-child td')];return {width:paper.getBoundingClientRect().width,height:paper.getBoundingClientRect().height,scale:Number(paper.style.getPropertyValue('--assignment-print-scale')),columns:cells.map(c=>c.getBoundingClientRect().width),overflow:[...paper.querySelectorAll('.assignment-cell-text')].flatMap(n=>{const r=document.createRange();r.selectNodeContents(n);return r.getBoundingClientRect().width>n.clientWidth+1?[{text:n.textContent,width:r.getBoundingClientRect().width,available:n.clientWidth}]:[]}),wrapping:[...paper.querySelectorAll('.assignment-cell-text')].some(n=>getComputedStyle(n).whiteSpace!=='nowrap')}})()`);
-  assert.equal(evidence.layout.columns.length, 11);
+  assert.equal(evidence.layout.columns.length, 13);
+  assert.ok(await evaluate("document.querySelector('.management-assignment-paper').innerText.includes('年分') && document.querySelector('.management-assignment-paper').innerText.includes('噸數') && document.querySelector('.management-assignment-paper').innerText.includes('2021.06') && document.querySelector('.management-assignment-paper').innerText.includes('2.0萬')"));
+  evidence.mergedCells = await evaluate("[...document.querySelectorAll('.management-assignment-paper tbody td[rowspan]')].filter(cell=>cell.rowSpan>1).map(cell=>({text:cell.textContent,rows:cell.rowSpan}))");
+  assert.ok(evidence.mergedCells.some(cell=>cell.text==='林管甲' && cell.rows===extraCount), 'adjacent office assignments merge without reordering ships');
   assert.ok(evidence.layout.width < 750 && evidence.layout.width > 740, 'fixed A4 portrait printable width');
   assert.ok(evidence.layout.columns[4] > evidence.layout.columns[5] * 2, 'supervisor column is wider than office columns');
   assert.deepEqual(evidence.layout.overflow, [], 'no hidden or overlapping cell text');
@@ -127,6 +130,7 @@ try {
   await click('分管表 Excel');
   await until(() => evidence.downloads.filter(d => d.complete).length === 2, 'vessel XLSX download');
   evidence.scenarios.push('vessel tab: same export includes all active vessels even when search matches none');
+  assert.equal(await evaluate("document.querySelector('input[aria-label=\"年分\"]') !== null && document.querySelector('input[aria-label=\"噸數\"]') !== null"), true, 'vessel management must expose maintainable year and tonnage labels');
   await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await image('management-mobile');
   evidence.mobile = await evaluate("({viewport:innerWidth,width:document.documentElement.scrollWidth,buttons:[...document.querySelectorAll('.management-assignment-export-actions button')].map(b=>({text:b.textContent,width:b.getBoundingClientRect().width,left:b.getBoundingClientRect().left,right:b.getBoundingClientRect().right}))})");

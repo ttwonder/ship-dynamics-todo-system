@@ -32,6 +32,7 @@ export function assignmentExportFixture(base) {
 // Full-width matrix: all six office groups, two supervisors, and enabled delegates.
 export function assignmentPrintFixture(base, extraCount = 50) {
   const data = assignmentExportFixture(base);
+  Object.assign(data.vessels[0], { yearLabel: '2021.06', tonnageLabel: '2.0萬' });
   const groups = ['管理組', '資材組', '營業組', '航運處', '船員組', '海技組'];
   data.settings.departments = ['船東督導', ...groups];
   data.users.find(user => user.id === 'b').department = '海技組';
