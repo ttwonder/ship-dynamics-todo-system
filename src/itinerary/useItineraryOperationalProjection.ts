@@ -16,6 +16,7 @@ export interface ItineraryOperationalRefreshResult {
 }
 
 export interface ItineraryOperationalFeed {
+  projectionNow?: number;
   backend: OfficeItineraryCloudRepository | null;
   records: Record<string, ItineraryOperationalFeedRecord>;
   refresh: (vesselIds?: readonly string[]) => Promise<ItineraryOperationalRefreshResult>;
@@ -52,6 +53,14 @@ export function useItineraryOperationalProjection({ actor, vesselIds, enabled }:
     try { return { backend: new MainSessionItineraryRepository(actor, config), error: '' }; }
     catch (error) { return { backend: null as OfficeItineraryCloudRepository | null, error: errorMessage(error) }; }
   }, [enabled, actor?.userId, configKey]);
+  const [projectionNow, setProjectionNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!enabled) return;
+    const tick = () => setProjectionNow(Date.now());
+    const timer = window.setInterval(tick, 15_000);
+    window.addEventListener('focus', tick);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', tick); };
+  }, [enabled]);
   const [records, setRecords] = useState<Record<string, ItineraryOperationalFeedRecord>>({});
   const recordsRef = useRef(records);
   const generationRef = useRef(0);
@@ -127,5 +136,5 @@ export function useItineraryOperationalProjection({ actor, vesselIds, enabled }:
     };
   }, [enabled, actor?.userId, configKey, vesselKey, publish, refresh]);
 
-  return { backend: backendState.backend, records, refresh, publishConfirmed };
+  return { backend: backendState.backend, records, refresh, publishConfirmed, projectionNow };
 }

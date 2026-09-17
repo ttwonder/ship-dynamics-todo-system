@@ -326,6 +326,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       sitePasswordHash: text(settings.sitePasswordHash),
       systemTitle: text(settings.systemTitle, '船舶動態與會議管理系統'),
       departments: strings(settings.departments),
+      ...(Object.prototype.hasOwnProperty.call(settings, 'supervisorOrder') ? { supervisorOrder: Array.from(new Set(Array.isArray(settings.supervisorOrder) ? settings.supervisorOrder.filter((id): id is string => typeof id === 'string' && Boolean(id)) : [])) } : {}),
       taskCategories: normalizedTaskCategories,
       taskCategorySchemaVersion: 2,
       meetingTaskCategories: normalizedMeetingTaskCategories,

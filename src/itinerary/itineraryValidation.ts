@@ -1,4 +1,5 @@
 import { ITINERARY_MAX_ALTERNATIVE_PLANS, ITINERARY_MAX_ROWS, ITINERARY_SCHEMA_VERSION, normalizeItineraryOperation, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryRow } from './itineraryTypes';
+import { NAVIGATION_STATUSES, LOAD_STATUSES, VESSEL_STATUSES } from '../vesselStateChoices';
 import { isValidItineraryTimeZone, normalizeInstant } from './itineraryTime';
 
 export interface ItineraryValidationError {
@@ -95,6 +96,19 @@ export function validateItineraryDocument(input: unknown, options: ItineraryVali
         return;
       }
       const row = typedRow as unknown as Record<string, unknown>;
+      if (Object.prototype.hasOwnProperty.call(row, 'currentVesselState')) {
+        const state = row.currentVesselState as Record<string, unknown>;
+        const invalid = !state || typeof state !== 'object' || Array.isArray(state)
+          || Object.keys(state).some(key => !['location', 'navigationStatus', 'loadStatus', 'statusList'].includes(key))
+          || ('location' in state && (typeof state.location !== 'string' || state.location.length > 240))
+          || ('navigationStatus' in state && !NAVIGATION_STATUSES.includes(state.navigationStatus as never))
+          || ('loadStatus' in state && !LOAD_STATUSES.includes(state.loadStatus as never))
+          || ('statusList' in state && (!Array.isArray(state.statusList)
+            || state.statusList.some(value => !VESSEL_STATUSES.includes(value))
+            || new Set(state.statusList).size !== state.statusList.length));
+        if (invalid) add(errors, `${path}.currentVesselState`, 'invalid-current-vessel-state', '目前船舶狀態格式無效。');
+        if (index !== 0) add(errors, `${path}.currentVesselState`, 'first-row-only', '目前船舶狀態只可設定於正式第一行。');
+      }
       const compatibilityDefaults: Partial<ItineraryRow> = {
         previousPortName: '',
         etaTimeZone: '', etbTimeZone: '', etcTimeZone: '', etdTimeZone: '',
@@ -188,6 +202,9 @@ export function validateItineraryDocument(input: unknown, options: ItineraryVali
           allRowIds.add(row.rowId);
         }
       });
+      if (planResult.value.rows.some(row => Object.prototype.hasOwnProperty.call(row, 'currentVesselState'))) {
+        add(errors, `${path}.rows`, 'formal-field-not-allowed', '備選方案不可保存目前船舶狀態。');
+      }
       const contaminatedRow = planResult.value.rows.findIndex(row => Boolean(row.previousPortName));
       if (contaminatedRow >= 0) add(errors, `${path}.rows[${contaminatedRow}].previousPortName`, 'formal-field-not-allowed', '備選方案不可保存正式上一港資料。');
       const formalAnchor = safeFormalRows[0];

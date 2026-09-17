@@ -1,3 +1,4 @@
+import { preserveItineraryCurrentVesselState } from './itineraryTypes';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TaskItem, UserAccount, Vessel } from '../types';
 import { getSupabaseConfig } from '../cloud';
@@ -29,6 +30,8 @@ interface ItineraryDashboardProps {
   calendarTasks: TaskItem[];
   selectedVesselIds: string[];
   setSelectedVesselIds: (ids: string[]) => void;
+  displayMode?: 'table' | 'calendar';
+  onDisplayModeChange?: (mode: 'table' | 'calendar') => void;
 }
 
 const UNRESTRICTED_ITINERARY_PERMISSIONS = {
@@ -66,7 +69,7 @@ function browserHolderId(): string {
   }
 }
 
-export default function ItineraryDashboard({ user, actor, operationalFeed, vessels, calendarTaskVessels, calendarTasks, selectedVesselIds, setSelectedVesselIds }: ItineraryDashboardProps) {
+export default function ItineraryDashboard({ user, actor, operationalFeed, vessels, calendarTaskVessels, calendarTasks, selectedVesselIds, setSelectedVesselIds, displayMode: controlledDisplayMode, onDisplayModeChange }: ItineraryDashboardProps) {
   const permissions = UNRESTRICTED_ITINERARY_PERMISSIONS;
   const demoMode = localDemoModeRequested();
   const [clockOrigin] = useState(() => Date.now());
@@ -76,7 +79,9 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
   const [notice, setNotice] = useState('');
   const [excelBusy, setExcelBusy] = useState<'' | 'export' | 'import'>('');
   const [importPreview, setImportPreview] = useState<{ fileName: string; parsed: ParsedItineraryWorkbook } | null>(null);
-  const [displayMode, setDisplayMode] = useState<'table' | 'calendar'>('table');
+  const [localDisplayMode, setLocalDisplayMode] = useState<'table' | 'calendar'>('table');
+  const displayMode = controlledDisplayMode ?? localDisplayMode;
+  const setDisplayMode = (mode: 'table' | 'calendar') => { setLocalDisplayMode(mode); onDisplayModeChange?.(mode); };
   const [holderId] = useState(browserHolderId);
   const editorRef = useRef(editor);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -106,7 +111,7 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
   const displayDocuments = useMemo(() => projectItineraryDocumentsForDisplay(documents, vessels), [documents, vessels]);
   const visibleIds = vessels.map(vessel => vessel.id);
   const everyVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedVesselIds.includes(id));
-  const selectedDocuments = selectedVesselIds.map(id => displayDocuments[id]).filter((document): document is ItineraryDocument => Boolean(document));
+  const selectedDocuments = selectedVesselIds.filter(id => visibleIds.includes(id)).map(id => displayDocuments[id]).filter((document): document is ItineraryDocument => Boolean(document));
   const calendarTaskEvents = useMemo(() => projectTaskPlannedCalendarEvents(
     calendarTasks,
     calendarTaskVessels.map(vessel => ({ id: vessel.id, vesselName: itineraryVesselDisplayName(vessel) })),
@@ -333,7 +338,7 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
       }
       const importedRows = item.sheet.rows.map(row => ({ ...row }));
       if (importedRows[0] && !importedRows[0].previousPortName.trim()) importedRows[0].previousPortName = current.rows[0]?.previousPortName || '';
-      const candidate: ItineraryDocument = { ...current, rows: importedRows };
+      const candidate: ItineraryDocument = { ...current, rows: preserveItineraryCurrentVesselState(importedRows, current.rows) };
       const result = await backend.save({ document: candidate, expectedRevision: current.revision, operationId: createItineraryOperationId(), lease: claim.lease, actorLabel: user.name });
       void backend.releaseLease(claim.lease);
       if (result.ok === true) {
@@ -355,7 +360,7 @@ export default function ItineraryDashboard({ user, actor, operationalFeed, vesse
         <a href={`${import.meta.env.BASE_URL}ship-itinerary.html`} target="_blank" rel="noopener noreferrer" className="btn small itinerary-ship-link">打開船端網頁</a>
         <button type="button" className="btn small ghost" onClick={toggleVisible} disabled={!visibleIds.length}>{everyVisibleSelected?'取消選取目前可見':'選取目前可見'}</button>
         <button type="button" className="btn small ghost" onClick={()=>setSelectedVesselIds([])} disabled={!selectedVesselIds.length}>清除選取</button>
-        <button type="button" className="btn small itinerary-view-toggle" onClick={()=>setDisplayMode(mode=>mode==='table'?'calendar':'table')}>{displayMode==='table'?'切換行事曆':'返回 Itinerary'}</button>
+        <button type="button" className="btn small itinerary-view-toggle" onClick={()=>setDisplayMode(displayMode==='table'?'calendar':'table')}>{displayMode==='table'?'切換行事曆':'返回 Itinerary'}</button>
         {permissions.export&&<button type="button" className="btn small ghost" onClick={()=>void exportSelected()} disabled={!selectedVesselIds.some(id=>documents[id])||Boolean(excelBusy)}>{excelBusy==='export'?'產生中…':`匯出 Excel（${selectedVesselIds.filter(id=>documents[id]).length}）`}</button>}
         {permissions.import&&<><button type="button" className="btn small ghost" onClick={()=>fileInputRef.current?.click()} disabled={Boolean(excelBusy)}>{excelBusy==='import'?'檢查中…':'匯入 Excel'}</button><input ref={fileInputRef} className="itinerary-file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event=>{const file=event.target.files?.[0];if(file)void readImportFile(file);}}/></>}
       </div>

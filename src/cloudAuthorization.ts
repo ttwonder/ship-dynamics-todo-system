@@ -533,7 +533,8 @@ export function assertActorAuthorizedForCloudBlockPatch(data:AppData,operations:
     if(operation.kind==='settings'){
       const fields=changedFields(operation.expected as unknown as Record<string,unknown>,operation.value as unknown as Record<string,unknown>);
       if(fields.has('rolePermissions'))permission(data,actor,'manageRolePermissions');
-      if([...fields].some(field=>field!=='rolePermissions'&&field!=='lastCloudSyncAt'))permission(data,actor,'manageSystemSettings');
+      if(fields.has('supervisorOrder')&&actor.role!=='owner'&&actor.role!=='admin')throw new CloudPatchAuthorizationError('supervisor-order-admin-only');
+      if([...fields].some(field=>field!=='rolePermissions'&&field!=='lastCloudSyncAt'&&field!=='supervisorOrder'))permission(data,actor,'manageSystemSettings');
       authorizedPrimary=true;
     }else if(operation.kind==='entity'){
       authorizeEntityOperation(data,actor,operation,crossUserTaskDismissalResets,withdrawnTaskIds);

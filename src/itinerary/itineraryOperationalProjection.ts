@@ -1,10 +1,11 @@
 import type { Vessel } from '../types';
-import { instantToWallTime } from './itineraryTime';
-import { firstItineraryRow, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryRow, type ItineraryTimeField } from './itineraryTypes';
+import { instantToWallTime, normalizeInstant } from './itineraryTime';
+import { resolveItineraryTimeZone, type ItineraryCurrentVesselState, type ItineraryDocument, type ItineraryRow, type ItineraryTimeField } from './itineraryTypes';
 
 export type ItineraryOperationalFeedStatus = 'loading' | 'ready' | 'missing' | 'stale' | 'error';
 
 export interface ItineraryOperationalValues {
+  currentVesselState?: ItineraryCurrentVesselState;
   previousPortName: string;
   portDockName: string;
   etaUtc: string | null;
@@ -61,12 +62,17 @@ function scheduleValue(row: ItineraryRow, field: ItineraryTimeField): { instant:
   return { instant, timeZone, schedule: itineraryOperationalScheduleValue(instant,timeZone) };
 }
 
-export function projectItineraryOperationalDocument(document: ItineraryDocument): ItineraryOperationalProjection | null {
-  const row = firstItineraryRow(document);
+export function projectItineraryOperationalDocument(document: ItineraryDocument, now: string | number | Date = Date.now()): ItineraryOperationalProjection | null {
+  const rows = [...document.rows].sort((left, right) => left.sortOrder - right.sortOrder || left.rowId.localeCompare(right.rowId));
+  const row = rows[0];
   if (!row) return null;
   const eta = scheduleValue(row, 'etaUtc');
   const etb = scheduleValue(row, 'etbUtc');
   const etd = scheduleValue(row, 'etdUtc');
+  const etdInstant = row.etdUtc && normalizeInstant(row.etdUtc) ? Date.parse(row.etdUtc) : NaN;
+  const nowInstant = new Date(now).getTime();
+  const nextPort = Number.isFinite(etdInstant) && etdInstant < nowInstant
+    ? text(rows[1]?.portDockName) || 'TBA' : text(row.portDockName);
   return {
     source: 'itinerary',
     vesselId: document.vesselId,
@@ -74,8 +80,9 @@ export function projectItineraryOperationalDocument(document: ItineraryDocument)
     updatedAt: document.updatedAt,
     rowId: row.rowId,
     values: {
+      ...(row.currentVesselState !== undefined ? { currentVesselState: structuredClone(row.currentVesselState) } : {}),
       previousPortName: text(row.previousPortName),
-      portDockName: text(row.portDockName),
+      portDockName: nextPort,
       etaUtc: eta.instant,
       etaTimeZone: eta.timeZone,
       etaSchedule: eta.schedule,
@@ -129,6 +136,11 @@ export function markItineraryOperationalRecordError(
 export function applyItineraryOperationalProjection(vessel: Vessel, projection: ItineraryOperationalProjection): Vessel {
   const next = structuredClone(vessel);
   const values = projection.values;
+  const state = values.currentVesselState;
+  if (state?.location !== undefined) next.position.location = state.location;
+  if (state?.navigationStatus !== undefined) next.position.navigationStatus = state.navigationStatus;
+  if (state?.loadStatus !== undefined) next.cargo.loadStatus = state.loadStatus;
+  if (state?.statusList !== undefined) next.note.statusList = [...state.statusList];
   next.position.lastPort = values.previousPortName;
   next.position.nextPort = values.portDockName;
   next.position.eta = values.etaSchedule ?? itineraryOperationalScheduleValue(values.etaUtc,values.etaTimeZone);
@@ -147,9 +159,10 @@ export function applyItineraryOperationalProjection(vessel: Vessel, projection: 
 export function resolveVesselWithItineraryProjection(
   vessel: Vessel,
   record: ItineraryOperationalFeedRecord | undefined,
+  now: string | number | Date = Date.now(),
 ): Vessel {
   if (!record?.document) return vessel;
-  const projection = projectItineraryOperationalDocument(record.document);
+  const projection = projectItineraryOperationalDocument(record.document, now);
   return projection ? applyItineraryOperationalProjection(vessel, projection) : vessel;
 }
 
@@ -168,7 +181,7 @@ export function buildItineraryProjectionSnapshot(
       itineraryProjections[vessel.id] = { source: 'legacy' };
       continue;
     }
-    const projection = record.document ? projectItineraryOperationalDocument(record.document) : null;
+    const projection = record.document ? projectItineraryOperationalDocument(record.document, capturedAt) : null;
     if (!projection) throw new Error(`尚未取得可信的 Itinerary：${vessel.name || vessel.id}`);
     itineraryProjections[vessel.id] = {
       source: 'itinerary',

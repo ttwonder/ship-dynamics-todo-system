@@ -1,0 +1,7 @@
+.supervisor-order-editor{display:grid;gap:6px;padding:8px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-bottom:8px;font-size:12px}
+.supervisor-order-editor>small{color:var(--muted)}
+.supervisor-order-editor ol{display:grid;gap:4px;max-height:260px;overflow:auto;list-style:none;padding:0;margin:0}
+.supervisor-order-editor li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:4px}
+.supervisor-order-editor li span{min-width:0;overflow-wrap:anywhere}
+.supervisor-order-editor p{margin:0;color:#9d2f22}
+.supervisor-order-actions{display:flex;gap:6px;justify-content:flex-end}

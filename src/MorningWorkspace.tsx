@@ -100,7 +100,7 @@ export default function MorningWorkspaceView({ data, user, visibleVessels, selec
   const scopeSet = new Set(scopeIds);
   const discussionVessels = visibleVessels.filter(vessel => scopeSet.has(vessel.id));
   const shipTypes = shipTypeFilterOptions(visibleVessels);
-  const supervisors = vesselSupervisorOptions(visibleVessels, data.users);
+  const supervisors = vesselSupervisorOptions(visibleVessels, data.users, data.settings.supervisorOrder);
   const applyVesselFilters = (nextFilters: ReturnType<typeof emptyVesselFilterState>) => {
     setVesselFilters(nextFilters);
     setSelected(hasActiveVesselFilters(nextFilters) ? matchingVesselIds(filterFacts, nextFilters) : []);

@@ -1,7 +1,7 @@
 import { recalculateItineraryRows } from './itineraryDomain';
 import { instantToWallTime, isValidItineraryTimeZone, wallTimeToInstant } from './itineraryTime';
 import {
-  createBlankItineraryRow, createEmptyItineraryDocument, createItineraryId, ITINERARY_MAX_ALTERNATIVE_PLANS, ITINERARY_TIME_ZONE_FIELDS, resolveItineraryTimeZone,
+  preserveItineraryCurrentVesselState, createBlankItineraryRow, createEmptyItineraryDocument, createItineraryId, ITINERARY_MAX_ALTERNATIVE_PLANS, ITINERARY_TIME_ZONE_FIELDS, resolveItineraryTimeZone,
   type ItineraryDocument, type ItineraryRow, type ItineraryTimeField,
 } from './itineraryTypes';
 
@@ -31,7 +31,7 @@ function synchronizeAlternativeAnchors(document: ItineraryDocument): ItineraryDo
   const formalAnchor = document.rows[0];
   document.alternativePlans = documentAlternativePlans(document).map(plan => ({
     ...plan,
-    rows: recalculateItineraryRows(plan.rows.map((row, index) => ({
+    rows: recalculateItineraryRows(preserveItineraryCurrentVesselState(plan.rows, []).map((row, index) => ({
       ...row,
       previousPortName: '',
       calculationStartUtc: index === 0 ? formalAnchor?.calculationStartUtc || null : null,
@@ -48,6 +48,7 @@ export function synchronizeShipAlternativeAnchors(document: ItineraryDocument): 
 export function createShipDraft(latest: ItineraryDocument, mode: ShipDraftStartMode, blankRowId?: string): ItineraryDocument {
   if (mode === 'latest') return cloneDocument(latest);
   const blank = createEmptyItineraryDocument({ workspaceKey: latest.workspaceKey, vesselId: latest.vesselId, vesselName: latest.vesselName, rowId: blankRowId });
+  blank.rows = preserveItineraryCurrentVesselState(blank.rows, latest.rows);
   blank.revision = latest.revision;
   blank.updatedAt = latest.updatedAt;
   blank.updatedActorKind = latest.updatedActorKind;
@@ -82,7 +83,7 @@ export function removeShipDraftRow(document: ItineraryDocument, rowId: string): 
       calculationStartTimeZone: removedFirstRow.calculationStartTimeZone,
     };
   }
-  next.rows = recalculateItineraryRows(remaining.length ? remaining : [createBlankItineraryRow(undefined, 0)]).rows;
+  next.rows = recalculateItineraryRows(preserveItineraryCurrentVesselState(remaining.length ? remaining : [createBlankItineraryRow(undefined, 0)], document.rows)).rows;
   if (next.rows[0]) next.rows[0].etaMode = next.rows[0].etaUtc ? next.rows[0].etaMode : 'manual';
   return removedFirstRow ? synchronizeAlternativeAnchors(next) : next;
 }
@@ -99,7 +100,7 @@ export function updateShipDraftRow(document: ItineraryDocument, rowId: string, p
 
 export function replaceShipDraftRows(document: ItineraryDocument, rows: ItineraryRow[]): ItineraryDocument {
   const next = cloneDocument(document);
-  next.rows = rows.map(row => ({ ...row }));
+  next.rows = preserveItineraryCurrentVesselState(rows, document.rows);
   return synchronizeAlternativeAnchors(next);
 }
 
@@ -132,6 +133,7 @@ export function updateShipAlternativePlanRow(document: ItineraryDocument, planId
   const next = cloneDocument(document);
   const normalizedPatch = { ...patch };
   delete normalizedPatch.previousPortName;
+  delete normalizedPatch.currentVesselState;
   delete normalizedPatch.calculationStartUtc;
   delete normalizedPatch.calculationStartTimeZone;
   if (Object.prototype.hasOwnProperty.call(patch, 'ldRateText')) normalizedPatch.operationRateMtPerHour = parseItineraryRateText(patch.ldRateText || '');
@@ -202,7 +204,7 @@ export function promoteShipAlternativePlanToDraft(document: ItineraryDocument, p
   const plan = documentAlternativePlans(next).find(candidate => candidate.planId === planId);
   if (!plan) return next;
   const formalFirst = next.rows[0];
-  next.rows = recalculateItineraryRows(plan.rows.map((row, index) => ({
+  next.rows = recalculateItineraryRows(preserveItineraryCurrentVesselState(plan.rows, document.rows).map((row, index) => ({
     ...structuredClone(row),
     rowId: createRowId(),
     sortOrder: index,
@@ -313,7 +315,7 @@ function rowHasBusinessContent(row: ItineraryRow): boolean {
 }
 
 export function hasShipDraftBusinessContent(document: ItineraryDocument): boolean {
-  return document.rows.some(rowHasBusinessContent);
+  return document.rows.some(rowHasBusinessContent) || Object.keys(document.rows[0]?.currentVesselState || {}).length > 0;
 }
 
 export function hasShipPreviousPortName(document: ItineraryDocument): boolean {

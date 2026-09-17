@@ -1,5 +1,5 @@
 import type { ItineraryRow } from './itineraryTypes';
-import { resolveItineraryTimeZone } from './itineraryTypes';
+import { preserveItineraryCurrentVesselState, resolveItineraryTimeZone } from './itineraryTypes';
 import { addHoursToInstant, isValidItineraryTimeZone } from './itineraryTime';
 
 export type ItineraryCalculationIssueCode =
@@ -63,7 +63,7 @@ function validateNonNegative(
 }
 
 export function resequenceItineraryRows(rows: readonly ItineraryRow[]): ItineraryRow[] {
-  return rows.map((row, index) => ({ ...row, sortOrder: index }));
+  return preserveItineraryCurrentVesselState(rows, rows).map((row, index) => ({ ...row, sortOrder: index }));
 }
 
 export function recalculateItineraryRows(inputRows: readonly ItineraryRow[]): ItineraryCalculationResult {

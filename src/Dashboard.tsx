@@ -33,6 +33,8 @@ interface DashboardProps {
   itineraryActor: ItineraryMainActor;
   itineraryOperationalFeed?: ItineraryOperationalFeed;
   users: UserAccount[];
+  supervisorOrder?: string[];
+  onSaveSupervisorOrder?: (ids: string[], expected: string[] | undefined) => Promise<boolean>;
   vessels: Vessel[];
   tasks: TaskItem[];
   calendarTasks: TaskItem[];
@@ -59,13 +61,14 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, itineraryActor, itineraryOperationalFeed, users, vessels, tasks, calendarTasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ user, itineraryActor, itineraryOperationalFeed, users, supervisorOrder, onSaveSupervisorOrder, vessels, tasks, calendarTasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [vesselFilters, setVesselFilters] = useState(emptyVesselFilterState);
   const [keyword, setKeyword] = useState('');
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
   const [scheduleNow, setScheduleNow] = useState(() => new Date());
-  const [dashboardMode, setDashboardMode] = useState<'cards' | 'itinerary'>('cards');
+  const [dashboardMode, setDashboardMode] = useState<'cards' | 'itinerary' | 'calendar'>('cards');
   const [itinerarySelected, setItinerarySelected] = useState<string[]>([]);
+  const [calendarSelection, setCalendarSelection] = useState<{ scope: string; ids: string[] }>({ scope: '', ids: [] });
   const scheduleField = { ETA: 'eta', ETB: 'etb', ETD: 'etd' } as const;
 
   useEffect(() => {
@@ -94,7 +97,7 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
     }] as const;
   }));
   const shipTypes = shipTypeFilterOptions(vessels);
-  const supervisors = vesselSupervisorOptions(vessels, users);
+  const supervisors = vesselSupervisorOptions(vessels, users, supervisorOrder);
 
   const visible = vessels.filter(vessel => {
     const filterFacts = filterFactsByVessel.get(vessel.id);
@@ -113,6 +116,19 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
     ].join(' ').toLowerCase().includes(query);
   });
 
+  const calendarScope = JSON.stringify([vesselFilters, keyword.trim(), visible.map(vessel => vessel.id).sort()]);
+  const calendarVisibleIds = visible.map(vessel => vessel.id);
+  const calendarSelected = calendarSelection.scope === calendarScope
+    ? calendarSelection.ids.filter(id => calendarVisibleIds.includes(id)) : calendarVisibleIds;
+  const setCalendarSelected = (ids: string[]) => setCalendarSelection({ scope: calendarScope, ids });
+  useEffect(() => {
+    setCalendarSelection(previous => previous.scope === calendarScope ? previous : { scope: calendarScope, ids: calendarVisibleIds });
+  }, [calendarScope]);
+  const changeItineraryView = (mode: 'table' | 'calendar') => {
+    if (mode === 'calendar') setCalendarSelected(calendarVisibleIds);
+    setDashboardMode(mode === 'calendar' ? 'calendar' : 'itinerary');
+  };
+
   const visibleVesselIds = new Set(vessels.map(vessel => vessel.id));
   const openTasks = tasks.filter(task => taskVesselIds(task).some(id => visibleVesselIds.has(id)) && !taskIsClosedForScope(task,[...visibleVesselIds]));
   const urgentHighCount = openTasks.filter(task => task.priority === '急' || task.priority === '高').length;
@@ -130,7 +146,7 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
   return <section className="dashboard-view">
     <div className="page-heading">
       <div><h1>船舶看板</h1><p>集中查看上下港、位置、載況、時間、貨物、未來一週關注與重要要事。</p></div>
-      <div className="heading-actions no-print"><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='itinerary'} onClick={()=>setDashboardMode(mode=>mode==='cards'?'itinerary':'cards')}>{dashboardMode==='itinerary'?'返回船舶卡片':'切換顯示Itinerary信息'}</button>{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新船舶（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>
+      <div className="heading-actions no-print"><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='calendar'} onClick={()=>{if(dashboardMode==='calendar')setDashboardMode('cards');else changeItineraryView('calendar');}}>{dashboardMode==='calendar'?'返回船舶卡片':'切換行事曆顯示'}</button><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='itinerary'} onClick={()=>setDashboardMode(mode=>mode==='itinerary'?'cards':'itinerary')}>{dashboardMode==='itinerary'?'返回船舶卡片':'切換顯示Itinerary信息'}</button>{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新船舶（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>
     </div>
     <div className="metric-grid">
       <div className="metric-card blue"><small>今日船舶</small><b>{vessels.length}</b><span>艘</span></div>
@@ -142,9 +158,9 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
     </div>
     <div className="dashboard-toolbar no-print">
       <input className="dashboard-search" value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
-      <VesselFilterControls filters={vesselFilters} shipTypes={shipTypes} supervisors={supervisors} onChange={setVesselFilters} showMeeting={canUseMeetings}/>
+      <VesselFilterControls key={user.id} filters={vesselFilters} shipTypes={shipTypes} supervisors={supervisors} onChange={setVesselFilters} showMeeting={canUseMeetings} supervisorOrder={supervisorOrder} onSaveSupervisorOrder={user.isActive && (user.role==='owner'||user.role==='admin') ? onSaveSupervisorOrder : undefined}/>
     </div>
-    {dashboardMode==='itinerary'?<Suspense fallback={<div className="itinerary-empty">正在載入 Itinerary 視圖…</div>}><ItineraryDashboard user={user} actor={itineraryActor} operationalFeed={itineraryOperationalFeed} vessels={visible} calendarTaskVessels={vessels} calendarTasks={calendarTasks} selectedVesselIds={itinerarySelected} setSelectedVesselIds={setItinerarySelected}/></Suspense>:<div className="fleet-card-grid">{visible.map(vessel => {
+    {dashboardMode!=='cards'?<Suspense fallback={<div className="itinerary-empty">正在載入 Itinerary 視圖…</div>}><ItineraryDashboard user={user} actor={itineraryActor} operationalFeed={itineraryOperationalFeed} vessels={visible} calendarTaskVessels={vessels} calendarTasks={calendarTasks} displayMode={dashboardMode==='calendar'?'calendar':'table'} onDisplayModeChange={changeItineraryView} selectedVesselIds={dashboardMode==='calendar'?calendarSelected:itinerarySelected} setSelectedVesselIds={dashboardMode==='calendar'?setCalendarSelected:setItinerarySelected}/></Suspense>:<div className="fleet-card-grid">{visible.map(vessel => {
       const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
       const attentionTasks = vesselAttentionTasks(vesselTasks);
       const abnormalMeetings = abnormalMeetingsForVessel(vessel.id);

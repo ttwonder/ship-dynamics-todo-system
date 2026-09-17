@@ -1,5 +1,9 @@
 # Records 增量資料庫更新包｜本機交付
 
+## 後續獨立功能 delta（不重跑本包）
+
+船端目前四欄與時間感知下一港的本機候選，交接見 [itinerary-current-state-release.md](itinerary-current-state-release.md)。新增 migration 為 `20260916090000_itinerary_current_vessel_state.sql`；沒有重生 05–14 或改變下述正式狀態。
+
 ## 結論與邊界
 
 這次交付的是 **可執行、已在隔離 native PostgreSQL 演練的增量資料庫包**，不是重建資料庫。完整備份依使用者決定不再作為前置；已取得的首包和未提交備份草稿保留，不混入這次 commit。

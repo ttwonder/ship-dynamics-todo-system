@@ -43,6 +43,6 @@ assert.match(styles, /\.vessel-officer-grid\{[^}]*grid-template-columns:repeat\(
 assert.match(styles, /\.vessel-officer-grid\{[^}]*margin:0/, '四位姓名區必須與左側近期動態頂端對齊，不得沿用舊版外距下移');
 assert.match(styles, /\.vessel-cargo-field textarea,\.vessel-manual-remark textarea\{[^}]*min-height:91px/, '人工備註與貨名貨量必須同高');
 assert.ok(modal.includes('<section className="vessel-dynamics-section">'), '船舶狀態與作業／動態補充必須包在同一船舶動態區塊');
-assert.ok(modal.includes('CheckboxMultiPicker label="船舶狀態"') && modal.includes('target.note.statusSupplement = value'), '視覺整合不得合併或刪除兩個獨立資料欄位');
+assert.ok(modal.includes('<label>船舶狀態</label>') && modal.includes('value={draft.note.statusList.map(') && !modal.includes('CheckboxMultiPicker label="船舶狀態"') && modal.includes('target.note.statusSupplement = value'), '船舶狀態改為 Itinerary 唯讀投影；作業／動態補充仍是獨立可編輯欄位');
 
 console.log('Single-vessel detail and quick-update layout contracts passed.');

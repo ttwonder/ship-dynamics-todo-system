@@ -718,7 +718,8 @@ const rawVessels = [
 export const DEPARTMENTS = Array.from(new Set(rawPersonnel.map(p => p.department)));
 export const TASK_CATEGORIES = [...REQUIRED_TASK_CATEGORIES];
 export const MEETING_TASK_CATEGORIES = [...REQUIRED_MEETING_TASK_CATEGORIES];
-export const VESSEL_STATUSES: ShipStatus[] = ['loading', 'unloading', 'to load', 'to unload', 'waiting order', 'drydock/repiar'];
+import { VESSEL_STATUSES } from '../vesselStateChoices';
+export { VESSEL_STATUSES } from '../vesselStateChoices';
 export const PRIORITIES: TaskPriority[] = ['急', '高', '中', '低'];
 
 const ports = ['高雄', '麥寮', '新加坡', '仁川', '東京', '上海', '香港', '馬尼拉', '釜山', '杜拜'];

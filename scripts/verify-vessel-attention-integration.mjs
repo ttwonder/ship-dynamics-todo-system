@@ -11,7 +11,7 @@ assert.ok(handler.includes('vesselAttentionSaveQueue.current?.enqueue'), 'attent
 assert.ok(!handler.includes('mutateVesselWithLease'), 'attention click must not wait for the whole-vessel edit lease workflow');
 assert.ok(app.includes('createVesselAttentionSaveQueue'), 'App must own the latest-value per-vessel queue');
 assert.ok(app.includes('vesselAttentionDirectSaveSnapshots'), 'direct attention saves must mark their snapshot');
-assert.match(app, /const directAttentionSave=vesselAttentionDirectSaveSnapshots\.current\.has\(data\);[\s\S]*?if\(directAttentionSave\)return;/, '900ms autosave must skip snapshots already sent by the attention queue');
+assert.match(app, /const directAttentionSave=vesselAttentionDirectSaveSnapshots\.current\.has\(data\);[\s\S]*?if\(directAttentionSave\|\|internalControlBatchDirectSaveSnapshots\.current\.has\(data\)\)return;/, '900ms autosave must skip snapshots already sent by the attention queue');
 assert.ok(app.includes('attentionSaveStates={vesselAttentionSaveStates}'), 'Dashboard must receive per-vessel sync state');
 assert.ok(app.includes('onRetryAttentionSave={retryDashboardVesselAttention}'), 'Dashboard must receive a per-card retry action');
 

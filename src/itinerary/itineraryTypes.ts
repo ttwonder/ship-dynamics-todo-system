@@ -1,3 +1,12 @@
+import type { LoadStatus, NavigationStatus, ShipStatus } from '../types';
+
+export interface ItineraryCurrentVesselState {
+  location?: string;
+  navigationStatus?: NavigationStatus;
+  loadStatus?: LoadStatus;
+  statusList?: ShipStatus[];
+}
+
 export const ITINERARY_SCHEMA_VERSION = 1 as const;
 export const ITINERARY_MAX_ROWS = 100;
 export const ITINERARY_MAX_ALTERNATIVE_PLANS = 5;
@@ -66,6 +75,7 @@ export interface ItineraryRow {
   sortOrder: number;
   /** Document-level metadata stored on the first sorted row for cloud compatibility. */
   previousPortName: string;
+  currentVesselState?: ItineraryCurrentVesselState;
   voyageNumber: string;
   portDockName: string;
   operation: ItineraryOperation;
@@ -124,6 +134,17 @@ export function resolveItineraryTimeZone(row: ItineraryRow, field: ItineraryTime
 
 export function firstItineraryRow(document: Pick<ItineraryDocument, 'rows'>): ItineraryRow | null {
   return [...document.rows].sort((left, right) => left.sortOrder - right.sortOrder || left.rowId.localeCompare(right.rowId))[0] || null;
+}
+
+/** Retain document metadata across row replacement; imports/alternatives cannot own it. */
+export function preserveItineraryCurrentVesselState(rows: readonly ItineraryRow[], sourceRows: readonly ItineraryRow[]): ItineraryRow[] {
+  const state = firstItineraryRow({ rows: [...sourceRows] })?.currentVesselState;
+  return rows.map((row, index) => {
+    const next = { ...row };
+    delete next.currentVesselState;
+    if (index === 0 && state !== undefined) next.currentVesselState = structuredClone(state);
+    return next;
+  });
 }
 
 export interface ItineraryDocument {

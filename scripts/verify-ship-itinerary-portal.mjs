@@ -290,9 +290,9 @@ try {
   assert.ok(calculationAnchorBlock.indexOf('>使用現在</button>') < calculationAnchorBlock.indexOf(calculationAnchorReminder), 'UTC offset calculation reminder must sit after the Use Now button in the same calculation anchor');
   assert.match(calculationAnchorBlock, /<p className="ship-calculation-anchor-note" role="note">/);
   assert.equal(officeEditor.includes(calculationAnchorReminder), false, 'UTC offset calculation reminder is requested only in the ship-side editor');
-  assert.match(css, /\.ship-calculation-anchor\{[^}]*grid-template-columns:72px 112px 68px 94px 58px minmax\(0,1fr\)/, 'desktop calculation anchor must reserve a flexible sixth cell for the reminder');
+  assert.match(css, /\.ship-calculation-anchor-note\{[^}]*grid-column:3\/-1;grid-row:2/, 'calculation reminder starts on row two aligned with the time input');
   assert.match(css, /\.ship-calculation-anchor-note\{[^}]*margin:0[^}]*min-width:0[^}]*white-space:normal[^}]*overflow-wrap:anywhere/, 'calculation reminder must prefer one line but wrap safely when space is narrow');
-  assert.match(css, /@media\(max-width:900px\)\{[\s\S]*?\.ship-calculation-anchor-note\{grid-column:1\/-1\}/, 'narrow ship editor must place the reminder below the controls without creating a wider grid');
+  assert.match(css, /@media\(max-width:900px\)\{[\s\S]*?\.ship-calculation-anchor-note\{grid-column:3\/-1\}/, 'narrow ship editor must place the reminder below the controls without creating a wider grid');
   assert.match(editor, /role="separator"/);
   assert.match(editor, /onPointerMove=/);
   assert.match(editor, /shipTimeZonePatch/);

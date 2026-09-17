@@ -24,8 +24,11 @@ assert.ok(types.includes('items: VesselCargoItem[]'), '货名货量需支持多�
 assert.ok(types.includes('weeklyAttention: WeeklyAttentionKey[]'), '需保存未来一周关注灯');
 
 assert.ok(modals.includes('異常') && modals.includes('draft.isAbnormal'), '新增／编辑要事弹窗需提供异常选项');
+// Current-state entry moved to the ship portal; quick update displays confirmed values read-only.
+const stateChoices = read('src/vesselStateChoices.ts');
+assert.ok(modals.includes('<input readOnly aria-readonly="true" value={draft.position.navigationStatus}/>'), '快速更新只顯示船端已確認航行狀態');
 for (const status of ['航行','拋錨','進港中','出港中','停泊','漂航']) {
-  assert.ok(modals.includes(`<option>${status}</option>`), `快速更新航行狀態需提供「${status}」`);
+  assert.ok(stateChoices.includes(`'${status}'`), `船岸共用航行狀態需保留「${status}」`);
 }
 assert.ok(modals.includes('智慧船舶接口'), '快速更新需说明资料可由智慧船舶接口同步');
 

@@ -3,6 +3,10 @@
 狀態：本機實作基線（2026-08-31）
 來源：使用者需求、`每日 甲板 - Itinerary - 模板.xlsx`、現行 `Dashboard.tsx` 及既有權限／保存流程。
 
+## 目前狀態／下一港增量規則
+
+需求 1、2 的最新 optional first-row metadata、ship-only 編輯與 captured-time 下一港規則見 [itinerary-current-state-release.md](itinerary-current-state-release.md)；其規則優先於此早期基線對營運欄位來源的描述。既有 rows／alternatives／lease／CAS／history 協定不變。
+
 ## 1. 隔離邊界
 
 - Itinerary 是獨立模組，只共用既有不可變 `vessel.id` 與顯示船名。

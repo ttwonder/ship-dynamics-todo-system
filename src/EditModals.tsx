@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { AppData, LoadStatus, NavigationStatus, ShipStatus, TaskItem, TaskPriority, UserAccount, Vessel, VesselCargoItem } from './types';
+import type { AppData, TaskItem, TaskPriority, UserAccount, Vessel, VesselCargoItem } from './types';
 import { nowIso, todayDate, uid } from './runtimeUtils';
 import { FLOW_INTERNAL_CONTROL_REMINDER } from './taskWorkflow';
 import { vesselDisplayName } from './vesselDisplay';
@@ -122,13 +122,13 @@ export function VesselEditModal({ vessel, data, currentUser, close, onSave, addT
   return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="vessel-edit-title"><div className="modal-header"><div><h2 id="vessel-edit-title">快速更新｜{vesselDisplayName(draft)}</h2><small>按「保存並關閉」才會寫入資料；按 Esc 等同取消</small></div><div className="heading-actions"><button type="button" className="btn ghost" disabled={saving} onClick={cancel}>{leaseMode==='frozen'?'放棄並關閉':'取消並關閉'}</button><button type="button" className="btn primary" disabled={saving||leaseMode!=='editable'} onClick={()=>void save()}>{saving?'正在確認雲端…':leaseMode==='retrying'?'正在重新確認編輯鎖…':leaseMode==='frozen'?'編輯鎖已失效，不能保存':'保存並關閉'}</button></div></div>
     {leaseMode!=='editable'&&<div className={`callout ${leaseMode==='frozen'?'danger':'warning'} vessel-lease-continuity-notice`} role="status"><b>{leaseMode==='frozen'?'多人協作鎖已失效':'多人協作鎖暫時無法確認'}</b><span>{leaseMessage||(leaseMode==='frozen'?'目前內容以唯讀方式保留，不能保存；可先複製內容，或明確放棄並關閉。':'正在重試；目前內容仍保留，可以繼續填寫，確認成功前不能保存。')}</span></div>}
     <fieldset disabled={leaseMode==='frozen'} className="vessel-editor-fields" aria-readonly={leaseMode==='frozen'}>
-    <div className="smart-ship-api-note"><b>營運資訊來源</b><span>上一港、下一港、ETA／ETB／ETD 與貨名貨量由 Itinerary 正式首列同步；請在 Itinerary 修改。智慧船舶接口只保留目前位置、航行狀態、船速與載況。</span></div>
+    <div className="smart-ship-api-note"><b>營運資訊來源</b><span>上一港、ETA／ETB／ETD 與貨名貨量由 Itinerary 正式首列同步；下一港依首列 ETD 判斷是否採第二列。目前位置、航行狀態、載況與船舶狀態只可在船端 Itinerary 修改；智慧船舶接口只保留船速。</span></div>
     <div className="grid cols-4 vessel-operational-grid">
-      <div className="field"><label>目前位置</label><input disabled={saving} value={draft.position.location} onChange={event => { const value = event.target.value; update(target => { target.position.location = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }); }}/></div>
+      <div className="field"><label>目前位置</label><input readOnly aria-readonly="true" value={draft.position.location}/><small>由船端 Itinerary 同步</small></div>
       <div className="field"><label>上一港</label><input readOnly aria-readonly="true" value={draft.position.lastPort}/><small>由 Itinerary 正式首列同步</small></div>
-      <div className="field"><label>下一港</label><input readOnly aria-readonly="true" value={draft.position.nextPort}/><small>由 Itinerary 正式首列同步</small></div>
-      <div className="field"><label>航行狀態</label><select disabled={saving} value={draft.position.navigationStatus} onChange={event => { const value = event.target.value as NavigationStatus; update(target => { target.position.navigationStatus = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }); }}><option>航行</option><option>拋錨</option><option>進港中</option><option>出港中</option><option>停泊</option><option>漂航</option></select></div>
-      <div className="field"><label>載況</label><select disabled={saving} value={draft.cargo.loadStatus} onChange={event => { const value = event.target.value as LoadStatus; update(target => { target.cargo.loadStatus = value; target.cargo.source = 'manual'; target.cargo.updatedAt = nowIso(); }); }}><option>空載</option><option>非空載</option><option>滿載</option></select></div>
+      <div className="field"><label>下一港</label><input readOnly aria-readonly="true" value={draft.position.nextPort}/><small>依首列 ETD 判斷第一／第二列；無第二列為 TBA</small></div>
+      <div className="field"><label>航行狀態</label><input readOnly aria-readonly="true" value={draft.position.navigationStatus}/><small>由船端 Itinerary 同步</small></div>
+      <div className="field"><label>載況</label><input readOnly aria-readonly="true" value={draft.cargo.loadStatus}/><small>由船端 Itinerary 同步</small></div>
       <ScheduleDateTimeField readOnly label="ETA" value={draft.position.eta} onChange={()=>undefined}/>
       <ScheduleDateTimeField readOnly label="ETB" value={draft.position.etb} onChange={()=>undefined}/>
       <ScheduleDateTimeField readOnly label="ETD" value={draft.position.etd} onChange={()=>undefined}/>
@@ -150,7 +150,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, onSave, addT
     <section className="vessel-dynamics-section">
       <div className="vessel-dynamics-section-title"><h3>船舶動態</h3><span>快捷狀態與自由補充可分別使用</span></div>
       <div className="vessel-status-edit-grid">
-        <CheckboxMultiPicker label="船舶狀態" values={draft.note.statusList} choices={data.settings.vesselStatuses.map(status => ({ value: status, label: status === 'drydock/repiar' ? 'drydock/repair' : status }))} onChange={values => update(target => { target.note.statusList = values as ShipStatus[]; target.note.updatedAt = nowIso(); })}/>
+        <div className="field"><label>船舶狀態</label><input readOnly aria-readonly="true" value={draft.note.statusList.map(status => status === 'drydock/repiar' ? 'drydock/repair' : status).join(' / ')}/><small>由船端 Itinerary 同步</small></div>
         <div className="field vessel-status-supplement"><label>船舶作業／動態補充</label><textarea disabled={saving} value={draft.note.statusSupplement} placeholder="可自由輸入；可與快捷狀態同時使用，也可全部留空" onChange={event => { const value = event.target.value; update(target => { target.note.statusSupplement = value; target.note.updatedAt = nowIso(); }); }}/></div>
       </div>
     </section>

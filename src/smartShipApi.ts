@@ -42,7 +42,7 @@ export function mergeSmartShipSnapshot(vessel: Vessel, snapshot: SmartShipVessel
   if (snapshot.eta !== undefined) position.eta = snapshot.eta;
   if (snapshot.etb !== undefined) position.etb = snapshot.etb;
   if (snapshot.etd !== undefined) position.etd = snapshot.etd;
-  const positionChanged = snapshot.location !== undefined || snapshot.speedKnots !== undefined || snapshot.navigationStatus !== undefined;
+  const positionChanged = snapshot.speedKnots !== undefined;
   if (positionChanged) {
     position.source = 'smart-ship-api';
     position.updatedAt = snapshot.fetchedAt;
@@ -54,10 +54,6 @@ export function mergeSmartShipSnapshot(vessel: Vessel, snapshot: SmartShipVessel
     next.cargo.name = snapshot.cargoItems[0]?.name || '';
     next.cargo.quantity = snapshot.cargoItems[0]?.quantity || '';
   }
-  if (snapshot.loadStatus !== undefined) {
-    next.cargo.source = 'smart-ship-api';
-    next.cargo.updatedAt = snapshot.fetchedAt;
-  }
-  if (positionChanged || snapshot.loadStatus !== undefined) next.updatedAt = snapshot.fetchedAt;
+  if (positionChanged) next.updatedAt = snapshot.fetchedAt;
   return applyItineraryOperationalWriteMask(vessel, next);
 }

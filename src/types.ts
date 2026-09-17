@@ -297,6 +297,7 @@ export interface AuditLog {
 }
 
 export interface AppSettings {
+  supervisorOrder?: string[];
   sitePasswordHash: string;
   systemTitle: string;
   departments: string[];

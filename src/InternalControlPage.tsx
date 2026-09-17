@@ -161,7 +161,7 @@ export default function InternalControlPage({ loadCase, data, user, vessels, can
   const shipTypes = unique(vessels.map(vessel => vessel.shipType));
   const categories = unique([...data.settings.taskCategories, ...scopedCases.map(item => item.category), '設備故障']);
   const departments = unique([...data.settings.departments, ...scopedCases.flatMap(item => item.departments)]);
-  const supervisorOptions = vesselSupervisorOptions(vessels, data.users).map(option => ({ value: option.id, label: option.name }));
+  const supervisorOptions = vesselSupervisorOptions(vessels, data.users, data.settings.supervisorOrder).map(option => ({ value: option.id, label: option.name }));
   const setFilter = <K extends keyof InternalControlFilters>(key: K, value: InternalControlFilters[K]) => setFilters(previous => ({ ...previous, [key]: value }));
   const resetSelection=defaultInternalControlVesselSelection(user,vessels);
   const reset = () => {setFilters(emptyFilters(resetSelection));setColumnSort('created-desc');};

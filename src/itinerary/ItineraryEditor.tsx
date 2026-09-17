@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createBlankItineraryRow, createItineraryId, ITINERARY_TIME_ZONE_FIELDS, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryRow, type ItineraryTimeField } from './itineraryTypes';
+import { preserveItineraryCurrentVesselState, createBlankItineraryRow, createItineraryId, ITINERARY_TIME_ZONE_FIELDS, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryRow, type ItineraryTimeField } from './itineraryTypes';
 import { pendingOperationForDocument } from './itineraryOperation';
 import { resequenceItineraryRows } from './itineraryDomain';
 import { instantToWallTime, wallTimeToInstant } from './itineraryTime';
@@ -173,7 +173,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
     if (current.rows.length === 1) {
       const replacement = createBlankItineraryRow(current.rows[0].rowId, 0);
       replacement.previousPortName = current.rows[0]?.previousPortName || '';
-      return { ...current, rows: [replacement] };
+      return { ...current, rows: preserveItineraryCurrentVesselState([replacement], current.rows) };
     }
     return removeShipDraftRow(current, rowId);
   });
@@ -185,7 +185,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
     // an await. Component lifetime alone does not identify actor/config scope.
     const isSaveCurrent = () => isCurrent(generation) && (!isSaveContextCurrent || isSaveContextCurrent());
     if (!isSaveCurrent()) return;
-    const candidate = { ...draft, rows: resequenceItineraryRows(draft.rows) };
+    const candidate = { ...draft, rows: preserveItineraryCurrentVesselState(resequenceItineraryRows(draft.rows), document.rows) };
     const validation = validateItineraryDocument(candidate);
     if (validation.ok === false) {
       setMessage(validation.errors.slice(0, 3).map(error => error.message).join('；'));

@@ -24,9 +24,7 @@ for (const label of ['目前位置','上一港','下一港','航行狀態','載�
   assert.ok(batch.includes(label), `批量更新清單缺少欄位：${label}`);
 }
 assert.ok(!batch.includes('value={vessel.position.speedKnots}'), '船速欄位暫時隱藏時，批量更新不得仍提供人工輸入');
-for (const status of ['航行','拋錨','進港中','出港中','停泊','漂航']) {
-  assert.ok(batch.includes(`<option>${status}</option>`), `批量更新航行狀態需提供「${status}」`);
-}
+assert.ok(batch.includes('船端 Itinerary') && !batch.includes('<select'), '航行狀態／載況由船端 Itinerary 提供，批量清單不得再編輯');
 assert.ok(app.includes('batchTargetVesselsFor(activeVessels,currentUser,batchSelectedVesselIds)'), 'App 必須把人工勾選解析成exact target，不得把經管船舶自動加入本次操作');
 assert.ok(!batch.includes("currentUser.role === 'owner' || currentUser.role === 'admin' ? vessels"), 'Owner／管理員不得因全船可見權限而把所有船舶誤納入自管批量清單');
 assert.ok(batch.includes('ScheduleDateTimeField') && batch.includes('value={vessel.position.eta}') && batch.includes('readOnly aria-readonly="true"'), '批量清單需顯示唯讀 ETA／ETB／ETD 日期時間');

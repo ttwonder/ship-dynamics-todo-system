@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { LoadStatus, NavigationStatus, Vessel, VesselCargoItem } from './types';
+import type { Vessel, VesselCargoItem } from './types';
 import { nowIso } from './utils';
 import { vesselDisplayName } from './vesselDisplay';
 import { formatScheduleDisplay, scheduleDateValue, scheduleTimeValue } from './scheduleTime';
@@ -64,7 +64,7 @@ export default function BatchManagedVesselModal({ vessels, lockedVesselIds, read
       <div>
         <h2 id="batch-managed-title">批量更新船舶</h2>
         <small>欄位先暫存在本視窗；按「保存並關閉」才會一次寫入全部修改。</small>
-        <small>上一港、下一港、ETA／ETB／ETD 與貨名貨量由 Itinerary 正式首列同步，只可在 Itinerary 修改。</small>
+        <small>上一港、ETA／ETB／ETD 與貨名貨量由 Itinerary 正式首列同步；下一港依首列 ETD 判斷是否採第二列，只可在 Itinerary 修改；目前位置、航行狀態、載況與船舶狀態只可在船端 Itinerary 修改。</small>
         <small>共 {managedVessels.length} 艘；第 {page} / {pageCount} 頁</small>
         {readOnly&&<small className="danger-note">正在等待雲端確認；欄位已暫停，船舶鎖仍保留。</small>}
       </div>
@@ -82,11 +82,11 @@ export default function BatchManagedVesselModal({ vessels, lockedVesselIds, read
         </header>
         <fieldset disabled={readOnly||busy||!lockedVesselIds.includes(vessel.id)} style={{border:0,padding:0,margin:0,minWidth:0}}>
           <div className="batch-managed-grid">
-            <label>目前位置<input value={vessel.position.location} onChange={event => { const value = event.target.value; updateVessel(vessel.id, '修改目前位置', target => { target.position.location = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }); }}/></label>
+            <label>目前位置<input readOnly aria-readonly="true" value={vessel.position.location}/><small>船端 Itinerary</small></label>
             <label>上一港<input readOnly aria-readonly="true" value={vessel.position.lastPort}/><small>Itinerary</small></label>
             <label>下一港<input readOnly aria-readonly="true" value={vessel.position.nextPort}/><small>Itinerary</small></label>
-            <label>航行狀態<select value={vessel.position.navigationStatus} onChange={event => { const value = event.target.value as NavigationStatus; updateVessel(vessel.id, '修改航行狀態', target => { target.position.navigationStatus = value; target.position.source = 'manual'; target.position.updatedAt = nowIso(); }); }}><option>航行</option><option>拋錨</option><option>進港中</option><option>出港中</option><option>停泊</option><option>漂航</option></select></label>
-            <label>載況<select value={vessel.cargo.loadStatus} onChange={event => { const value = event.target.value as LoadStatus; updateVessel(vessel.id, '修改載況', target => { target.cargo.loadStatus = value; target.cargo.source = 'manual'; target.cargo.updatedAt = nowIso(); }); }}><option>空載</option><option>非空載</option><option>滿載</option></select></label>
+            <label>航行狀態<input readOnly aria-readonly="true" value={vessel.position.navigationStatus}/><small>船端 Itinerary</small></label>
+            <label>載況<input readOnly aria-readonly="true" value={vessel.cargo.loadStatus}/><small>船端 Itinerary</small></label>
             <ScheduleDateTimeField label="ETA" value={vessel.position.eta}/>
             <ScheduleDateTimeField label="ETB" value={vessel.position.etb}/>
             <ScheduleDateTimeField label="ETD" value={vessel.position.etd}/>

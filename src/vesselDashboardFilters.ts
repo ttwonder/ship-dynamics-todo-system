@@ -83,10 +83,12 @@ export function supervisorIdsForVessel(vessel: Pick<Vessel, 'id' | 'assignedUser
     .map(user => user.id);
 }
 
-export function vesselSupervisorOptions(vessels: Array<Pick<Vessel, 'id' | 'assignedUserIds' | 'delegateManagers'>>, users: UserAccount[]): VesselSupervisorOption[] {
+export function vesselSupervisorOptions(vessels: Array<Pick<Vessel, 'id' | 'assignedUserIds' | 'delegateManagers'>>, users: UserAccount[], order: readonly string[] = []): VesselSupervisorOption[] {
   const visibleSupervisorIds = new Set(vessels.flatMap(vessel => supervisorIdsForVessel(vessel, users)));
+  const rank = new Map(Array.from(new Set(order)).map((id, index) => [id, index]));
   return users
     .filter(user => visibleSupervisorIds.has(user.id))
+    .sort((left, right) => (rank.get(left.id) ?? Infinity) - (rank.get(right.id) ?? Infinity))
     .map(user => ({ id: user.id, name: vesselSupervisorDisplayName(user), department: user.department }));
 }
 

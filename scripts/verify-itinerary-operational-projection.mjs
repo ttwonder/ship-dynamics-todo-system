@@ -42,7 +42,23 @@ try {
     rows: [{ ...types.createBlankItineraryRow('alt-row', 0), previousPortName: 'FORBIDDEN', portDockName: 'FORBIDDEN ALT PORT', etaUtc: '2026-01-01T00:00:00Z', cargoQuantityText: 'FORBIDDEN ALT CARGO' }],
   }];
 
-  const projected = projection.projectItineraryOperationalDocument(document);
+  const capture = '2026-09-01T00:00:00Z';
+  const projected = projection.projectItineraryOperationalDocument(document, capture);
+  const after = projection.projectItineraryOperationalDocument(document, '2026-09-01T08:00:00.001+08:00');
+  assert.equal(after.values.portDockName, 'WRONG LATER PORT', 'strictly passed ETD selects sorted formal row two');
+  assert.equal(after.values.previousPortName, 'BUSAN');
+  assert.equal(after.values.cargoQuantityText, first.cargoQuantityText);
+  assert.equal(after.rowId, first.rowId);
+  for (const etdUtc of [null, '', 'invalid', '2026-08-31', '2026-02-30T00:00:00Z', '2026-09-02T00:00:00Z']) {
+    const d = structuredClone(document); d.rows[0].etdUtc = etdUtc;
+    assert.equal(projection.projectItineraryOperationalDocument(d, capture).values.portDockName, '');
+  }
+  const noSecond = structuredClone(document); noSecond.rows = [first];
+  assert.equal(projection.projectItineraryOperationalDocument(noSecond, '2026-09-02T00:00:00Z').values.portDockName, 'TBA');
+  const blankSecond = structuredClone(document); blankSecond.rows[1].portDockName = '  ';
+  blankSecond.rows.push({ ...types.createBlankItineraryRow('third', 10), portDockName: 'NEVER THIRD' });
+  assert.equal(projection.projectItineraryOperationalDocument(blankSecond, '2026-09-02T00:00:00Z').values.portDockName, 'TBA');
+
   assert.equal(projected.revision, 7);
   assert.equal(projected.rowId, 'row-first', 'formal first row must be selected by sortOrder, not array order');
   assert.equal(projected.values.previousPortName, 'BUSAN');
@@ -62,7 +78,7 @@ try {
   };
 
   const readyRecord = { status: 'ready', document, checkedAt: '2026-09-03T12:35:00Z' };
-  const effective = projection.resolveVesselWithItineraryProjection(vessel, readyRecord);
+  const effective = projection.resolveVesselWithItineraryProjection(vessel, readyRecord, capture);
   assert.equal(effective.position.lastPort, 'BUSAN');
   assert.equal(effective.position.nextPort, '', 'a blank Itinerary next port must not borrow the legacy next port');
   assert.equal(effective.position.eta, '2026-09-01T08:00');
@@ -88,12 +104,13 @@ try {
     'v-2': { status: 'missing', document: null, checkedAt: '2026-09-03T12:35:00Z' },
   };
   const vessel2 = structuredClone(vessel); vessel2.id = 'v-2'; vessel2.position.lastPort = 'LEGACY V2';
-  const snapshot = projection.buildItineraryProjectionSnapshot([vessel, vessel2], records, '2026-09-03T12:35:00Z');
+  const snapshot = projection.buildItineraryProjectionSnapshot([vessel, vessel2], records, capture);
   assert.equal(snapshot.schemaVersion, 2);
   assert.equal(snapshot.itineraryProjections['v-1'].source, 'itinerary');
   assert.equal(snapshot.itineraryProjections['v-2'].source, 'legacy');
   const replayed = projection.applyItineraryProjectionSnapshot([vessel, vessel2], snapshot.itineraryProjections);
   assert.equal(replayed[0].position.lastPort, 'BUSAN');
+  assert.equal(replayed[0].position.nextPort, '', 'snapshot is evaluated at capture, not at replay wall clock');
   assert.equal(replayed[1].position.lastPort, 'LEGACY V2');
   assert.throws(
     () => projection.buildItineraryProjectionSnapshot([vessel], { 'v-1': { status: 'error', document: null, checkedAt: null, error: 'offline' } }, '2026-09-03T12:35:00Z'),
@@ -111,9 +128,9 @@ try {
   tampered.position.location = 'NEW LOCATION';
   tampered.cargo.loadStatus = '滿載';
   const maskedAllowed = drafts.applyItineraryOperationalWriteMask(vessel, tampered);
-  assert.equal(maskedAllowed.position.location, 'NEW LOCATION');
+  assert.equal(maskedAllowed.position.location, vessel.position.location);
   assert.equal(maskedAllowed.position.lastPort, 'LEGACY LAST');
-  assert.equal(maskedAllowed.cargo.loadStatus, '滿載');
+  assert.equal(maskedAllowed.cargo.loadStatus, vessel.cargo.loadStatus);
   assert.equal(maskedAllowed.cargo.items[0].name, 'LEGACY CARGO');
 
   const smartProtectedOnly = smartShipApi.mergeSmartShipSnapshot(vessel, {
@@ -126,9 +143,26 @@ try {
   const smartAllowed = smartShipApi.mergeSmartShipSnapshot(vessel, {
     externalVesselId:'v-1', fetchedAt:'2026-09-03T14:00:00Z', location:'PACIFIC', navigationStatus:'航行', loadStatus:'滿載', nextPort:'FORBIDDEN',
   });
-  assert.equal(smartAllowed.position.location,'PACIFIC');
+  assert.equal(smartAllowed.position.location,vessel.position.location);
   assert.equal(smartAllowed.position.nextPort,'LEGACY NEXT');
-  assert.equal(smartAllowed.cargo.loadStatus,'滿載');
+  assert.equal(smartAllowed.cargo.loadStatus,vessel.cargo.loadStatus);
+  assert.equal(smartAllowed.position.navigationStatus,vessel.position.navigationStatus);
+  assert.deepEqual(smartAllowed,vessel,'protected-only Smart Ship snapshot is a complete no-op');
+  const fourTampered=structuredClone(vessel);
+  Object.assign(fourTampered.position,{location:'NEW',navigationStatus:'停泊',source:'smart-ship-api',updatedAt:'NEW'});
+  Object.assign(fourTampered.cargo,{loadStatus:'滿載',source:'smart-ship-api',updatedAt:'NEW'});
+  Object.assign(fourTampered.note,{statusList:['drydock/repiar'],updatedAt:'NEW'});
+  assert.equal(drafts.vesselOperationalDraftEquals(vessel,fourTampered),true);
+  assert.deepEqual(drafts.applyItineraryOperationalWriteMask(vessel,fourTampered),vessel);
+  fourTampered.note.captain='NEW CAPTAIN';
+  fourTampered.position.manualRemark='NEW REMARK';
+  const safe=drafts.applyItineraryOperationalWriteMask(vessel,fourTampered);
+  assert.equal(safe.note.captain,'NEW CAPTAIN'); assert.equal(safe.position.manualRemark,'NEW REMARK');
+  assert.deepEqual(safe.note.statusList,vessel.note.statusList);
+  assert.equal(drafts.vesselOperationalDraftEquals(vessel,fourTampered),false);
+  const speed=smartShipApi.mergeSmartShipSnapshot(vessel,{externalVesselId:'v-1',fetchedAt:'NEW',speedKnots:20,location:'FORBIDDEN'});
+  assert.equal(speed.position.speedKnots,20);assert.equal(speed.position.location,vessel.position.location);
+
 
   const hookSource = fs.readFileSync('src/itinerary/useItineraryOperationalProjection.ts','utf8');
   assert.match(hookSource,/identityVersionRef\.current\.version!==identityVersion/,'late ACK from an old actor/workspace generation must not publish into the current feed');

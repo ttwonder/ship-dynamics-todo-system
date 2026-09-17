@@ -54,7 +54,8 @@ try {
   for (const label of ['船舶作業／動態補充', '船長', '大副', '輪機長', '大管輪']) {
     assert.ok(editModals.includes(label), `快速更新必須顯示「${label}」`);
   }
-  assert.ok(editModals.includes('CheckboxMultiPicker label="船舶狀態"'), '六個既有快捷狀態必須保留多選操作');
+  assert.ok(!editModals.includes('CheckboxMultiPicker label="船舶狀態"'), '船舶狀態編輯僅保留於船端 Itinerary；岸端為唯讀');
+  assert.ok(editModals.includes('value={draft.note.statusList.map'), '岸端仍保留目前船舶狀態顯示');
   assert.ok(!editModals.includes('required={true}'), '快捷狀態與自由輸入都不得變成必填');
 
   const changed = structuredClone(legacy);
