@@ -180,7 +180,7 @@ const countValues = (values: string[], preferred: string[] = []): InternalContro
   });
 };
 
-export function buildInternalControlStats(cases: InternalControlCase[], vessels: InternalControlVessel[] = []): InternalControlStats {
+export function buildInternalControlStats(cases: InternalControlCase[], vessels: InternalControlVessel[] = [], formatVesselName?: (vessel: InternalControlVessel) => string): InternalControlStats {
   const closed = cases.filter(item => item.isClosed).length;
   const vesselMap = new Map(vessels.map(vessel => [vessel.id, vessel]));
   const months = Array.from(new Set(cases.flatMap(item => [item.reportDate.slice(0, 7), item.closedDate?.slice(0, 7) || '']).filter(Boolean))).sort();
@@ -193,7 +193,7 @@ export function buildInternalControlStats(cases: InternalControlCase[], vessels:
     closureRate: cases.length ? Math.round(closed / cases.length * 1000) / 10 : 0,
     byVessel: countValues(cases.map(item => {
       const vessel = vesselMap.get(item.vesselId);
-      return vessel?.name || vessel?.shortName || vessel?.fullName || item.vesselId;
+      return vessel && formatVesselName ? formatVesselName(vessel) : vessel?.name || vessel?.shortName || vessel?.fullName || item.vesselId;
     })),
     byShipType: countValues(cases.map(item => vesselMap.get(item.vesselId)?.shipType || '未填船型')),
     byPriority: countValues(cases.map(item => item.priority), ['急', '高', '中', '低']),

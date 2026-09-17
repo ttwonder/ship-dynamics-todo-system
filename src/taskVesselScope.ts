@@ -1,5 +1,5 @@
 import type { TaskItem, Vessel } from './types';
-import { vesselDisplayName } from './vesselDisplay';
+import { pdfVesselDisplayName, vesselDisplayName } from './vesselDisplay';
 
 type TaskVesselScope = Pick<TaskItem, 'vesselId' | 'vesselIds' | 'vesselScopeMode' | 'vesselTypeScopes'>;
 
@@ -15,9 +15,9 @@ export const taskVessels = (task: TaskVesselScope, vessels: Vessel[]): Vessel[] 
   return taskVesselIds(task).map(id => vesselById.get(id)).filter((vessel): vessel is Vessel => Boolean(vessel));
 };
 
-export const taskVesselLabel = (task: TaskVesselScope, vessels: Vessel[]): string => {
+export const taskVesselLabel = (task: TaskVesselScope, vessels: Vessel[], formatName: typeof vesselDisplayName = vesselDisplayName): string => {
   if (task.vesselScopeMode === 'all') return '全部船舶';
-  const names = taskVessels(task, vessels).map(vesselDisplayName);
+  const names = taskVessels(task, vessels).map(formatName);
   const restrictedCount = Math.max(0, taskVesselIds(task).length - names.length);
   return [...names, ...(restrictedCount ? [`另含受限船舶 ${restrictedCount} 艘`] : [])].join('、') || '-';
 };
@@ -36,7 +36,7 @@ export const taskShipTypeLabel = (task: TaskVesselScope, vessels: Vessel[]): str
 
 export const taskReportVesselLabel = (task: TaskVesselScope, reportVessels: Vessel[]): string => {
   const reportIds = new Set(reportVessels.map(vessel => vessel.id));
-  const names = taskVessels(task, reportVessels).filter(vessel => reportIds.has(vessel.id)).map(vesselDisplayName);
+  const names = taskVessels(task, reportVessels).filter(vessel => reportIds.has(vessel.id)).map(pdfVesselDisplayName);
   return names.join('、') || '-';
 };
 

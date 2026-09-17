@@ -34,7 +34,7 @@ import { closeLinkedInternalControlCaseAfterTaskDelete, createInternalControlCas
 import { buildTaskNotificationsForVessels, buildTaskScopeChangeNotifications, canAccessTab, canAcquireTaskEditLock, canCancelInternalControl, canDeleteTask, canUseVessel, internalControlTransitionRequested, selectInternalControlCasesVisibleToUser, selectTasksVisibleToUser, taskSourceLabel, trustedClosureDate, validateInternalControlTransition } from './taskWorkflow';
 import { repairPendingCompanyLevelNotificationOverflow } from './notificationCompaction';
 import { isMeetingTaskSource, mergeAttentionFromCategories, normalizeMeetingTaskCategoryList, normalizeTaskCategoryList, taskCategoriesOf, taskCategoryLabel } from './taskCategories';
-import { vesselDisplayName } from './vesselDisplay';
+import { pdfVesselDisplayName, vesselDisplayName } from './vesselDisplay';
 import { applyItineraryOperationalWriteMask, applyVesselOperationalDraft, vesselOperationalDraftEquals } from './vesselOperationalDraft';
 import { applyItineraryProjectionSnapshot, buildItineraryProjectionSnapshot, resolveVesselWithItineraryProjection, type ItineraryProjectionSnapshot } from './itinerary/itineraryOperationalProjection';
 import { useItineraryOperationalProjection } from './itinerary/useItineraryOperationalProjection';
@@ -5136,7 +5136,7 @@ function vesselReportNavigation(v: Vessel) {
   return v.position.navigationStatus;
 }
 function VesselReportNameCell({ v }: { v: Vessel }) {
-  return <div className="report-vessel-name-cell"><strong>{vesselDisplayName(v)}</strong><div className="report-vessel-officers">
+  return <div className="report-vessel-name-cell"><strong>{pdfVesselDisplayName(v)}</strong><div className="report-vessel-officers">
     <span><b>船長：</b>{valueOrDash(v.note.captain)}</span>
     <span><b>大副：</b>{valueOrDash(v.note.chiefOfficer)}</span>
     <span><b>輪機長：</b>{valueOrDash(v.note.chiefEngineer)}</span>

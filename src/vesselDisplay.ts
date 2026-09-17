@@ -12,3 +12,12 @@ export function dashboardVesselDisplayName(vessel?: VesselNameSource | null): st
   if (!chineseName || chineseName === displayName || chineseName === fullName || chineseName === shortName) return displayName;
   return `${chineseName} ${displayName}`;
 }
+
+export function pdfVesselDisplayName(vessel?: VesselNameSource | null): string {
+  const displayName = vesselDisplayName(vessel);
+  const chineseName = vessel?.name?.trim() || '';
+  // Legacy records may put an English alias in name when no Chinese name exists.
+  return /\p{Script=Han}/u.test(chineseName) && chineseName !== displayName
+    ? `${chineseName} ${displayName}`
+    : displayName;
+}

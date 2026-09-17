@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AppData, InternalControlCase, InternalControlFilters, InternalControlReportSource, TaskPriority, UserAccount, Vessel } from './types';
-import { vesselDisplayName } from './vesselDisplay';
+import { pdfVesselDisplayName, vesselDisplayName } from './vesselDisplay';
 import { richTextToPlainText } from './richText';
 import {
   buildInternalControlStats,
@@ -167,7 +167,10 @@ export default function InternalControlPage({ loadCase, data, user, vessels, can
   const reset = () => {setFilters(emptyFilters(resetSelection));setColumnSort('created-desc');};
   const selectedVesselNames = filters.vesselIds.map(id => vessels.find(vessel => vessel.id === id)).filter((vessel): vessel is Vessel => Boolean(vessel)).map(vesselDisplayName);
   const vesselSummary=filters.ownerMode==='all'?'全部':filters.ownerMode==='mine'?'只看我的經管':selectedVesselNames.length?selectedVesselNames.join('、'):'未選船舶';
-  const summary = `船舶 ${vesselSummary}；日期 ${filters.fromDate || '不限'}～${filters.toDate || '不限'}；${subpage === 'open' ? '未完' : subpage === 'closed' ? '已結案' : '全部案件'}`;
+  const summaryFor = (names: string) => `船舶 ${names}；日期 ${filters.fromDate || '不限'}～${filters.toDate || '不限'}；${subpage === 'open' ? '未完' : subpage === 'closed' ? '已結案' : '全部案件'}`;
+  const summary = summaryFor(vesselSummary);
+  const selectedPdfVesselNames = filters.vesselIds.map(id => vessels.find(vessel => vessel.id === id)).filter((vessel): vessel is Vessel => Boolean(vessel)).map(pdfVesselDisplayName);
+  const printSummary = summaryFor(filters.ownerMode === 'all' || filters.ownerMode === 'mine' ? vesselSummary : selectedPdfVesselNames.join('、') || '未選船舶');
   const print = () => {
     if (!canExport||(subpage!=='stats'&&!selectedCases.length)) return;
     document.body.classList.add('printing-internal-control');
@@ -265,7 +268,7 @@ export default function InternalControlPage({ loadCase, data, user, vessels, can
       {!filtered.length && <div className="empty-state">目前篩選條件沒有案件</div>}<PaginationControls page={paged.page} pageCount={paged.pageCount} total={paged.total} from={paged.from} to={paged.to} onPageChange={setPage} ariaLabel="內控異常分頁"/>
     </section> : <InternalControlStatsView stats={stats}/>}
 
-    <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單（所選項目）' : subpage === 'closed' ? '結案清單（所選項目）' : '統計報告'}</h1><p>{summary}｜共 {printCases.length} 件｜匯出人 {user.name}｜{formatTaipeiDateTime(new Date())}</p>{subpage === 'stats' ? <InternalControlStatsView stats={stats}/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{printCases.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? vesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
+    <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單（所選項目）' : subpage === 'closed' ? '結案清單（所選項目）' : '統計報告'}</h1><p>{printSummary}｜共 {printCases.length} 件｜匯出人 {user.name}｜{formatTaipeiDateTime(new Date())}</p>{subpage === 'stats' ? <InternalControlStatsView stats={buildInternalControlStats(printCases, vessels, pdfVesselDisplayName)}/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{printCases.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? pdfVesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
 
     {visibleBatch && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={async (items, projections) => { if (await onCreate(items, data.revision, projections)) { setBatchOpen(false); return true; } return false; }}/>}
     {visibleEditing && editing && <CaseEditModal

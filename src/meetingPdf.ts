@@ -1,4 +1,4 @@
-import { vesselDisplayName } from './vesselDisplay';
+import { pdfVesselDisplayName } from './vesselDisplay';
 
 export type MeetingPdfScope = {
   vesselScopeMode?: 'all' | 'types' | 'vessels';
@@ -28,6 +28,6 @@ export function meetingPdfVesselSummary(meeting: MeetingPdfScope, vessels: Meeti
     return `船舶類型：${types.join('、') || '未指定'}`;
   }
   const byId = new Map(vessels.map(vessel => [vessel.id, vessel]));
-  const names = Array.from(new Set(meeting.vessels.map(id => vesselDisplayName(byId.get(id))).filter(Boolean)));
+  const names = Array.from(new Set(meeting.vessels.map(id => pdfVesselDisplayName(byId.get(id))).filter(Boolean)));
   return names.join('、') || '未指定船舶';
 }
