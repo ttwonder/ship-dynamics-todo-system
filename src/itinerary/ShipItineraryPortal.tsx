@@ -19,6 +19,7 @@ import { ItineraryBrowseTable, ItineraryMoreParametersButton } from './Itinerary
 import { ShipItineraryAlternativesBrowse } from './ShipItineraryAlternativesBrowse';
 import ItineraryCopyEmailButton from './ItineraryCopyEmailButton';
 import ItineraryVesselMetadata from './ItineraryCurrentTimeZone';
+import ItineraryCurrentVesselStateSummary from './ItineraryCurrentVesselStateSummary';
 import ShipItineraryBriefDialog from './ShipItineraryBriefDialog';
 import { shipItineraryVesselOptionName, sortShipItineraryVesselsByEnglishName } from './itineraryVesselDisplay';
 
@@ -364,6 +365,7 @@ export default function ShipItineraryPortal() {
     {selectedVesselId && latest && !editor && <section className="ship-latest-card">
       <div className="ship-latest-head">
         <ShipItineraryLatestHeading document={latest} />
+        <ItineraryCurrentVesselStateSummary document={latest} />
         <div>
           <ItineraryCopyEmailButton document={latest} onNotice={setNotice} />
           <ItineraryMoreParametersButton expanded={showMoreParameters} onToggle={() => setShowMoreParameters(value => !value)} />

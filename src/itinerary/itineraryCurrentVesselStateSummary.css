@@ -1,0 +1,11 @@
+.itinerary-current-state-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;min-width:0;max-width:100%;margin:0;padding:2px 10px;border-left:1px solid var(--ship-line,var(--line,#d7dee8));font-size:12px;line-height:1.35}
+.itinerary-current-state-summary>div{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 6px;min-width:0}
+.itinerary-current-state-summary dt{margin:0;color:var(--ship-muted,var(--muted,#64748b));font-size:11px;font-weight:600}
+.itinerary-current-state-summary dd{min-width:0;margin:0;font-weight:700;overflow-wrap:anywhere;white-space:pre-wrap}
+.itinerary-panel-head.itinerary-panel-head-with-state{grid-template-columns:auto minmax(0,1fr)}
+.itinerary-panel-head-with-state>.itinerary-current-state-summary,.itinerary-panel-head-with-state>.itinerary-panel-meta{grid-column:1/-1}
+.itinerary-panel-head-with-state>.itinerary-panel-meta{justify-content:flex-start}
+.ship-latest-head>.itinerary-current-state-summary{flex:1 1 360px}
+@media(min-width:1101px){.itinerary-panel-head.itinerary-panel-head-with-state{grid-template-columns:auto minmax(0,max-content) minmax(260px,1fr) auto}.itinerary-panel-head-with-state>.itinerary-current-state-summary,.itinerary-panel-head-with-state>.itinerary-panel-meta{grid-column:auto}.itinerary-panel-head-with-state>.itinerary-panel-meta{justify-content:flex-end}}
+@media(max-width:1100px){.ship-latest-head{flex-wrap:wrap}.ship-latest-head>div:last-child{width:100%;flex-wrap:wrap}.ship-latest-head>.itinerary-current-state-summary{flex:1 1 360px}.itinerary-panel-head-with-state>.itinerary-current-state-summary{border-left:0;padding:3px 0}}
+@media(max-width:720px){.ship-latest-head>.itinerary-current-state-summary{flex:none;width:100%;border-left:0;padding:3px 0}}
