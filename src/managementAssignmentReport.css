@@ -1,0 +1,30 @@
+.management-assignment-export-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;max-width:320px}
+.management-assignment-export-actions>small{flex-basis:100%;font-size:11px}
+.management-heading .management-kpis{flex-wrap:wrap}
+.management-assignment-shell{width:min(1500px,100%);max-width:none;overflow:auto}
+.management-assignment-paper{min-width:960px;margin:0;padding:22px;background:#fff;color:#111}
+.management-assignment-paper>header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}
+.management-assignment-paper h1{margin:0;font-size:22px;color:#111}
+.management-assignment-paper>header p{margin:0;font-size:11px}
+.management-assignment-paper table{width:100%;border-collapse:collapse;table-layout:fixed}
+.management-assignment-paper .fleet{width:9%}.management-assignment-paper .ship-type{width:9%}.management-assignment-paper .chinese{width:12%}.management-assignment-paper .english{width:17%}
+.management-assignment-paper th,.management-assignment-paper td{border:1px solid #7d858c;padding:4px 5px;font-size:11px;line-height:1.35;vertical-align:middle;white-space:pre-line;overflow-wrap:anywhere}
+.management-assignment-paper th{background:#e9eef2;font-weight:700;text-align:center}
+.management-assignment-paper td{text-align:left}
+.management-assignment-paper footer{margin-top:8px;font-size:10px;line-height:1.5}
+@media(max-width:600px){.management-assignment-modal{padding:8px}.management-assignment-export-actions{max-width:100%}}
+@page management-assignments{size:A4 landscape;margin:8mm}
+@media print{
+  body.printing-management-assignments{background:#fff!important;color:#111!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body.printing-management-assignments>*:not(.management-assignment-modal){display:none!important}
+  body.printing-management-assignments>.management-assignment-modal{display:block!important;position:static!important;inset:auto!important;width:auto!important;margin:0!important;padding:0!important;background:#fff!important;overflow:visible!important;backdrop-filter:none!important}
+  body.printing-management-assignments .management-assignment-shell{display:block!important;width:auto!important;max-width:none!important;max-height:none!important;margin:0!important;overflow:visible!important;box-shadow:none!important}
+  body.printing-management-assignments .no-print{display:none!important}
+  body.printing-management-assignments .management-assignment-paper{page:management-assignments;width:auto;min-width:0;margin:0;padding:0}
+  body.printing-management-assignments .management-assignment-paper h1{font-size:13pt}
+  body.printing-management-assignments .management-assignment-paper>header p{font-size:7pt}
+  body.printing-management-assignments .management-assignment-paper th,body.printing-management-assignments .management-assignment-paper td{padding:1mm;font-size:7pt;line-height:1.25}
+  body.printing-management-assignments .management-assignment-paper thead{display:table-header-group}
+  body.printing-management-assignments .management-assignment-paper tr{break-inside:avoid;page-break-inside:avoid}
+  body.printing-management-assignments .management-assignment-paper footer{font-size:6.5pt}
+}

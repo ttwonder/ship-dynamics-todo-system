@@ -11,6 +11,7 @@ import { formatTaipeiDateTime } from './taipeiTime';
 import { presentAuditLog } from './auditPresentation';
 import { useManagementDraft, confirmManagementDraftDiscard, type ManagementDraftReporter } from './managementDraft';
 import DataManagementPanel from './DataManagementPanel';
+import ManagementAssignmentExports from './ManagementAssignmentExports';
 
 type Section = 'directory' | 'people' | 'vessels' | 'categories' | 'attention' | 'roles' | 'owner' | 'audit' | 'data';
 type DirectoryKind = 'all' | 'user' | 'vessel';
@@ -368,7 +369,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
   ];
 
   return <section className="management-view">
-    <div className="page-heading management-heading"><div><h1>管理中心</h1><p>B 版主從管理：先從總清單或中間欄選擇，再在右側編輯單筆資料。</p></div><div className="management-kpis"><span><small>人員</small><b>{activeUsers.length}</b></span><span><small>船舶</small><b>{activeVessels.length}</b></span><span><small>管理員</small><b>{activeUsers.filter(u => u.role === 'owner' || u.role === 'admin').length}</b></span></div></div>
+    <div className="page-heading management-heading"><div><h1>管理中心</h1><p>B 版主從管理：先從總清單或中間欄選擇，再在右側編輯單筆資料。</p></div><div className="management-kpis"><ManagementAssignmentExports data={data} currentUser={currentUser} captureContext={captureContinuation}/><span><small>人員</small><b>{activeUsers.length}</b></span><span><small>船舶</small><b>{activeVessels.length}</b></span><span><small>管理員</small><b>{activeUsers.filter(u => u.role === 'owner' || u.role === 'admin').length}</b></span></div></div>
     <div className="management-shell">
       <aside className="management-sidebar"><h2>管理功能</h2>{nav.map(item => <button key={item.id} className={section === item.id ? 'active' : ''} onClick={() => go(item.id)}><i>{item.icon}</i>{item.label}</button>)}<div className="management-sidebar-note"><b>{currentUser.name}</b><span>{roleLabel(currentUser.role)}</span></div></aside>
 
