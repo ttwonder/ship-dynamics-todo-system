@@ -2,17 +2,17 @@
 -- Target: the same Supabase project used for the additive migration.
 -- Migration source: 4471e32ff65d1256f0c0a086deb223a6b6e56f63
 -- Stop on any error or FAIL. Do not rerun the installation automatically.
--- v2: normalize CR on BOTH sides of the multiline guard comparison.
+-- v3: includes 20260917090000 bunker delta; normalize CR on BOTH guard sides.
 begin transaction read only;
 set local statement_timeout = '15s';
 set local lock_timeout = '2s';
 
 with
 fixture as (
-  select $fixture$[{"rowId":"READBACK-R1","sortOrder":0,"previousPortName":"READBACK-PREVIOUS","voyageNumber":"","portDockName":"READBACK-FIRST","operation":"To Unload","cargoQuantityText":"1 MT","etaUtc":"2026-01-01T00:00:00Z","etbUtc":null,"ldRateText":"","etcUtc":null,"etdUtc":"2026-01-01T01:00:00Z","arrivalDraftText":"A:\nF:","departureDraftText":"A:\nF:","arrivalRobText":"","departureRobText":"","notesText":"","portTimeZone":"UTC+8","etaTimeZone":"","etbTimeZone":"","etcTimeZone":"","etdTimeZone":"","calculationStartUtc":"2026-01-01T00:00:00Z","calculationStartTimeZone":"UTC+8","oceanDistanceNm":null,"speedKnots":null,"sailingHours":null,"berthWaitHours":null,"channelSailingHours":null,"preCompletionDelayHours":null,"postCompletionDelayHours":null,"tanksText":"","operationQuantityMt":null,"operationRateMtPerHour":null,"operationHours":null,"departureBufferDays":null,"etaMode":"auto","etbMode":"auto","etcMode":"auto","etdMode":"auto","currentVesselState":{"location":"READBACK-AREA","navigationStatus":"航行","loadStatus":"滿載","statusList":["loading","drydock/repiar"]}},{"rowId":"READBACK-R2","sortOrder":1,"previousPortName":"","voyageNumber":"","portDockName":"READBACK-SECOND","operation":"","cargoQuantityText":"","etaUtc":null,"etbUtc":null,"ldRateText":"","etcUtc":null,"etdUtc":null,"arrivalDraftText":"A:\nF:","departureDraftText":"A:\nF:","arrivalRobText":"","departureRobText":"","notesText":"","portTimeZone":"UTC+8","etaTimeZone":"","etbTimeZone":"","etcTimeZone":"","etdTimeZone":"","calculationStartUtc":null,"calculationStartTimeZone":"","oceanDistanceNm":null,"speedKnots":null,"sailingHours":null,"berthWaitHours":null,"channelSailingHours":null,"preCompletionDelayHours":null,"postCompletionDelayHours":null,"tanksText":"","operationQuantityMt":null,"operationRateMtPerHour":null,"operationHours":null,"departureBufferDays":null,"etaMode":"auto","etbMode":"auto","etcMode":"auto","etdMode":"auto"}]$fixture$::jsonb as rows
+  select $fixture$[{"rowId":"READBACK-R1","sortOrder":0,"previousPortName":"READBACK-PREVIOUS","voyageNumber":"","portDockName":"READBACK-FIRST","operation":"To Unload","cargoQuantityText":"1 MT","etaUtc":"2026-01-01T00:00:00Z","etbUtc":null,"ldRateText":"","etcUtc":null,"etdUtc":"2026-01-01T01:00:00Z","arrivalDraftText":"A:\nF:","departureDraftText":"A:\nF:","arrivalRobText":"","departureRobText":"","notesText":"","portTimeZone":"UTC+8","etaTimeZone":"","etbTimeZone":"","etcTimeZone":"","etdTimeZone":"","calculationStartUtc":"2026-01-01T00:00:00Z","calculationStartTimeZone":"UTC+8","oceanDistanceNm":null,"speedKnots":null,"sailingHours":null,"berthWaitHours":null,"channelSailingHours":null,"preCompletionDelayHours":null,"postCompletionDelayHours":null,"tanksText":"","operationQuantityMt":null,"operationRateMtPerHour":null,"operationHours":null,"departureBufferDays":null,"etaMode":"auto","etbMode":"auto","etcMode":"auto","etdMode":"auto","currentVesselState":{"location":"READBACK-AREA","navigationStatus":"航行","loadStatus":"滿載","statusList":["loading","drydock/repiar","bunker"]}},{"rowId":"READBACK-R2","sortOrder":1,"previousPortName":"","voyageNumber":"","portDockName":"READBACK-SECOND","operation":"","cargoQuantityText":"","etaUtc":null,"etbUtc":null,"ldRateText":"","etcUtc":null,"etdUtc":null,"arrivalDraftText":"A:\nF:","departureDraftText":"A:\nF:","arrivalRobText":"","departureRobText":"","notesText":"","portTimeZone":"UTC+8","etaTimeZone":"","etbTimeZone":"","etcTimeZone":"","etdTimeZone":"","calculationStartUtc":null,"calculationStartTimeZone":"","oceanDistanceNm":null,"speedKnots":null,"sailingHours":null,"berthWaitHours":null,"channelSailingHours":null,"preCompletionDelayHours":null,"postCompletionDelayHours":null,"tanksText":"","operationQuantityMt":null,"operationRateMtPerHour":null,"operationHours":null,"departureBufferDays":null,"etaMode":"auto","etbMode":"auto","etcMode":"auto","etdMode":"auto"}]$fixture$::jsonb as rows
 ),
 expected_bodies(signature, expected_md5) as (values
-  ('public.sd_itinerary_rows_valid(jsonb)', '029a21874ef2b4b2f5444a64d0ab5340'),
+  ('public.sd_itinerary_rows_valid(jsonb)', 'b8de65122a24f611c7a9d9ad5941e62f'),
   ('public.sd_itinerary_operational_values_v1(jsonb,timestamptz)', '102c8490bae86ec70a11e55e9c07d575')
 ),
 private_helpers(signature) as (values
@@ -103,7 +103,7 @@ select case when bool_and(coalesce(ok,false)) then 'PASS' else 'FAIL' end as ove
   count(*) as check_count,
   count(*) filter (where ok is not true) as failed_count,
   coalesce(jsonb_agg(check_name order by check_name) filter (where ok is not true),'[]'::jsonb) as failed_checks,
-  'current-state-readback-v2' as readback_id,
+  'current-state-readback-v3-bunker' as readback_id,
   position(chr(13) in $copy_format$
 $copy_format$)>0 as copied_sql_contains_cr,
   to_char(clock_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') as checked_at_utc

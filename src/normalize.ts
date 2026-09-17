@@ -38,7 +38,7 @@ const auditRoles: Array<UserRole | 'system'> = [...roles, 'system'];
 const priorities: TaskPriority[] = ['急', '高', '中', '低'];
 const internalControlReportSources: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 const vesselAttentionLevels: VesselAttentionLevel[] = [...priorities, '特別關注'];
-const shipStatuses: ShipStatus[] = ['loading', 'unloading', 'to load', 'to unload', 'waiting order', 'drydock/repiar'];
+const shipStatuses: ShipStatus[] = ['loading', 'unloading', 'to load', 'to unload', 'waiting order', 'drydock/repiar', 'bunker'];
 const legacyShipStatusMap: Record<string, ShipStatus> = {
   '裝載': 'loading',
   '空載': 'unloading',

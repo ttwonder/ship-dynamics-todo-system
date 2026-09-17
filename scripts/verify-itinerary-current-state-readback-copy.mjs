@@ -52,7 +52,7 @@ try {
   }
   for (const [format, transform] of formats) {
     await test(format + ' wrong body fingerprint stays FAIL', async () => {
-      const bad = sql.replace('029a21874ef2b4b2f5444a64d0ab5340', '00000000000000000000000000000000');
+      const bad = sql.replace('b8de65122a24f611c7a9d9ad5941e62f', '00000000000000000000000000000000');
       assert.notEqual(bad, sql);
       const r = await run(transform(bad));
       assert.equal(r.overall, 'FAIL'); assert.equal(r.failed_count, '1');

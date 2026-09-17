@@ -13,7 +13,7 @@ try {
   const validation = await server.ssrLoadModule('/src/itinerary/itineraryValidation.ts');
   const projection = await server.ssrLoadModule('/src/itinerary/itineraryOperationalProjection.ts');
   const document = types.createEmptyItineraryDocument({ workspaceKey:'qa', vesselId:'v1', vesselName:'V1', rowId:'r1' });
-  const state = { location:'Taiwan Strait', navigationStatus:'停泊', loadStatus:'滿載', statusList:['loading','drydock/repiar'] };
+  const state = { location:'Taiwan Strait', navigationStatus:'停泊', loadStatus:'滿載', statusList:['loading','drydock/repiar','bunker'] };
   document.rows[0].currentVesselState = structuredClone(state);
   document.rows[0].previousPortName = 'BUSAN';
   document.rows.push(types.createBlankItineraryRow('r2',1));
@@ -85,6 +85,20 @@ try {
   const ship = await server.ssrLoadModule('/src/itinerary/ShipItineraryEditor.tsx');
   const quick = await server.ssrLoadModule('/src/EditModals.tsx');
   const batch = await server.ssrLoadModule('/src/BatchManagedVesselModal.tsx');
+  const choices = await server.ssrLoadModule('/src/vesselStateChoices.ts');
+  const normalizer = await server.ssrLoadModule('/src/normalize.ts');
+  const seed = await server.ssrLoadModule('/src/data/seed.ts');
+  test('bunker appended without changing existing status order or stored alias',()=>{
+    assert.deepEqual(choices.VESSEL_STATUSES,['loading','unloading','to load','to unload','waiting order','drydock/repiar','bunker']);
+    assert.equal(choices.shipStatusLabel('bunker'),'bunker');
+  });
+  test('bunker survives repeat normalization, deduplication and JSON roundtrip',()=>{
+    const data=seed.createInitialData();
+    data.vessels[0].note.statusList=['loading','bunker','drydock/repiar','bunker','unknown'];
+    const once=normalizer.normalizeAppData(JSON.parse(JSON.stringify(data)));
+    assert.deepEqual(once.vessels[0].note.statusList,['loading','bunker','drydock/repiar']);
+    assert.deepEqual(normalizer.normalizeAppData(once).vessels[0].note.statusList,once.vessels[0].note.statusList);
+  });
   const renderShip = (d,readOnly=false) => renderToStaticMarkup(React.createElement(ship.default,{document:d,readOnly,canSave:true,onChange(){}}));
   test('ship header renders exact hints and all choices as optional controls', () => {
     const html=renderShip(document);
@@ -96,8 +110,10 @@ try {
       assert.ok(select,label);for(const choice of choices)assert.ok(select[1].includes('>'+choice+'</option>'));
     }
     const status=html.match(/<details[^>]*data-current-vessel-status[^>]*>([\s\S]*?)<\/details>/)?.[1]||'';
-    for(const choice of ['loading','unloading','to load','to unload','waiting order','drydock/repair']) assert.ok(status.includes(choice),choice);
-    assert.equal((status.match(/type="checkbox"/g)||[]).length,6);
+    for(const choice of ['loading','unloading','to load','to unload','waiting order','drydock/repair','bunker']) assert.ok(status.includes(choice),choice);
+    assert.equal((status.match(/type="checkbox"/g)||[]).length,7);
+    const bunker=(status.match(/<label>[\s\S]*?<\/label>/g)||[]).find(label=>label.includes('<span>bunker</span>'));
+    assert.ok(bunker);assert.match(bunker,/checked=""/);
     const d=structuredClone(document);delete d.rows[0].currentVesselState;
     assert.match(renderShip(d),/<option value="" disabled="" selected="">/);
     assert.match(renderShip(d,true),/<input(?=[^>]*name="currentLocation")(?=[^>]*disabled="")[^>]*>/);

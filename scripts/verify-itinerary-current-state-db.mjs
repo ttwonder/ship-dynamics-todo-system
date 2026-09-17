@@ -9,6 +9,7 @@ import { installItineraryFixture, seedItineraryFixture, itineraryWorkspaceId as 
 import { installMorningOracle, schedulerSql } from './record-daily-morning-local-fixture.mjs';
 
 const migration='supabase/migrations/20260916090000_itinerary_current_vessel_state.sql';
+const bunkerMigration='supabase/migrations/20260917090000_itinerary_bunker_status.sql';
 const nativeMode=process.argv.includes('--native');
 const receipt={layer:nativeMode?'native PostgreSQL':'PGlite',cases:[]};
 const run=fs.mkdtempSync(path.join(process.env.QA_OUTPUT||os.tmpdir(),'itinerary-current-state-'));
@@ -33,7 +34,8 @@ try {
   const before=await scalar("select jsonb_agg(to_jsonb(d)) from sd_itinerary_documents d");
   const aclBefore=(await db.query("select oid,proacl::text from pg_proc where proname in ('sd_itinerary_rows_valid','sd_itinerary_alternative_plans_valid','sd_build_daily_morning_snapshot','build_ship_dynamics_record_daily_morning_v1') order by oid")).rows;
   if(fs.existsSync(migration))await db.exec(fs.readFileSync(migration,'utf8'));
-  const state={location:'Taiwan Strait',navigationStatus:'停泊',loadStatus:'滿載',statusList:['loading','drydock/repiar']};
+    if(fs.existsSync(bunkerMigration)){await db.exec(fs.readFileSync(bunkerMigration,'utf8').replace(/\r?\n/g,'\r\n'));await db.exec(fs.readFileSync(bunkerMigration,'utf8'));}
+  const state={location:'Taiwan Strait',navigationStatus:'停泊',loadStatus:'滿載',statusList:['loading','drydock/repiar','bunker']};
   const rows=structuredClone(document.rows); rows[0].currentVesselState=state;
   rows[0].etdUtc='2026-09-07T01:00:00Z';
   const valid=rows=>scalar('select sd_itinerary_rows_valid($1::jsonb)',[JSON.stringify(rows)]);
@@ -42,7 +44,7 @@ try {
     assert.equal(await valid(document.rows),true);
     const partial=structuredClone(rows);partial[0].currentVesselState={location:'',statusList:[]};assert.equal(await valid(partial),true);
   });
-  for(const invalid of [null,[],{navigationStatus:'bad'},{loadStatus:'bad'},{location:7},{statusList:['drydock/repair']},{statusList:['loading','loading']},{unknown:1}])await test('invalid metadata '+JSON.stringify(invalid),async()=>{
+  for(const invalid of [null,[],{navigationStatus:'bad'},{loadStatus:'bad'},{location:7},{statusList:['drydock/repair']},{statusList:['loading','loading']},{statusList:['bunker','bunker']},{statusList:['unknown']},{unknown:1}])await test('invalid metadata '+JSON.stringify(invalid),async()=>{
     const d=structuredClone(rows);d[0].currentVesselState=invalid;assert.equal(await valid(d),false);
   });
   await test('nonfirst metadata and alternatives rejected',async()=>{
@@ -72,8 +74,18 @@ try {
   await test('rerun is idempotent; no data or existing ACL/OID changes',async()=>{
     await db.query('update sd_itinerary_documents set rows_payload=$1::jsonb where workspace_id=$2',[JSON.stringify(document.rows),workspace]);
     if(fs.existsSync(migration))await db.exec(fs.readFileSync(migration,'utf8'));
+    if(fs.existsSync(bunkerMigration)){await db.exec(fs.readFileSync(bunkerMigration,'utf8').replace(/\r?\n/g,'\r\n'));await db.exec(fs.readFileSync(bunkerMigration,'utf8'));}
     assert.deepEqual(await scalar('select jsonb_agg(to_jsonb(d)) from sd_itinerary_documents d'),before);
     assert.deepEqual((await db.query("select oid,proacl::text from pg_proc where proname in ('sd_itinerary_rows_valid','sd_itinerary_alternative_plans_valid','sd_build_daily_morning_snapshot','build_ship_dynamics_record_daily_morning_v1') order by oid")).rows,aclBefore);
+  });
+  await test('bunker delta rejects an unknown predecessor without overwriting it',async()=>{
+    const definition=await scalar("select pg_get_functiondef('public.sd_itinerary_rows_valid(jsonb)'::regprocedure)");
+    const changed=definition.replace('legacy_rows jsonb', '/* owned mismatch probe */ legacy_rows jsonb');assert.notEqual(changed,definition);
+    const body=fs.readFileSync(bunkerMigration,'utf8').replace('\nbegin;\n','\n').replace(/\ncommit;\s*$/,'\n');
+    await db.exec('begin;');
+    try{await db.exec(changed);await assert.rejects(()=>db.exec(body),/bunker-current-state-predecessor-mismatch/);}
+    finally{await db.exec('rollback;');}
+    assert.equal(await scalar("select pg_get_functiondef('public.sd_itinerary_rows_valid(jsonb)'::regprocedure)"),definition);
   });
   await test('ship save, lost-ACK replay, shore preservation and forbidden shore metadata update',async()=>{
     await db.query('delete from sd_itinerary_leases where workspace_id=$1',[workspace]);
