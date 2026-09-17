@@ -25,8 +25,8 @@ try {
   assert.deepEqual(report.departments, ['船東督導', '海技', '未設定部門']);
   assert.equal(report.vessels[0].yearLabel, '2021.06', 'report takes only the saved year label');
   assert.equal(report.vessels[0].tonnageLabel, '2.0萬', 'report takes the saved tonnage label verbatim');
-  assert.equal(assignmentCellText(report.vessels[0].cells[1]), '（未激活代理丁）', 'configured inactive delegates must appear in every department column without gaining activation');
-  assert.equal(assignmentCellText(report.vessels[0].cells[0]), '測試督導甲\n（測試代理丙*）', 'only activated delegates carry the star');
+  assert.equal(assignmentCellText(report.vessels[0].cells[1]), '(未激活代理丁)', 'configured inactive delegates must appear in every department column without gaining activation');
+  assert.equal(assignmentCellText(report.vessels[0].cells[0]), '測試督導甲\n(測試代理丙*)', 'only activated delegates carry the star');
   assert.deepEqual(report.vessels[0].cells[0], { direct: ['測試督導甲'], delegates: ['測試代理丙*'], mergeKey: JSON.stringify([['a'], [['c', true]]]) }, 'dedupe identities and exclude owner, ship, disabled and missing accounts');
   assert.equal(report.vessels[1].chineseName, '純中文測試輪');
   assert.equal(report.vessels[1].englishName, '');
@@ -54,7 +54,8 @@ try {
   denied.settings.rolePermissions.admin.exportReports = false;
   assert.equal(canExportManagementAssignments(denied, denied.users[1]), false);
   const paper = renderToStaticMarkup(React.createElement(ManagementAssignmentPaper, { report }));
-  for (const text of ['目前船舶分管表', '測試甲輪', 'QA ALPHA', '測試督導甲', '（測試代理丙*）', '（未激活代理丁）', '純中文測試輪', 'FPMC QA BETA']) assert.ok(paper.includes(text), text);
+  for (const text of ['目前船舶分管表', '測試甲輪', 'QA ALPHA', '測試督導甲', '(測試代理丙*)', '(未激活代理丁)', '純中文測試輪', 'FPMC QA BETA']) assert.ok(paper.includes(text), text);
+  assert.ok(paper.includes('測試督導甲\n(測試代理丙*)'), 'the PDF must retain the same explicit delegation line break');
   assert.ok(!/PRIVATE_|停用人員戊|INACTIVE SHIP/.test(paper));
   assert.ok(!/來源版本|Rev\./.test(paper), 'printed assignment report must omit the source revision');
   const injection = structuredClone(report);
@@ -73,7 +74,10 @@ try {
   assert.equal(ships.getCell(3, ships.columnCount).text, '噸數');
   assert.equal(ships.getCell(5, ships.columnCount-1).text, '2021.06');
   assert.equal(ships.getCell(5, ships.columnCount).text, '2.0萬');
-  assert.equal(ships.getCell('E5').text, '測試督導甲 （測試代理丙*）');
+  assert.equal(ships.getCell('E5').text, '測試督導甲\n(測試代理丙*)', 'delegates must start a separate line');
+  for (let row=5;row<=ships.rowCount;row++) for(let column=5;column<=ships.columnCount-2;column++) {
+    assert.equal(ships.getCell(row,column).alignment.horizontal,'center','every department is centered');
+  }
   assert.equal(ships.rowCount, 4 + report.vessels.length);
   assert.equal(ships.pageSetup.printTitlesRow ?? '', '', 'single-page matrix includes its headers once; repeating titles can distort native PDF page size');
   assert.equal(people.pageSetup.printTitlesRow, '1:4', 'multi-page personnel detail keeps its existing repeated headings');
@@ -85,8 +89,9 @@ try {
   assert.equal(ships.pageSetup.fitToHeight, 1, 'entire ship matrix must print on one page');
   assert.equal(ships.getCell('E5').alignment.wrapText, true, 'supervisor names must wrap');
   for (const sheet of workbook.worksheets) sheet.eachRow(row => row.eachCell(cell => {
-    assert.equal(cell.alignment.wrapText, true, `${sheet.name}!${cell.address} must wrap, including headers and non-supervisor cells`);
-    assert.equal(Boolean(cell.alignment.shrinkToFit), false, `${sheet.name}!${cell.address} must never shrink to one line`);
+    const shrink = sheet === ships && Number(cell.row) >= 5 && [1, 2, 4, sheet.columnCount-1, sheet.columnCount].includes(Number(cell.col));
+    assert.equal(Boolean(cell.alignment.wrapText), !shrink, `${sheet.name}!${cell.address} follows its column wrap policy`);
+    assert.equal(Boolean(cell.alignment.shrinkToFit), shrink, `${sheet.name}!${cell.address} shrinks only the five selected fields`);
   }));
   assert.equal(Boolean(ships.getCell('E5').alignment.shrinkToFit), false);
   assert.ok(ships.getRow(5).height > 13, 'wrapped supervisor names must receive sufficient row height');

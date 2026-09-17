@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer } from 'vite';
+import { assignmentReportLayoutProbe } from './assignment-report-layout-probe.mjs';
 
 const output = fs.mkdtempSync(path.join(process.env.QA_EVIDENCE_ROOT || os.tmpdir(), 'management-assignment-'));
 const profile = path.join(output, 'chrome-profile');
@@ -83,7 +84,7 @@ try {
   await until(() => evaluate("!!document.querySelector('.management-assignment-paper')"), 'PDF preview');
   evidence.rowCount = await evaluate("document.querySelectorAll('.management-assignment-paper tbody tr').length");
   assert.equal(evidence.rowCount, await evaluate('window.__qaData.vessels.filter(v=>v.isActive).length'));
-  assert.match(await evaluate("document.querySelector('.management-assignment-paper').innerText"), /測試督導甲、林督乙 （測試代理丙\*）/);
+  assert.ok((await evaluate("document.querySelector('.management-assignment-paper').innerText")).includes('測試督導甲、林督乙\n(測試代理丙*)'));
   assert.ok(!(await evaluate("document.querySelector('.management-assignment-paper').innerText")).includes('QA UNSAVED NAME'));
   assert.ok(!(await evaluate("document.querySelector('.management-assignment-paper').innerText")).includes('來源版本'));
   assert.ok(await evaluate("document.querySelector('.management-assignment-modal').innerText.includes('A4 直向・單頁')"));
@@ -99,13 +100,12 @@ try {
   assert.ok(evidence.layout.columns[4] > evidence.layout.columns[5] * 2, 'supervisor column is wider than office columns');
   assert.deepEqual(evidence.layout.overflow, [], 'no hidden or overlapping cell text');
   assert.equal(evidence.layout.wrapping, true);
-  evidence.allCellWrap = await evaluate(`(()=>{const nodes=[...document.querySelectorAll('.management-assignment-paper .assignment-cell-text')],body=nodes.filter(n=>n.closest('tbody'));return {allWrap:nodes.every(n=>getComputedStyle(n).whiteSpace==='normal'),noInlineShrink:nodes.every(n=>n.style.fontSize===''),bodyFonts:[...new Set(body.map(n=>getComputedStyle(n).fontSize))],wrapped:body.filter(n=>n.getBoundingClientRect().height>parseFloat(getComputedStyle(n).lineHeight)+1).map(n=>n.textContent),contained:nodes.every(n=>{const range=document.createRange();range.selectNodeContents(n);const r=range.getBoundingClientRect(),cell=n.closest('td,th').getBoundingClientRect();return r.left>=cell.left-1&&r.right<=cell.right+1&&r.top>=cell.top-1&&r.bottom<=cell.bottom+1})}})()`);
-  assert.equal(evidence.allCellWrap.allWrap, true, 'every cell must wrap regardless of department display label');
-  assert.equal(evidence.allCellWrap.noInlineShrink, true, 'no individual cell may be forced to tiny single-line text');
-  assert.equal(evidence.allCellWrap.bodyFonts.length, 1, 'all body cells retain the same base font size');
-  assert.ok(evidence.allCellWrap.wrapped.some(text=>text.includes('測試督導甲')));
-  assert.ok(evidence.allCellWrap.wrapped.some(text=>text.includes('未激活代理丁')), 'an ordinary office column must also really wrap');
-  assert.equal(evidence.allCellWrap.contained, true);
+  evidence.columnLayout = await evaluate(`(${assignmentReportLayoutProbe.toString()})()`);
+  assert.equal(evidence.columnLayout.shrinkCount, evidence.rowCount * 5, 'exactly five fields per vessel may shrink');
+  for (const key of ['exactShrinkColumns','noWrap','singleLine','otherWrap','otherNoShrink','centered','preserveNewline','delegatesBelow','contained']) assert.equal(evidence.columnLayout[key], true, key);
+  assert.ok(evidence.columnLayout.departmentCount > 0 && evidence.columnLayout.delegateLineCount > 0);
+  assert.deepEqual(evidence.columnLayout.departmentFonts, ['10px'], 'do not shrink personnel to fit a line');
+  for (const value of ['FPMC QA LONG EXAMPLE','2021.06.30','20,000 DWT']) assert.ok(evidence.columnLayout.shrunk.includes(value), `the long field really shrinks: ${value}`);
   assert.ok(await evaluate("document.querySelector('.management-assignment-paper').innerText.includes('未激活代理丁') && !document.querySelector('.management-assignment-paper').innerText.includes('未激活代理丁*')"));
   assert.ok(evidence.layout.height * evidence.layout.scale <= 284 * 96 / 25.4 + 1, 'complete table fits A4 page height');
   await image('preview-desktop');
@@ -113,6 +113,8 @@ try {
   assert.equal(await evaluate('window.__qaPrints'), 1);
   await call('Emulation.setEmulatedMedia', { media: 'print' });
   evidence.printLayout = await evaluate(`(()=>{const p=document.querySelector('.management-assignment-paper'),s=getComputedStyle(p);return{classes:document.body.className,page:s.page,zoom:s.zoom,width:p.getBoundingClientRect().width,height:p.getBoundingClientRect().height,rules:[...document.styleSheets].flatMap(sheet=>[...sheet.cssRules].filter(r=>r.type===6).map(r=>r.cssText))}})()`);
+  evidence.printColumnLayout = await evaluate(`(${assignmentReportLayoutProbe.toString()})()`);
+  for (const key of ['exactShrinkColumns','noWrap','singleLine','otherWrap','otherNoShrink','centered','preserveNewline','delegatesBelow','contained']) assert.equal(evidence.printColumnLayout[key], true, `print: ${key}`);
   assert.ok(evidence.printLayout.height <= 284 * 96 / 25.4 + 1, 'measured print height, including rounded borders, must fit one page');
   const pdf = await call('Page.printToPDF', { printBackground: true, preferCSSPageSize: true, displayHeaderFooter: false });
   await call('Emulation.setEmulatedMedia', { media: '' });

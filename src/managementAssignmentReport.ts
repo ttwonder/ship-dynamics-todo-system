@@ -69,7 +69,7 @@ export function buildManagementAssignmentReport(data: Pick<AppData, 'vessels' | 
 }
 
 export function assignmentCellText(cell: AssignmentCell, separator = '\n'): string {
-  return [cell.direct.join('、'), cell.delegates.length ? `（${cell.delegates.join('、')}）` : ''].filter(Boolean).join(separator) || '—';
+  return [cell.direct.join('、'), cell.delegates.length ? `(${cell.delegates.join('、')})` : ''].filter(Boolean).join(separator) || '—';
 }
 
 /** Shared PDF/Excel span plan: zero denotes a covered cell; empty cells stay separate. */

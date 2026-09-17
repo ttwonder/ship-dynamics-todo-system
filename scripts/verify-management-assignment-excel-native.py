@@ -24,8 +24,15 @@ try:
             assert ship.Name == '船舶分管' and people.Name == '人員分管'
             assert ship.UsedRange.Rows.Count == 4 + evidence['rowCount']
             assert ship.UsedRange.Columns.Count == 6 + len(evidence['departments'])
-            assert ship.Range('E5').Value == '測試督導甲、林督乙 （測試代理丙*）'
-            assert ship.UsedRange.WrapText is True and ship.UsedRange.ShrinkToFit is False, 'all cells must wrap without shrink-to-fit, not just a specially named department'
+            assert ship.Range('E5').Value == '測試督導甲、林督乙\n(測試代理丙*)'
+            columns = ship.UsedRange.Columns.Count
+            for column in range(1, columns + 1):
+                body = ship.Range(ship.Cells(5, column), ship.Cells(ship.UsedRange.Rows.Count, column))
+                shrink = column in [1, 2, 4, columns - 1, columns]
+                assert body.WrapText is (not shrink) and body.ShrinkToFit is shrink, ('column policy', column)
+                if 5 <= column <= columns - 2:
+                    assert body.HorizontalAlignment == -4108, ('department not centered', column)
+            assert ship.Range(ship.Cells(1, 1), ship.Cells(4, columns)).WrapText is True
             assert people.UsedRange.WrapText is True and people.UsedRange.ShrinkToFit is False
             assert not ship.Range('E5').HasFormula
             assert ship.Columns(5).ColumnWidth > ship.Columns(6).ColumnWidth * 2

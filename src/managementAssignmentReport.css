@@ -10,7 +10,10 @@
 .management-assignment-paper th,.management-assignment-paper td{border:0.5pt solid #7d858c;padding:0.5mm 0.4mm;font-size:7.5pt;line-height:1.2;vertical-align:middle;white-space:normal;overflow-wrap:anywhere;word-break:normal;color:#111}
 .management-assignment-paper th{background:#e9eef2;font-weight:700;text-align:center}
 .management-assignment-paper td{text-align:left}
+.management-assignment-paper td.assignment-department-cell{text-align:center}
+.management-assignment-paper .assignment-department-cell .assignment-cell-text{white-space:pre-line}
 .management-assignment-paper .assignment-cell-text{display:block;white-space:normal;overflow-wrap:anywhere;word-break:normal;overflow:visible}
+.management-assignment-paper .assignment-shrink-text{white-space:nowrap;overflow-wrap:normal}
 .management-assignment-paper footer{margin-top:2mm;font-size:6.5pt;line-height:1.4}
 @media(max-width:600px){.management-assignment-modal{padding:8px}.management-assignment-export-actions{max-width:100%}.management-assignment-shell .report-preview-actions{flex-wrap:wrap}.management-assignment-shell .report-preview-actions h2{font-size:15px}}
 @page management-assignments{size:A4 portrait;margin:6mm}
