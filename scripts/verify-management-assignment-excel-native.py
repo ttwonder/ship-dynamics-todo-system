@@ -25,7 +25,8 @@ try:
             assert ship.UsedRange.Rows.Count == 4 + evidence['rowCount']
             assert ship.UsedRange.Columns.Count == 6 + len(evidence['departments'])
             assert ship.Range('E5').Value == '測試督導甲、林督乙 （測試代理丙*）'
-            assert ship.Range('E5').WrapText is True and ship.Range('E5').ShrinkToFit is False
+            assert ship.UsedRange.WrapText is True and ship.UsedRange.ShrinkToFit is False, 'all cells must wrap without shrink-to-fit, not just a specially named department'
+            assert people.UsedRange.WrapText is True and people.UsedRange.ShrinkToFit is False
             assert not ship.Range('E5').HasFormula
             assert ship.Columns(5).ColumnWidth > ship.Columns(6).ColumnWidth * 2
             assert 0 < ship.Columns(5).ColumnWidth < 13, 'native font metrics differ from OOXML width; still the narrowed supervisor column'

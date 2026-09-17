@@ -84,7 +84,10 @@ try {
   assert.equal(ships.pageSetup.fitToWidth, 1);
   assert.equal(ships.pageSetup.fitToHeight, 1, 'entire ship matrix must print on one page');
   assert.equal(ships.getCell('E5').alignment.wrapText, true, 'supervisor names must wrap');
-  assert.equal(Boolean(ships.getCell('F5').alignment.wrapText), false, 'other columns remain compact and unwrapped');
+  for (const sheet of workbook.worksheets) sheet.eachRow(row => row.eachCell(cell => {
+    assert.equal(cell.alignment.wrapText, true, `${sheet.name}!${cell.address} must wrap, including headers and non-supervisor cells`);
+    assert.equal(Boolean(cell.alignment.shrinkToFit), false, `${sheet.name}!${cell.address} must never shrink to one line`);
+  }));
   assert.equal(Boolean(ships.getCell('E5').alignment.shrinkToFit), false);
   assert.ok(ships.getRow(5).height > 13, 'wrapped supervisor names must receive sufficient row height');
   assert.equal(ships.getColumn(5).width, 12.6, 'serialized supervisor width is half its previous 25.2');

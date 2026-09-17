@@ -2,7 +2,31 @@ import type ExcelJS from 'exceljs';
 import { assignmentCellText, assignmentColumnWidths, assignmentRowSpans, assignmentReportFileName, type ManagementAssignmentReport } from './managementAssignmentReport';
 import { formatTaipeiDateTime } from './taipeiTime';
 
-function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = false, wrappedColumns: number[] = [], rowSpans: number[][] = []): void {
+/** Estimate natural word/CJK wrapping at the workbook font, in printer points. */
+function wrappedLines(text: string, width: number, font: Partial<ExcelJS.Font>, context: CanvasRenderingContext2D | null): number {
+  const size = font.size || 8.5;
+  if (context) context.font = `${font.bold ? 'bold ' : ''}${size}pt "${font.name || 'Microsoft JhengHei'}"`;
+  const measure = (value: string) => context ? context.measureText(value).width * 72 / 96
+    : Array.from(value).reduce((sum, char) => sum + (/[^\x00-\x7f]/.test(char) ? 1 : /[MW@]/.test(char) ? 0.95 : /[A-Z]/.test(char) ? 0.7 : /[0-9]/.test(char) ? 0.62 : /[a-z]/.test(char) ? 0.55 : 0.38), 0) * size * (font.bold ? 1.06 : 1);
+  return text.split(/\r\n?|\n/).reduce((sum, paragraph) => {
+    let lines = 1, used = 0;
+    for (const token of paragraph.match(/[A-Za-z0-9]+|[ \t]+|./gu) || []) {
+      const tokenWidth = measure(token);
+      if (/^\s+$/.test(token)) { if (used) used = Math.min(width, used + tokenWidth); continue; }
+      if (tokenWidth <= width) {
+        if (used && used + tokenWidth > width) { lines++; used = 0; }
+        used += tokenWidth;
+      } else for (const char of token) {
+        const charWidth = measure(char);
+        if (used && used + charWidth > width) { lines++; used = 0; }
+        used += charWidth;
+      }
+    }
+    return sum + lines;
+  }, 0);
+}
+
+function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = false): void {
   widths.forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
   const border: Partial<ExcelJS.Borders> = Object.fromEntries(['top', 'bottom', 'left', 'right'].map(side => [side, { style: 'thin', color: { argb: 'FF808080' } }]));
   for (let row = 1; row <= sheet.rowCount; row += 1) {
@@ -10,8 +34,7 @@ function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = 
     for (let column = 1; column <= widths.length; column += 1) {
       const cell = sheet.getCell(row, column);
       cell.font = { name: compactMatrix ? 'Microsoft JhengHei' : 'Calibri', size: row === 1 ? 14 : compactMatrix ? 8.5 : 10, bold: row === 1 || row === 3 || row === 4, color: { argb: 'FF000000' } };
-      const wrap = !compactMatrix || row === 2 || (row >= 5 && wrappedColumns.includes(column));
-      cell.alignment = { vertical: 'middle', horizontal: row <= 4 ? 'center' : 'left', wrapText: wrap, shrinkToFit: compactMatrix && !wrap };
+      cell.alignment = { vertical: 'middle', horizontal: row <= 4 ? 'center' : 'left', wrapText: true, shrinkToFit: false };
       if (row >= 3) cell.border = border;
       if (row === 3 || row === 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9EEF2' } };
       if (row >= 5 && !compactMatrix) {
@@ -25,15 +48,24 @@ function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = 
       : row === 1 ? 28 : row === 2 ? metadataLines * 14 + 8 : row <= 4 ? 24 : lines * 14 + 6;
   }
   if (compactMatrix) {
-    // Excel does not AutoFit vertically merged wrapped cells. Reserve the
-    // required text height across the whole shared span, not once per vessel.
-    for (const column of wrappedColumns) for (let row = 5; row <= sheet.rowCount; row++) {
-      const span = rowSpans[row - 5]?.[column - 5] || 0;
-      if (!span) continue;
-      const lines = sheet.getCell(row, column).text.split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(Array.from(line).reduce((n, char) => n + (/[^\x00-\x7f]/.test(char) ? 2 : 1), 0) / Math.max(1, widths[column - 1] - 2))), 0);
-      const rows = Array.from({ length: span }, (_, offset) => sheet.getRow(row + offset));
+    // Excel does not AutoFit merged wrapped cells. Size every master cell at
+    // its full merged width/height, including headings and non-person columns.
+    const context = typeof document === 'undefined' ? null : document.createElement('canvas').getContext('2d');
+    for (let row = 1; row <= sheet.rowCount; row++) for (let column = 1; column <= widths.length; column++) {
+      const cell = sheet.getCell(row, column);
+      if (cell.isMerged && cell.master.address !== cell.address) continue;
+      let rowSpan = 1, columnSpan = 1;
+      if (cell.isMerged) {
+        while (row + rowSpan <= sheet.rowCount && sheet.getCell(row + rowSpan, column).master.address === cell.address) rowSpan++;
+        while (column + columnSpan <= widths.length && sheet.getCell(row, column + columnSpan).master.address === cell.address) columnSpan++;
+      }
+      // Normal-style Excel character units are approximately 5.25 pt; reserve
+      // padding before measuring the actual workbook font in the browser.
+      const width = Math.max(1, widths.slice(column - 1, column - 1 + columnSpan).reduce((sum, value) => sum + value, 0) * 5.25 - 2);
+      const lines = wrappedLines(cell.text, width, cell.font, context);
+      const rows = Array.from({ length: rowSpan }, (_, offset) => sheet.getRow(row + offset));
       const height = rows.reduce((sum, item) => sum + (item.height || 0), 0);
-      const extra = Math.max(0, lines * 11 + 4 - height) / span;
+      const extra = Math.max(0, lines * (cell.font.size || 8.5) * 1.25 + 2 - height) / rowSpan;
       if (extra) rows.forEach(item => { item.height = (item.height || 0) + extra; });
     }
     // Fit the physical content before Excel's printer scaling. Native PDF export
@@ -77,7 +109,7 @@ export async function buildManagementAssignmentWorkbook(report: ManagementAssign
   rowSpans.forEach((spans, row) => spans.forEach((span, column) => {
     if (span > 1) ships.mergeCells(row + 5, column + 5, row + 4 + span, column + 5);
   }));
-  styleSheet(ships, assignmentColumnWidths(report.departments).map(width => width * 0.84), true, report.departments.flatMap((department, index) => department === '船東督導' ? [index + 5] : []), rowSpans);
+  styleSheet(ships, assignmentColumnWidths(report.departments).map(width => width * 0.84), true);
 
   const people = workbook.addWorksheet('人員分管');
   people.mergeCells('A1:D1'); people.getCell('A1').value = '目前人員分管明細';

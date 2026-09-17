@@ -89,7 +89,7 @@ try {
   assert.ok(await evaluate("document.querySelector('.management-assignment-modal').innerText.includes('A4 直向・單頁')"));
   await evaluate('document.fonts.ready');
   evidence.expectedNames = await evaluate("window.__qaData.vessels.filter(v=>v.isActive).map(v=>({chinese:v.name,english:v.fullName}))");
-  evidence.departments = ['船東督導', '管理組', '資材組', '營業組', '航運處', '船員組', '海技組', '海技']; // configured inactive-only department must now also be shown
+  evidence.departments = ['督導', '管理組', '資材組', '營業組', '航運處', '船員組', '海技組', '海技']; // configured inactive-only department must now also be shown
   evidence.layout = await evaluate(`(()=>{const paper=document.querySelector('.management-assignment-paper');const cells=[...paper.querySelectorAll('tbody tr:first-child td')];return {width:paper.getBoundingClientRect().width,height:paper.getBoundingClientRect().height,scale:Number(paper.style.getPropertyValue('--assignment-print-scale')),columns:cells.map(c=>c.getBoundingClientRect().width),overflow:[...paper.querySelectorAll('.assignment-cell-text')].flatMap(n=>{const r=document.createRange();r.selectNodeContents(n);return r.getBoundingClientRect().width>n.clientWidth+1?[{text:n.textContent,width:r.getBoundingClientRect().width,available:n.clientWidth}]:[]}),wrapping:[...paper.querySelectorAll('.assignment-cell-text')].some(n=>getComputedStyle(n).whiteSpace!=='nowrap')}})()`);
   assert.equal(evidence.layout.columns.length, 6 + evidence.departments.length);
   assert.ok(await evaluate("document.querySelector('.management-assignment-paper').innerText.includes('年份') && document.querySelector('.management-assignment-paper').innerText.includes('噸數') && document.querySelector('.management-assignment-paper').innerText.includes('2021.06') && document.querySelector('.management-assignment-paper').innerText.includes('2.0萬')"));
@@ -99,11 +99,13 @@ try {
   assert.ok(evidence.layout.columns[4] > evidence.layout.columns[5] * 2, 'supervisor column is wider than office columns');
   assert.deepEqual(evidence.layout.overflow, [], 'no hidden or overlapping cell text');
   assert.equal(evidence.layout.wrapping, true);
-  evidence.supervisorWrap = await evaluate(`(()=>{const nodes=[...document.querySelectorAll('.management-assignment-paper .assignment-supervisor-text')];return {firstText:nodes[0].textContent,height:nodes[0].getBoundingClientRect().height,lineHeight:parseFloat(getComputedStyle(nodes[0]).lineHeight),inlineFont:nodes[0].style.fontSize,allWrap:nodes.every(n=>getComputedStyle(n).whiteSpace==='normal'),otherColumnsNoWrap:[...document.querySelectorAll('.management-assignment-paper .assignment-cell-text:not(.assignment-supervisor-text)')].every(n=>getComputedStyle(n).whiteSpace==='nowrap')}})()`);
-  assert.ok(evidence.supervisorWrap.height > evidence.supervisorWrap.lineHeight + 1, 'long supervisor names really occupy multiple lines');
-  assert.equal(evidence.supervisorWrap.inlineFont, '', 'do not shrink supervisor names to force one line');
-  assert.equal(evidence.supervisorWrap.allWrap, true);
-  assert.equal(evidence.supervisorWrap.otherColumnsNoWrap, true);
+  evidence.allCellWrap = await evaluate(`(()=>{const nodes=[...document.querySelectorAll('.management-assignment-paper .assignment-cell-text')],body=nodes.filter(n=>n.closest('tbody'));return {allWrap:nodes.every(n=>getComputedStyle(n).whiteSpace==='normal'),noInlineShrink:nodes.every(n=>n.style.fontSize===''),bodyFonts:[...new Set(body.map(n=>getComputedStyle(n).fontSize))],wrapped:body.filter(n=>n.getBoundingClientRect().height>parseFloat(getComputedStyle(n).lineHeight)+1).map(n=>n.textContent),contained:nodes.every(n=>{const range=document.createRange();range.selectNodeContents(n);const r=range.getBoundingClientRect(),cell=n.closest('td,th').getBoundingClientRect();return r.left>=cell.left-1&&r.right<=cell.right+1&&r.top>=cell.top-1&&r.bottom<=cell.bottom+1})}})()`);
+  assert.equal(evidence.allCellWrap.allWrap, true, 'every cell must wrap regardless of department display label');
+  assert.equal(evidence.allCellWrap.noInlineShrink, true, 'no individual cell may be forced to tiny single-line text');
+  assert.equal(evidence.allCellWrap.bodyFonts.length, 1, 'all body cells retain the same base font size');
+  assert.ok(evidence.allCellWrap.wrapped.some(text=>text.includes('測試督導甲')));
+  assert.ok(evidence.allCellWrap.wrapped.some(text=>text.includes('未激活代理丁')), 'an ordinary office column must also really wrap');
+  assert.equal(evidence.allCellWrap.contained, true);
   assert.ok(await evaluate("document.querySelector('.management-assignment-paper').innerText.includes('未激活代理丁') && !document.querySelector('.management-assignment-paper').innerText.includes('未激活代理丁*')"));
   assert.ok(evidence.layout.height * evidence.layout.scale <= 284 * 96 / 25.4 + 1, 'complete table fits A4 page height');
   await image('preview-desktop');

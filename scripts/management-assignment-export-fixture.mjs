@@ -34,11 +34,12 @@ export function assignmentPrintFixture(base, extraCount = 50) {
   const data = assignmentExportFixture(base);
   Object.assign(data.vessels[0], { yearLabel: '2021.06', tonnageLabel: '2.0萬' });
   const groups = ['管理組', '資材組', '營業組', '航運處', '船員組', '海技組'];
-  data.settings.departments = ['船東督導', ...groups];
+  data.settings.departments = ['督導', ...groups];
+  data.users.filter(user => user.department === '船東督導').forEach(user => { user.department = '督導'; });
   data.users.find(user => user.id === 'b').department = '海技組';
   data.users.find(user => user.id === 'g').department = '航運處';
   const added = [
-    { id: 'supervisor-2', name: '林督乙', department: '船東督導' },
+    { id: 'supervisor-2', name: '林督乙', department: '督導' },
     ...groups.map((department, index) => ({ id: 'group-' + index, name: ['林管甲', '陳資乙', '王營丙', '李航丁', '黃員戊', '吳技己'][index], department })),
   ];
   data.users.push(...added.map(person => ({ ...data.users[2], ...person, managedVesselIds: [] })));
