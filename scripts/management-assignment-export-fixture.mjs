@@ -28,3 +28,25 @@ export function assignmentExportFixture(base) {
     settings: { ...base.settings, departments: ['船東督導', '海技', '資材', '船舶帳戶'] },
   };
 }
+
+// Full-width matrix: all six office groups, two supervisors, and enabled delegates.
+export function assignmentPrintFixture(base, extraCount = 50) {
+  const data = assignmentExportFixture(base);
+  const groups = ['管理組', '資材組', '營業組', '航運處', '船員組', '海技組'];
+  data.settings.departments = ['船東督導', ...groups];
+  data.users.find(user => user.id === 'b').department = '海技組';
+  data.users.find(user => user.id === 'g').department = '航運處';
+  const added = [
+    { id: 'supervisor-2', name: '林督乙', department: '船東督導' },
+    ...groups.map((department, index) => ({ id: 'group-' + index, name: ['林管甲', '陳資乙', '王營丙', '李航丁', '黃員戊', '吳技己'][index], department })),
+  ];
+  data.users.push(...added.map(person => ({ ...data.users[2], ...person, managedVesselIds: [] })));
+  data.vessels[0].assignedUserIds.push(...added.map(person => person.id));
+  for (let n = 1; n <= extraCount; n++) data.vessels.push({
+    ...structuredClone(data.vessels[0]), id: 'extra-' + n, name: '測試船' + String(n).padStart(2, '0'),
+    shortName: 'QA ' + n, fullName: 'FPMC QA EXTRA ' + String(n).padStart(2, '0'),
+    assignedUserIds: ['a', ...added.map(person => person.id)],
+    delegateManagers: n % 5 === 0 ? [{ userId: 'c', isActive: true }] : [],
+  });
+  return data;
+}

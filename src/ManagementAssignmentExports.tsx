@@ -2,15 +2,57 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AppData, UserAccount } from './types';
 import { formatTaipeiDateTime } from './taipeiTime';
-import { assignmentCellText, assignmentReportFileName, buildManagementAssignmentReport, canExportManagementAssignments, type ManagementAssignmentReport } from './managementAssignmentReport';
+import { assignmentCellText, assignmentColumnWidths, assignmentReportFileName, buildManagementAssignmentReport, canExportManagementAssignments, type ManagementAssignmentReport } from './managementAssignmentReport';
 import './managementAssignmentReport.css';
 
+function fitAssignmentPaper(paper: HTMLElement): void {
+  // Measure once at the fixed printable width; never inverse-compensate zoom.
+  paper.style.setProperty('--assignment-print-scale', '1');
+  const previousZoom = paper.style.getPropertyValue('zoom');
+  paper.style.setProperty('zoom', '1');
+  for (const text of paper.querySelectorAll<HTMLElement>('.assignment-cell-text')) {
+    text.style.fontSize = '';
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const naturalWidth = range.getBoundingClientRect().width;
+    const available = text.clientWidth;
+    if (available > 0 && naturalWidth > available) {
+      text.style.fontSize = `${parseFloat(getComputedStyle(text).fontSize) * available / naturalWidth * 0.98}px`;
+    }
+  }
+  // A4 portrait, 6 mm margins, plus 1 mm rounding allowance at the bottom.
+  const maxHeight = 284 * 96 / 25.4;
+  let scale = Math.min(1, maxHeight / Math.max(1, paper.getBoundingClientRect().height));
+  // Collapsed table borders round to device pixels; actual zoomed height is
+  // not exactly unscaled height * scale, especially for a long fleet list.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    paper.style.setProperty('zoom', String(scale));
+    const height = paper.getBoundingClientRect().height;
+    if (height <= maxHeight) break;
+    scale *= maxHeight / height * 0.995;
+  }
+  paper.style.setProperty('--assignment-print-scale', String(scale));
+  if (previousZoom) paper.style.setProperty('zoom', previousZoom);
+  else paper.style.removeProperty('zoom');
+}
+
 export function ManagementAssignmentPaper({ report }: { report: ManagementAssignmentReport }) {
-  return <article className="management-assignment-paper">
-    <header><h1>目前船舶分管表</h1><p>匯出時間（台北）：{formatTaipeiDateTime(report.generatedAt)}｜啟用船舶 {report.vessels.length} 艘｜來源版本 Rev.{report.revision}</p></header>
-    <table><colgroup><col className="fleet"/><col className="ship-type"/><col className="chinese"/><col className="english"/>{report.departments.map(department => <col key={department}/>)}</colgroup>
-      <thead><tr><th rowSpan={2}>船隊</th><th rowSpan={2}>船型</th><th colSpan={2}>船名</th><th colSpan={report.departments.length}>分管部門／人員</th></tr><tr><th>中文</th><th>英文</th>{report.departments.map(department => <th key={department}>{department}</th>)}</tr></thead>
-      <tbody>{report.vessels.map(vessel => <tr key={vessel.id}><td>{vessel.fleet}</td><td>{vessel.shipType}</td><td>{vessel.chineseName || '—'}</td><td>{vessel.englishName || '—'}</td>{vessel.cells.map((cell, index) => <td key={report.departments[index]}>{assignmentCellText(cell)}</td>)}</tr>)}
+  const paper = useRef<HTMLElement>(null);
+  useEffect(() => {
+    let active = true;
+    const fit = () => { if (active && paper.current) fitAssignmentPaper(paper.current); };
+    fit();
+    void document.fonts.ready.then(fit);
+    window.addEventListener('beforeprint', fit);
+    return () => { active = false; window.removeEventListener('beforeprint', fit); };
+  }, [report]);
+  const widths = assignmentColumnWidths(report.departments), total = widths.reduce((sum, width) => sum + width, 0);
+  const text = (value: string) => <span className="assignment-cell-text">{value}</span>;
+  return <article ref={paper} className="management-assignment-paper">
+    <header><h1>目前船舶分管表</h1><p>匯出時間（台北）：{formatTaipeiDateTime(report.generatedAt)}｜啟用船舶 {report.vessels.length} 艘</p></header>
+    <table><colgroup>{widths.map((width, index) => <col key={index} style={{ width: `${width / total * 100}%` }}/>)}</colgroup>
+      <thead><tr><th rowSpan={2}>{text('船隊')}</th><th rowSpan={2}>{text('船型')}</th><th colSpan={2}>{text('船名')}</th><th colSpan={report.departments.length}>{text('分管部門／人員')}</th></tr><tr><th>{text('中文')}</th><th>{text('英文')}</th>{report.departments.map(department => <th key={department}>{text(department)}</th>)}</tr></thead>
+      <tbody>{report.vessels.map(vessel => <tr key={vessel.id}>{[vessel.fleet, vessel.shipType, vessel.chineseName || '—', vessel.englishName || '—', ...vessel.cells.map(cell => assignmentCellText(cell, ' '))].map((value, index) => <td key={index}>{text(value)}</td>)}</tr>)}
         {!report.vessels.length && <tr><td colSpan={4 + report.departments.length}>目前無啟用船舶</td></tr>}</tbody>
     </table>
     <footer>範圍：全部啟用船舶及啟用岸端分管人員，不受列表搜尋影響。括號內為已啟用代理；系統未記錄一對一職務代理關係。停用人員、未啟用代理、船舶帳戶及未保存編輯不列入。</footer>
@@ -36,8 +78,16 @@ function AssignmentPreview({ report, close }: { report: ManagementAssignmentRepo
   }, []);
   const print = () => {
     cleanupPrint.current?.();
+    const paper = shell.current?.querySelector<HTMLElement>('.management-assignment-paper');
+    if (paper) fitAssignmentPaper(paper);
     const title = document.title;
-    const cleanup = () => { document.body.classList.remove('printing-management-assignments'); document.title = title; window.removeEventListener('afterprint', cleanup); cleanupPrint.current = null; };
+    // Also scope the anonymous page used by Chromium's print root. The app's
+    // shared landscape @page can otherwise win despite the article's named page.
+    const pageStyle = document.createElement('style');
+    pageStyle.dataset.assignmentPrintPage = 'true';
+    pageStyle.textContent = '@page { size: A4 portrait; margin: 6mm; }';
+    document.head.append(pageStyle);
+    const cleanup = () => { pageStyle.remove(); document.body.classList.remove('printing-management-assignments'); document.title = title; window.removeEventListener('afterprint', cleanup); cleanupPrint.current = null; };
     cleanupPrint.current = cleanup;
     document.title = assignmentReportFileName(report, 'pdf').replace(/\.pdf$/, '');
     document.body.classList.add('printing-management-assignments');
@@ -46,7 +96,7 @@ function AssignmentPreview({ report, close }: { report: ManagementAssignmentRepo
   };
   return createPortal(<div className="report-preview-modal management-assignment-modal" role="dialog" aria-modal="true" aria-labelledby="management-assignment-title">
     <div ref={shell} className="report-preview-shell management-assignment-shell">
-      <div className="report-preview-actions no-print"><h2 id="management-assignment-title">船舶分管 PDF 預覽</h2><span>A4 橫向</span><div className="spacer"/><button className="btn primary" onClick={print}>導出／列印 PDF</button><button ref={closeButton} className="btn ghost" onClick={close}>關閉</button></div>
+      <div className="report-preview-actions no-print"><h2 id="management-assignment-title">船舶分管 PDF 預覽</h2><span>A4 直向・單頁</span><div className="spacer"/><button className="btn primary" onClick={print}>導出／列印 PDF</button><button ref={closeButton} className="btn ghost" onClick={close}>關閉</button></div>
       <ManagementAssignmentPaper report={report}/>
     </div>
   </div>, document.body);

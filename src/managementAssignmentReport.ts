@@ -61,8 +61,13 @@ export function buildManagementAssignmentReport(data: Pick<AppData, 'vessels' | 
   };
 }
 
-export function assignmentCellText(cell: AssignmentCell): string {
-  return [cell.direct.join('、'), cell.delegates.length ? `（代理：${cell.delegates.join('、')}）` : ''].filter(Boolean).join('\n') || '—';
+export function assignmentCellText(cell: AssignmentCell, separator = '\n'): string {
+  return [cell.direct.join('、'), cell.delegates.length ? `（代理：${cell.delegates.join('、')}）` : ''].filter(Boolean).join(separator) || '—';
+}
+
+/** Shared relative PDF widths / Excel character widths; keep supervisor names together. */
+export function assignmentColumnWidths(departments: string[]): number[] {
+  return [9, 7, 9, 16, ...departments.map(department => department.includes('督導') ? 30 : 7)];
 }
 
 export function assignmentReportFileName(report: ManagementAssignmentReport, extension: 'pdf' | 'xlsx'): string {
