@@ -8,6 +8,7 @@ import { assignmentReportLayoutProbe } from './assignment-report-layout-probe.mj
 
 const output = fs.mkdtempSync(path.join(process.env.QA_EVIDENCE_ROOT || os.tmpdir(), 'management-assignment-'));
 const profile = path.join(output, 'chrome-profile');
+const expectedNotes = ['註：()為職務代理人', '註2：船隊加油業務(燃油/潤滑油)改為資材組-王梓名負責。'];
 const extraCount = Number(process.env.QA_EXTRA_VESSELS || 50);
 assert.ok(Number.isInteger(extraCount) && extraCount >= 1 && extraCount <= 200);
 const entry = `
@@ -101,6 +102,8 @@ try {
   assert.deepEqual(evidence.layout.overflow, [], 'no hidden or overlapping cell text');
   assert.equal(evidence.layout.wrapping, true);
   evidence.columnLayout = await evaluate(`(${assignmentReportLayoutProbe.toString()})()`);
+  assert.deepEqual(evidence.columnLayout.notes, expectedNotes, 'both reference notes appear below the table');
+  for (const key of ['notesBelowTable', 'notesContained', 'notesLast']) assert.equal(evidence.columnLayout[key], true, key);
   assert.equal(evidence.columnLayout.shrinkCount, evidence.rowCount * 5, 'exactly five fields per vessel may shrink');
   for (const key of ['exactShrinkColumns','noWrap','singleLine','otherWrap','otherNoShrink','centered','preserveNewline','delegatesBelow','contained']) assert.equal(evidence.columnLayout[key], true, key);
   assert.ok(evidence.columnLayout.departmentCount > 0 && evidence.columnLayout.delegateLineCount > 0);
@@ -115,6 +118,8 @@ try {
   evidence.printLayout = await evaluate(`(()=>{const p=document.querySelector('.management-assignment-paper'),s=getComputedStyle(p);return{classes:document.body.className,page:s.page,zoom:s.zoom,width:p.getBoundingClientRect().width,height:p.getBoundingClientRect().height,rules:[...document.styleSheets].flatMap(sheet=>[...sheet.cssRules].filter(r=>r.type===6).map(r=>r.cssText))}})()`);
   evidence.printColumnLayout = await evaluate(`(${assignmentReportLayoutProbe.toString()})()`);
   for (const key of ['exactShrinkColumns','noWrap','singleLine','otherWrap','otherNoShrink','centered','preserveNewline','delegatesBelow','contained']) assert.equal(evidence.printColumnLayout[key], true, `print: ${key}`);
+  assert.deepEqual(evidence.printColumnLayout.notes, expectedNotes);
+  for (const key of ['notesBelowTable', 'notesContained', 'notesLast']) assert.equal(evidence.printColumnLayout[key], true, `print: ${key}`);
   assert.ok(evidence.printLayout.height <= 284 * 96 / 25.4 + 1, 'measured print height, including rounded borders, must fit one page');
   const pdf = await call('Page.printToPDF', { printBackground: true, preferCSSPageSize: true, displayHeaderFooter: false });
   await call('Emulation.setEmulatedMedia', { media: '' });

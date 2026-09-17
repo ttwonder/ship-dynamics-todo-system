@@ -53,7 +53,9 @@ try {
   const denied = structuredClone(original);
   denied.settings.rolePermissions.admin.exportReports = false;
   assert.equal(canExportManagementAssignments(denied, denied.users[1]), false);
+  const expectedNotes = ['註：()為職務代理人', '註2：船隊加油業務(燃油/潤滑油)改為資材組-王梓名負責。'];
   const paper = renderToStaticMarkup(React.createElement(ManagementAssignmentPaper, { report }));
+  assert.ok(paper.endsWith(expectedNotes.map(note => `<div>${note}</div>`).join('') + '</footer></article>'), 'the two supplied notes must be the final PDF content, on separate lines after the table');
   for (const text of ['目前船舶分管表', '測試甲輪', 'QA ALPHA', '測試督導甲', '(測試代理丙*)', '(未激活代理丁)', '純中文測試輪', 'FPMC QA BETA']) assert.ok(paper.includes(text), text);
   assert.ok(paper.includes('測試督導甲\n(測試代理丙*)'), 'the PDF must retain the same explicit delegation line break');
   assert.ok(!/PRIVATE_|停用人員戊|INACTIVE SHIP/.test(paper));
@@ -75,10 +77,25 @@ try {
   assert.equal(ships.getCell(5, ships.columnCount-1).text, '2021.06');
   assert.equal(ships.getCell(5, ships.columnCount).text, '2.0萬');
   assert.equal(ships.getCell('E5').text, '測試督導甲\n(測試代理丙*)', 'delegates must start a separate line');
-  for (let row=5;row<=ships.rowCount;row++) for(let column=5;column<=ships.columnCount-2;column++) {
+  for (let row=5;row<=4+report.vessels.length;row++) for(let column=5;column<=ships.columnCount-2;column++) {
     assert.equal(ships.getCell(row,column).alignment.horizontal,'center','every department is centered');
   }
-  assert.equal(ships.rowCount, 4 + report.vessels.length);
+  const assertNotes = (sheet, vesselCount) => {
+    const start = 5 + Math.max(1, vesselCount);
+    assert.equal(sheet.rowCount, start + expectedNotes.length - 1, 'notes follow the last vessel or empty-state row');
+    for (const [index, note] of expectedNotes.entries()) {
+      const cell = sheet.getCell(start + index, 1);
+      assert.equal(cell.text, note);
+      assert.equal(sheet.getCell(start + index, sheet.columnCount).master.address, cell.address, 'notes span the existing table width');
+      assert.equal(cell.alignment.horizontal, 'left');
+      assert.equal(cell.alignment.wrapText, true);
+      assert.equal(Boolean(cell.alignment.shrinkToFit), false, 'footnotes are not vessel single-line fields');
+      assert.ok(sheet.getRow(start + index).height >= 13);
+    }
+    assert.equal(sheet.pageSetup.printArea, `A1:${sheet.getColumn(sheet.columnCount).letter}${sheet.rowCount}`, 'both notes are in the print area');
+  };
+  assertNotes(ships, report.vessels.length);
+  assert.ok(expectedNotes.every(note => !people.getCell('A' + people.rowCount).text.includes(note)), 'personnel detail is unchanged');
   assert.equal(ships.pageSetup.printTitlesRow ?? '', '', 'single-page matrix includes its headers once; repeating titles can distort native PDF page size');
   assert.equal(people.pageSetup.printTitlesRow, '1:4', 'multi-page personnel detail keeps its existing repeated headings');
   assert.ok(ships.getRow(2).height >= 24, 'compact merged metadata must retain room for both caption lines');
@@ -89,7 +106,7 @@ try {
   assert.equal(ships.pageSetup.fitToHeight, 1, 'entire ship matrix must print on one page');
   assert.equal(ships.getCell('E5').alignment.wrapText, true, 'supervisor names must wrap');
   for (const sheet of workbook.worksheets) sheet.eachRow(row => row.eachCell(cell => {
-    const shrink = sheet === ships && Number(cell.row) >= 5 && [1, 2, 4, sheet.columnCount-1, sheet.columnCount].includes(Number(cell.col));
+    const shrink = sheet === ships && Number(cell.row) >= 5 && Number(cell.row) <= 4 + report.vessels.length && [1, 2, 4, sheet.columnCount-1, sheet.columnCount].includes(Number(cell.col));
     assert.equal(Boolean(cell.alignment.wrapText), !shrink, `${sheet.name}!${cell.address} follows its column wrap policy`);
     assert.equal(Boolean(cell.alignment.shrinkToFit), shrink, `${sheet.name}!${cell.address} shrinks only the five selected fields`);
   }));
@@ -138,7 +155,11 @@ try {
   const empty = buildManagementAssignmentReport({ ...original, vessels: [], users: [] });
   assert.deepEqual(empty.departments, ['分管人員']);
   assert.ok(renderToStaticMarkup(React.createElement(ManagementAssignmentPaper, { report: empty })).includes('目前無啟用船舶'));
-  await new ExcelJS.Workbook().xlsx.load(await buildManagementAssignmentWorkbook(empty));
+  const emptyBook = new ExcelJS.Workbook();
+  await emptyBook.xlsx.load(await buildManagementAssignmentWorkbook(empty));
+  assert.equal(emptyBook.worksheets[0].getCell('A5').text, '目前無啟用船舶');
+  assertNotes(emptyBook.worksheets[0], 0);
+  assert.ok(renderToStaticMarkup(React.createElement(ManagementAssignmentPaper, { report: empty })).endsWith(expectedNotes.map(note => `<div>${note}</div>`).join('') + '</footer></article>'));
   console.log('PASS assignment export: mounted entry markup, source/roles/delegation, names, frozen redacted DTO, PDF renderer, serialized Excel and late-revocation guard');
 } finally {
   delete globalThis.window;

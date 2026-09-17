@@ -8,6 +8,8 @@ export function assignmentReportLayoutProbe() {
   const wrapped = nodes.filter(node => !node.classList.contains('assignment-shrink-text'));
   const departments = [...paper.querySelectorAll('.assignment-department-cell .assignment-cell-text')];
   const box = node => { const range = document.createRange(); range.selectNodeContents(node); return range.getBoundingClientRect(); };
+  const notes = [...paper.querySelectorAll('footer > div')];
+  const pageBox = paper.getBoundingClientRect(), tableBottom = paper.querySelector('table').getBoundingClientRect().bottom;
   const delegates = departments.filter(node => node.textContent.includes('\n('));
   const lineBreaks = delegates.map(node => {
     const range = document.createRange();
@@ -19,6 +21,10 @@ export function assignmentReportLayoutProbe() {
   });
   return {
     rows: rows.length,
+    notes: notes.map(node => node.textContent),
+    notesBelowTable: notes.length === 2 && notes.every((node, index) => node.getBoundingClientRect().top >= (index ? notes[index - 1].getBoundingClientRect().bottom : tableBottom) - 1),
+    notesContained: notes.length === 2 && notes.every(node => { const r = box(node); return r.left >= pageBox.left - 1 && r.right <= pageBox.right + 1 && r.bottom <= pageBox.bottom + 1; }),
+    notesLast: paper.lastElementChild?.tagName === 'FOOTER' && paper.lastElementChild.lastElementChild === notes[1],
     shrinkCount: shrink.length,
     exactShrinkColumns: expected.length === shrink.length && expected.every(node => shrink.includes(node)),
     noWrap: shrink.every(node => getComputedStyle(node).whiteSpace === 'nowrap'),

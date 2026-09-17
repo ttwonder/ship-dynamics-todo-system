@@ -22,17 +22,23 @@ try:
             assert book.Worksheets.Count == 2 and book.ReadOnly
             ship, people = book.Worksheets(1), book.Worksheets(2)
             assert ship.Name == '船舶分管' and people.Name == '人員分管'
-            assert ship.UsedRange.Rows.Count == 4 + evidence['rowCount']
+            assert ship.UsedRange.Rows.Count == 4 + evidence['rowCount'] + 2
             assert ship.UsedRange.Columns.Count == 6 + len(evidence['departments'])
             assert ship.Range('E5').Value == '測試督導甲、林督乙\n(測試代理丙*)'
             columns = ship.UsedRange.Columns.Count
             for column in range(1, columns + 1):
-                body = ship.Range(ship.Cells(5, column), ship.Cells(ship.UsedRange.Rows.Count, column))
+                body = ship.Range(ship.Cells(5, column), ship.Cells(4 + evidence['rowCount'], column))
                 shrink = column in [1, 2, 4, columns - 1, columns]
                 assert body.WrapText is (not shrink) and body.ShrinkToFit is shrink, ('column policy', column)
                 if 5 <= column <= columns - 2:
                     assert body.HorizontalAlignment == -4108, ('department not centered', column)
             assert ship.Range(ship.Cells(1, 1), ship.Cells(4, columns)).WrapText is True
+            for offset, note in enumerate(['註：()為職務代理人', '註2：船隊加油業務(燃油/潤滑油)改為資材組-王梓名負責。']):
+                cell = ship.Cells(5 + evidence['rowCount'] + offset, 1)
+                assert cell.Value == note and not cell.HasFormula
+                assert cell.MergeArea.Columns.Count == columns
+                assert cell.WrapText is True and cell.ShrinkToFit is False
+                assert cell.HorizontalAlignment == -4131, 'notes must remain left aligned'
             assert people.UsedRange.WrapText is True and people.UsedRange.ShrinkToFit is False
             assert not ship.Range('E5').HasFormula
             assert ship.Columns(5).ColumnWidth > ship.Columns(6).ColumnWidth * 2
@@ -60,7 +66,7 @@ try:
             pdf = 'excel-ships.pdf' if index == 0 else 'excel-ships-vessel-entry.pdf'
             ship.ExportAsFixedFormat(0, str(root / pdf))
             receipts.append({'file': name, 'ship_rows': evidence['rowCount'], 'normal_open': True,
-                             'read_only': True, 'portrait_a4': True, 'fit_wide': 1, 'fit_tall': 1, 'pdf': pdf})
+                             'read_only': True, 'bottom_notes': True, 'portrait_a4': True, 'fit_wide': 1, 'fit_tall': 1, 'pdf': pdf})
         finally:
             book.Close(SaveChanges=False)
 finally:

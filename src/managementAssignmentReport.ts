@@ -4,6 +4,12 @@ import { hasActiveVesselDelegation, hasAnyVesselDelegation } from './vesselDeleg
 import { pdfVesselDisplayName, vesselDisplayName } from './vesselDisplay';
 import { formatTaipeiDateTime } from './taipeiTime';
 
+// User-supplied report annotations only; they do not change assignment data.
+export const MANAGEMENT_ASSIGNMENT_NOTES = [
+  '註：()為職務代理人',
+  '註2：船隊加油業務(燃油/潤滑油)改為資材組-王梓名負責。',
+] as const;
+
 export interface AssignmentCell { direct: string[]; delegates: string[]; mergeKey: string }
 export interface AssignmentVesselRow {
   id: string; fleet: string; shipType: string; chineseName: string; englishName: string; yearLabel: string; tonnageLabel: string; cells: AssignmentCell[];

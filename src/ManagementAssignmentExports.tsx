@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AppData, UserAccount } from './types';
 import { formatTaipeiDateTime } from './taipeiTime';
-import { assignmentCellText, assignmentColumnWidths, assignmentRowSpans, assignmentReportFileName, buildManagementAssignmentReport, canExportManagementAssignments, type ManagementAssignmentReport } from './managementAssignmentReport';
+import { MANAGEMENT_ASSIGNMENT_NOTES, assignmentCellText, assignmentColumnWidths, assignmentRowSpans, assignmentReportFileName, buildManagementAssignmentReport, canExportManagementAssignments, type ManagementAssignmentReport } from './managementAssignmentReport';
 import './managementAssignmentReport.css';
 
 function fitAssignmentPaper(paper: HTMLElement): void {
@@ -60,7 +60,7 @@ export function ManagementAssignmentPaper({ report }: { report: ManagementAssign
       </tr>)}
         {!report.vessels.length && <tr><td colSpan={6 + report.departments.length}>目前無啟用船舶</td></tr>}</tbody>
     </table>
-    <footer>範圍：全部啟用船舶及啟用岸端分管人員，不受列表搜尋影響。括號內為預設代管人員，* 表示該船代管已激活；系統未記錄一對一職務代理關係。停用人員、船舶帳戶及未保存編輯不列入。</footer>
+    <footer>範圍：全部啟用船舶及啟用岸端分管人員，不受列表搜尋影響。括號內為預設代管人員，* 表示該船代管已激活；系統未記錄一對一職務代理關係。停用人員、船舶帳戶及未保存編輯不列入。{MANAGEMENT_ASSIGNMENT_NOTES.map(note => <div key={note}>{note}</div>)}</footer>
   </article>;
 }
 

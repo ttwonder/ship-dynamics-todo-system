@@ -20,6 +20,7 @@ def normalized(value):
 
 names = [name for vessel in evidence['expectedNames'] for name in [vessel['english'], vessel['chinese'] if re.search('[\u3400-\u9fff]', vessel['chinese']) else ''] if name]
 required = names + evidence['departments'] + ['年份', '噸數', '2021.06', '2.0萬', '2021.06.30', '20,000 DWT'] + ['測試督導甲', '林督乙', '測試代理丙*', '未激活代理丁', '林管甲', '陳資乙', '王營丙', '李航丁', '黃員戊', '吳技己']
+required += ['註：()為職務代理人', '註2：船隊加油業務(燃油/潤滑油)改為資材組-王梓名負責。']
 receipts = []
 for name in ['management-assignments.pdf', 'excel-ships.pdf', 'excel-ships-vessel-entry.pdf']:
     source = root / name
@@ -42,6 +43,6 @@ for name in ['management-assignments.pdf', 'excel-ships.pdf', 'excel-ships-vesse
         textpage.close()
         rendered.close()
     receipts.append({'file': name, 'pages': len(reader.pages), 'width_pt': width, 'height_pt': height,
-                     'all_ship_names_present': True, 'ship_rows': evidence['rowCount'], 'text_within_page': True})
+                     'all_ship_names_present': True, 'both_notes_present': True, 'ship_rows': evidence['rowCount'], 'text_within_page': True})
 (root / 'print-verification.json').write_text(json.dumps(receipts, ensure_ascii=False, indent=2), encoding='utf-8')
 print(json.dumps({'status': 'PASS', 'portrait_single_page_pdfs': len(receipts), 'ship_rows_per_pdf': evidence['rowCount']}))

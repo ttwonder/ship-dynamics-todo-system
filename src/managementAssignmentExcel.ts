@@ -1,5 +1,5 @@
 import type ExcelJS from 'exceljs';
-import { assignmentCellText, assignmentColumnWidths, assignmentRowSpans, assignmentReportFileName, type ManagementAssignmentReport } from './managementAssignmentReport';
+import { MANAGEMENT_ASSIGNMENT_NOTES, assignmentCellText, assignmentColumnWidths, assignmentRowSpans, assignmentReportFileName, type ManagementAssignmentReport } from './managementAssignmentReport';
 import { formatTaipeiDateTime } from './taipeiTime';
 
 /** Estimate natural word/CJK wrapping at the workbook font, in printer points. */
@@ -26,17 +26,18 @@ function wrappedLines(text: string, width: number, font: Partial<ExcelJS.Font>, 
   }, 0);
 }
 
-function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = false): void {
+function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = false, notesStartRow = Infinity): void {
   widths.forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
   const border: Partial<ExcelJS.Borders> = Object.fromEntries(['top', 'bottom', 'left', 'right'].map(side => [side, { style: 'thin', color: { argb: 'FF808080' } }]));
   for (let row = 1; row <= sheet.rowCount; row += 1) {
     let lines = 1;
+    const isNote = row >= notesStartRow;
     for (let column = 1; column <= widths.length; column += 1) {
       const cell = sheet.getCell(row, column);
       cell.font = { name: compactMatrix ? 'Microsoft JhengHei' : 'Calibri', size: row === 1 ? 14 : compactMatrix ? 8.5 : 10, bold: row === 1 || row === 3 || row === 4, color: { argb: 'FF000000' } };
-      const shrink = compactMatrix && row >= 5 && [1, 2, 4, widths.length - 1, widths.length].includes(column);
-      cell.alignment = { vertical: 'middle', horizontal: row <= 4 || (compactMatrix && column >= 5 && column <= widths.length - 2) ? 'center' : 'left', wrapText: !shrink, shrinkToFit: shrink };
-      if (row >= 3) cell.border = border;
+      const shrink = compactMatrix && !isNote && row >= 5 && [1, 2, 4, widths.length - 1, widths.length].includes(column);
+      cell.alignment = { vertical: 'middle', horizontal: !isNote && (row <= 4 || (compactMatrix && column >= 5 && column <= widths.length - 2)) ? 'center' : 'left', wrapText: !shrink, shrinkToFit: shrink };
+      if (row >= 3 && !isNote) cell.border = border;
       if (row === 3 || row === 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9EEF2' } };
       if (row >= 5 && !compactMatrix) {
         const count = cell.text.split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(Array.from(line).reduce((n, char) => n + (/[^\x00-\x7f]/.test(char) ? 2 : 1), 0) / (widths[column - 1] - 2))), 0);
@@ -110,7 +111,13 @@ export async function buildManagementAssignmentWorkbook(report: ManagementAssign
   rowSpans.forEach((spans, row) => spans.forEach((span, column) => {
     if (span > 1) ships.mergeCells(row + 5, column + 5, row + 4 + span, column + 5);
   }));
-  styleSheet(ships, assignmentColumnWidths(report.departments).map(width => width * 0.84), true);
+  const notesStartRow = ships.rowCount + 1;
+  MANAGEMENT_ASSIGNMENT_NOTES.forEach((note, index) => {
+    const row = notesStartRow + index;
+    ships.mergeCells(row, 1, row, columns);
+    ships.getCell(row, 1).value = note;
+  });
+  styleSheet(ships, assignmentColumnWidths(report.departments).map(width => width * 0.84), true, notesStartRow);
 
   const people = workbook.addWorksheet('人員分管');
   people.mergeCells('A1:D1'); people.getCell('A1').value = '目前人員分管明細';
