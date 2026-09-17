@@ -366,7 +366,7 @@ export default function ShipItineraryPortal() {
       <div className="ship-latest-head">
         <ShipItineraryLatestHeading document={latest} />
         <ItineraryCurrentVesselStateSummary document={latest} />
-        <div>
+        <div className="ship-latest-actions">
           <ItineraryCopyEmailButton document={latest} onNotice={setNotice} />
           <ItineraryMoreParametersButton expanded={showMoreParameters} onToggle={() => setShowMoreParameters(value => !value)} />
           <button className="btn ghost small" onClick={() => void exportDocument(latest, 'Itinerary')}>匯出最新 Excel</button>
