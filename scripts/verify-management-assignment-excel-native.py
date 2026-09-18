@@ -24,12 +24,12 @@ try:
             assert ship.Name == '船舶分管' and people.Name == '人員分管'
             assert ship.UsedRange.Rows.Count == 4 + evidence['rowCount']
             assert ship.UsedRange.Columns.Count == 6 + len(evidence['departments'])
-            assert ship.Range('E5').Value == '測試督導甲、林督乙 （測試代理丙）'
-            assert ship.Range('E5').WrapText is False and ship.Range('E5').ShrinkToFit is True
+            assert ship.Range('E5').Value == '測試督導甲、林督乙 （測試代理丙*）'
+            assert ship.Range('E5').WrapText is True and ship.Range('E5').ShrinkToFit is False
             assert not ship.Range('E5').HasFormula
             assert ship.Columns(5).ColumnWidth > ship.Columns(6).ColumnWidth * 2
             assert 0 < ship.Columns(5).ColumnWidth < 13, 'native font metrics differ from OOXML width; still the narrowed supervisor column'
-            assert ship.Cells(3, ship.UsedRange.Columns.Count-1).Value == '年分'
+            assert ship.Cells(3, ship.UsedRange.Columns.Count-1).Value == '年份'
             assert ship.Cells(3, ship.UsedRange.Columns.Count).Value == '噸數'
             assert ship.Cells(5, ship.UsedRange.Columns.Count-1).Value == '2021.06'
             assert ship.Cells(5, ship.UsedRange.Columns.Count).Value == '2.0萬'
@@ -43,10 +43,11 @@ try:
                 assert (vessel['english'] or vessel['chinese']) in values
             for label in evidence['departments']:
                 assert label in values
-            for forbidden in ['來源版本', 'Rev.', 'PRIVATE_', 'QA UNSAVED NAME', 'INACTIVE SHIP', '停用人員戊', '未激活代理丁']:
+            for forbidden in ['來源版本', 'Rev.', 'PRIVATE_', 'QA UNSAVED NAME', 'INACTIVE SHIP', '停用人員戊', '未激活代理丁*']:
                 assert forbidden not in values
             people_values = '\n'.join(str(cell or '') for row in people.UsedRange.Value for cell in row)
-            assert '未分管人員己' in people_values and '已啟用代理' in people_values
+            assert '未分管人員己' in people_values and '已激活代管' in people_values and '預設代管' in people_values
+            assert '未激活代理丁' in values and '測試代理丙*' in values
             assert 'PRIVATE_' not in people_values
             pdf = 'excel-ships.pdf' if index == 0 else 'excel-ships-vessel-entry.pdf'
             ship.ExportAsFixedFormat(0, str(root / pdf))

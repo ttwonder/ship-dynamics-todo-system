@@ -24,13 +24,13 @@ const activate=async expr=>{await evaluate(`(()=>{const n=${expr};if(!n||n.disab
 const click=async(label,selector='button',ends=false)=>{const expr=`[...document.querySelectorAll(${JSON.stringify(selector)})].find(n=>n.textContent.trim().${ends?'endsWith':'includes'}(${JSON.stringify(label)})&&n.getClientRects().length&&!n.disabled)`;await until(()=>evaluate(`Boolean(${expr})`),'button '+label);await activate(expr);};
 const fill=async(selector,text)=>{await evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n||n.disabled||n.readOnly)throw Error('field unavailable');n.focus();n.select();})()`);if(text)await call('Input.insertText',{text});else await key('Backspace');};
 const screen=async name=>fs.writeFileSync(path.join(run,name+'.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png'})).data,'base64'));
-const values=()=>evaluate("[...document.querySelectorAll('input[aria-label=年分],input[aria-label=噸數]')].map(n=>n.value)");
+const values=()=>evaluate("[...document.querySelectorAll('input[aria-label=年份],input[aria-label=噸數]')].map(n=>n.value)");
 const read=async()=>storageMode==='legacy'?(await native.observer.query('select payload,revision from ship_dynamics_app_state where workspace_key=$1',[qa.workspace])).rows[0]:(await native.observer.query('select read_ship_dynamics_records_v1($1) r',[qa.workspace])).rows[0].r;
 async function openManagement(){
  await click('管理','nav button');await until(()=>evaluate("!!document.querySelector('.management-view')"),'Management');
  await click('船舶','.management-sidebar button',true);
  await click('FPMC S AMBER','.management-master .management-list button');
- await until(()=>evaluate("!!document.querySelector('input[aria-label=年分]')"),'particulars inputs');
+ await until(()=>evaluate("!!document.querySelector('input[aria-label=年份]')"),'particulars inputs');
 }
 try{
  native=await createNativeRecordQa(run,evidence,{httpTransactions:true});
@@ -85,7 +85,7 @@ try{
  await click('關閉','.management-assignment-modal button');
  assert.deepEqual(await read(),before,'opening/prefilling/exporting never writes the reference');
  evidence.cases.push('original-editor-prefill-is-not-a-save');
- await fill('input[aria-label=年分]','2024.03');await fill('input[aria-label=噸數]','2.1萬');
+ await fill('input[aria-label=年份]','2024.03');await fill('input[aria-label=噸數]','2.1萬');
  await click('保存變更','.management-editor button');
  await until(()=>evaluate("document.body?.innerText.includes('船舶資料已保存')"),'real Management ACK');
  const after=await read();
@@ -98,7 +98,7 @@ try{
  assert.ok(savedText.includes('2024.03')&&savedText.includes('2.1萬'));
  await click('關閉','.management-assignment-modal button');
  evidence.cases.push('original-Management-save-native-SQL-readback-and-export');
- await fill('input[aria-label=年分]','');await fill('input[aria-label=噸數]','');
+ await fill('input[aria-label=年份]','');await fill('input[aria-label=噸數]','');
  assert.deepEqual(await values(),['',''],'native Backspace must actually clear both editor controls before Save');
  await click('保存變更','.management-editor button');
  await until(async()=>{const value=await read();return value.payload.vessels[0].yearLabel===''&&value.payload.vessels[0].tonnageLabel==='';},'durable explicit clear');

@@ -19,7 +19,7 @@ def normalized(value):
     return re.sub(r'\s+', '', unicodedata.normalize('NFKC', value))
 
 names = [name for vessel in evidence['expectedNames'] for name in [vessel['english'], vessel['chinese'] if re.search('[\u3400-\u9fff]', vessel['chinese']) else ''] if name]
-required = names + evidence['departments'] + ['年分', '噸數', '2021.06', '2.0萬'] + ['測試督導甲', '林督乙', '測試代理丙', '林管甲', '陳資乙', '王營丙', '李航丁', '黃員戊', '吳技己']
+required = names + evidence['departments'] + ['年份', '噸數', '2021.06', '2.0萬'] + ['測試督導甲', '林督乙', '測試代理丙*', '未激活代理丁', '林管甲', '陳資乙', '王營丙', '李航丁', '黃員戊', '吳技己']
 receipts = []
 for name in ['management-assignments.pdf', 'excel-ships.pdf', 'excel-ships-vessel-entry.pdf']:
     source = root / name
@@ -31,7 +31,7 @@ for name in ['management-assignments.pdf', 'excel-ships.pdf', 'excel-ships-vesse
     text = normalized(page.extract_text())
     for value in required:
         assert normalized(value) in text, (name, 'missing printed text', value)
-    for value in ['來源版本', 'Rev.', 'PRIVATE_', 'QA UNSAVED NAME', 'INACTIVE SHIP', '停用人員戊']:
+    for value in ['來源版本', 'Rev.', 'PRIVATE_', 'QA UNSAVED NAME', 'INACTIVE SHIP', '停用人員戊', '未激活代理丁*', '年分']:
         assert normalized(value) not in text, (name, 'forbidden text', value)
     with pdfium.PdfDocument(source) as document:
         rendered = document[0]

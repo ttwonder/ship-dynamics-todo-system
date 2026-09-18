@@ -1,6 +1,6 @@
 import type { AppData, UserAccount } from './types';
 import { hasPermission } from './permissions';
-import { hasActiveVesselDelegation } from './vesselDelegation';
+import { hasActiveVesselDelegation, hasAnyVesselDelegation } from './vesselDelegation';
 import { pdfVesselDisplayName, vesselDisplayName } from './vesselDisplay';
 import { formatTaipeiDateTime } from './taipeiTime';
 
@@ -9,7 +9,7 @@ export interface AssignmentVesselRow {
   id: string; fleet: string; shipType: string; chineseName: string; englishName: string; yearLabel: string; tonnageLabel: string; cells: AssignmentCell[];
 }
 export interface AssignmentPersonRow {
-  id: string; name: string; department: string; directVessels: string[]; delegateVessels: string[];
+  id: string; name: string; department: string; directVessels: string[]; delegateVessels: { name: string; isActive: boolean }[];
 }
 export interface ManagementAssignmentReport {
   generatedAt: string; revision: number; departments: string[]; vessels: AssignmentVesselRow[]; people: AssignmentPersonRow[];
@@ -28,7 +28,7 @@ export function buildManagementAssignmentReport(data: Pick<AppData, 'vessels' | 
   const department = (user: UserAccount) => user.department.trim() || '未設定部門';
   const name = (user: UserAccount) => user.name.trim() || '未命名人員';
   const direct = (vessel: typeof activeVessels[number], user: UserAccount) => vessel.assignedUserIds.includes(user.id) || user.managedVesselIds.includes(vessel.id);
-  const delegated = (vessel: typeof activeVessels[number], user: UserAccount) => !direct(vessel, user) && hasActiveVesselDelegation(vessel, user.id);
+  const delegated = (vessel: typeof activeVessels[number], user: UserAccount) => !direct(vessel, user) && hasAnyVesselDelegation(vessel, user.id);
   const usedDepartments = new Set(people.filter(user => activeVessels.some(vessel => direct(vessel, user) || delegated(vessel, user))).map(department));
   const departments = [...new Set([...data.settings.departments.map(value => value.trim()), ...usedDepartments])].filter(value => usedDepartments.has(value));
   if (!departments.length) departments.push('分管人員');
@@ -52,10 +52,10 @@ export function buildManagementAssignmentReport(data: Pick<AppData, 'vessels' | 
           const directPeople = people.filter(user => department(user) === value && direct(vessel, user));
           const delegatePeople = people.filter(user => department(user) === value && delegated(vessel, user));
           return {
-            direct: directPeople.map(name), delegates: delegatePeople.map(name),
+            direct: directPeople.map(name), delegates: delegatePeople.map(user => name(user) + (hasActiveVesselDelegation(vessel, user.id) ? '*' : '')),
             // Same display name is not proof of the same person or responsibility.
             mergeKey: directPeople.length || delegatePeople.length
-              ? JSON.stringify([directPeople.map(user => user.id).sort(), delegatePeople.map(user => user.id).sort()]) : '',
+              ? JSON.stringify([directPeople.map(user => user.id).sort(), delegatePeople.map(user => [user.id, hasActiveVesselDelegation(vessel, user.id)]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))]) : '',
           };
         }),
       };
@@ -63,7 +63,7 @@ export function buildManagementAssignmentReport(data: Pick<AppData, 'vessels' | 
     people: people.map(user => ({
       id: user.id, name: name(user), department: department(user),
       directVessels: vessels.filter(vessel => direct(vessel, user)).map(pdfVesselDisplayName),
-      delegateVessels: vessels.filter(vessel => delegated(vessel, user)).map(pdfVesselDisplayName),
+      delegateVessels: vessels.filter(vessel => delegated(vessel, user)).map(vessel => ({ name: pdfVesselDisplayName(vessel), isActive: hasActiveVesselDelegation(vessel, user.id) })),
     })),
   };
 }

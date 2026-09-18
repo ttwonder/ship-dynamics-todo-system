@@ -2,7 +2,7 @@ import type ExcelJS from 'exceljs';
 import { assignmentCellText, assignmentColumnWidths, assignmentRowSpans, assignmentReportFileName, type ManagementAssignmentReport } from './managementAssignmentReport';
 import { formatTaipeiDateTime } from './taipeiTime';
 
-function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = false): void {
+function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = false, wrappedColumns: number[] = [], rowSpans: number[][] = []): void {
   widths.forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
   const border: Partial<ExcelJS.Borders> = Object.fromEntries(['top', 'bottom', 'left', 'right'].map(side => [side, { style: 'thin', color: { argb: 'FF808080' } }]));
   for (let row = 1; row <= sheet.rowCount; row += 1) {
@@ -10,7 +10,8 @@ function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = 
     for (let column = 1; column <= widths.length; column += 1) {
       const cell = sheet.getCell(row, column);
       cell.font = { name: compactMatrix ? 'Microsoft JhengHei' : 'Calibri', size: row === 1 ? 14 : compactMatrix ? 8.5 : 10, bold: row === 1 || row === 3 || row === 4, color: { argb: 'FF000000' } };
-      cell.alignment = { vertical: 'middle', horizontal: row <= 4 ? 'center' : 'left', wrapText: !compactMatrix || row === 2, shrinkToFit: compactMatrix && row !== 2 };
+      const wrap = !compactMatrix || row === 2 || (row >= 5 && wrappedColumns.includes(column));
+      cell.alignment = { vertical: 'middle', horizontal: row <= 4 ? 'center' : 'left', wrapText: wrap, shrinkToFit: compactMatrix && !wrap };
       if (row >= 3) cell.border = border;
       if (row === 3 || row === 4) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9EEF2' } };
       if (row >= 5 && !compactMatrix) {
@@ -24,6 +25,17 @@ function styleSheet(sheet: ExcelJS.Worksheet, widths: number[], compactMatrix = 
       : row === 1 ? 28 : row === 2 ? metadataLines * 14 + 8 : row <= 4 ? 24 : lines * 14 + 6;
   }
   if (compactMatrix) {
+    // Excel does not AutoFit vertically merged wrapped cells. Reserve the
+    // required text height across the whole shared span, not once per vessel.
+    for (const column of wrappedColumns) for (let row = 5; row <= sheet.rowCount; row++) {
+      const span = rowSpans[row - 5]?.[column - 5] || 0;
+      if (!span) continue;
+      const lines = sheet.getCell(row, column).text.split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(Array.from(line).reduce((n, char) => n + (/[^\x00-\x7f]/.test(char) ? 2 : 1), 0) / Math.max(1, widths[column - 1] - 2))), 0);
+      const rows = Array.from({ length: span }, (_, offset) => sheet.getRow(row + offset));
+      const height = rows.reduce((sum, item) => sum + (item.height || 0), 0);
+      const extra = Math.max(0, lines * 11 + 4 - height) / span;
+      if (extra) rows.forEach(item => { item.height = (item.height || 0) + extra; });
+    }
     // Fit the physical content before Excel's printer scaling. Native PDF export
     // can otherwise enlarge its MediaBox inversely to the fitted print scale.
     const height = Array.from({ length: sheet.rowCount }, (_, index) => sheet.getRow(index + 1).height || 0).reduce((sum, value) => sum + value, 0);
@@ -44,7 +56,7 @@ export async function buildManagementAssignmentWorkbook(report: ManagementAssign
   const runtime = await import('exceljs');
   const workbook = new (runtime.Workbook || runtime.default.Workbook)();
   workbook.creator = 'Ship Dynamics';
-  const summary = `匯出時間（台北）：${formatTaipeiDateTime(report.generatedAt)}｜全部啟用船舶 ${report.vessels.length} 艘\n僅列已啟用代理，不代表一對一職務代理關係`;
+  const summary = `匯出時間（台北）：${formatTaipeiDateTime(report.generatedAt)}｜全部啟用船舶 ${report.vessels.length} 艘\n括號內為預設代管人員，* 表示該船代管已激活；不代表一對一職務代理關係`;
   const ships = workbook.addWorksheet('船舶分管');
   const departmentEnd = 4 + report.departments.length, columns = departmentEnd + 2;
   ships.mergeCells(1, 1, 1, columns); ships.getCell('A1').value = '目前船舶分管表';
@@ -53,7 +65,7 @@ export async function buildManagementAssignmentWorkbook(report: ManagementAssign
   ships.mergeCells('B3:B4'); ships.getCell('B3').value = '船型';
   ships.mergeCells('C3:D3'); ships.getCell('C3').value = '船名';
   if (report.departments.length > 1) ships.mergeCells(3, 5, 3, departmentEnd);
-  for (const [index, label] of ['年分', '噸數'].entries()) {
+  for (const [index, label] of ['年份', '噸數'].entries()) {
     const column = departmentEnd + index + 1;
     ships.mergeCells(3, column, 4, column); ships.getCell(3, column).value = label;
   }
@@ -61,10 +73,11 @@ export async function buildManagementAssignmentWorkbook(report: ManagementAssign
   ['中文', '英文', ...report.departments].forEach((value, index) => { ships.getCell(4, index + 3).value = value; });
   for (const vessel of report.vessels) ships.addRow([vessel.fleet, vessel.shipType, vessel.chineseName || '—', vessel.englishName || '—', ...vessel.cells.map(cell => assignmentCellText(cell, ' ')), vessel.yearLabel || '—', vessel.tonnageLabel || '—']);
   if (!report.vessels.length) ships.getCell('A5').value = '目前無啟用船舶';
-  assignmentRowSpans(report).forEach((spans, row) => spans.forEach((span, column) => {
+  const rowSpans = assignmentRowSpans(report);
+  rowSpans.forEach((spans, row) => spans.forEach((span, column) => {
     if (span > 1) ships.mergeCells(row + 5, column + 5, row + 4 + span, column + 5);
   }));
-  styleSheet(ships, assignmentColumnWidths(report.departments).map(width => width * 0.84), true);
+  styleSheet(ships, assignmentColumnWidths(report.departments).map(width => width * 0.84), true, report.departments.flatMap((department, index) => department === '船東督導' ? [index + 5] : []), rowSpans);
 
   const people = workbook.addWorksheet('人員分管');
   people.mergeCells('A1:D1'); people.getCell('A1').value = '目前人員分管明細';
@@ -73,7 +86,7 @@ export async function buildManagementAssignmentWorkbook(report: ManagementAssign
   for (const person of report.people) {
     // One assignment per row keeps large portfolios readable and avoids Excel's row-height limit.
     for (const ship of person.directVessels) people.addRow([person.department, person.name, '直接經管', ship]);
-    for (const ship of person.delegateVessels) people.addRow([person.department, person.name, '已啟用代理', ship]);
+    for (const ship of person.delegateVessels) people.addRow([person.department, person.name + (ship.isActive ? '*' : ''), ship.isActive ? '已激活代管' : '預設代管', ship.name]);
     if (!person.directVessels.length && !person.delegateVessels.length) people.addRow([person.department, person.name, '未指派', '—']);
   }
   if (!report.people.length) people.getCell('A5').value = '目前無啟用岸端人員';
