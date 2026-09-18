@@ -94,6 +94,23 @@ export function assignmentRowSpans(report: ManagementAssignmentReport): number[]
   return spans;
 }
 
+/** Fleet/type spans for both renderers; a type never spans a fleet boundary. */
+export function assignmentGroupRowSpans(report: ManagementAssignmentReport): number[][] {
+  const keys = report.vessels.map(vessel => [vessel.fleet, vessel.fleet && vessel.shipType ? JSON.stringify([vessel.fleet, vessel.shipType]) : '']);
+  const spans = keys.map(() => [1, 1]);
+  for (let column = 0; column < 2; column++) {
+    for (let row = 0; row < keys.length;) {
+      const key = keys[row][column];
+      let end = row + 1;
+      while (key && end < keys.length && keys[end][column] === key) end++;
+      spans[row][column] = end - row;
+      for (let covered = row + 1; covered < end; covered++) spans[covered][column] = 0;
+      row = end;
+    }
+  }
+  return spans;
+}
+
 /** Shared relative PDF widths / Excel character widths; keep supervisor names together. */
 export function assignmentColumnWidths(departments: string[]): number[] {
   return [9, 7, 9, 16, ...departments.map(department => department.includes('督導') ? 15 : 7), 8, 7];

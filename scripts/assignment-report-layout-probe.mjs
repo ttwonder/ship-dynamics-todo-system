@@ -2,8 +2,21 @@
 export function assignmentReportLayoutProbe() {
   const paper = document.querySelector('.management-assignment-paper');
   const nodes = [...paper.querySelectorAll('.assignment-cell-text')];
-  const rows = [...paper.querySelectorAll('tbody tr')].filter(row => row.cells.length >= 6);
-  const expected = rows.flatMap(row => [row.cells[0], row.cells[1], row.cells[3], row.cells[row.cells.length - 2], row.cells[row.cells.length - 1]]).map(cell => cell.querySelector('.assignment-cell-text'));
+  const rows = [...paper.querySelectorAll('tbody tr')];
+  const columnCount = paper.querySelectorAll('colgroup col').length;
+  // Reconstruct logical columns: covered fleet/type/person cells are absent in DOM rows.
+  const grid = rows.map(() => []);
+  rows.forEach((row, rowIndex) => {
+    let column = 0;
+    for (const cell of row.cells) {
+      while (grid[rowIndex][column]) column++;
+      for (let down = 0; down < cell.rowSpan; down++) for (let across = 0; across < cell.colSpan; across++) (grid[rowIndex + down] ||= [])[column + across] = cell;
+      column += cell.colSpan;
+    }
+  });
+  const logicalFields = grid.flatMap(cells => [cells[0], cells[1], cells[3], cells[columnCount - 2], cells[columnCount - 1]]).map(cell => cell?.querySelector('.assignment-cell-text'));
+  const expected = [...new Set(logicalFields)];
+  const groupSpans = [0, 1].flatMap(column => grid.flatMap((cells, row) => !row || cells[column] !== grid[row - 1][column] ? [{ column, row, rows: cells[column]?.rowSpan, text: cells[column]?.textContent }] : []));
   const shrink = nodes.filter(node => node.classList.contains('assignment-shrink-text'));
   const wrapped = nodes.filter(node => !node.classList.contains('assignment-shrink-text'));
   const departments = [...paper.querySelectorAll('.assignment-department-cell .assignment-cell-text')];
@@ -21,6 +34,9 @@ export function assignmentReportLayoutProbe() {
   });
   return {
     rows: rows.length,
+    gridComplete: grid.length === rows.length && grid.every(cells => cells.length === columnCount && Array.from({ length: columnCount }, (_, column) => Boolean(cells[column])).every(Boolean)),
+    logicalShrinkCount: logicalFields.filter(node => node?.classList.contains('assignment-shrink-text')).length,
+    groupSpans,
     notes: notes.map(node => node.textContent),
     notesBelowTable: notes.length === 2 && notes.every((node, index) => node.getBoundingClientRect().top >= (index ? notes[index - 1].getBoundingClientRect().bottom : tableBottom) - 1),
     notesContained: notes.length === 2 && notes.every(node => { const r = box(node); return r.left >= pageBox.left - 1 && r.right <= pageBox.right + 1 && r.bottom <= pageBox.bottom + 1; }),

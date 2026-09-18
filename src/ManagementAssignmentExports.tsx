@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AppData, UserAccount } from './types';
 import { formatTaipeiDateTime } from './taipeiTime';
-import { MANAGEMENT_ASSIGNMENT_NOTES, assignmentCellText, assignmentColumnWidths, assignmentRowSpans, assignmentReportFileName, buildManagementAssignmentReport, canExportManagementAssignments, type ManagementAssignmentReport } from './managementAssignmentReport';
+import { MANAGEMENT_ASSIGNMENT_NOTES, assignmentCellText, assignmentColumnWidths, assignmentGroupRowSpans, assignmentRowSpans, assignmentReportFileName, buildManagementAssignmentReport, canExportManagementAssignments, type ManagementAssignmentReport } from './managementAssignmentReport';
 import './managementAssignmentReport.css';
 
 function fitAssignmentPaper(paper: HTMLElement): void {
@@ -47,14 +47,15 @@ export function ManagementAssignmentPaper({ report }: { report: ManagementAssign
     return () => { active = false; window.removeEventListener('beforeprint', fit); };
   }, [report]);
   const widths = assignmentColumnWidths(report.departments), total = widths.reduce((sum, width) => sum + width, 0);
-  const rowSpans = assignmentRowSpans(report);
+  const rowSpans = assignmentRowSpans(report), groupSpans = assignmentGroupRowSpans(report);
   const text = (value: string, shrink = false) => <span className={`assignment-cell-text${shrink ? ' assignment-shrink-text' : ''}`}>{value}</span>;
   return <article ref={paper} className="management-assignment-paper">
     <header><h1>目前船舶分管表</h1><p>匯出時間(台北)：{formatTaipeiDateTime(report.generatedAt)}｜啟用船舶 {report.vessels.length} 艘</p></header>
     <table><colgroup>{widths.map((width, index) => <col key={index} style={{ width: `${width / total * 100}%` }}/>)}</colgroup>
       <thead><tr><th rowSpan={2}>{text('船隊')}</th><th rowSpan={2}>{text('船型')}</th><th colSpan={2}>{text('船名')}</th><th colSpan={report.departments.length}>{text('分管部門／人員')}</th><th rowSpan={2}>{text('年份')}</th><th rowSpan={2}>{text('噸數')}</th></tr><tr><th>{text('中文')}</th><th>{text('英文')}</th>{report.departments.map(department => <th key={department}>{text(department)}</th>)}</tr></thead>
       <tbody>{report.vessels.map((vessel, row) => <tr key={vessel.id}>
-        {[vessel.fleet, vessel.shipType, vessel.chineseName || '—', vessel.englishName || '—'].map((value, index) => <td key={index}>{text(value, index !== 2)}</td>)}
+        {[vessel.fleet, vessel.shipType].map((value, column) => groupSpans[row][column] ? <td className="assignment-group-cell" key={column} rowSpan={groupSpans[row][column]}>{text(value, true)}</td> : null)}
+        <td>{text(vessel.chineseName || '—')}</td><td>{text(vessel.englishName || '—', true)}</td>
         {vessel.cells.map((cell, column) => rowSpans[row][column] ? <td className="assignment-department-cell" key={`department-${column}`} rowSpan={rowSpans[row][column]}>{text(assignmentCellText(cell))}</td> : null)}
         <td>{text(vessel.yearLabel || '—', true)}</td><td>{text(vessel.tonnageLabel || '—', true)}</td>
       </tr>)}

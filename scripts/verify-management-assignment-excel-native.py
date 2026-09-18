@@ -25,6 +25,12 @@ try:
             assert ship.UsedRange.Rows.Count == 4 + evidence['rowCount'] + 2
             assert ship.UsedRange.Columns.Count == 6 + len(evidence['departments'])
             assert ship.Range('E5').Value == '測試督導甲、林督乙\n(測試代理丙*)'
+            for group in evidence['expectedGroupSpans']:
+                cell = ship.Cells(group['row'] + 5, group['column'] + 1)
+                area = cell.MergeArea
+                assert cell.Value == group['text']
+                assert area.Row == group['row'] + 5 and area.Column == group['column'] + 1
+                assert area.Rows.Count == group['rows'] and area.Columns.Count == 1, ('fleet/type merge', group)
             columns = ship.UsedRange.Columns.Count
             for column in range(1, columns + 1):
                 body = ship.Range(ship.Cells(5, column), ship.Cells(4 + evidence['rowCount'], column))
@@ -66,7 +72,7 @@ try:
             pdf = 'excel-ships.pdf' if index == 0 else 'excel-ships-vessel-entry.pdf'
             ship.ExportAsFixedFormat(0, str(root / pdf))
             receipts.append({'file': name, 'ship_rows': evidence['rowCount'], 'normal_open': True,
-                             'read_only': True, 'bottom_notes': True, 'portrait_a4': True, 'fit_wide': 1, 'fit_tall': 1, 'pdf': pdf})
+                             'read_only': True, 'fleet_type_merges': True, 'bottom_notes': True, 'portrait_a4': True, 'fit_wide': 1, 'fit_tall': 1, 'pdf': pdf})
         finally:
             book.Close(SaveChanges=False)
 finally:

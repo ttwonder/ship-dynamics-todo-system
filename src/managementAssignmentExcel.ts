@@ -1,5 +1,5 @@
 import type ExcelJS from 'exceljs';
-import { MANAGEMENT_ASSIGNMENT_NOTES, assignmentCellText, assignmentColumnWidths, assignmentRowSpans, assignmentReportFileName, type ManagementAssignmentReport } from './managementAssignmentReport';
+import { MANAGEMENT_ASSIGNMENT_NOTES, assignmentCellText, assignmentColumnWidths, assignmentGroupRowSpans, assignmentRowSpans, assignmentReportFileName, type ManagementAssignmentReport } from './managementAssignmentReport';
 import { formatTaipeiDateTime } from './taipeiTime';
 
 /** Estimate natural word/CJK wrapping at the workbook font, in printer points. */
@@ -107,6 +107,9 @@ export async function buildManagementAssignmentWorkbook(report: ManagementAssign
   ['中文', '英文', ...report.departments].forEach((value, index) => { ships.getCell(4, index + 3).value = value; });
   for (const vessel of report.vessels) ships.addRow([vessel.fleet, vessel.shipType, vessel.chineseName || '—', vessel.englishName || '—', ...vessel.cells.map(cell => assignmentCellText(cell)), vessel.yearLabel || '—', vessel.tonnageLabel || '—']);
   if (!report.vessels.length) ships.getCell('A5').value = '目前無啟用船舶';
+  assignmentGroupRowSpans(report).forEach((spans, row) => spans.forEach((span, column) => {
+    if (span > 1) ships.mergeCells(row + 5, column + 1, row + 4 + span, column + 1);
+  }));
   const rowSpans = assignmentRowSpans(report);
   rowSpans.forEach((spans, row) => spans.forEach((span, column) => {
     if (span > 1) ships.mergeCells(row + 5, column + 5, row + 4 + span, column + 5);

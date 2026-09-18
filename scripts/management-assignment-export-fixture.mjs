@@ -50,6 +50,8 @@ export function assignmentPrintFixture(base, extraCount = 50) {
     assignedUserIds: ['a', ...added.map(person => person.id)],
     delegateManagers: n % 5 === 0 ? [{ userId: 'c', isActive: true }] : [],
   });
-  if (extraCount) Object.assign(data.vessels.at(-1), { fullName: 'FPMC QA LONG EXAMPLE', yearLabel: '2021.06.30', tonnageLabel: '20,000 DWT' });
+  data.vessels[1].fleetCategory = 'bulk fleet';
+  // Adjacent chemical ships at the fleet boundary must not become one type cell.
+  if (extraCount) Object.assign(data.vessels.at(-1), { shipType: '化學船', fullName: 'FPMC QA LONG EXAMPLE', yearLabel: '2021.06.30', tonnageLabel: '20,000 DWT' });
   return data;
 }

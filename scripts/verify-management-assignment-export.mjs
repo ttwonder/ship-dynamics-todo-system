@@ -70,6 +70,8 @@ try {
   await workbook.xlsx.load(bytes);
   assert.deepEqual(workbook.worksheets.map(s => s.name), ['船舶分管', '人員分管']);
   const ships = workbook.worksheets[0], people = workbook.worksheets[1];
+  const groupMerges = sheet => sheet.model.merges.filter(range => /^[AB]\d+:[AB]\d+$/.test(range) && Number(range.match(/\d+/)[0]) >= 5).sort();
+  assert.deepEqual(groupMerges(ships), ['A5:A7', 'B5:B6'], 'adjacent same fleet/type cells must be true Excel merges');
   assert.equal(ships.getCell('C5').text, '測試甲輪');
   assert.equal(ships.getCell('D5').text, 'QA ALPHA');
   assert.equal(ships.getCell(3, ships.columnCount-1).text, '年份');
@@ -152,7 +154,24 @@ try {
   assert.equal(mergedSheet.getCell('E11').isMerged, false);
   assert.equal(mergedSheet.getCell('E12').isMerged, false);
   assert.deepEqual(mergedReport.vessels.map(row => row.id), assignments.map((_, index) => `merge-${index}`), 'merging never rearranges vessels');
+  // Identical types at a fleet boundary and nonadjacent repeats stay separate.
+  const groups = [['甲船隊', '油輪'], ['甲船隊', '油輪'], ['甲船隊', '化學船'], ['乙船隊', '化學船'], ['乙船隊', '化學船'], ['甲船隊', '油輪'], ['甲船隊', '油輪'], ['', ''], ['', '']];
+  const groupReport = { ...structuredClone(report), vessels: groups.map(([fleet, shipType], index) => ({ ...structuredClone(report.vessels[0]), id: `group-${index}`, fleet, shipType })) };
+  const expectedGroupSpans = [[3, 2], [0, 0], [0, 1], [2, 2], [0, 0], [2, 2], [0, 0], [1, 1], [1, 1]];
+  const { assignmentGroupRowSpans } = await server.ssrLoadModule('/src/managementAssignmentReport.ts');
+  const groupBefore = JSON.stringify(groupReport);
+  assert.deepEqual(assignmentGroupRowSpans(groupReport), expectedGroupSpans);
+  const groupPaper = renderToStaticMarkup(React.createElement(ManagementAssignmentPaper, { report: groupReport }));
+  const pdfGroups = [...groupPaper.matchAll(/<td class="assignment-group-cell" rowspan="(\d+)"><span[^>]*>([^<]*)<\/span><\/td>/gi)].map(match => [match[2], Number(match[1])]);
+  assert.deepEqual(pdfGroups, groups.flatMap((values, row) => values.flatMap((text, column) => expectedGroupSpans[row][column] ? [[text, expectedGroupSpans[row][column]]] : [])), 'PDF contains only actual group masters with the correct rowspan');
+  const groupBook = new ExcelJS.Workbook();
+  await groupBook.xlsx.load(await buildManagementAssignmentWorkbook(groupReport));
+  const groupSheet = groupBook.worksheets[0];
+  assert.deepEqual(groupMerges(groupSheet), ['A10:A11', 'A5:A7', 'A8:A9', 'B10:B11', 'B5:B6', 'B8:B9']);
+  for (let row = 5; row < 5 + groups.length; row++) for (const column of [3, 4, groupSheet.columnCount - 1, groupSheet.columnCount]) assert.equal(groupSheet.getCell(row, column).isMerged, false, 'vessel names and particulars are never merged');
+  assert.equal(JSON.stringify(groupReport), groupBefore, 'group merging cannot alter data or reorder vessels');
   const empty = buildManagementAssignmentReport({ ...original, vessels: [], users: [] });
+  assert.deepEqual(assignmentGroupRowSpans(empty), []);
   assert.deepEqual(empty.departments, ['分管人員']);
   assert.ok(renderToStaticMarkup(React.createElement(ManagementAssignmentPaper, { report: empty })).includes('目前無啟用船舶'));
   const emptyBook = new ExcelJS.Workbook();

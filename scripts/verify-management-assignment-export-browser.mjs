@@ -101,10 +101,20 @@ try {
   assert.ok(evidence.layout.columns[4] > evidence.layout.columns[5] * 2, 'supervisor column is wider than office columns');
   assert.deepEqual(evidence.layout.overflow, [], 'no hidden or overlapping cell text');
   assert.equal(evidence.layout.wrapping, true);
+  evidence.expectedGroupSpans = [
+    { column: 0, row: 0, rows: extraCount + 2, text: '油輪船隊' },
+    { column: 0, row: extraCount + 2, rows: 1, text: '散貨船隊' },
+    { column: 1, row: 0, rows: extraCount + 1, text: '油輪' },
+    { column: 1, row: extraCount + 1, rows: 1, text: '化學船' },
+    { column: 1, row: extraCount + 2, rows: 1, text: '化學船' },
+  ];
   evidence.columnLayout = await evaluate(`(${assignmentReportLayoutProbe.toString()})()`);
+  assert.equal(evidence.columnLayout.gridComplete, true, 'merged cells must preserve a complete logical grid');
+  assert.deepEqual(evidence.columnLayout.groupSpans, evidence.expectedGroupSpans);
   assert.deepEqual(evidence.columnLayout.notes, expectedNotes, 'both reference notes appear below the table');
   for (const key of ['notesBelowTable', 'notesContained', 'notesLast']) assert.equal(evidence.columnLayout[key], true, key);
-  assert.equal(evidence.columnLayout.shrinkCount, evidence.rowCount * 5, 'exactly five fields per vessel may shrink');
+  assert.equal(evidence.columnLayout.logicalShrinkCount, evidence.rowCount * 5, 'exactly five logical fields per vessel may shrink');
+  assert.equal(evidence.columnLayout.shrinkCount, evidence.rowCount * 3 + evidence.expectedGroupSpans.length, 'each merged group contributes one visible fitting target');
   for (const key of ['exactShrinkColumns','noWrap','singleLine','otherWrap','otherNoShrink','centered','preserveNewline','delegatesBelow','contained']) assert.equal(evidence.columnLayout[key], true, key);
   assert.ok(evidence.columnLayout.departmentCount > 0 && evidence.columnLayout.delegateLineCount > 0);
   assert.deepEqual(evidence.columnLayout.departmentFonts, ['10px'], 'do not shrink personnel to fit a line');
@@ -117,6 +127,9 @@ try {
   await call('Emulation.setEmulatedMedia', { media: 'print' });
   evidence.printLayout = await evaluate(`(()=>{const p=document.querySelector('.management-assignment-paper'),s=getComputedStyle(p);return{classes:document.body.className,page:s.page,zoom:s.zoom,width:p.getBoundingClientRect().width,height:p.getBoundingClientRect().height,rules:[...document.styleSheets].flatMap(sheet=>[...sheet.cssRules].filter(r=>r.type===6).map(r=>r.cssText))}})()`);
   evidence.printColumnLayout = await evaluate(`(${assignmentReportLayoutProbe.toString()})()`);
+  assert.equal(evidence.printColumnLayout.gridComplete, true);
+  assert.deepEqual(evidence.printColumnLayout.groupSpans, evidence.expectedGroupSpans);
+  assert.equal(evidence.printColumnLayout.logicalShrinkCount, evidence.rowCount * 5);
   for (const key of ['exactShrinkColumns','noWrap','singleLine','otherWrap','otherNoShrink','centered','preserveNewline','delegatesBelow','contained']) assert.equal(evidence.printColumnLayout[key], true, `print: ${key}`);
   assert.deepEqual(evidence.printColumnLayout.notes, expectedNotes);
   for (const key of ['notesBelowTable', 'notesContained', 'notesLast']) assert.equal(evidence.printColumnLayout[key], true, `print: ${key}`);
