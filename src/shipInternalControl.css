@@ -7,4 +7,10 @@
 .ship-internal-portal .ship-vessel-picker select{max-width:100%}
 .ship-internal-portal .modal-backdrop{padding:8px;grid-template-columns:minmax(0,1fr)}
 .ship-internal-portal .ic-batch-modal{min-width:0;max-width:100%}
+.ship-internal-guidance{display:block;overflow-wrap:anywhere}
+.ship-internal-guidance h2{font-size:16px;margin:0 0 6px}
+.ship-internal-guidance ul{margin:0;padding-left:22px;line-height:1.55}
+.ship-internal-guidance li+li{margin-top:4px}
+.ship-ic-reporter{margin-bottom:10px}
+.ship-ic-reporter small{line-height:1.4}
 @media(prefers-color-scheme:dark){.ship-internal-success{background:#163729;color:#b9edcd;border-color:#438966}}

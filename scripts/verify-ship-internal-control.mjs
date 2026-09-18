@@ -20,6 +20,9 @@ try {
   const ship=renderToStaticMarkup(createElement(BatchCreateModal,{...props,shipSubmission:{draft,catalog,busy:false,pending:false,message:'',onDraftChange:()=>{}}}));
   assert.doesNotMatch(ship,/結案日期/,'ship submission may only create open cases, not pre-closed cases');
   assert.match(ship,/提交 1 筆/);
+  assert.match(ship,/報告人姓名＋職務/);assert.match(ship,/<input[^>]+id="ship-internal-reporter"[^>]+required=""/);
+  assert.doesNotMatch(shore,/報告人姓名＋職務/,'shore form is unchanged');
+  assert.match(ship,/提交成功後無法在船端修改/);assert.match(ship,/辦公室刪除/);
   assert.match(shore,/同步到要事/,'shore optional task linkage remains available');
   assert.doesNotMatch(ship,/同步到要事|同步要事設定|追蹤窗口/,'ship may create internal-control cases only');
   for(const label of ['報告日期','報告來源','事項內容','解決計劃／最新狀態','標記為知曉事項','涉及部門','＋ 新增一筆'])assert.ok(ship.includes(label),`shared field retained: ${label}`);
@@ -29,5 +32,6 @@ try {
   const {default:Portal}=await server.ssrLoadModule('/src/ShipInternalControlPortal.tsx');
   const portal=renderToStaticMarkup(createElement(Portal));
   assert.match(portal,/船端內控\/訴求/);assert.match(portal,/請選擇船舶/);assert.match(portal,/增加內控\/訴求/);assert.doesNotMatch(portal,/type="password"/);
+  for(const wording of ['DMP-FM01','不對外','高風險','物料／備件跟催','對公司的建議','已報 DMP-FM01 的事項，不需重複提報內控','提報內控後，不一定需要另報 DMP-FM01','正常情況下，異常情況應依 DMP-FM01','由督導判斷','重新提交修正版','辦公室刪除'])assert.ok(portal.includes(wording),'public guidance: '+wording);
   console.log('PASS ship internal-control: public selection, shore form preserved, ship internal-only and controlled draft');
 } finally {await server.close();}

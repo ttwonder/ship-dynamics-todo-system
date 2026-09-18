@@ -54,6 +54,7 @@ export type InternalControlBatchDraft = {
   vesselId: string;
   reportDate: string;
   reportSource: InternalControlReportSource;
+  reporterNameAndRole?: string;
   rows: InternalControlBatchRow[];
 };
 export type ShipInternalControlForm = {
@@ -150,6 +151,7 @@ export function BatchCreateModal({ data, user, vessels, close, save, shipSubmiss
     setDraft({ ...draft, vesselId: nextVesselId, rows: rows.map(row => row.syncToTask ? { ...row, taskOwnerUserIds: defaultOwnerIds(data!, nextVesselId) } : row) });
   };
   const fields = <>
+    {shipSubmission && <div className="field ship-ic-reporter"><label htmlFor="ship-internal-reporter">報告人姓名＋職務 *</label><input id="ship-internal-reporter" type="text" required maxLength={120} placeholder="例如：王小明／大副" value={draft.reporterNameAndRole || ''} onChange={event => setDraft({ ...draft, reporterNameAndRole: event.target.value })}/><small>本批共用，會自動附在每筆事項內容末尾。{shipSubmission.pending && !draft.reporterNameAndRole && '舊版待確認提交將依原內容確認，不補寫或改動原提交。'}</small></div>}
     <div className="grid cols-3"><div className="field"><label>船舶 *</label><select value={vesselId} disabled={Boolean(shipSubmission)} onChange={event => changeVessel(event.target.value)}>{vessels.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div><div className="field"><label>報告日期 *</label><input type="date" value={reportDate} onChange={event => setDraft({ ...draft, reportDate: event.target.value })}/></div><div className="field"><label>報告來源 *</label><select value={reportSource} onChange={event => setDraft({ ...draft, reportSource: event.target.value as InternalControlReportSource })}>{REPORT_SOURCES.map(source => <option key={source}>{source}</option>)}</select></div></div>
     <div className="ic-batch-rows">{rows.map((row, index) => <article className="ic-batch-row" key={row.key}>
       <div className="ic-batch-row-head"><h3>第 {index + 1} 筆</h3>{rows.length > 1 && <button className="btn small danger" onClick={() => setRows(previous => previous.filter(item => item.key !== row.key))}>刪除本筆</button>}</div>
@@ -163,6 +165,7 @@ export function BatchCreateModal({ data, user, vessels, close, save, shipSubmiss
   return <div className="modal-backdrop"><div className="modal ic-batch-modal" role="dialog" aria-modal="true" aria-labelledby="ic-batch-title">
     <div className="modal-head"><div><h2 id="ic-batch-title">{shipSubmission ? '增加內控/訴求' : '批量新增內控異常'}</h2><p>共用船舶、報告日期及來源；保存後每列拆成獨立案件。</p></div><button className="btn ghost" onClick={close}>關閉</button></div>
     {shipSubmission?.message && <div className="ship-ic-form-notice" role="status">{shipSubmission.message}</div>}
+    {shipSubmission && <p className="ship-ic-form-notice">提交成功後無法在船端修改；如需更正，請重新提交修正版，多餘項目由辦公室刪除。</p>}
     {shipSubmission ? <fieldset disabled={shipSubmission.busy || shipSubmission.pending} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{fields}</fieldset> : fields}
     <div className="modal-actions"><button className="btn ghost" disabled={Boolean(shipSubmission && (shipSubmission.busy || shipSubmission.pending || rows.length >= 100))} onClick={() => setRows(previous => [...previous, newInternalControlBatchRow(categories[0] || '設備故障')])}>＋ 新增一筆</button><button className="btn ghost" onClick={close}>{shipSubmission ? '關閉（保留草稿）' : '取消'}</button><button className="btn primary" disabled={shipSubmission?.busy} onClick={submit}>{shipSubmission ? (shipSubmission.busy ? '提交中…' : shipSubmission.pending ? '確認結果／重試相同提交' : `提交 ${rows.length} 筆`) : `保存 ${rows.length} 筆案件`}</button></div>
   </div></div>;

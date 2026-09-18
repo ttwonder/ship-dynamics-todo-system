@@ -49,6 +49,7 @@ async function office(user){
 
 const RPC_SHIP='submit_ship_dynamics_internal_control_public_v1',RPC_MAIN='apply_ship_dynamics_record_patch_v1';
 const sha=x=>createHash('sha256').update(typeof x==='string'?x:JSON.stringify(x)).digest('hex');
+const reporter='QA 並發提報人／大副',shipDescriptions=new Set(),descriptionFor=name=>shipDescriptions.has(name)?name+'\n\n報告人姓名＋職務：'+reporter:name;
 const wanted=[],network=new Map();evidence.httpAcks=[];evidence.blocking=[];
 let barrier=null,intendedSaves=0;
 const freshBarrier=rpc=>{let release;const ready=new Promise(r=>release=r);return {rpc,ready,release,reached:false};};
@@ -60,7 +61,7 @@ const preserveUnrelated=(before,after,changed=[])=>{
 };
 const openBatch=async(sid,ship,names)=>{
  session=sid;await click(ship?'增加內控/訴求':'批量新增');await until(()=>evaluate("!!document.querySelector('.ic-batch-modal')"),'batch modal');
- if(!ship)await choose('.ic-batch-modal select','qa-v1');
+ if(!ship)await choose('.ic-batch-modal select','qa-v1');else {await fill('#ship-internal-reporter',reporter);for(const name of names)shipDescriptions.add(name);}
  for(let i=0;i<names.length;i++){if(i)await click('新增一筆','.ic-batch-modal button');await fillRow(i,names[i]);}
  assert.deepEqual(await descriptions(),names);return names.length;
 };
@@ -68,7 +69,7 @@ const submitBatch=async(sid,ship,n)=>{session=sid;intendedSaves++;await click(sh
 const batchAck=async(sid,ship,n)=>{session=sid;await until(()=>evaluate(`!document.querySelector('.ic-batch-modal')${ship?`&&document.body.innerText.includes('成功提交 ${n} 筆')`:''}`),'original '+(ship?'ship':'shore')+' ACK closes modal');};
 const requireCases=async names=>{
  const payload=(await read()).payload;
- for(const name of names){const rows=payload.internalControlCases.filter(x=>x.description===name);assert.equal(rows.length,1,'exactly one '+name);assert.equal(rows[0].status,'待岸端協助 '+name);assert.equal(rows[0].vesselId,'qa-v1');assert.equal(rows[0].syncToTask,false);assert.equal(rows[0].isClosed,false);}
+ for(const name of names){const rows=payload.internalControlCases.filter(x=>x.description===descriptionFor(name));assert.equal(rows.length,1,'exactly one '+name);assert.equal(rows[0].status,'待岸端協助 '+name);assert.equal(rows[0].vesselId,'qa-v1');assert.equal(rows[0].syncToTask,false);assert.equal(rows[0].isClosed,false);}
  return payload;
 };
 const observeBlocked=async(peerRpc,since)=>{
@@ -116,7 +117,7 @@ try{
  const main=await office('qa-manager');await click('內控異常','nav button');
  await until(()=>evaluate(`document.querySelector('.ic-table')?.innerText.includes(${JSON.stringify(seed)})`),'shore sees ship-created case');
  await check('C01-existing-shore-edit-ship-append-then-real-shore-save',async()=>{
-  const before=(await read()).payload,existing=before.internalControlCases.find(x=>x.description===seed);
+  const before=(await read()).payload,existing=before.internalControlCases.find(x=>x.description===descriptionFor(seed));
   await evaluate(`(()=>{const row=[...document.querySelectorAll('.ic-table tbody tr')].find(n=>n.innerText.includes(${JSON.stringify(seed)}));[...row.querySelectorAll('button')].find(n=>n.textContent==='更新').focus();})()`);await key('Enter');
   await until(()=>evaluate("!!document.querySelector('.ic-edit-modal')"),'original case editor');
   const field='.ic-edit-modal .ic-case-content-row .field:nth-child(2) textarea',status='QA 岸端保留原草稿並完成保存';
@@ -148,10 +149,11 @@ try{
  await check('C04-fresh-shore-list-and-personal-work-center',async()=>{
   await office('qa-manager');await click('內控異常','nav button');
   await until(()=>evaluate(`(()=>{const text=document.querySelector('.ic-table')?.innerText||'';return ${JSON.stringify(wanted)}.every(s=>text.includes(s));})()`),'fresh original list contains every saved case');
-  const descriptions=await evaluate("[...document.querySelectorAll('.ic-table tbody tr td.ic-description-column b')].map(n=>n.textContent)");assert.deepEqual(descriptions.sort(),[...wanted].sort());await screen('C04-fresh-main-readback');
+  // Existing richTextToPlainText collapses blank lines for display only; SQL must retain the exact body below.
+  const descriptions=await evaluate("[...document.querySelectorAll('.ic-table tbody tr td.ic-description-column b')].map(n=>n.textContent)");assert.deepEqual(descriptions.sort(),wanted.map(name=>descriptionFor(name).replace(/\n{2,}/g,'\n')).sort());await screen('C04-fresh-main-readback');
   await click('我的待辦','nav button');await until(()=>evaluate(`(()=>{const text=document.body.innerText;return ${JSON.stringify(wanted)}.every(s=>text.includes(s));})()`),'all ship and shore cases in assigned work center');await screen('C04-work-center');
-  const data=(await read()).payload;assert.equal(data.internalControlCases.length,wanted.length);assert.equal(data.tasks.length,0);
-  evidence.final={caseCount:data.internalControlCases.length,uniqueIds:new Set(data.internalControlCases.map(x=>x.id)).size,expectedDescriptions:wanted,tasks:data.tasks.length,businessDigest:sha(data)};
+  const data=(await read()).payload;assert.equal(data.internalControlCases.length,wanted.length);assert.equal(data.tasks.length,0);assert.deepEqual(data.internalControlCases.map(c=>c.description).sort(),wanted.map(descriptionFor).sort(),'fresh SQL keeps every exact reporter/body');
+  evidence.final={caseCount:data.internalControlCases.length,uniqueIds:new Set(data.internalControlCases.map(x=>x.id)).size,expectedDescriptions:wanted.map(descriptionFor),tasks:data.tasks.length,businessDigest:sha(data)};
  });
  await until(()=>evidence.httpAcks.filter(x=>x.ok===true).length>=intendedSaves,'captured actual browser ACKs');
  assert.equal(evidence.httpAcks.filter(x=>x.ok===true).length,intendedSaves,'one browser ACK per UI save intent');

@@ -140,11 +140,17 @@ export default function ShipInternalControlPortal() {
     setOpen(false);
   };
   const options = record && !vessels.some(vessel => vessel.id === record.vessel.id) ? [record.vessel, ...vessels] : vessels;
-  const hasDraft = record && (record.pending || record.draft.rows.some(row => row.description || row.status));
+  const hasDraft = record && (record.pending || record.draft.reporterNameAndRole?.trim() || record.draft.rows.some(row => row.description || row.status));
   return <main className="ship-portal-shell ship-internal-portal">
     <header className="ship-portal-header"><div><h1>船端內控/訴求</h1><p>免登入｜選擇船名後新增內控；雲端確認保存才會顯示成功。</p></div>
       <div className="ship-vessel-picker"><label htmlFor="ship-internal-vessel">船名</label><select id="ship-internal-vessel" value={selected} disabled={!backend || loading || busy || open} onChange={event => void selectVessel(event.target.value)}><option value="">請選擇船舶</option>{options.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div>
     </header>
+    <section className="ship-state-card compact ship-internal-guidance" aria-label="填報說明"><h2>內控／訴求填報說明</h2><ul>
+      <li>本頁供船舶提報內控事項，以不對外的異常情況、船上提議或訴求為主，例如：暫時無法解決、需要公司協助的高風險事項、物料／備件跟催，或對公司的建議。</li>
+      <li>正常情況下，異常情況應依 DMP-FM01 流程報告。已報 DMP-FM01 的事項，不需重複提報內控；提報內控後，不一定需要另報 DMP-FM01，但不代表一律免報。</li>
+      <li>不確定應填內控或 DMP-FM01 時，可先在此提報，由督導判斷是否應走正常 DMP-FM01 報告流程。</li>
+      <li><strong>提交成功後無法在船端修改；如需更正，請重新提交修正版，多餘項目由辦公室刪除。</strong></li>
+    </ul></section>
     {notice && <div className={`ship-notice${saved ? ' ship-internal-success' : ''}`} role="status">{notice}</div>}
     <section className="ship-state-card compact ship-internal-actions"><div><b>{record ? vesselDisplayName(record.vessel) : loading ? '正在載入船舶…' : '先選擇船名'}</b><p>{record ? '可輸入單筆或多筆內控／訴求，由岸端跟進及結案。' : '僅列出目前啟用的船舶。'}</p></div>
       <button type="button" className="btn green" disabled={!record || loading || busy || open} onClick={() => { setSaved(false); if (!record?.pending) setNotice(''); setOpen(true); }}>＋ 增加內控/訴求</button>
