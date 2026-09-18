@@ -8,7 +8,7 @@ const types = fs.readFileSync('src/types.ts', 'utf8');
 const management = fs.readFileSync('src/Management.tsx', 'utf8');
 const app = fs.readFileSync('src/App.tsx', 'utf8');
 const delegationSource = fs.readFileSync('src/vesselDelegation.ts', 'utf8');
-const workCenter = fs.readFileSync('src/workCenterScope.ts', 'utf8');
+
 const styles = fs.readFileSync('src/styles.css', 'utf8');
 
 assert.ok(types.includes('VesselDelegateAssignment'), 'Vessel 需有代管人員資料型別');
@@ -31,12 +31,13 @@ assert.deepEqual([toggleStyle.width, toggleStyle.height, toggleStyle.padding], [
 const stateDotStyle = cssDeclarations(styles, '.delegate-state-dot');
 assert.deepEqual([stateDotStyle.width, stateDotStyle.height], ['10px', '10px'], '代管狀態視覺需為小圓點');
 assert.ok(app.includes('vesselMatchesUser') && app.includes('hasActiveVesselDelegation'), '可見船舶範圍需包含激活代管船舶');
-assert.ok(workCenter.includes('hasActiveVesselDelegation'), '我的待辦需把激活代管船舶視為本人相關船舶');
+// Work-center delegation is composed through vesselManagerHandover; verify behavior below, not a private helper name.
 assert.ok(app.includes('batchTargetVesselsFor') && app.includes('userCanManageVesselByAssignmentOrDelegation(vessel,user)') && delegationSource.includes('hasActiveVesselDelegation(vessel, user.id)'), 'App批量目標解析需透過共用範圍函式包含激活代管船舶');
 
 const server = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
 try {
   const delegation = await server.ssrLoadModule('/src/vesselDelegation.ts');
+  const scope = await server.ssrLoadModule('/src/workCenterScope.ts');
   const { normalizeAppData } = await server.ssrLoadModule('/src/normalize.ts');
   const { PersonEditor } = await server.ssrLoadModule('/src/Management.tsx');
   const activeShipName = 'QA <SHIP> & "ACTIVE"';
@@ -115,6 +116,14 @@ try {
   assert.deepEqual(normalized.vessels[0].delegateManagers, [{ userId:'u1', isActive:true }, { userId:'u2', isActive:false }], '代管名單需去重、去空值並保留個別激活狀態');
   assert.equal(delegation.hasActiveVesselDelegation(normalized.vessels[0], 'u1'), true, '激活代管人員應取得代管關係');
   assert.equal(delegation.hasActiveVesselDelegation(normalized.vessels[0], 'u2'), false, '未激活代管人員不得取得代管關係');
+  const task = { id:'qa-task', vesselId:'v1', vesselIds:['v1'], ownerUserIds:[], isClosed:false, attentionDimension:'task', sourceType:'manual' };
+  const item = { id:'qa-case', vesselId:'v1', isClosed:false, syncToTask:false, origin:'internal-control' };
+  const current = { ...normalized, tasks:[task], internalControlCases:[item], taskDismissals:[] };
+  for (const [index, expected] of [[0,1],[1,0]]) {
+    assert.equal(scope.selectUserWorkCenterTasks(current, normalized.users[index], current.vessels).length, expected, '要事待辦只包含激活代管，不包含未激活代管');
+    assert.equal(scope.selectUserWorkCenterInternalCases(current, normalized.users[index], current.vessels).length, expected, '內控待辦只包含激活代管，不包含未激活代管');
+  }
+  assert.equal(scope.selectUserWorkCenterInternalCases(current, normalized.users[0], []).length, 0, '不擴大可見船舶範圍');
 } finally {
   await server.close();
 }

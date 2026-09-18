@@ -40,6 +40,7 @@ export default defineConfig({
       input:{
         main:resolve(process.cwd(),'index.html'),
         shipItinerary:resolve(process.cwd(),'ship-itinerary.html'),
+        shipInternalControl:resolve(process.cwd(),'ship-internal-control.html'),
       },
     },
   },

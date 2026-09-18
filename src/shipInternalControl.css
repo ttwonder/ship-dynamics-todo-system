@@ -1,0 +1,10 @@
+/* Public internal-control entry: retain the shared shore form and density. */
+.ship-internal-actions{align-items:center;gap:12px;flex-wrap:wrap}
+.ship-internal-actions p{margin:4px 0 0}
+.ship-internal-actions small{flex-basis:100%}
+.ship-internal-success{border-color:#248355;background:#e8f7ed;color:#14572e}
+.ship-ic-form-notice{margin:0 0 12px;padding:9px 12px;border:1px solid var(--ship-line);border-radius:8px;background:var(--ship-card);overflow-wrap:anywhere}
+.ship-internal-portal .ship-vessel-picker select{max-width:100%}
+.ship-internal-portal .modal-backdrop{padding:8px;grid-template-columns:minmax(0,1fr)}
+.ship-internal-portal .ic-batch-modal{min-width:0;max-width:100%}
+@media(prefers-color-scheme:dark){.ship-internal-success{background:#163729;color:#b9edcd;border-color:#438966}}

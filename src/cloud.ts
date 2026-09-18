@@ -7,6 +7,7 @@ import { CloudBlockPatchConflictError, type CloudBlockPatchOperation } from './c
 import type { CloudBlockCompactReceipt, CloudBlockReceiptStatus } from './cloudBlockReceipt';
 import { consumeCloudDeltaResponse, type CloudDeltaSnapshot } from './cloudDelta';
 import { consumeRecordSnapshot, usesRecordStorage } from './cloudRecords';
+import { startRecordRevisionPoll } from './cloudRevisionPoll';
 import { isMorningRecordScope, consumeRecordScopes, recordScopePayload, recordScopeVersions, recordScopeKey, type RecordReadScope, type RecordScopeSnapshot } from './cloudRecordScopes';
 
 export interface SupabaseConfig { supabaseUrl: string; supabaseAnonKey: string; workspaceKey: string; tableName?: string; readMode?: 'snapshot' | 'delta-v1' | 'scoped-v1'; storageMode?: 'legacy' | 'records-v1' }
@@ -99,7 +100,12 @@ export function subscribeToCloudRevision(
       if(Number.isSafeInteger(revision)&&revision>=0)onRevision(revision);
     })
     .subscribe(status=>onStatus?.(String(status)));
-  return()=>{void supabase.removeChannel(channel);};
+  const stopPoll=usesRecordStorage(cfg)?startRecordRevisionPoll(async signal=>{
+    const {data,error}=await supabase.rpc('read_ship_dynamics_internal_control_public_revision_v1',{p_workspace_key:cfg.workspaceKey}).abortSignal(signal);
+    if(error){if(error.code==='PGRST202'||error.code==='42883')return null;throw error;}
+    return data;
+  },onRevision):()=>{};
+  return()=>{stopPoll();void supabase.removeChannel(channel);};
 }
 
 const lockFromRpc = (value: any, fallbackSectionKey: string): CloudEditingLock => ({

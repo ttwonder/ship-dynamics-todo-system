@@ -7,10 +7,11 @@ import {installItineraryFixture,seedItineraryFixture,snapshotItineraryAuthority,
 
 import {morningInput,installMorningOracle,seedMorningOracle,schedulerSql} from './record-daily-morning-local-fixture.mjs';
 import {shipExcelRpcArgs} from './ship-itinerary-excel-local-fixture.mjs';
+import {shipInternalControlRpcArgs} from './ship-internal-control-local-fixture.mjs';
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({manualReportAuthority=false,browserAuthority=false,dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,performanceTrace=false,scopedRead=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
+export async function createRecordStorageLocalQa({manualReportAuthority=false,browserAuthority=false,dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,shipInternalControl=false,performanceTrace=false,scopedRead=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
  if(preparePerformanceFixture&&!performanceTrace)throw new Error('Performance fixture requires explicit performanceTrace');
  // Opt-in private native QA supplies an already identity-verified connection.
  // The existing browser/PGlite default and migration/seed chain stay unchanged.
@@ -18,7 +19,7 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
  const workspace='isolated-record-ui-qa',password=`qa-${randomUUID()}`;
  let origin='',http,vite,loseItineraryAck=false,loseReportAck=false,losePruneAck=false;
  let recordFault=null,uiMiddleware=null;
- const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',storageMode:legacySnapshot?'legacy':'records-v1',readMode:legacySnapshot?'snapshot':scopedRead?'scoped-v1':'delta-v1'});
+ const config=()=>({supabaseUrl:origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:workspace,tableName:'ship_dynamics_app_state',...(shipInternalControl?{}:{storageMode:legacySnapshot?'legacy':'records-v1'}),readMode:legacySnapshot?'snapshot':scopedRead?'scoped-v1':'delta-v1'});
  const requestArgs=['p_workspace_key','p_operation_id','p_operations:jsonb','p_saved_by','p_actor_user_id','p_actor_guard:jsonb','p_authorization_guard:jsonb','p_lock_guards:jsonb'];
  const rpcArgs={
   ...(manualReportAuthority?{
@@ -31,6 +32,7 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
   ...(legacySnapshot?{apply_ship_dynamics_block_patch_v2:requestArgs,get_ship_dynamics_block_patch_receipt:requestArgs}:{}),
   ...(browserAuthority?{read_ship_dynamics_browser_authority_v1:['p_workspace_key'],apply_ship_dynamics_block_patch_v2:requestArgs,get_ship_dynamics_block_patch_receipt:requestArgs}:{}),
   ...(shipExcel?shipExcelRpcArgs:{}),
+  ...(shipInternalControl?shipInternalControlRpcArgs:{}),
   ...recordWriteArgs,
   ...(taskMember?Object.fromEntries(['save_ship_dynamics_task_member_v1','get_ship_dynamics_task_member_receipt_v1'].map(name=>[name,['p_workspace_key','p_operation_id','p_task_id','p_vessel_id','p_command:jsonb','p_expected:jsonb','p_actor_user_id','p_actor_guard:jsonb','p_lock_guards:jsonb']])):{}),
   ...(taskMember?{read_ship_dynamics_task_member_v1:['p_workspace_key','p_task_id','p_vessel_id','p_actor_user_id'],renew_ship_dynamics_task_member_lock_v1:['p_workspace_key','p_section_key','p_locked_by','p_lease_version','p_ttl_seconds:integer'],release_ship_dynamics_task_member_lock_v1:['p_workspace_key','p_section_key','p_locked_by','p_lease_version']}:{}),
@@ -118,11 +120,11 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
      const start=performance.now();
      // Opt-in measurements only. Never persist request bodies, keys or credentials.
      const trace=performanceTrace?{requestBytes:length,requestStartedMs:performance.timeOrigin+start,baseRevision:body.p_base_revision??null,scope:body.p_scope??null}:null;
-     if(internalControl&&recordFault?.before&&(taskMember||['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1','renew_ship_dynamics_edit_lock'].includes(name)))await recordFault.before({name,body,db,metrics});
+     if(internalControl&&recordFault?.before&&(taskMember||(shipInternalControl&&Object.hasOwn(shipInternalControlRpcArgs,name))||['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1','renew_ship_dynamics_edit_lock'].includes(name)))await recordFault.before({name,body,db,metrics});
      try{
       const value=await db.transaction(async tx=>{
        if(trace)trace.sqlStartedMs=performance.timeOrigin+performance.now();
-       if(browserAuthority&&name==='read_ship_dynamics_browser_authority_v1'||shipExcel&&Object.hasOwn(shipExcelRpcArgs,name))await tx.exec('set local role anon');
+       if(browserAuthority&&name==='read_ship_dynamics_browser_authority_v1'||shipExcel&&Object.hasOwn(shipExcelRpcArgs,name)||shipInternalControl&&Object.hasOwn(shipInternalControlRpcArgs,name))await tx.exec('set local role anon');
        await tx.query("select set_config('request.headers',$1,true)",[JSON.stringify({'x-forwarded-for':'192.0.2.30','cf-ipcountry':'TW'})]);
        const params=args.map(arg=>{const[key,type]=arg.split(':');if(body[key]==null)return null;return type==='jsonb'?JSON.stringify(body[key]):body[key];});
        const result=(await tx.query(`select public.${name}(${args.map((arg,index)=>`$${index+1}::${arg.split(':')[1]||'text'}`).join(',')}) as result`,params)).rows[0].result;
@@ -139,7 +141,7 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
       if(loseItineraryAck&&(name==='sd_itinerary_record_save_v1'||(shipExcel&&name==='sd_itinerary_save_public'))){loseItineraryAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic ACK loss after actual SQL commit'});return;}
       if(loseReportAck&&['sd_itinerary_record_report_save_manual_v1','sd_itinerary_record_report_delete_ids_v1'].includes(name)){loseReportAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic report ACK loss after actual SQL commit'});return;}
       if(losePruneAck&&name==='prune_ship_dynamics_record_revision_history_v1'){losePruneAck=false;metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic prune ACK loss after actual SQL commit'});return;}
-      if(internalControl&&recordFault?.after&&(taskMember||['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1'].includes(name))){
+      if(internalControl&&recordFault?.after&&(taskMember||(shipInternalControl&&Object.hasOwn(shipInternalControlRpcArgs,name))||['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1'].includes(name))){
        const drop=await recordFault.after({name,body,value,db,metrics});
        if(drop){metrics.push({rpc:name,status:'ACK_DROPPED_AFTER_SQL',operationId:body.p_operation_id});send(res,503,{code:'QA_LOST_ACK',message:'Synthetic record ACK loss after actual SQL commit'});return;}
       }

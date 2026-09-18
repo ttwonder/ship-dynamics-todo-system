@@ -23,7 +23,7 @@ export function internalControlTaskSyncChoice(
   return { syncToTask: true, isAbnormal: confirmChoice(LINKED_TASK_ABNORMAL_PROMPT) };
 }
 
-type BatchRow = {
+export type InternalControlBatchRow = {
   key: string;
   description: string;
   priority: TaskPriority;
@@ -41,9 +41,31 @@ type BatchRow = {
   taskIsAbnormal: boolean;
 };
 
-const newRow = (category: string): BatchRow => ({
+export const newInternalControlBatchRow = (category: string): InternalControlBatchRow => ({
   key: uid('ic-row'), description: '', priority: '低', category, equipmentSubcategory: '', isAware: false, status: '', departments: [], closedDate: '', syncToTask: false,
   taskCategories: category ? [category] : [], taskEquipmentSubcategory: '', taskExpectedDate: '', taskOwnerUserIds: [], taskIsAbnormal: false,
+});
+
+export type InternalControlBatchCatalog = Pick<AppData['settings'], 'taskCategories' | 'priorities' | 'equipmentFailureSubcategories' | 'departments'> & {
+  owners: UserAccount[];
+  defaultOwnerIds: string[];
+};
+export type InternalControlBatchDraft = {
+  vesselId: string;
+  reportDate: string;
+  reportSource: InternalControlReportSource;
+  rows: InternalControlBatchRow[];
+};
+export type ShipInternalControlForm = {
+  draft: InternalControlBatchDraft;
+  catalog: Omit<InternalControlBatchCatalog, 'owners' | 'defaultOwnerIds'>;
+  busy: boolean;
+  pending: boolean;
+  message: string;
+  onDraftChange: (draft: InternalControlBatchDraft) => void;
+};
+export const createInternalControlBatchDraft = (vesselId: string, category: string): InternalControlBatchDraft => ({
+  vesselId, reportDate: todayDate(), reportSource: '日常', rows: [newInternalControlBatchRow(category)],
 });
 
 const defaultOwnerIds = (data: AppData, vesselId: string) => {
@@ -58,71 +80,91 @@ function DepartmentPicker({ values, choices, onChange }: { values: string[]; cho
   return <fieldset className="ic-choice-picker" aria-required="true"><legend>涉及部門 * <span>已選 {values.length}</span></legend><div>{choices.map(value => <label key={value} className={values.includes(value) ? 'selected' : ''}><input type="checkbox" checked={values.includes(value)} onChange={() => toggle(value)}/><span>{value}</span></label>)}</div></fieldset>;
 }
 
-function TaskProjectionFields({ data, vesselId, projection, onChange }: { data: AppData; vesselId: string; projection: InternalControlTaskProjection; onChange: (projection: InternalControlTaskProjection) => void }) {
-  const categoryChoices = unique([...data.settings.taskCategories, ...projection.categories, '設備故障']);
+function catalogForVessel(data: AppData, vesselId: string): InternalControlBatchCatalog {
   const vessel = data.vessels.find(item => item.id === vesselId);
-  const eligibleOwners = data.users.filter(user => user.isActive && vessel && isEligibleTaskOwner(data.settings.rolePermissions, user, [vessel]));
+  return {
+    taskCategories: data.settings.taskCategories, priorities: data.settings.priorities,
+    equipmentFailureSubcategories: data.settings.equipmentFailureSubcategories, departments: data.settings.departments,
+    owners: data.users.filter(user => user.isActive && vessel && isEligibleTaskOwner(data.settings.rolePermissions, user, [vessel])),
+    defaultOwnerIds: defaultOwnerIds(data, vesselId),
+  };
+}
+
+function TaskProjectionFields({ data, catalog: suppliedCatalog, vesselId, projection, onChange }: { data?: AppData; catalog?: InternalControlBatchCatalog; vesselId: string; projection: InternalControlTaskProjection; onChange: (projection: InternalControlTaskProjection) => void }) {
+  const catalog = suppliedCatalog || catalogForVessel(data!, vesselId);
+  const categoryChoices = unique([...catalog.taskCategories, ...projection.categories, '設備故障']);
+  const eligibleOwners = catalog.owners;
   const toggleCategory = (value: string) => onChange({ ...projection, categories: projection.categories.includes(value) ? projection.categories.filter(item => item !== value) : [...projection.categories, value] });
   return <section className="ic-task-projection" aria-label="同步要事設定">
     <div className="ic-task-projection-head"><h4>同步要事設定</h4><small>以下欄位直接寫入要事；必填規則與「新增要事」一致。</small></div>
     <fieldset className="ic-choice-picker" aria-required="true"><legend>要事分類 * <span>已選 {projection.categories.length}</span></legend><div>{categoryChoices.map(value => <label key={value} className={projection.categories.includes(value) ? 'selected' : ''}><input type="checkbox" checked={projection.categories.includes(value)} onChange={() => toggleCategory(value)}/><span>{value}</span></label>)}</div></fieldset>
-    {projection.categories.includes('設備故障') && <div className="field"><label>要事設備故障細項 *</label><select required value={projection.equipmentSubcategory || ''} onChange={event => onChange({ ...projection, equipmentSubcategory: event.target.value || undefined })}><option value="">請選擇</option>{data.settings.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div>}
+    {projection.categories.includes('設備故障') && <div className="field"><label>要事設備故障細項 *</label><select required value={projection.equipmentSubcategory || ''} onChange={event => onChange({ ...projection, equipmentSubcategory: event.target.value || undefined })}><option value="">請選擇</option>{catalog.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div>}
     <div className="grid cols-2 ic-task-projection-meta"><div className="field"><label>預計完成日期</label><input type="date" value={projection.expectedDate} onChange={event => onChange({ ...projection, expectedDate: event.target.value })}/></div><div className="field"><label>涉及部門 *</label><div className="scope-result-note"><b>沿用本案件涉及部門</b><span>請在上方至少選擇一個部門</span></div></div></div>
-    <MeetingPeoplePicker label="追蹤窗口" users={eligibleOwners} departments={data.settings.departments} selectedIds={projection.ownerUserIds} onChange={ownerUserIds => onChange({ ...projection, ownerUserIds })}/>
+    <MeetingPeoplePicker label="追蹤窗口" users={eligibleOwners} departments={catalog.departments} selectedIds={projection.ownerUserIds} onChange={ownerUserIds => onChange({ ...projection, ownerUserIds })}/>
   </section>;
 }
 
-export function BatchCreateModal({ data, user, vessels, close, save }: { data: AppData; user: UserAccount; vessels: Vessel[]; close: () => void; save: (items: InternalControlCase[], projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean> }) {
-  const categories = unique([...data.settings.taskCategories, '設備故障']);
-  const [vesselId, setVesselId] = useState(vessels[0]?.id || '');
-  const [reportDate, setReportDate] = useState(todayDate());
-  const [reportSource, setReportSource] = useState<InternalControlReportSource>('日常');
-  const [rows, setRows] = useState<BatchRow[]>([newRow(categories[0] || '設備故障')]);
-  const update = (key: string, patch: Partial<BatchRow>) => setRows(previous => previous.map(row => row.key === key ? { ...row, ...patch } : row));
-  const projectionFor = (row: BatchRow): InternalControlTaskProjection => ({ categories: row.taskCategories, equipmentSubcategory: row.taskEquipmentSubcategory || row.equipmentSubcategory || undefined, expectedDate: row.taskExpectedDate, ownerUserIds: row.taskOwnerUserIds, isAbnormal: row.taskIsAbnormal });
-  const changeTaskSync = (row: BatchRow, checked: boolean) => {
+export function BatchCreateModal({ data, user, vessels, close, save, shipSubmission }: { data?: AppData; user: Pick<UserAccount, 'id'>; vessels: Array<Pick<Vessel, 'id' | 'name' | 'shortName' | 'fullName'>>; close: () => void; save: (items: InternalControlCase[], projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean>; shipSubmission?: ShipInternalControlForm }) {
+  const [localDraft, setLocalDraft] = useState(() => createInternalControlBatchDraft(vessels[0]?.id || '', data?.settings.taskCategories[0] || '設備故障'));
+  const draft = shipSubmission?.draft || localDraft;
+  const { vesselId, reportDate, reportSource, rows } = draft;
+  const catalog: InternalControlBatchCatalog = shipSubmission ? { ...shipSubmission.catalog, owners: [], defaultOwnerIds: [] } : catalogForVessel(data!, vesselId);
+  const categories = unique([...catalog.taskCategories, '設備故障']);
+  const setDraft = (next: InternalControlBatchDraft) => {
+    if (shipSubmission) { if (!shipSubmission.busy && !shipSubmission.pending) shipSubmission.onDraftChange(next); }
+    else setLocalDraft(next);
+  };
+  const setRows = (updateRows: (rows: InternalControlBatchRow[]) => InternalControlBatchRow[]) => setDraft({ ...draft, rows: updateRows(rows) });
+  const update = (key: string, patch: Partial<InternalControlBatchRow>) => setRows(previous => previous.map(row => row.key === key ? { ...row, ...patch } : row));
+  const projectionFor = (row: InternalControlBatchRow): InternalControlTaskProjection => ({ categories: row.taskCategories, equipmentSubcategory: row.taskEquipmentSubcategory || row.equipmentSubcategory || undefined, expectedDate: row.taskExpectedDate, ownerUserIds: row.taskOwnerUserIds, isAbnormal: row.taskIsAbnormal });
+  const changeTaskSync = (row: InternalControlBatchRow, checked: boolean) => {
     const choice = internalControlTaskSyncChoice(checked);
     update(row.key, {
       syncToTask: choice.syncToTask,
       taskIsAbnormal: choice.syncToTask ? choice.isAbnormal : row.taskIsAbnormal,
       taskCategories: row.taskCategories.length ? row.taskCategories : [row.category],
-      taskOwnerUserIds: choice.syncToTask ? defaultOwnerIds(data, vesselId) : row.taskOwnerUserIds,
+      taskOwnerUserIds: choice.syncToTask ? catalog.defaultOwnerIds : row.taskOwnerUserIds,
     });
   };
   const submit = async () => {
+    if (shipSubmission?.busy) return;
     const at = new Date().toISOString();
     const candidates: InternalControlCase[] = rows.map(row => ({
       id: uid('internal'), vesselId, reportDate, reportSource, description: row.description.trim(), priority: row.priority, category: row.category,
       equipmentSubcategory: row.category === '設備故障' ? row.equipmentSubcategory : undefined, isAware: row.isAware, status: row.status.trim(), departments: row.departments,
-      syncToTask: row.syncToTask, isClosed: Boolean(row.closedDate), closedDate: row.closedDate || undefined, createdBy: user.id, updatedBy: user.id, createdAt: at, updatedAt: at, origin: 'internal-control', statusLogs: [],
+      syncToTask: shipSubmission ? false : row.syncToTask, isClosed: shipSubmission ? false : Boolean(row.closedDate), closedDate: shipSubmission ? undefined : row.closedDate || undefined, createdBy: user.id, updatedBy: user.id, createdAt: at, updatedAt: at, origin: 'internal-control', statusLogs: [],
     }));
     if (!vesselId || !reportDate || !reportSource) return alert('請完整填寫船舶、報告日期與報告來源');
     const errors = candidates.flatMap((item, index) => validateInternalControlCase(item).map(error => `第 ${index + 1} 筆：${error}`));
     rows.forEach((row, index) => {
-      if (!row.syncToTask) return;
+      if (shipSubmission || !row.syncToTask) return;
       if (!row.taskCategories.length) errors.push(`第 ${index + 1} 筆：要事分類`);
       if (row.taskCategories.includes('設備故障') && !(row.taskEquipmentSubcategory || row.equipmentSubcategory)) errors.push(`第 ${index + 1} 筆：要事設備故障細項`);
     });
     if (errors.length) return alert(errors.join('\n'));
-    const projections = Object.fromEntries(candidates.map((item, index) => [item.id, projectionFor(rows[index])]).filter((_, index) => rows[index].syncToTask));
+    const projections = Object.fromEntries(candidates.map((item, index) => [item.id, projectionFor(rows[index])]).filter((_, index) => !shipSubmission && rows[index].syncToTask));
     if (await save(candidates, projections)) close();
   };
   const changeVessel = (nextVesselId: string) => {
-    setVesselId(nextVesselId);
-    setRows(previous => previous.map(row => row.syncToTask ? { ...row, taskOwnerUserIds: defaultOwnerIds(data, nextVesselId) } : row));
+    if (shipSubmission) return;
+    setDraft({ ...draft, vesselId: nextVesselId, rows: rows.map(row => row.syncToTask ? { ...row, taskOwnerUserIds: defaultOwnerIds(data!, nextVesselId) } : row) });
   };
-  return <div className="modal-backdrop"><div className="modal ic-batch-modal" role="dialog" aria-modal="true" aria-labelledby="ic-batch-title">
-    <div className="modal-head"><div><h2 id="ic-batch-title">批量新增內控異常</h2><p>共用船舶、報告日期及來源；保存後每列拆成獨立案件。</p></div><button className="btn ghost" onClick={close}>關閉</button></div>
-    <div className="grid cols-3"><div className="field"><label>船舶 *</label><select value={vesselId} onChange={event => changeVessel(event.target.value)}>{vessels.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div><div className="field"><label>報告日期 *</label><input type="date" value={reportDate} onChange={event => setReportDate(event.target.value)}/></div><div className="field"><label>報告來源 *</label><select value={reportSource} onChange={event => setReportSource(event.target.value as InternalControlReportSource)}>{REPORT_SOURCES.map(source => <option key={source}>{source}</option>)}</select></div></div>
+  const fields = <>
+    <div className="grid cols-3"><div className="field"><label>船舶 *</label><select value={vesselId} disabled={Boolean(shipSubmission)} onChange={event => changeVessel(event.target.value)}>{vessels.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div><div className="field"><label>報告日期 *</label><input type="date" value={reportDate} onChange={event => setDraft({ ...draft, reportDate: event.target.value })}/></div><div className="field"><label>報告來源 *</label><select value={reportSource} onChange={event => setDraft({ ...draft, reportSource: event.target.value as InternalControlReportSource })}>{REPORT_SOURCES.map(source => <option key={source}>{source}</option>)}</select></div></div>
     <div className="ic-batch-rows">{rows.map((row, index) => <article className="ic-batch-row" key={row.key}>
       <div className="ic-batch-row-head"><h3>第 {index + 1} 筆</h3>{rows.length > 1 && <button className="btn small danger" onClick={() => setRows(previous => previous.filter(item => item.key !== row.key))}>刪除本筆</button>}</div>
-      <div className="grid cols-3 ic-case-classification-row"><div className="field"><label>關注程度 *</label><select value={row.priority} onChange={event => update(row.key, { priority: event.target.value as TaskPriority })}>{data.settings.priorities.map(priority => <option key={priority}>{priority}</option>)}</select></div><div className="field"><label>事件分類 *</label><select value={row.category} onChange={event => { const category = event.target.value; update(row.key, { category, equipmentSubcategory: category === '設備故障' ? row.equipmentSubcategory : '', taskCategories: row.taskCategories.length <= 1 ? [category] : row.taskCategories }); }}>{categories.map(category => <option key={category}>{category}</option>)}</select></div><div className="field"><label>設備故障細項{row.category === '設備故障' ? ' *' : ''}</label><select disabled={row.category !== '設備故障'} value={row.equipmentSubcategory} onChange={event => update(row.key, { equipmentSubcategory: event.target.value })}><option value="">{row.category === '設備故障' ? '請選擇' : '不適用'}</option>{data.settings.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div></div>
+      <div className="grid cols-3 ic-case-classification-row"><div className="field"><label>關注程度 *</label><select value={row.priority} onChange={event => update(row.key, { priority: event.target.value as TaskPriority })}>{catalog.priorities.map(priority => <option key={priority}>{priority}</option>)}</select></div><div className="field"><label>事件分類 *</label><select value={row.category} onChange={event => { const category = event.target.value; update(row.key, { category, equipmentSubcategory: category === '設備故障' ? row.equipmentSubcategory : '', taskCategories: row.taskCategories.length <= 1 ? [category] : row.taskCategories }); }}>{categories.map(category => <option key={category}>{category}</option>)}</select></div><div className="field"><label>設備故障細項{row.category === '設備故障' ? ' *' : ''}</label><select disabled={row.category !== '設備故障'} value={row.equipmentSubcategory} onChange={event => update(row.key, { equipmentSubcategory: event.target.value })}><option value="">{row.category === '設備故障' ? '請選擇' : '不適用'}</option>{catalog.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-2 ic-case-content-row"><div className="field"><label>事項內容 *</label><textarea value={row.description} onChange={event => update(row.key, { description: event.target.value })}/></div><div className="field"><label>解決計劃／最新狀態 *</label><textarea value={row.status} onChange={event => update(row.key, { status: event.target.value })}/></div></div>
-      <div className="ic-inline-options"><label><input type="checkbox" checked={row.isAware} onChange={event => update(row.key, { isAware: event.target.checked })}/>標記為知曉事項</label><label><input type="checkbox" checked={row.syncToTask} onChange={event => changeTaskSync(row, event.target.checked)}/>同步到要事</label><div className="field"><label>結案日期（可選）</label><input type="date" value={row.closedDate} onChange={event => update(row.key, { closedDate: event.target.value })}/></div></div>
-      <DepartmentPicker values={row.departments} choices={data.settings.departments} onChange={departments => update(row.key, { departments })}/>
-      {row.syncToTask && <TaskProjectionFields data={data} vesselId={vesselId} projection={projectionFor(row)} onChange={projection => update(row.key, { taskCategories: projection.categories, taskEquipmentSubcategory: projection.equipmentSubcategory || '', taskExpectedDate: projection.expectedDate, taskOwnerUserIds: projection.ownerUserIds, taskIsAbnormal: projection.isAbnormal === true })}/>}
+      <div className="ic-inline-options"><label><input type="checkbox" checked={row.isAware} onChange={event => update(row.key, { isAware: event.target.checked })}/>標記為知曉事項</label>{!shipSubmission && <label><input type="checkbox" checked={row.syncToTask} onChange={event => changeTaskSync(row, event.target.checked)}/>同步到要事</label>}{!shipSubmission && <div className="field"><label>結案日期（可選）</label><input type="date" value={row.closedDate} onChange={event => update(row.key, { closedDate: event.target.value })}/></div>}</div>
+      <DepartmentPicker values={row.departments} choices={catalog.departments} onChange={departments => update(row.key, { departments })}/>
+      {!shipSubmission && row.syncToTask && <TaskProjectionFields catalog={catalog} vesselId={vesselId} projection={projectionFor(row)} onChange={projection => update(row.key, { taskCategories: projection.categories, taskEquipmentSubcategory: projection.equipmentSubcategory || '', taskExpectedDate: projection.expectedDate, taskOwnerUserIds: projection.ownerUserIds, taskIsAbnormal: projection.isAbnormal === true })}/>}
     </article>)}</div>
-    <div className="modal-actions"><button className="btn ghost" onClick={() => setRows(previous => [...previous, newRow(categories[0] || '設備故障')])}>＋ 新增一筆</button><button className="btn ghost" onClick={close}>取消</button><button className="btn primary" onClick={submit}>保存 {rows.length} 筆案件</button></div>
+  </>;
+  return <div className="modal-backdrop"><div className="modal ic-batch-modal" role="dialog" aria-modal="true" aria-labelledby="ic-batch-title">
+    <div className="modal-head"><div><h2 id="ic-batch-title">{shipSubmission ? '增加內控/訴求' : '批量新增內控異常'}</h2><p>共用船舶、報告日期及來源；保存後每列拆成獨立案件。</p></div><button className="btn ghost" onClick={close}>關閉</button></div>
+    {shipSubmission?.message && <div className="ship-ic-form-notice" role="status">{shipSubmission.message}</div>}
+    {shipSubmission ? <fieldset disabled={shipSubmission.busy || shipSubmission.pending} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{fields}</fieldset> : fields}
+    <div className="modal-actions"><button className="btn ghost" disabled={Boolean(shipSubmission && (shipSubmission.busy || shipSubmission.pending || rows.length >= 100))} onClick={() => setRows(previous => [...previous, newInternalControlBatchRow(categories[0] || '設備故障')])}>＋ 新增一筆</button><button className="btn ghost" onClick={close}>{shipSubmission ? '關閉（保留草稿）' : '取消'}</button><button className="btn primary" disabled={shipSubmission?.busy} onClick={submit}>{shipSubmission ? (shipSubmission.busy ? '提交中…' : shipSubmission.pending ? '確認結果／重試相同提交' : `提交 ${rows.length} 筆`) : `保存 ${rows.length} 筆案件`}</button></div>
   </div></div>;
 }
 
