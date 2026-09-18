@@ -2795,7 +2795,8 @@ export default function App() {
       flushSync(()=>setData(prev=>{
       const liveUser=prev.users.find(user=>user.id===currentUser.id&&user.isActive);
       if(!liveUser||liveUser.role==='vessel'||!hasPermission(prev.settings.rolePermissions,liveUser,'createTasks')){failure='目前身份無權新增內控案件';return prev;}
-      if(prev.revision!==expectedRevision){failure='主資料已更新，請保留輸入內容並重新提交';return prev;}
+      // The durable boundary refreshes under the creation lease; newer unrelated rows must survive this append.
+      if(prev.revision<expectedRevision){failure='主資料已更新，請保留輸入內容並重新提交';return prev;}
       const caseVessels=items.map(item=>prev.vessels.find(vessel=>vessel.id===item.vesselId&&vessel.isActive));
       if(caseVessels.some(vessel=>!vessel)||!canAccessAllVessels(prev.settings.rolePermissions,liveUser,caseVessels as Vessel[])){failure='必須具備全部所選船舶的權限';return prev;}
       if(items.some(item=>item.isClosed)&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')){failure='目前身份無權建立已結案案件';return prev;}
@@ -2825,7 +2826,8 @@ export default function App() {
       if(!liveUser||liveUser.role==='vessel'||!hasPermission(prev.settings.rolePermissions,liveUser,'editBusinessContent')){failure='目前身份無權更新內控案件';return prev;}
       const previous=prev.internalControlCases.find(item=>item.id===candidate.id);
       if(!previous||prev.internalControlCases.filter(item=>item.id===candidate.id).length!==1){failure='內控案件不存在或識別碼重複';return prev;}
-      if(prev.revision!==expectedRevision||previous.updatedAt!==expectedUpdatedAt){failure='案件已由其他人更新，請重新開啟後再保存';return prev;}
+      // Use this case's version after the locked refresh, not the workspace revision advanced by another case.
+      if(prev.revision<expectedRevision||previous.updatedAt!==expectedUpdatedAt){failure='案件已由其他人更新，請重新開啟後再保存';return prev;}
       const scopeVessels=[previous.vesselId,candidate.vesselId].map(id=>prev.vessels.find(vessel=>vessel.id===id&&vessel.isActive));
       if(scopeVessels.some(vessel=>!vessel)||!canAccessAllVessels(prev.settings.rolePermissions,liveUser,scopeVessels as Vessel[])){failure='必須具備原船舶與新船舶的完整權限';return prev;}
       if(!previous.syncToTask&&candidate.syncToTask&&!hasPermission(prev.settings.rolePermissions,liveUser,'createTasks')){failure='目前身份無權建立同步要事';return prev;}

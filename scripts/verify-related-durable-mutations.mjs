@@ -19,7 +19,7 @@ const saveTaskStart=app.indexOf('const saveTask = async');
 const saveTaskEnd=app.indexOf('\n  const saveTaskVesselProgress',saveTaskStart);
 const saveTask=app.slice(saveTaskStart,saveTaskEnd);
 assert.match(saveTask,/await runDurableRelatedMutation\(\s*`task:\$\{candidate\.id\}`[\s\S]*?taskVesselIds\(candidate\)[\s\S]*?\.map\(vesselId=>`vessel:\$\{vesselId\}`\)/, 'an existing task save must hold its task/relation/vessel lock closure and await authoritative cloud confirmation before the editor can close');
-assert.match(saveTask,/taskInternalControlCreationLockKeys\(snapshot,candidate,isMeetingTaskSource\(candidate\)\)/, 'an existing task save that can create an internal-control case must include the matching creation guard in its additional lock closure');
+assert.match(saveTask,/taskInternalControlCreationLockKeys\(snapshot,candidate,isMeetingTaskSource\(candidate\),Boolean\(getSupabaseConfig\(\)&&originalAuthority\.current\?\.source==='records-v1'\)\)/, 'an existing task save must reserve its matching creation guard, including a projected case not yet stored in records-v1');
 const progressStart=app.indexOf('const saveTaskVesselProgress =');
 const progressEnd=app.indexOf('\n  const deleteTask',progressStart);
 assert.match(app.slice(progressStart,progressEnd),/const saveTaskVesselProgress = async[\s\S]*?await runDurableRelatedMutation\(\s*`task:\$\{candidate\.id\}`/, 'single-vessel progress must return success only after its task/relation mutation is durably confirmed');
