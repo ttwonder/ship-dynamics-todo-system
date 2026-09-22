@@ -1,0 +1,100 @@
+.data-analysis-view { display: grid; gap: 8px; min-width: 0; }
+.data-analysis-view .page-heading { margin-bottom: 0; }
+.data-analysis-view .page-heading h1 { font-size: 20px; }
+.data-analysis-view .page-heading p { margin: 3px 0 0; }
+.data-analysis-view .panel { min-width: 0; padding: 10px; border-radius: 11px; }
+.data-analysis-view .analysis-panel { margin-top: 0; }
+.data-analysis-view .panel-title { display: flex; flex-direction: row; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+.data-analysis-view .panel-title h3 { font-size: 14px; margin: 0; }
+.data-analysis-view .panel-title small { font-size: 11px; }
+.data-analysis-view .analysis-filters { gap: 8px; padding: 8px 10px; }
+.data-analysis-view .analysis-filters label { min-width: 120px; max-width: 230px; gap: 3px; flex: 0 1 auto; }
+.data-analysis-view .analysis-filters input,
+.data-analysis-view .analysis-filters select,
+.data-analysis-view .da-rank-controls select,
+.data-analysis-view .da-interval select { width: 100%; min-width: 0; padding: 5px 7px; min-height: 32px; font-size: 12px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: #fff; }
+.data-analysis-view .da-reset { min-height: 32px; padding: 5px 9px; font-size: 12px; }
+.data-analysis-view .analysis-scope-note { padding: 7px 9px; font-size: 12px; }
+.data-analysis-view .analysis-metric-grid { grid-template-columns: repeat(8,minmax(0,1fr)); gap: 7px; margin: 0; }
+.data-analysis-view .analysis-metric-grid .metric-card { min-width: 0; padding: 7px 9px; min-height: 65px; border-radius: 9px; text-align: left; box-shadow: none; }
+.data-analysis-view .metric-card::after { display: none; }
+.data-analysis-view .metric-card small { font-size: 12px; }
+.data-analysis-view .metric-card b { font-size: 22px; line-height: 1.2; }
+.data-analysis-view .metric-card span { display: block; font-size: 11px; line-height: 1.4; }
+.data-analysis-view .da-overview { display: grid; grid-template-columns: minmax(200px,1fr) minmax(200px,1fr) minmax(330px,2fr); gap: 8px; align-items: start; }
+.data-analysis-view .category-ratio-panel .analysis-compare-list { gap: 3px; max-height: 224px; overflow: auto; margin-top: 7px; }
+.data-analysis-view .category-ratio-panel .analysis-compare-row { grid-template-columns: minmax(0,1fr) 42px 37px; gap: 4px; padding: 5px 6px; min-height: 36px; border-radius: 6px; }
+.data-analysis-view .category-ratio-panel .analysis-name { font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
+.data-analysis-view .category-ratio-panel .analysis-bar { grid-column: 1/-1; grid-row: 2; height: 4px; }
+.data-analysis-view .category-ratio-panel .analysis-compare-row .analysis-value { display: block; font-size: 11px; }
+.data-analysis-view .da-note { display: block; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.data-analysis-view .da-interval { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+.data-analysis-view .da-interval select { width: 58px; min-height: 28px; padding: 3px 5px; }
+.data-analysis-view .da-trend-caption { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.data-analysis-view .da-trend-caption small { font-size: 11px; color: var(--muted); }
+.data-analysis-view .da-trend-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; margin: 7px 0 2px; font-weight: 700; }
+.data-analysis-view .da-ordinary { color: #257a9c; }
+.data-analysis-view .da-meeting { color: #8956a6; }
+.data-analysis-view .da-ordinary::before,
+.data-analysis-view .da-meeting::before { content: ''; display: inline-block; width: 14px; border-top: 2px solid; margin: 0 5px 3px 0; }
+.data-analysis-view .da-meeting::before { border-top-style: dashed; }
+.data-analysis-view .da-trend-canvas { min-width: 0; width: 100%; }
+.data-analysis-view .da-trend-svg { display: block; width: 100%; height: auto; }
+.data-analysis-view .da-trend-svg text { font-size: 11px; fill: #67576e; }
+.data-analysis-view .da-period-details { margin-top: 5px; font-size: 11px; color: var(--muted); }
+.data-analysis-view summary { cursor: pointer; }
+.data-analysis-view .da-period-details .table-wrap { max-height: 200px; }
+.data-analysis-view .da-period-details table { min-width: 0; width: 100%; }
+.data-analysis-view .da-period-details th,
+.data-analysis-view .da-period-details td { padding: 4px 7px; font-size: 11px; }
+.data-analysis-view .da-rank-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.data-analysis-view .da-rank-controls label { display: flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 12px; font-weight: 700; }
+.data-analysis-view .da-rank-controls select { width: auto; }
+.data-analysis-view .da-rank-controls small { flex: 1 1 300px; font-size: 11px; color: var(--muted); }
+.data-analysis-view .da-comparisons { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; align-items: start; }
+.data-analysis-view .da-compare-panel .analysis-compare-list { max-height: 310px; overflow: auto; gap: 4px; }
+.data-analysis-view .da-compare-panel .analysis-compare-row { grid-template-columns: 24px minmax(0,1fr) auto; gap: 3px 5px; padding: 5px 6px; border-radius: 6px; }
+.data-analysis-view .analysis-rank { width: 22px; height: 22px; font-size: 12px; }
+.data-analysis-view .da-text-button { padding: 2px 0; min-width: 0; background: transparent; border: 0; color: #446985; text-align: left; font-size: 12px; cursor: pointer; font-weight: 700; white-space: normal; overflow-wrap: anywhere; }
+.data-analysis-view .da-text-button:hover { text-decoration: underline; }
+.data-analysis-view .da-text-button[aria-pressed=true] { color: #743db0; background: #f0e5fb; border-radius: 4px; }
+.data-analysis-view .da-text-button:focus-visible { outline: 2px solid #9863b6; outline-offset: 2px; }
+.data-analysis-view .da-share { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.data-analysis-view .da-compare-panel .analysis-bar { grid-column: 1/-1; height: 4px; }
+.data-analysis-view .da-row-values { grid-column: 1/-1; display: flex; justify-content: space-between; gap: 4px; flex-wrap: wrap; }
+.data-analysis-view .da-compare-panel .da-row-values .analysis-value { display: inline; font-size: 11px; }
+.data-analysis-view .da-live-note { font-size: 11px; color: #6b5875; background: #f2ecf7; padding: 5px 8px; border-radius: 6px; }
+.data-analysis-view .analysis-vessel-table { max-height: 300px; overflow: auto; }
+.data-analysis-view .analysis-vessel-table table { min-width: 850px; }
+.data-analysis-view .analysis-vessel-table th,
+.data-analysis-view .analysis-vessel-table td { padding: 6px 8px; font-size: 12px; }
+.data-analysis-view .analysis-vessel-table .analysis-trend { height: 27px; }
+.data-analysis-view .da-method summary { font-size: 12px; font-weight: 700; }
+.data-analysis-view .analysis-method { font-size: 12px; margin-top: 7px; line-height: 1.65; }
+.data-analysis-view .da-error { margin: 0; font-size: 12px; padding: 7px 9px; color: #a52c41; background: #fff0f1; border-radius: 6px; }
+.data-analysis-view .empty-text { font-size: 12px; margin: 10px 0; }
+@media(max-width:1080px) {
+  .data-analysis-view .analysis-metric-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
+  .data-analysis-view .da-overview { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .data-analysis-view .da-trend-panel { grid-column: 1/-1; }
+  .data-analysis-view .da-comparisons { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:600px) {
+  .data-analysis-view .analysis-metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .data-analysis-view .analysis-filters label { flex: 1 1 135px; max-width: none; }
+  .data-analysis-view .analysis-filters input,
+  .data-analysis-view .analysis-filters select,
+  .data-analysis-view .da-reset { min-height: 36px; }
+  .data-analysis-view .da-overview,
+  .data-analysis-view .da-comparisons { grid-template-columns: minmax(0,1fr); }
+  .data-analysis-view .da-compare-panel .da-text-button { min-height: 28px; }
+  .data-analysis-view .panel-title { align-items: center; }
+}
+@media print {
+  .data-analysis-view .da-rank-controls { display: none; }
+  .data-analysis-view .da-overview { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .data-analysis-view .da-trend-panel { grid-column: 1/-1; }
+  .data-analysis-view .analysis-compare-list,
+  .data-analysis-view .analysis-vessel-table { max-height: none; overflow: visible; }
+  .data-analysis-view .panel { break-inside: avoid; }
+}
