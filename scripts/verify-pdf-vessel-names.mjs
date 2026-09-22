@@ -28,7 +28,7 @@ const server = await createServer({
     }
     const className = filename.endsWith('/src/WorkCenter.tsx') ? 'work-print-list print-only'
       : filename.endsWith('/src/InternalControlPage.tsx') ? 'internal-control-print print-only' : '';
-    if (className) return `${source}\nexport function PdfNameQaPrint({user,vessels,printTasks,printInternalCases,visibleVesselIds,subpage,summary,printSummary,printCases,stats,printStats}) { return (${printSection(source, filename, className)}); }`;
+    if (className) return `${source}\nexport function PdfNameQaPrint({user,vessels,printTasks,printInternalCases,visibleVesselIds,subpage,summary,printSummary,printCases,stats,printStats,filters,analyticsFilterSummary,analysisSelection,setAnalysisSelection}) { return (${printSection(source, filename, className)}); }`;
   } }],
 });
 try {
@@ -116,6 +116,8 @@ try {
   assert.deepEqual({ ...pdfStats, byVessel: [] }, { ...stats, byVessel: [] }, 'only statistic name labels may change');
   const statsMarkup = renderToStaticMarkup(React.createElement(internal.PdfNameQaPrint, {
     user: data.users[0], vessels, printCases: [statCase], subpage: 'stats', summary: 'QA', printSummary: 'QA', stats,
+    filters: { fromDate: '', toDate: '' }, analyticsFilterSummary: '',
+    analysisSelection: { dimension: 'vessel', interval: 'month', focusKey: '' }, setAnalysisSelection() {},
   }));
   assert.match(statsMarkup, /<span>測試甲船 FPMC QA ALPHA<\/span>/, 'real statistics PDF section');
   if (process.env.PDF_NAME_QA_HTML) {

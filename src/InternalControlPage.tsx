@@ -20,6 +20,8 @@ import { sanitizeInternalControlSelection } from './batchInternalControlActions'
 import VesselListFilter from './VesselListFilter';
 import { formatTaipeiDate, formatTaipeiDateTime } from './taipeiTime';
 import { selectedListRecords } from './selectedListExport';
+import InternalControlStatsView from './InternalControlStatsView';
+import type { InternalControlAnalysisSelection } from './internalControlAnalytics';
 import {
   matchesListVesselSelection,
   nextListColumnSort,
@@ -73,6 +75,7 @@ const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' 
 
 export default function InternalControlPage({ loadCase, data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, requestedCaseId, onRequestedCaseHandled, onCreate, onUpdate, onWithdrawTaskSync, onDelete, onBatchClose, onBatchDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
   const [subpage, setSubpage] = useState<Subpage>('open');
+  const [analysisSelection, setAnalysisSelection] = useState<InternalControlAnalysisSelection>({ dimension: 'category', interval: 'month', focusKey: '' });
   const [filters, setFilters] = useState<InternalControlFilters>(() => emptyFilters(defaultInternalControlVesselSelection(user, vessels)));
   const [batchOpen, setBatchOpen] = useState(false);
   const [editing, setEditing] = useState<InternalControlCase | null>(null);
@@ -137,6 +140,7 @@ export default function InternalControlPage({ loadCase, data, user, vessels, can
         :'';
 
   useEffect(() => setPage(1), [subpage, JSON.stringify(filters),columnSort]);
+  useEffect(() => setAnalysisSelection(previous => previous.focusKey ? { ...previous, focusKey: '' } : previous), [JSON.stringify(filters), authorizationEpoch]);
   useEffect(()=>{
     setSelectedCaseIds(previous=>{
       const next=sanitizeInternalControlSelection(previous,selectableCases);
@@ -171,6 +175,15 @@ export default function InternalControlPage({ loadCase, data, user, vessels, can
   const summary = summaryFor(vesselSummary);
   const selectedPdfVesselNames = filters.vesselIds.map(id => vessels.find(vessel => vessel.id === id)).filter((vessel): vessel is Vessel => Boolean(vessel)).map(pdfVesselDisplayName);
   const printSummary = summaryFor(filters.ownerMode === 'all' || filters.ownerMode === 'mine' ? vesselSummary : selectedPdfVesselNames.join('、') || '未選船舶');
+  const analyticsFilterSummary = [
+    filters.keyword && `關鍵字：${filters.keyword}`, filters.shipTypes.length && `船型：${filters.shipTypes.join('、')}`,
+    filters.priorities.length && `重要程度：${filters.priorities.join('、')}`, filters.categories.length && `事項分類：${filters.categories.join('、')}`,
+    filters.departments.length && `部門：${filters.departments.join('、')}`, filters.reportSources.length && `來源：${filters.reportSources.join('、')}`,
+    filters.equipmentSubcategories.length && `設備細項：${filters.equipmentSubcategories.join('、')}`,
+    filters.supervisorIds.length && `經管督導：${filters.supervisorIds.map(id => data.users.find(person => person.id === id)?.name || id).join('、')}`,
+    filters.awareMode !== 'all' && `知曉事項：${filters.awareMode === 'aware' ? '是' : '否'}`,
+    filters.syncMode !== 'all' && `同步要事：${filters.syncMode === 'synced' ? '是' : '否'}`,
+  ].filter(Boolean).join('；');
   const print = () => {
     if (!canExport||(subpage!=='stats'&&!selectedCases.length)) return;
     document.body.classList.add('printing-internal-control');
@@ -266,9 +279,9 @@ export default function InternalControlPage({ loadCase, data, user, vessels, can
         </tr>;
       })}</tbody></table></div>
       {!filtered.length && <div className="empty-state">目前篩選條件沒有案件</div>}<PaginationControls page={paged.page} pageCount={paged.pageCount} total={paged.total} from={paged.from} to={paged.to} onPageChange={setPage} ariaLabel="內控異常分頁"/>
-    </section> : <InternalControlStatsView stats={stats}/>}
+    </section> : <InternalControlStatsView stats={stats} cases={filtered} vessels={vessels} fromDate={filters.fromDate} toDate={filters.toDate} filterSummary={analyticsFilterSummary} selection={analysisSelection} onSelectionChange={setAnalysisSelection} formatVesselName={vesselDisplayName}/>}
 
-    <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單（所選項目）' : subpage === 'closed' ? '結案清單（所選項目）' : '統計報告'}</h1><p>{printSummary}｜共 {printCases.length} 件｜匯出人 {user.name}｜{formatTaipeiDateTime(new Date())}</p>{subpage === 'stats' ? <InternalControlStatsView stats={buildInternalControlStats(printCases, vessels, pdfVesselDisplayName)}/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{printCases.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? pdfVesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
+    <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單（所選項目）' : subpage === 'closed' ? '結案清單（所選項目）' : '統計報告'}</h1><p>{printSummary}｜共 {printCases.length} 件｜匯出人 {user.name}｜{formatTaipeiDateTime(new Date())}</p>{subpage === 'stats' ? <InternalControlStatsView stats={buildInternalControlStats(printCases, vessels, pdfVesselDisplayName)} cases={printCases} vessels={vessels} fromDate={filters.fromDate} toDate={filters.toDate} filterSummary={analyticsFilterSummary} selection={analysisSelection} onSelectionChange={setAnalysisSelection} formatVesselName={pdfVesselDisplayName} printMode/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{printCases.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? pdfVesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
 
     {visibleBatch && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={async (items, projections) => { if (await onCreate(items, data.revision, projections)) { setBatchOpen(false); return true; } return false; }}/>}
     {visibleEditing && editing && <CaseEditModal
@@ -299,9 +312,4 @@ export default function InternalControlPage({ loadCase, data, user, vessels, can
       }}
     />}
   </section>;
-}
-
-function InternalControlStatsView({ stats }: { stats: ReturnType<typeof buildInternalControlStats> }) {
-  const dimensions: Array<[string, Array<{ label: string; count: number }>]> = [['船舶', stats.byVessel], ['船型', stats.byShipType], ['關注程度', stats.byPriority], ['分類', stats.byCategory], ['涉及部門', stats.byDepartment], ['報告來源', stats.bySource]];
-  return <section className="ic-stats"><div className="metric-grid"><div className="metric-card blue"><small>案件總數</small><b>{stats.total}</b><span>件</span></div><div className="metric-card pink"><small>內控未完</small><b>{stats.open}</b><span>件</span></div><div className="metric-card mint"><small>已結案</small><b>{stats.closed}</b><span>件</span></div><div className="metric-card purple"><small>急／高關注</small><b>{stats.highAttention}</b><span>件</span></div><div className="metric-card yellow"><small>結案率</small><b>{stats.closureRate}</b><span>%</span></div></div><div className="ic-stat-grid">{dimensions.map(([label, rows]) => <div className="panel" key={label}><h2>{label}分布</h2>{rows.length ? rows.slice(0, 12).map(row => <div className="ic-stat-row" key={row.label}><span>{row.label}</span><i style={{ width: `${Math.max(4, stats.total ? row.count / stats.total * 100 : 0)}%` }}/><b>{row.count}</b></div>) : <p className="muted">沒有資料</p>}</div>)}<div className="panel ic-trend-panel"><h2>月度趨勢</h2><table className="compact"><thead><tr><th>月份</th><th>新增</th><th>結案</th></tr></thead><tbody>{stats.monthlyTrend.map(row => <tr key={row.month}><td>{row.month}</td><td>{row.created}</td><td>{row.closed}</td></tr>)}</tbody></table></div></div></section>;
 }
