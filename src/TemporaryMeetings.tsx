@@ -1,5 +1,6 @@
 import { rebindReopenedVesselResponsibilities, canRetainVesselCommonContact, meetingHandoverVesselIds } from './vesselManagerHandover';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { MeetingStatisticsEntry } from './PageStatistics';
 import type { Dispatch, SetStateAction } from 'react';
 import { flushSync } from 'react-dom';
 import type {
@@ -232,16 +233,18 @@ export default function TemporaryMeetingsPage({ loadMeetings, authorizationEpoch
 
   const registerMeetings=accessibleMeetings.filter(meeting=>meetingBelongsToRegisterList(statusOf(meeting),registerListMode));
   const filterSourceMeetings=viewMode==='register'?registerMeetings:accessibleMeetings;
-  const filtered = filterSourceMeetings.filter(meeting => {
+  const matchesMeetingStatisticsFilters = (meeting: TemporaryMeeting, applyStatus = true) => {
     const q = query.trim().toLowerCase();
-    if (statusFilter !== '全部' && statusOf(meeting) !== statusFilter) return false;
+    if (applyStatus && statusFilter !== '全部' && statusOf(meeting) !== statusFilter) return false;
     if (scopeFilter !== 'any' && scopeModeOf(meeting) !== scopeFilter) return false;
     if (typeFilter !== 'all') {
       if (scopeModeOf(meeting)==='all') return !q || `${meeting.subject} ${richTextToPlainText(meeting.reason)} ${richTextToPlainText(meeting.resolution)} ${meetingTaskItems(meeting, data.tasks, data.settings.meetingTaskCategories).map(item => richTextToPlainText(item.description)).join(' ')} ${meeting.meetingDate} ${meetingScopeLabel(meeting)}`.toLowerCase().includes(q);
       if (!meetingVesselTypes(meeting).includes(typeFilter)) return false;
     }
     return !q || `${meeting.subject} ${richTextToPlainText(meeting.reason)} ${richTextToPlainText(meeting.resolution)} ${[...meeting.participantUserIds, ...(meeting.trackingUserIds || []), ...meeting.responsibleUserIds].map(id => users[id]?.name || '').join(' ')} ${meetingTaskItems(meeting, data.tasks, data.settings.meetingTaskCategories).map(item => richTextToPlainText(item.description)).join(' ')} ${meeting.meetingDate} ${meetingScopeLabel(meeting)}`.toLowerCase().includes(q);
-  });
+  };
+  const filtered = filterSourceMeetings.filter(meeting => matchesMeetingStatisticsFilters(meeting));
+  const statisticsMeetings = accessibleMeetings.filter(meeting => matchesMeetingStatisticsFilters(meeting,false));
   useEffect(() => setMeetingPage(1), [query, statusFilter, scopeFilter, typeFilter]);
 
   const resolvedVesselIds = useMemo(() => {
@@ -1177,13 +1180,15 @@ export default function TemporaryMeetingsPage({ loadMeetings, authorizationEpoch
   const creator = selected ? users[selected.createdBy] : undefined;
   const selectedTaskItemNumbers = new Map((selected ? meetingTaskItems(selected, data.tasks, data.settings.meetingTaskCategories) : []).map((item, index) => [item.id, index + 1]));
 
+  const statisticsEntry = <MeetingStatisticsEntry meetings={filtered} allMeetings={statisticsMeetings} data={data} vessels={visibleVessels} contextKey={JSON.stringify([currentUser.id,authorizationEpoch])}/>;
   if (creating && !editable) return <section className="temporary-meeting-page"><div className="page-heading"><div><h1>臨會/專題</h1><p>目前身份沒有建立臨會/專題權限，已停止顯示先前的新增草稿。</p></div></div><div className="empty-state">目前沒有可編輯的臨會/專題草稿</div></section>;
-  if (!creating && !selected) return <section className="temporary-meeting-page"><div className="page-heading"><div><h1>臨會/專題</h1><p>目前沒有可檢視的臨會/專題，或原選取會議已不在目前權限範圍。</p></div>{editable&&<div className="heading-actions no-print"><button className="btn primary" onClick={() => void startNew()}>＋ 新增臨會/專題</button></div>}</div><div className="empty-state">目前沒有可檢視的臨會/專題</div></section>;
+  if (!creating && !selected) return <section className="temporary-meeting-page"><div className="page-heading"><div><h1>臨會/專題</h1><p>目前沒有可檢視的臨會/專題，或原選取會議已不在目前權限範圍。</p></div>{statisticsEntry}{editable&&<div className="heading-actions no-print"><button className="btn primary" onClick={() => void startNew()}>＋ 新增臨會/專題</button></div>}</div><div className="empty-state">目前沒有可檢視的臨會/專題</div></section>;
 
   return <><section className="temporary-meeting-page meeting-screen">
     <div className="page-heading">
       <div><h1>臨會/專題</h1><p>建立突發議題會議，可按全部船舶、船舶類型或逐船設定範圍。</p></div>
       <div className="heading-actions no-print">
+        {statisticsEntry}
         <button aria-pressed={viewMode==='register'&&registerListMode==='unfinished'} className={`btn ghost meeting-register-entry ${viewMode==='register'&&registerListMode==='unfinished'?'active':''}`} onClick={()=>openMeetingRegister('unfinished')}>未完成清單</button>
         <button aria-pressed={viewMode==='register'&&registerListMode==='completed'} className={`btn ghost meeting-register-entry ${viewMode==='register'&&registerListMode==='completed'?'active':''}`} onClick={()=>openMeetingRegister('completed')}>已完成清單</button>
         {editable?<button className="btn primary" onClick={() => void startNew()}>＋ 新增臨會/專題</button>:<span className="badge">操作員唯讀</span>}
