@@ -6,7 +6,7 @@ import {createRequire} from 'node:module';
 import {execFileSync} from 'node:child_process';
 
 // No connection-string/host/database input: only an owned fresh localhost cluster.
-export async function createNativeRecordQa(run,receipt,{httpTransactions=false,beforeCommit=null}={}){
+export async function createNativeRecordQa(run,receipt,{httpTransactions=false,beforeCommit=null,initTimeoutMs=30000}={}){
  assert.ok(!beforeCommit||httpTransactions,'Native commit barrier requires opt-in HTTP transactions');
  const bin=process.env.SHIP_QA_PG_BIN,modulePath=process.env.SHIP_QA_PG_MODULE;
  for(const p of [bin,modulePath])assert.ok(p&&path.isAbsolute(p),'Explicit absolute SHIP_QA_PG_BIN / SHIP_QA_PG_MODULE required');
@@ -18,7 +18,7 @@ export async function createNativeRecordQa(run,receipt,{httpTransactions=false,b
  const save=()=>fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));
  const command=(name,args)=>{
   const start=new Date().toISOString(),fd=fs.openSync(path.join(run,'postgres-commands.log'),'a');let exit=0;
-  try{return execFileSync(path.join(bin,name+(process.platform==='win32'?'.exe':'')),args,{env,stdio:['ignore',fd,fd],windowsHide:true,timeout:30000});}
+  try{return execFileSync(path.join(bin,name+(process.platform==='win32'?'.exe':'')),args,{env,stdio:['ignore',fd,fd],windowsHide:true,timeout:name==='initdb'?initTimeoutMs:30000});}
   catch(e){exit=e.status??e.code??1;throw e;}
   finally{fs.closeSync(fd);receipt.commands??=[];receipt.commands.push({name,args,start,end:new Date().toISOString(),exit});save();}
  };
