@@ -25,6 +25,8 @@ export function cloudErrorMessage(error:unknown):string{
   return fallback&&fallback!=='[object Object]'?fallback:'未知的雲端服務錯誤';
 }
 
+export const isCloudStatementTimeout=(error:unknown):boolean=>/canceling statement due to statement timeout/i.test(cloudErrorMessage(error));
+
 export function classifyCloudSyncFailure(error:unknown):{kind:CloudSyncFailureKind;message:string}{
   const conflicts=Array.isArray((error as{conflicts?:unknown})?.conflicts)
     ?(error as{conflicts:unknown[]}).conflicts.map(value=>String(value))
@@ -45,5 +47,6 @@ export function classifyCloudSyncFailure(error:unknown):{kind:CloudSyncFailureKi
     };
   }
   const message=cloudErrorMessage(error);
+  if(isCloudStatementTimeout(error))return{kind:'transport',message:'雲端資料庫查詢逾時（57014）；修改仍保留，這不等於網路斷線。請勿連續重按保存；稍後重試原保存，完成前不要關閉或重新整理頁面。'};
   return{kind:'transport',message:`同步失敗：${message}；本機編輯內容仍完整保留。`};
 }

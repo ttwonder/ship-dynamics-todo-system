@@ -79,7 +79,7 @@ import { internalControlCreationLockKey, internalControlEditLockKey, isInternalC
 import { resolveItemEditSession } from './itemEditSession';
 import { buildCloudBlockPatch, CloudBlockPatchConflictError } from './cloudBlockPatch';
 import { actorStorageAuthorizationGuard, appDataAuthorizationDomainChanged, assertActorAuthorizedForAppDataChange, authorizationDomainGuard } from './cloudAuthorization';
-import { classifyCloudSyncFailure, cloudErrorMessage } from './cloudSyncError';
+import { classifyCloudSyncFailure, cloudErrorMessage, isCloudStatementTimeout } from './cloudSyncError';
 import { shouldOfferStaleBrowserRecovery } from './staleBrowserRecovery';
 import { APP_VERSION_CHECK_INTERVAL_MS, appRecoveryReloadUrl, appUpdateBlockReason, appVersionReloadUrl, checkForAppVersion } from './appVersionUpdate';
 import BrowserRecoveryModal, { type BrowserRecoveryPhase } from './BrowserRecoveryModal';
@@ -446,6 +446,7 @@ export default function App() {
   const taskOpenRequests=useRef(createTaskOpenRequestCoordinator());
   const creationHandoffInFlight=useRef<DurableCreationHandoffBarrier|null>(null);
   const relatedMutationHandoffInFlight=useRef<RelatedMutationEditorHandoff|null>(null);
+  const relatedMutationAdmissionInFlight=useRef(false);
   const creationAttempts=useRef(new Map<string,{leaseOwnerId:string;task:TaskItem}>());
   const latestCreationDrafts=useRef(new Map<string,{leaseOwnerId:string;task:TaskItem}>());
   const confirmedCreationLeases=useRef(new Set<string>());
@@ -601,7 +602,7 @@ export default function App() {
         ? `${message}；修改仍保留，請稍後再按「立即保存」，並先不要關閉頁面。`
       : error instanceof CloudConflictError||error instanceof CloudRebaseConflictError
         ? '雲端已有其他人更新的內容，你的修改仍保留在此頁，尚未保存到雲端。請先點擊「同步最新（安全合併）」；同步完成後，再點擊「重新保存」。直到畫面顯示「已保存到雲端」才算完成，完成前請不要關閉網頁、瀏覽器或電腦。'
-        : `${message}；修改仍保留在目前頁面，請檢查網路後重新保存。`;
+        : isCloudStatementTimeout(error)?failure.message:`${message}；修改仍保留在目前頁面，請檢查網路後重新保存。`;
     setSavePhase('error');
     setCloudStatus(`保存未完成｜${detail}`);
     showSaveToast('error','尚未保存到雲端',detail);
@@ -2637,6 +2638,11 @@ export default function App() {
     if(relatedMutationHandoffInFlight.current?.pending||relatedMutationHandoffMatchesCurrent(activeEditLockRef.current)){alert('前一筆關聯修改仍在確認，請勿重複操作。');return false;}
     const expectedLease=activeEditLockRef.current;
     if(!expectedLease)return false;
+    // Reserve before any await: the durable handoff is installed only after
+    // planning/claiming locks, so it cannot exclude overlapping preparations.
+    if(relatedMutationAdmissionInFlight.current){alert('目前正在準備或保存此筆關聯修改，請勿重複操作。');return false;}
+    relatedMutationAdmissionInFlight.current=true;
+    try{
     const expectedIdentityGeneration=identitySessionGeneration.current;
     const actorId=currentUser.id;
     const actorName=currentUser.name;
@@ -2788,6 +2794,7 @@ export default function App() {
       mutationHandoff.finish(!applied||durableConfirmed,durableConfirmed);
       if(relatedMutationHandoffInFlight.current===mutationHandoff)setRelatedMutationHandoffVersion(value=>value+1);
     }
+    }finally{relatedMutationAdmissionInFlight.current=false;}
   };
   const createInternalCases = async (items: InternalControlCase[], expectedRevision: number, projections: Record<string, InternalControlTaskProjection> = {}) => {
     const sectionKey=internalControlCreationLockKey(uid('internal-control-batch'));

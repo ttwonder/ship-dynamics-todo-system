@@ -20,6 +20,8 @@ try{
   const structuredMessage=errors.cloudErrorMessage(structured);
   assert.match(structuredMessage,/canceling statement due to statement timeout/);
   assert.match(structuredMessage,/57014/);
+  assert.match(errors.classifyCloudSyncFailure(structured).message,/資料庫.*逾時/,'SQL statement timeout must not be described as a client-network failure');
+  assert.ok(!errors.classifyCloudSyncFailure({code:'57014',message:'canceling statement due to user request'}).message.includes('資料庫查詢逾時'),'SQL cancellation alone does not prove statement timeout');
   assert.ok(!structuredMessage.includes('[object Object]'),'structured Supabase/PostgREST errors must never degrade to [object Object]');
   assert.ok(!errors.classifyCloudSyncFailure(structured).message.includes('[object Object]'),'sync transport copy must use the structured cloud error formatter');
   assert.ok(app.includes('const message=cloudErrorMessage(error)'),'visible cloud-save failure reporting must use the same structured formatter');

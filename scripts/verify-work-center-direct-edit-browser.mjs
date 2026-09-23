@@ -61,7 +61,7 @@ const read=async()=> (await native.observer.query('select read_ship_dynamics_rec
 const locks=async()=> (await native.observer.query('select section_key from ship_dynamics_edit_locks where expires_at>now()')).rows;
 
 const taskDialog="document.querySelector('#task-edit-title')";
-let a;
+let a,rejectNextClose=false;
 async function check(id,fn){currentCase=id;await fn();receipt.cases.push({caseId:id,status:'PASS'});save();}
 const workRow=(text)=>`[...document.querySelectorAll('.work-task-list article')].find(n=>n.textContent.includes(${JSON.stringify(text)}))`;
 const caseStatus="[...document.querySelectorAll('.ic-edit-modal .field')].find(n=>n.querySelector('label')?.textContent==='解決計劃／最新狀態 *')?.querySelector('textarea')";
@@ -88,15 +88,15 @@ try {
  await installMorningOracle(native.adapter);await native.adapter.exec(fs.readFileSync(schedulerSql,'utf8'));
  for(const file of ['supabase/migrations/20260904161000_appdata_compact_ack_receipts.sql','supabase/migrations/20260817143000_data_management_storage.sql','supabase/migrations/20260818154500_data_management_prune_batch_limit.sql','supabase/normalized-legacy-cutover.sql','supabase/development/20260911_legacy_report_workspace_binding.sql','supabase/development/20260911_business_quiescence.sql','supabase/development/20260911_paused_record_legacy_transfer.sql','supabase/development/20260911_source_authority_publication.sql','supabase/development/20260912_browser_source_authority.sql'])await native.adapter.exec(fs.readFileSync(file,'utf8'));
  receipt.origin=qa.origin;receipt.layer='真實原始 App UI＋測試資料＋本機 PostgreSQL；非正式 Supabase';
- receipt.inputs=Object.fromEntries(['src/App.tsx','src/WorkCenter.tsx','src/InternalControlPage.tsx','scripts/verify-work-center-direct-edit-browser.mjs'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
- browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
+ receipt.inputs=Object.fromEntries(['src/App.tsx','src/WorkCenter.tsx','src/InternalControlPage.tsx','src/InternalControlModals.tsx','src/cloudSyncError.ts','src/styles.css','scripts/verify-work-center-direct-edit-browser.mjs'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
+ browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update',`--explicitly-allowed-ports=${new URL(qa.origin).port}`,'--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let socketPath;await until(()=>{try{[chromePort,socketPath]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(chromePort)&&socketPath?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'Chrome handshake');
  receipt.chrome={pid:browser.pid,port:Number(chromePort)};
  ws=new WebSocket(`ws://127.0.0.1:${chromePort}${socketPath}`);await new Promise((r,j)=>{ws.addEventListener('open',r,{once:true});ws.addEventListener('error',j,{once:true});});
  ws.addEventListener('message',event=>{const m=JSON.parse(event.data);if(m.id){const p=pending.get(m.id);if(p){pending.delete(m.id);m.error?p.reject(new Error(m.error.message)):p.resolve(m.result);}return;}
   const handle=async()=>{
    if(m.method==='Runtime.exceptionThrown')receipt.errors.push(m.params.exceptionDetails.exception?.description||m.params.exceptionDetails.text);
-   if(m.method==='Page.javascriptDialogOpening'){const {type,message}=m.params;receipt.dialogs??=[];receipt.dialogs.push({caseId:currentCase,type,message});await call('Page.handleJavaScriptDialog',{accept:type==='confirm'||type==='beforeunload'},m.sessionId);}
+   if(m.method==='Page.javascriptDialogOpening'){const {type,message}=m.params;receipt.dialogs??=[];receipt.dialogs.push({caseId:currentCase,type,message});const reject=type==='confirm'&&message.startsWith('確定結案此內控案件')&&rejectNextClose;if(reject)rejectNextClose=false;await call('Page.handleJavaScriptDialog',{accept:!reject&&(type==='confirm'||type==='beforeunload')},m.sessionId);}
    if(m.method==='Fetch.requestPaused'){const u=new URL(m.params.request.url),allowed=u.origin===qa.origin||['data:','blob:'].includes(u.protocol);if(!allowed)receipt.blockedExternal.push(u.origin);await call(allowed?'Fetch.continueRequest':'Fetch.failRequest',allowed?{requestId:m.params.requestId}:{requestId:m.params.requestId,errorReason:'BlockedByClient'},m.sessionId);}
    if(m.method==='Network.requestWillBeSent'&&m.params.request.url.startsWith(qa.origin+'/rest/v1/rpc/')){const b=JSON.parse(m.params.request.postData||'{}'),row={caseId:currentCase,actor:actors.find(p=>p.s===m.sessionId)?.actor,rpc:m.params.request.url.split('/').at(-1),operationId:b.p_operation_id,readScope:b.p_scope,started:m.params.wallTime*1000};netRows.set(m.sessionId+':'+m.params.requestId,row);receipt.network.push(row);}
    const row=netRows.get(m.sessionId+':'+m.params.requestId);if(m.method==='Network.loadingFinished'&&row){row.finished=Date.now();save();}
@@ -122,16 +122,27 @@ try {
    assert.deepEqual((await read()).payload.internalControlCases,before.payload.internalControlCases);assert.deepEqual((await read()).payload.tasks,before.payload.tasks);
    assert.equal(await a.eval("window.__qaWork===document.querySelector('.work-center')"),true);assert.equal(await a.eval("document.querySelector('[aria-label=我的待辦關鍵字]').value"),'QA work');assert.equal(await a.eval("document.querySelector('.work-task-panel .batch-selection-count').textContent"),'已選 1');
  });
+ await check('direct-status-edit-saves-on-first-attempt',async()=>{
+   await openCase('QA work standalone','update');
+   await a.fill(caseStatus,'QA directly edited status');
+   await a.click('保存更新');
+   await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'direct status save must add history and close',10000);
+   const c=(await read()).payload.internalControlCases.find(c=>c.id==='qa-work-standalone');
+   assert.equal(c.status,'QA directly edited status');assert.equal(c.statusLogs[0].text,c.status);
+   assert.equal(c.statusLogs.filter(l=>l.text===c.status).length,1);
+ });
  await check('internal-update-button-save-held-ack-and-readback',async()=>{
    await openCase('QA work standalone','update');await a.fill("document.querySelector('.ic-status-add textarea')",'QA saved directly from my work');await a.click('加入狀態記錄');await until(()=>a.eval(`(${caseStatus}).value==='QA saved directly from my work'`),'status history applied');
    let reached=false;const barrier=new Promise(r=>{releaseCommit=r;});
    qa.setRecordFault({after:async({name,body})=>{if(name===patchRpc&&body.p_operations.some(o=>o.collection==='internalControlCases')){reached=true;await barrier;}return false;}});
-   await a.click('保存更新');await until(()=>reached,'native case commit before held ACK');
+   await a.click('保存更新');await a.key('Enter');await until(()=>reached,'native case commit before held ACK');
    const row=(await read()).payload.internalControlCases.find(c=>c.id==='qa-work-standalone');assert.equal(row.status,'QA saved directly from my work');
    await assertWork();assert.equal(await a.eval("Boolean(document.querySelector('.ic-edit-modal'))"),true);assert.equal(await a.eval("Boolean(document.querySelector('.save-toast.success'))"),false);
-   await a.screen('internal-held-ack');releaseCommit();releaseCommit=null;qa.setRecordFault(null);await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'ACK closes original editor');
+   assert.equal(await a.eval("[...document.querySelectorAll('.ic-edit-modal button')].find(n=>n.innerText==='保存中…')?.disabled"),true);
+   await wait(1300);await a.screen('internal-held-ack');releaseCommit();releaseCommit=null;qa.setRecordFault(null);await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'ACK closes original editor');
    await until(()=>a.eval(`(${workRow('QA work standalone')}).textContent.includes('QA saved directly from my work')`),'updated work row');
    assert.equal(await a.eval("window.__qaWork===document.querySelector('.work-center')"),true);assert.equal(await a.eval("document.querySelector('.work-task-panel .batch-selection-count').textContent"),'已選 1');
+   assert.equal((await read()).payload.internalControlCases.find(c=>c.id==='qa-work-standalone').statusLogs.filter(l=>l.text==='QA saved directly from my work').length,1,'repeated native Enter during save cannot add duplicate history');
  });
  await check('ordinary-and-synced-task-direct-edit-original-save',async()=>{
    await a.activate(`(${workRow('QA work linked')}).querySelector('.task-link')`);await until(()=>a.eval(`Boolean(${taskDialog})`),'linked task original editor');await assertWork();await a.click('取消');await until(()=>a.eval(`!${taskDialog}`),'cancel linked editor');
@@ -157,6 +168,27 @@ try {
    await call('Page.reload',{},a.s);await until(()=>a.eval("Boolean(document.querySelector('article.ship-card'))"),'fresh document');await a.sync();await a.activate("[...document.querySelectorAll('nav button')].find(n=>n.textContent.startsWith('我的待辦'))");await until(()=>a.eval("document.querySelectorAll('.work-task-list article').length===3"),'restored rows');assert.match(await a.text(),/QA saved directly from my work/);assert.match(await a.text(),/QA work ordinary updated/);
    await a.click('內控異常');await until(()=>a.eval("Boolean(document.querySelector('.ic-filter-panel'))"),'original internal-control page');assert.match(await a.text(),/內控未完清單/);assert.match(await a.text(),/內控結案清單/);assert.match(await a.text(),/數據統計/);
    await a.activate("[...document.querySelectorAll('.ic-table tbody tr')].find(n=>n.textContent.includes('QA work standalone')).querySelector('button.primary')");await until(()=>a.eval("Boolean(document.querySelector('.ic-edit-modal'))"),'original page editor');assert.equal(await a.eval(`(${caseStatus}).value`),'QA saved directly from my work');await a.click('取消');
+ });
+ await check('prominent-close-confirmation-held-ack-and-reopen',async()=>{
+   const openOriginal=async()=>{await a.activate("[...document.querySelectorAll('.ic-table tbody tr')].find(n=>n.textContent.includes('QA work standalone')).querySelector('button.primary')");await until(()=>a.eval("Boolean(document.querySelector('.ic-edit-modal'))"),'case editor');};
+   await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'previous cancel');
+   await openOriginal();
+   const before=await read();rejectNextClose=true;await a.click('結案並保存');
+   await until(()=>!rejectNextClose,'close confirmation cancelled');
+   assert.deepEqual((await read()).payload.internalControlCases,before.payload.internalControlCases,'cancel close confirmation writes nothing');
+   await a.fill("document.querySelector('.ic-status-add textarea')",'QA closed with pending note');
+   let reached=false;const barrier=new Promise(r=>{releaseCommit=r;});
+   qa.setRecordFault({after:async({name,body})=>{if(name===patchRpc&&body.p_operations.some(o=>o.collection==='internalControlCases')){reached=true;await barrier;}return false;}});
+   await a.click('結案並保存');await until(()=>reached,'close committed before ACK');
+   let c=(await read()).payload.internalControlCases.find(x=>x.id==='qa-work-standalone');
+   assert.equal(c.isClosed,true);assert.equal(c.status,'QA closed with pending note');assert.equal(c.statusLogs[0].text,c.status);assert.equal(c.closedBy,'qa-owner');
+   assert.equal(await a.eval("Boolean(document.querySelector('.ic-edit-modal'))"),true);assert.equal(await a.eval("Boolean(document.querySelector('.save-toast.success'))"),false);
+   releaseCommit();releaseCommit=null;qa.setRecordFault(null);await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'close ACK');
+   await a.activate("[...document.querySelectorAll('.ic-tabs button')].find(n=>n.textContent.startsWith('內控結案清單'))");await until(()=>a.eval("[...document.querySelectorAll('.ic-table tbody tr')].some(n=>n.textContent.includes('QA work standalone'))"),'closed row');
+   await openOriginal();await a.eval("document.querySelector('.ic-edit-actions').scrollIntoView({block:'end'})");await a.screen('close-actions-390');
+   await a.click('重新開啟並保存');await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'reopen ACK');
+   c=(await read()).payload.internalControlCases.find(x=>x.id==='qa-work-standalone');assert.equal(c.isClosed,false);assert.equal(c.status,'QA closed with pending note');
+   assert.equal(c.statusLogs.filter(l=>l.text===c.status).length,1,'reopen alone does not duplicate status history');
  });
  assert.equal(receipt.errors.length,0,JSON.stringify(receipt.errors));assert.equal(receipt.blockedExternal.length,0);receipt.status='PASS';
 } catch(error){failure=error;receipt.status='FAIL';receipt.failure=String(error.stack||error);if(a)try{await a.screen('failure');fs.writeFileSync(path.join(run,'failure-ui.txt'),await a.text());fs.writeFileSync(path.join(run,'failure-sql.json'),JSON.stringify(scrub(await read()),null,2));}catch{};}

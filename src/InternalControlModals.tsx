@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { AppData, InternalControlCase, InternalControlReportSource, TaskItem, TaskPriority, UserAccount, Vessel } from './types';
 import type { InternalControlTaskProjection } from './internalControlData';
 import { validateInternalControlCase } from './internalControlWorkflow';
@@ -171,6 +171,15 @@ export function BatchCreateModal({ data, user, vessels, close, save, shipSubmiss
   </div></div>;
 }
 
+export function prepareInternalControlEditForSave(draft:InternalControlCase,pendingLogText=''):InternalControlCase {
+  const next={...draft,status:draft.status.trim(),statusLogs:[...draft.statusLogs]};
+  const append=(text:string)=>{next.status=text;next.statusLogs.unshift({id:uid('client-log'),at:'',by:'',text});};
+  if(next.status&&next.status!==next.statusLogs[0]?.text.trim())append(next.status);
+  const pending=pendingLogText.trim();
+  if(pending&&(pending!==next.status||next.statusLogs.length===draft.statusLogs.length))append(pending);
+  return next;
+}
+
 export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelete, showWithdrawSync, canWithdrawSync, withdrawSyncReason, close, save, onWithdrawSync, onDelete }: { item: InternalControlCase; data: AppData; vessels: Vessel[]; canEdit: boolean; canClose: boolean; canDelete: boolean; showWithdrawSync: boolean; canWithdrawSync: boolean; withdrawSyncReason: string; close: () => void; save: (item: InternalControlCase, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>; onWithdrawSync: (item: InternalControlCase) => boolean | Promise<boolean>; onDelete: (item: InternalControlCase) => boolean | Promise<boolean> }) {
   const linkedTask: TaskItem | undefined = item.linkedTaskId ? data.tasks.find(task => task.id === item.linkedTaskId) : undefined;
   const [draft, setDraft] = useState(item);
@@ -183,6 +192,8 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
   });
   const [logText, setLogText] = useState('');
   const [withdrawing,setWithdrawing]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const savingRef=useRef(false);
   const categories = unique([...data.settings.taskCategories, draft.category, '設備故障']);
   const change = (patch: Partial<InternalControlCase>) => setDraft(previous => ({ ...previous, ...patch }));
   const changeTaskSync = (checked: boolean) => {
@@ -191,15 +202,26 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
     if (choice.syncToTask) setProjection(previous => ({ ...previous, isAbnormal: choice.isAbnormal }));
   };
   const addLog = () => { const text = logText.trim(); if (!text) return; setDraft(previous => ({ ...previous, status: text, statusLogs: [{ id: uid('client-log'), at: '', by: '', text }, ...previous.statusLogs] })); setLogText(''); };
-  const submit = async () => {
-    const errors = validateInternalControlCase(draft);
-    if (draft.syncToTask && !projection.categories.length) errors.push('要事分類');
-    if (draft.syncToTask && projection.categories.includes('設備故障') && !projection.equipmentSubcategory) errors.push('要事設備故障細項');
+  const submit = async (value=draft,confirmation='') => {
+    if(!canEdit||savingRef.current||withdrawing)return;
+    const candidate=prepareInternalControlEditForSave(value,logText);
+    const errors = validateInternalControlCase(candidate);
+    if (candidate.syncToTask && !projection.categories.length) errors.push('要事分類');
+    if (candidate.syncToTask && projection.categories.includes('設備故障') && !projection.equipmentSubcategory) errors.push('要事設備故障細項');
     if (errors.length) return alert(`請完成：${errors.join('、')}`);
-    if (await save(draft, draft.syncToTask ? projection : undefined)) close();
+    if(confirmation&&!confirm(confirmation))return;
+    savingRef.current=true;setSaving(true);
+    try{if(await save(candidate,candidate.syncToTask?projection:undefined))close();}
+    finally{savingRef.current=false;setSaving(false);}
+  };
+  const saveClosedState=()=>{
+    if(!canClose)return;
+    const isClosed=!item.isClosed;
+    const confirmation=`確定${isClosed?'結案':'重新開啟'}此內控案件？\n\n本視窗的修改會一併保存${item.linkedTaskId?'，關聯要事也會同步更新':''}。雲端確認後才算完成。`;
+    void submit({...draft,isClosed,closedDate:isClosed?(draft.closedDate||todayDate()):undefined},confirmation);
   };
   const withdrawSync=async()=>{
-    if(!canWithdrawSync||withdrawing)return;
+    if(!canWithdrawSync||withdrawing||savingRef.current)return;
     const taskLabel=richTextToPlainText(linkedTask?.description||'')||item.linkedTaskId||'關聯要事';
     if(!confirm(`確定撤回同步要事「${taskLabel}」？\n\n此操作會刪除由本案件自動建立的要事，但保留此內控案件及既有早會歷史。\n重新同步會建立新的要事，不會恢復原要事。\n本視窗尚未保存的其他修改不會一併保存。`))return;
     setWithdrawing(true);
@@ -208,8 +230,8 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
   };
   const vessel = vessels.find(entry => entry.id === draft.vesselId);
   return <div className="modal-backdrop"><div className="modal ic-edit-modal" role="dialog" aria-modal="true">
-    <div className="modal-head"><div><h2>更新內控案件</h2><p>{vessel ? vesselDisplayName(vessel) : draft.vesselId}｜{draft.reportDate}｜{draft.reportSource}{draft.linkedTaskId ? '｜已同步要事' : '｜僅內控'}</p></div><button className="btn ghost" onClick={close}>關閉</button></div>
-    <fieldset disabled={!canEdit}>
+    <div className="modal-head"><div><h2>更新內控案件</h2><p>{vessel ? vesselDisplayName(vessel) : draft.vesselId}｜{draft.reportDate}｜{draft.reportSource}{draft.linkedTaskId ? '｜已同步要事' : '｜僅內控'}</p></div><button className="btn ghost" disabled={saving||withdrawing} onClick={close}>關閉</button></div>
+    <fieldset disabled={!canEdit||saving||withdrawing}>
       <div className="grid cols-3"><div className="field"><label>船舶 *</label><select value={draft.vesselId} onChange={event => { const vesselId = event.target.value; change({ vesselId }); setProjection(previous => ({ ...previous, ownerUserIds: defaultOwnerIds(data, vesselId) })); }}>{vessels.map(value => <option key={value.id} value={value.id}>{vesselDisplayName(value)}</option>)}</select></div><div className="field"><label>報告日期 *</label><input type="date" value={draft.reportDate} onChange={event => change({ reportDate: event.target.value })}/></div><div className="field"><label>報告來源 *</label><select value={draft.reportSource} onChange={event => change({ reportSource: event.target.value as InternalControlReportSource })}>{REPORT_SOURCES.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-3 ic-case-classification-row"><div className="field"><label>關注程度 *</label><select value={draft.priority} onChange={event => change({ priority: event.target.value as TaskPriority })}>{data.settings.priorities.map(priority => <option key={priority}>{priority}</option>)}</select></div><div className="field"><label>事件分類 *</label><select value={draft.category} onChange={event => change({ category: event.target.value, equipmentSubcategory: event.target.value === '設備故障' ? draft.equipmentSubcategory : undefined })}>{categories.map(category => <option key={category}>{category}</option>)}</select></div><div className="field"><label>設備故障細項{draft.category === '設備故障' ? ' *' : ''}</label><select disabled={draft.category !== '設備故障'} value={draft.equipmentSubcategory || ''} onChange={event => change({ equipmentSubcategory: event.target.value })}><option value="">{draft.category === '設備故障' ? '請選擇' : '不適用'}</option>{data.settings.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-2 ic-case-content-row"><div className="field"><label>事項內容 *</label><textarea value={draft.description} onChange={event => change({ description: event.target.value })}/></div><div className="field"><label>解決計劃／最新狀態 *</label><textarea value={draft.status} onChange={event => change({ status: event.target.value })}/></div></div>
@@ -220,6 +242,6 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
       <label className="ic-close-toggle"><input type="checkbox" disabled={!canClose} checked={draft.isClosed} onChange={event => change({ isClosed: event.target.checked, closedDate: event.target.checked ? (draft.closedDate || todayDate()) : undefined })}/>點擊結案</label>
     </fieldset>
     <section className="status-history"><h3>狀態歷程</h3>{draft.statusLogs.length ? draft.statusLogs.map(log => <article key={log.id}><b>{log.text}</b><small>{log.at ? formatTaipeiDateTime(log.at) : '尚未保存'}｜{log.by || '目前使用者'}</small></article>) : <p className="muted">尚無狀態紀錄</p>}</section>
-    <div className="modal-actions ic-edit-actions">{showWithdrawSync && <button type="button" className="btn red" disabled={!canWithdrawSync||withdrawing} title={!canWithdrawSync?withdrawSyncReason:undefined} onClick={()=>void withdrawSync()}>{withdrawing?'撤回中…':'撤回同步要事'}</button>}{canDelete && <button className="btn danger" onClick={async () => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`) && await onDelete(item)) close(); }}>刪除案件</button>}<span/><button className="btn ghost" onClick={close}>取消</button>{canEdit && <button className="btn primary" onClick={submit}>保存更新</button>}</div>
+    <div className="modal-actions ic-edit-actions">{showWithdrawSync && <button type="button" className="btn red" disabled={!canWithdrawSync||withdrawing||saving} title={!canWithdrawSync?withdrawSyncReason:undefined} onClick={()=>void withdrawSync()}>{withdrawing?'撤回中…':'撤回同步要事'}</button>}{canDelete && <button className="btn danger" disabled={saving||withdrawing} onClick={async () => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`) && await onDelete(item)) close(); }}>刪除案件</button>}<span/><button className="btn ghost" disabled={saving||withdrawing} onClick={close}>取消</button>{canEdit&&canClose&&<button type="button" className="btn green ic-close-save" disabled={saving||withdrawing} onClick={saveClosedState}>{item.isClosed?'重新開啟並保存':'結案並保存'}</button>}{canEdit && <button className="btn primary" disabled={saving||withdrawing} onClick={()=>void submit()}>{saving?'保存中…':'保存更新'}</button>}</div>
   </div></div>;
 }
