@@ -6,6 +6,7 @@ import {spawn} from 'node:child_process';
 import {createNativeRecordQa} from './record-storage-native-qa.mjs';
 import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
 import {shipInternalControlInput,installShipInternalControlFixture} from './ship-internal-control-local-fixture.mjs';
+import {fillNativeDate} from './browser-native-date-input.mjs';
 
 // Real entry points + synthetic fixture + native PostgreSQL. Never hosted Supabase.
 const root=process.env.QA_EVIDENCE_ROOT;assert.ok(root&&path.isAbsolute(root));
@@ -51,7 +52,7 @@ try{
  native=await createNativeRecordQa(run,evidence,{httpTransactions:true});
  qa=await createRecordStorageLocalQa({browserAuthority:true,internalControl:true,taskMember:true,scopedRead:true,shipInternalControl:true,performanceTrace:true,databaseFactory:async()=>native.adapter,preparePerformanceFixture:async initial=>{shipInternalControlInput(initial);for(const [i,v] of initial.vessels.entries()){v.name=`QA 船 ${i+1}`;v.shortName=`QA SHIP ${i+1}`;v.fullName=`QA SHIP ${i+1}`;}}});
  await installShipInternalControlFixture(native.adapter,qa.workspace);
- browser=spawn(process.env.QA_CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
+ browser=spawn(process.env.QA_CHROME_PATH||'C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking',`--explicitly-allowed-ports=${new URL(qa.origin).port}`,'--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  await until(()=>fs.existsSync(path.join(profile,'DevToolsActivePort')),'Chrome readiness');
  const [port,socket]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);
  ws=new WebSocket(`ws://127.0.0.1:${port}${socket}`);await new Promise((r,j)=>{ws.addEventListener('open',r,{once:true});ws.addEventListener('error',j,{once:true});});
@@ -69,10 +70,13 @@ try{
   await choose('#ship-internal-vessel','qa-v1');assert.match(await evaluate("document.querySelector('[aria-label=填報說明]').innerText"),/DMP-FM01/);await screen('desktop-guidance');await click('增加內控/訴求');
   await until(()=>evaluate("!!document.querySelector('.ic-batch-modal')"),'shared form');
   assert.doesNotMatch(await evaluate("document.querySelector('.ic-batch-modal').innerText"),/同步到要事|同步要事設定|追蹤窗口|結案日期/);
+  assert.match(await evaluate("document.querySelector('.ic-batch-modal').innerText"),/期望完成日期\/DL/);
+  await fillNativeDate(evaluate,call,'.ic-batch-row input[type=date]','2026-10-10');
 
   await fillRow(0,'QA 船端單筆');await fill('#ship-internal-reporter','');const writes=qa.metrics.filter(m=>m.rpc==='submit_ship_dynamics_internal_control_public_v1').length;await click('提交 1 筆');await until(()=>evaluate("document.querySelector('.ic-batch-modal')?.innerText.includes('請填寫報告人姓名＋職務')"),'reporter required inside visible dialog');assert.equal(qa.metrics.filter(m=>m.rpc==='submit_ship_dynamics_internal_control_public_v1').length,writes);assert.equal((await read()).payload.internalControlCases.length,0);await fill('#ship-internal-reporter',reporter);await screen('desktop-single-form');
   await click('提交 1 筆');await until(()=>evaluate("document.body.innerText.includes('成功提交 1 筆')&&!document.querySelector('.ic-batch-modal')"),'single ACK');
   const data=await read();assert.equal(data.payload.internalControlCases[0].description,reported('QA 船端單筆'));assert.equal(data.payload.tasks.length,0);
+  assert.equal(data.payload.internalControlCases[0].expectedDate,'2026-10-10');assert.equal(data.payload.internalControlCases[0].isClosed,false);assert.equal(data.payload.internalControlCases[0].closedDate,undefined);
  });
  await check('UI02-batch-and-after-commit-lost-ACK-recover-once',async()=>{
   await click('增加內控/訴求');await fillRow(0,'QA 船端批次一');await click('＋ 新增一筆');await fillRow(1,'QA 船端批次二');
@@ -82,6 +86,7 @@ try{
  });
  await check('UI03-unknown-freezes-draft-reload-recovers-original-operation',async()=>{
   await click('增加內控/訴求');await fillRow(0,'QA 未知結果後恢復');
+  await fillNativeDate(evaluate,call,'.ic-batch-row input[type=date]','2026-10-11');
   let committed=false;qa.setRecordFault({before:async({name})=>{if(committed&&name==='get_ship_dynamics_internal_control_public_receipt_v1')throw Error('QA temporary receipt outage');},after:async({name})=>{if(name==='submit_ship_dynamics_internal_control_public_v1'){committed=true;return true;}return false;}});
   await click('提交 1 筆');await until(()=>evaluate("document.body.innerText.includes('確認結果／重試相同提交')&&!document.body.innerText.includes('正在確認雲端保存')"),'unknown preserved');
   assert.equal((await read()).payload.internalControlCases.filter(c=>c.description===reported('QA 未知結果後恢復')).length,1);
@@ -93,11 +98,13 @@ try{
   assert.deepEqual(await evaluate("JSON.parse(Object.entries(localStorage).find(([k,v])=>k.includes(':draft:')&&JSON.parse(v).pending)[1]).pending"),envelope);
   qa.setRecordFault(null);await click('確認結果／重試相同提交');await until(()=>evaluate("document.body.innerText.includes('成功提交 1 筆')&&!document.querySelector('.ic-batch-modal')"),'reload receipt recovery');
   assert.equal(qa.metrics.filter(r=>r.rpc==='submit_ship_dynamics_internal_control_public_v1'&&r.status==='SQL_OK').length,before,'recovery reads receipt, no new write');
+  assert.equal((await read()).payload.internalControlCases.find(c=>c.description===reported('QA 未知結果後恢復')).expectedDate,'2026-10-11');
  });
  await check('UI04-unsubmitted-draft-close-reload-and-mobile-layout',async()=>{
-  await click('增加內控/訴求');await fillRow(0,'QA 仍未提交草稿');await click('關閉（保留草稿）');
+  await click('增加內控/訴求');await fillRow(0,'QA 仍未提交草稿');await fillNativeDate(evaluate,call,'.ic-batch-row input[type=date]','2026-10-12');await click('關閉（保留草稿）');
   const before=await read();await call('Page.reload');await until(()=>evaluate("document.querySelector('#ship-internal-vessel')?.value==='qa-v1'"),'restored selection');await click('增加內控/訴求');
   assert.ok((await descriptions()).includes('QA 仍未提交草稿'));assert.equal(await evaluate("document.querySelector('#ship-internal-reporter').value"),reporter);assert.deepEqual(await read(),before);
+  assert.equal(await evaluate("document.querySelector('.ic-batch-row input[type=date]').value"),'2026-10-12');
   await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   await screen('mobile-restored-draft');const size=await evaluate("({w:innerWidth,doc:document.documentElement.scrollWidth,modal:document.querySelector('.ic-batch-modal').getBoundingClientRect().toJSON()})");
   assert.ok(size.doc<=size.w+1);assert.ok(size.modal.left>=0&&size.modal.right<=size.w+1);

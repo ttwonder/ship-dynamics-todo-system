@@ -6,6 +6,7 @@ import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {createNativeRecordQa} from './record-storage-native-qa.mjs';
 import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
+import {fillNativeDate} from './browser-native-date-input.mjs';
 
 // QA-only: original main.tsx -> App, native input, synthetic identities.
 // No setters, write helpers, fabricated responses, external hosts or user profile.
@@ -62,6 +63,7 @@ const locks=async()=> (await native.observer.query('select section_key from ship
 
 const taskDialog="document.querySelector('#task-edit-title')";
 let a,rejectNextClose=false;
+const dateInput=(selector,value)=>fillNativeDate(a.eval,(method,params)=>call(method,params,a.s),selector,value);
 async function check(id,fn){currentCase=id;await fn();receipt.cases.push({caseId:id,status:'PASS'});save();}
 const workRow=(text)=>`[...document.querySelectorAll('.work-task-list article')].find(n=>n.textContent.includes(${JSON.stringify(text)}))`;
 const caseStatus="[...document.querySelectorAll('.ic-edit-modal .field')].find(n=>n.querySelector('label')?.textContent==='解決計劃／最新狀態 *')?.querySelector('textarea')";
@@ -125,10 +127,12 @@ try {
  await check('direct-status-edit-saves-on-first-attempt',async()=>{
    await openCase('QA work standalone','update');
    await a.fill(caseStatus,'QA directly edited status');
+   await dateInput('#ic-edit-dl','2026-10-10');
    await a.click('保存更新');
    await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'direct status save must add history and close',10000);
    const c=(await read()).payload.internalControlCases.find(c=>c.id==='qa-work-standalone');
    assert.equal(c.status,'QA directly edited status');assert.equal(c.statusLogs[0].text,c.status);
+   assert.equal(c.expectedDate,'2026-10-10');assert.equal(c.isClosed,false);
    assert.equal(c.statusLogs.filter(l=>l.text===c.status).length,1);
  });
  await check('internal-update-button-save-held-ack-and-readback',async()=>{
@@ -145,7 +149,9 @@ try {
    assert.equal((await read()).payload.internalControlCases.find(c=>c.id==='qa-work-standalone').statusLogs.filter(l=>l.text==='QA saved directly from my work').length,1,'repeated native Enter during save cannot add duplicate history');
  });
  await check('ordinary-and-synced-task-direct-edit-original-save',async()=>{
-   await a.activate(`(${workRow('QA work linked')}).querySelector('.task-link')`);await until(()=>a.eval(`Boolean(${taskDialog})`),'linked task original editor');await assertWork();await a.click('取消');await until(()=>a.eval(`!${taskDialog}`),'cancel linked editor');
+   await a.activate(`(${workRow('QA work linked')}).querySelector('.task-link')`);await until(()=>a.eval(`Boolean(${taskDialog})`),'linked task original editor');await assertWork();
+   await dateInput('.task-global-fields input[type=date]','2026-10-11');await a.click('保存變更');await until(()=>a.eval(`!${taskDialog}`),'linked DL save');
+   assert.equal((await read()).payload.internalControlCases.find(c=>c.id==='qa-work-linked').expectedDate,'2026-10-11');
    await a.activate(`(${workRow('QA work ordinary')}).querySelector('.task-link')`);await until(()=>a.eval(`Boolean(${taskDialog})`),'ordinary original editor');await assertWork();
    await replaceRich("document.querySelector('[contenteditable=true][aria-label=事項內容]')",'QA work ordinary updated');await a.click('保存變更');await until(()=>a.eval(`!${taskDialog}`),'ordinary save ACK');
    assert.equal((await read()).payload.tasks.find(t=>t.id==='qa-work-ordinary').description,'QA work ordinary updated');await assertWork();
@@ -167,28 +173,58 @@ try {
  await check('fresh-document-durability-and-original-internal-page',async()=>{
    await call('Page.reload',{},a.s);await until(()=>a.eval("Boolean(document.querySelector('article.ship-card'))"),'fresh document');await a.sync();await a.activate("[...document.querySelectorAll('nav button')].find(n=>n.textContent.startsWith('我的待辦'))");await until(()=>a.eval("document.querySelectorAll('.work-task-list article').length===3"),'restored rows');assert.match(await a.text(),/QA saved directly from my work/);assert.match(await a.text(),/QA work ordinary updated/);
    await a.click('內控異常');await until(()=>a.eval("Boolean(document.querySelector('.ic-filter-panel'))"),'original internal-control page');assert.match(await a.text(),/內控未完清單/);assert.match(await a.text(),/內控結案清單/);assert.match(await a.text(),/數據統計/);
+   assert.match(await a.eval("document.querySelector('.ic-table').textContent"),/期望完成日期\/DL/);assert.match(await a.eval("document.querySelector('.ic-table').textContent"),/2026-10-10/);
    await a.activate("[...document.querySelectorAll('.ic-table tbody tr')].find(n=>n.textContent.includes('QA work standalone')).querySelector('button.primary')");await until(()=>a.eval("Boolean(document.querySelector('.ic-edit-modal'))"),'original page editor');assert.equal(await a.eval(`(${caseStatus}).value`),'QA saved directly from my work');await a.click('取消');
  });
  await check('prominent-close-confirmation-held-ack-and-reopen',async()=>{
    const openOriginal=async()=>{await a.activate("[...document.querySelectorAll('.ic-table tbody tr')].find(n=>n.textContent.includes('QA work standalone')).querySelector('button.primary')");await until(()=>a.eval("Boolean(document.querySelector('.ic-edit-modal'))"),'case editor');};
    await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'previous cancel');
    await openOriginal();
-   const before=await read();rejectNextClose=true;await a.click('結案並保存');
-   await until(()=>!rejectNextClose,'close confirmation cancelled');
+   const before=await read();await a.click('結案並保存');await until(()=>a.eval("!!document.querySelector('#ic-close-date')"),'date picker before closure');
+   await a.click('確認結案');assert.equal(await a.eval("document.querySelector('#ic-close-date').validity.valueMissing"),true);
+   await dateInput('#ic-close-date','2026-09-25');await a.screen('close-date-390');
+   const bounds=await a.eval("(()=>{const n=document.querySelector('.ic-close-date-modal'),r=n.getBoundingClientRect();return{left:r.left,right:r.right,viewport:document.documentElement.clientWidth,scroll:n.scrollWidth,width:n.clientWidth};})()");
+   assert.ok(bounds.left>=0&&bounds.right<=bounds.viewport+1&&bounds.scroll<=bounds.width+1,JSON.stringify(bounds));await a.click('取消結案');
    assert.deepEqual((await read()).payload.internalControlCases,before.payload.internalControlCases,'cancel close confirmation writes nothing');
    await a.fill("document.querySelector('.ic-status-add textarea')",'QA closed with pending note');
    let reached=false;const barrier=new Promise(r=>{releaseCommit=r;});
    qa.setRecordFault({after:async({name,body})=>{if(name===patchRpc&&body.p_operations.some(o=>o.collection==='internalControlCases')){reached=true;await barrier;}return false;}});
-   await a.click('結案並保存');await until(()=>reached,'close committed before ACK');
+   await a.click('結案並保存');await dateInput('#ic-close-date','2026-09-25');await a.click('確認結案');await a.key('Enter');await until(()=>reached,'close committed before ACK');
    let c=(await read()).payload.internalControlCases.find(x=>x.id==='qa-work-standalone');
    assert.equal(c.isClosed,true);assert.equal(c.status,'QA closed with pending note');assert.equal(c.statusLogs[0].text,c.status);assert.equal(c.closedBy,'qa-owner');
+   assert.equal(c.closedDate,'2026-09-25');assert.equal(c.expectedDate,'2026-10-10');
    assert.equal(await a.eval("Boolean(document.querySelector('.ic-edit-modal'))"),true);assert.equal(await a.eval("Boolean(document.querySelector('.save-toast.success'))"),false);
    releaseCommit();releaseCommit=null;qa.setRecordFault(null);await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'close ACK');
    await a.activate("[...document.querySelectorAll('.ic-tabs button')].find(n=>n.textContent.startsWith('內控結案清單'))");await until(()=>a.eval("[...document.querySelectorAll('.ic-table tbody tr')].some(n=>n.textContent.includes('QA work standalone'))"),'closed row');
    await openOriginal();await a.eval("document.querySelector('.ic-edit-actions').scrollIntoView({block:'end'})");await a.screen('close-actions-390');
-   await a.click('重新開啟並保存');await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'reopen ACK');
+   await a.click('改為未結案');await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'reopen ACK');
    c=(await read()).payload.internalControlCases.find(x=>x.id==='qa-work-standalone');assert.equal(c.isClosed,false);assert.equal(c.status,'QA closed with pending note');
    assert.equal(c.statusLogs.filter(l=>l.text===c.status).length,1,'reopen alone does not duplicate status history');
+   assert.equal(c.expectedDate,'2026-10-10');assert.equal(c.closedDate,undefined);
+ });
+ await check('case-DL-updates-linked-task-in-original-editor',async()=>{
+   await a.activate("[...document.querySelectorAll('.ic-tabs button')].find(n=>n.textContent.startsWith('內控未完清單'))");
+   await a.activate("[...document.querySelectorAll('.ic-table tbody tr')].find(n=>n.textContent.includes('QA work linked')).querySelector('button.primary')");await until(()=>a.eval("!!document.querySelector('#ic-edit-dl')"),'linked case DL');
+   assert.equal(await a.eval("document.querySelector('#ic-edit-dl').value"),'2026-10-11');await dateInput('#ic-edit-dl','2026-10-12');await a.click('保存更新');await until(()=>a.eval("!document.querySelector('.ic-edit-modal')"),'paired DL ACK');
+   const data=(await read()).payload,c=data.internalControlCases.find(c=>c.id==='qa-work-linked');assert.equal(c.expectedDate,'2026-10-12');assert.equal(data.tasks.find(t=>t.id===c.linkedTaskId).expectedDate,'2026-10-12');
+ });
+ await check('shore-batch-DL-not-closure-and-selected-batch-date',async()=>{
+   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},a.s);
+   await a.click('＋ 批量新增');await until(()=>a.eval("!!document.querySelector('.ic-batch-modal')"),'batch modal');
+   assert.doesNotMatch(await a.eval("document.querySelector('.ic-batch-modal').innerText"),/結案日期/);
+   for(let i=0;i<2;i++){
+     if(i)await a.click('＋ 新增一筆');const row=`.ic-batch-row:nth-child(${i+1})`;
+     await a.fill(`document.querySelector('${row} .ic-case-content-row .field:first-child textarea')`,'QA new DL case '+i);
+     await a.fill(`document.querySelector('${row} .ic-case-content-row .field:nth-child(2) textarea')`,'QA date only');
+     if(i===0)await dateInput(`${row} input[type=date]`,'2026-11-01');
+   }
+   await a.screen('shore-batch-dl');await a.click('保存 2 筆案件');await until(()=>a.eval("!document.querySelector('.ic-batch-modal')"),'batch create ACK');
+   let data=(await read()).payload;const first=data.internalControlCases.find(c=>c.description==='QA new DL case 0'),second=data.internalControlCases.find(c=>c.description==='QA new DL case 1');
+   assert.ok(first&&second);assert.equal(first.expectedDate,'2026-11-01');assert.equal(second.expectedDate,'');assert.equal(first.isClosed,false);assert.equal(second.isClosed,false);
+   await a.eval("[...document.querySelectorAll('.ic-table tbody tr')].find(n=>n.textContent.includes('QA new DL case 0')).querySelector('input[type=checkbox]').click()");
+   await a.click('批量結案（1）');await until(()=>a.eval("!!document.querySelector('#ic-close-date')"),'batch date');await a.click('取消結案');assert.equal((await read()).payload.internalControlCases.find(c=>c.id===first.id).isClosed,false);
+   await a.click('批量結案（1）');await dateInput('#ic-close-date','2026-09-26');await a.click('確認結案');await until(()=>a.eval("!document.querySelector('#ic-close-date')"),'batch close ACK');
+   data=(await read()).payload;assert.equal(data.internalControlCases.find(c=>c.id===first.id).closedDate,'2026-09-26');assert.equal(data.internalControlCases.find(c=>c.id===first.id).expectedDate,'2026-11-01');assert.deepEqual(data.internalControlCases.find(c=>c.id===second.id),second);
  });
  assert.equal(receipt.errors.length,0,JSON.stringify(receipt.errors));assert.equal(receipt.blockedExternal.length,0);receipt.status='PASS';
 } catch(error){failure=error;receipt.status='FAIL';receipt.failure=String(error.stack||error);if(a)try{await a.screen('failure');fs.writeFileSync(path.join(run,'failure-ui.txt'),await a.text());fs.writeFileSync(path.join(run,'failure-sql.json'),JSON.stringify(scrub(await read()),null,2));}catch{};}

@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {createElement} from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {createServer} from 'vite';
+const vite=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});
+try {
+  const {createInitialData}=await vite.ssrLoadModule('/src/data/seed.ts');
+  const {BatchCreateModal,CaseEditModal,InternalControlCloseDateDialog,createInternalControlBatchDraft}=await vite.ssrLoadModule('/src/InternalControlModals.tsx');
+  const {default:Page}=await vite.ssrLoadModule('/src/InternalControlPage.tsx');
+  const data=createInitialData(),user={...data.users[0],id:'qa-owner',role:'owner',name:'QA OWNER'},vessel=data.vessels[0];
+  data.users=[user];data.tasks=[];data.internalControlCases=[];vessel.assignedUserIds=[user.id];
+  const noop=()=>{},save=async()=>true,render=(component,props)=>renderToStaticMarkup(createElement(component,props));
+  const shore=render(BatchCreateModal,{data,user,vessels:[vessel],close:noop,save});
+  assert.match(shore,/期望完成日期\/DL/,'shore batch creation shows DL');
+  assert.doesNotMatch(shore,/結案日期/,'creation never exposes actual closure date');
+  const draft=createInternalControlBatchDraft(vessel.id,'其他');draft.rows[0].expectedDate='2026-10-10';
+  const ship=render(BatchCreateModal,{user,vessels:[vessel],close:noop,save,shipSubmission:{draft,catalog:data.settings,busy:false,pending:false,message:'',onDraftChange:noop}});
+  assert.match(ship,/期望完成日期\/DL/);assert.match(ship,/value="2026-10-10"/);
+  assert.doesNotMatch(ship,/結案日期|同步到要事/);
+  const item={id:'qa-ui-date',vesselId:vessel.id,reportDate:'2026-09-23',reportSource:'日常',priority:'低',category:'其他',description:'QA DL row',isAware:false,status:'QA open',departments:[],syncToTask:false,origin:'internal-control',isClosed:false,expectedDate:'2026-10-10',createdBy:user.id,updatedBy:user.id,createdAt:'2026-09-23T00:00:00Z',updatedAt:'2026-09-23T00:00:00Z',statusLogs:[]};
+  const editProps={item,data,vessels:[vessel],canEdit:true,canClose:true,canDelete:true,showWithdrawSync:false,canWithdrawSync:false,withdrawSyncReason:'',close:noop,save,onWithdrawSync:save,onDelete:save};
+  const edit=render(CaseEditModal,editProps);
+  assert.match(edit,/期望完成日期\/DL/);assert.match(edit,/value="2026-10-10"/);
+  assert.doesNotMatch(edit,/ic-close-toggle/,'no checkbox bypass of date confirmation');
+  const closed=render(CaseEditModal,{...editProps,item:{...item,isClosed:true,closedDate:'2026-09-25'}});
+  assert.match(closed,/>改為未結案<\/button>/);
+  const readonly=render(CaseEditModal,{...editProps,canEdit:false,canClose:false});
+  assert.doesNotMatch(readonly,/class="btn green ic-close-save"/);
+  data.internalControlCases=[item];
+  const page=render(Page,{data,user,vessels:[vessel],canCreate:true,canEdit:true,canClose:true,canDelete:true,canExport:true,authorizationEpoch:'qa',onCreate:save,onUpdate:save,onWithdrawTaskSync:save,onDelete:save,onBatchClose:save,onBatchDelete:save,onOpenTask:noop});
+  assert.match(page,/<th[^>]*>期望完成日期\/DL<\/th>/);assert.match(page,/<td[^>]*>2026-10-10<\/td>/);
+  const picker=render(InternalControlCloseDateDialog,{count:1,minDate:item.reportDate,busy:false,onCancel:noop,onConfirm:save});
+  assert.match(picker,/role="dialog"/);assert.match(picker,/結案日期/);assert.match(picker,/type="date"/);assert.match(picker,/required=""/);assert.match(picker,/>確認結案<\/button>/);
+  console.log('PASS date UI: shore/ship DL, update/read-only/reopen, open-list date column and required close-date confirmation');
+} finally {await vite.close();}

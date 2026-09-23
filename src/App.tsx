@@ -3879,7 +3879,7 @@ export default function App() {
       return false;
     }
   };
-  const batchCompleteTasks = async (taskIds: string[], internalControlCaseIds: string[] = []) => {
+  const batchCompleteTasks = async (taskIds: string[], internalControlCaseIds: string[] = [], requestedClosedDate?: string) => {
     if(!currentUser||!canCloseTasks||currentUser.role==='vessel') { alert('目前角色未獲授權批量完成待辦或內控案件'); return false; }
     const uniqueIds=[...new Set(taskIds)];
     const uniqueInternalControlCaseIds=[...new Set(internalControlCaseIds)];
@@ -3903,10 +3903,10 @@ export default function App() {
       if(!selected.ok||selected.cases.some(item=>item.isClosed||item.updatedAt!==expectedInternalUpdatedAtById.get(item.id)))throw new Error('所選內控案件已變更、已結案或不在目前可管理範圍');
       return internalControlBatchLockKeys(snapshot,uniqueInternalControlCaseIds);
     };
-    if(!confirm(`確定批量完成所選 ${tasks.length+selectedInternalCases.length} 筆項目（待辦 ${tasks.length}、內控 ${selectedInternalCases.length}）？`)) return false;
+    if(!requestedClosedDate&&!confirm(`確定批量完成所選 ${tasks.length+selectedInternalCases.length} 筆項目（待辦 ${tasks.length}、內控 ${selectedInternalCases.length}）？`)) return false;
     return runTaskMutationWithLockBundle(uniqueIds,'批量完成',fresh=>{
       const at=nowIso();
-      const closedDate=todayDate();
+      const closedDate=requestedClosedDate??todayDate();
       let applied=false;
       let failure='批量完成未執行：資料或權限已變更，請保留選擇並重新確認';
       flushSync(()=>setData(prev=>{
@@ -3941,7 +3941,7 @@ export default function App() {
             draft.meetings=result.meetings;
             syncLinkedInternalControlCasesFromTasks(draft,uniqueIds,liveUser,at);
           }
-          if(liveSelectedInternalCases.length)closeInternalControlCaseBatchFromDraft(draft,liveSelectedInternalCases,liveUser,at);
+          if(liveSelectedInternalCases.length)closeInternalControlCaseBatchFromDraft(draft,liveSelectedInternalCases,liveUser,at,closedDate);
         }catch(error:any){failure=error.message||String(error);return prev;}
         draft.notifications=[...notices,...draft.notifications].slice(0,1000);
         liveSelectedTasks.forEach(task=>{ draft=withAudit(draft,liveUser,'批量完成事項','task',task.id,richTextToPlainText(task.description)||task.id); });
@@ -5063,7 +5063,7 @@ export default function App() {
         markAllRead={()=>setData(previous=>markOwnNotificationsRead(previous,currentUser.id,nowIso()))}
       />}
       {tab==='closed' && <ListPanel title="已結案清單" tasks={closedTasks} statsTasks={closedStatsTasks} data={roleVisibleData} visibleVessels={activeVessels} filters={closedFilters} setFilters={setClosedFilters} fleetTags={fleetTags} userMap={userMap} exportedBy={currentUser.name} onEdit={openTask} onPrint={() => print('已結案清單')} batchContext={listBatchContext} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
-      {(tab==='internalControl'||tab==='work') && canAccessTab(currentUser,'internalControl') && <InternalControlPage key={tab} editorOnly={tab==='work'} loadCase={loadInternalControlScope} data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onWithdrawTaskSync={withdrawInternalCaseTaskSync} onDelete={removeInternalCase} onBatchClose={caseIds=>batchCompleteTasks([],caseIds)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
+      {(tab==='internalControl'||tab==='work') && canAccessTab(currentUser,'internalControl') && <InternalControlPage key={tab} editorOnly={tab==='work'} loadCase={loadInternalControlScope} data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onWithdrawTaskSync={withdrawInternalCaseTaskSync} onDelete={removeInternalCase} onBatchClose={(caseIds,closedDate)=>batchCompleteTasks([],caseIds,closedDate)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
       {tab==='stats' && <DataAnalysisView data={roleVisibleData} vessels={canViewAllVessels?reportVessels:activeVessels} />}
       {tab==='meeting' && <TemporaryMeetingsPage loadMeetings={loadMeetingScope} authorizationEpoch={authorizationEpoch} data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} canCloseTasks={canCloseTasks&&currentUser.role!=='vessel'} onOpenDecisionTask={openMeetingTaskFromMeetingPage} onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
 

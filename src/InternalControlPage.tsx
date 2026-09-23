@@ -11,7 +11,7 @@ import {
 import { downloadInternalControlExcel } from './internalControlExport';
 import { paginateItems } from './pagination';
 import PaginationControls from './PaginationControls';
-import { BatchCreateModal, CaseEditModal } from './InternalControlModals';
+import { BatchCreateModal, CaseEditModal, InternalControlCloseDateDialog } from './InternalControlModals';
 import type { InternalControlTaskProjection } from './internalControlData';
 import { internalControlTaskSyncWithdrawalEligibility } from './internalControlTaskSyncWithdrawal';
 import { internalControlEditLockKey } from './exclusiveItemEditLock';
@@ -52,7 +52,7 @@ type Props = {
   onUpdate: (item: InternalControlCase, expectedUpdatedAt: string, expectedRevision: number, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>;
   onWithdrawTaskSync: (item: InternalControlCase, expectedTaskUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>;
   onDelete: (item: InternalControlCase, expectedRevision: number) => boolean | Promise<boolean>;
-  onBatchClose: (caseIds: string[]) => boolean | Promise<boolean>;
+  onBatchClose: (caseIds: string[], closedDate: string) => boolean | Promise<boolean>;
   onBatchDelete: (caseIds: string[]) => boolean | Promise<boolean>;
   onOpenTask: (taskId: string) => void;
   claimItemLease?: (sectionKey:string,label:string)=>Promise<AppData|null>;
@@ -87,6 +87,7 @@ export default function InternalControlPage({ editorOnly=false, loadCase, data, 
   const [columnSort,setColumnSort]=useState<ListColumnSort>('created-desc');
   const [selectedCaseIds,setSelectedCaseIds]=useState<string[]>([]);
   const [batchClosing,setBatchClosing]=useState(false);
+  const [closureSelection,setClosureSelection]=useState<{ids:string[];minDate:string;epoch:string;userId:string}|null>(null);
   const [batchDeleting,setBatchDeleting]=useState(false);
   // A list mutation can optimistically remove/close its rows before its ACK.
   // Retain only this selection's read projection; all writes still use App's
@@ -230,12 +231,16 @@ export default function InternalControlPage({ editorOnly=false, loadCase, data, 
   };
   const toggleAllCases=()=>{batchSelection.current=null;setSelectedCaseIds(allSelected?[]:selectableCases.map(item=>item.id));};
   const toggleCase=(id:string)=>setSelectedCaseIds(previous=>previous.includes(id)?previous.filter(item=>item!==id):[...previous,id]);
-  const closeSelectedCases=async()=>{
+  const closeSelectedCases=async(closedDate?:string)=>{
     if(batchClosing||batchDeleting||subpage!=='open'||!selectedCases.length)return;
+    if(!canClose)return;
+    if(!closedDate){setClosureSelection({ids:selectedCases.map(item=>item.id),minDate:selectedCases.map(item=>item.reportDate).sort().slice(-1)[0]||'',epoch:authorizationEpoch,userId:user.id});return;}
+    if(!closureSelection||closureSelection.epoch!==authorizationEpoch||closureSelection.userId!==user.id)return;
+    const closingIds=closureSelection.ids;
     const attempt={epoch:authorizationEpoch,userId:user.id,cases:selectedCases};
     batchSelection.current=attempt;
     setBatchClosing(true);
-    try{if(await onBatchClose(selectedCases.map(item=>item.id))&&batchSelection.current===attempt){batchSelection.current=null;setSelectedCaseIds([]);}}
+    try{if(await onBatchClose(closingIds,closedDate)&&batchSelection.current===attempt){batchSelection.current=null;setSelectedCaseIds([]);setClosureSelection(null);}}
     finally{if(batchSelection.current===attempt||batchSelection.current===null)setBatchClosing(false);}
   };
   const deleteSelectedCases=async()=>{
@@ -293,7 +298,7 @@ export default function InternalControlPage({ editorOnly=false, loadCase, data, 
     {subpage !== 'stats' ? <section className="panel ic-list-panel">
       <div className="panel-title ic-batch-toolbar no-print"><h2>{subpage==='open'?'內控未完清單':'內控結案清單'} <span className="muted">目前 {filtered.length} 件</span></h2>{canSelectCases&&<div className="heading-actions"><button type="button" className="btn small ghost" onClick={toggleAllCases} disabled={batchClosing||batchDeleting||!selectableCases.length}>{allSelected?'取消全選':'全選目前結果'}</button><span className="batch-selection-count">已選 {selectedCases.length}</span>{subpage==='open'&&canClose&&<button type="button" className="btn small green" onClick={()=>void closeSelectedCases()} disabled={batchClosing||batchDeleting||!selectedCases.length}>{batchClosing?'結案中…':<>批量結案（{selectedCases.length}）</>}</button>}{canDelete&&<button type="button" className="btn small red" onClick={()=>void deleteSelectedCases()} disabled={batchClosing||batchDeleting||!selectedCases.length}>{batchDeleting?'刪除中…':<>批量刪除（{selectedCases.length}）</>}</button>}</div>}</div>
       <div className="table-wrap"><table className="compact ic-table"><thead><tr>
-        {canSelectCases&&<th className="no-print ic-select-column"><input type="checkbox" aria-label="選取目前全部內控案件" checked={allSelected} onChange={toggleAllCases} disabled={batchClosing||batchDeleting||!selectableCases.length}/></th>}<th className="ic-vessel-date-column"><span className="table-sort-pair"><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}>船舶 <span>{columnSort==='vessel-asc'?'↑':columnSort==='vessel-desc'?'↓':'↕'}</span></button><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}>報告日期 <span>{columnSort==='date-asc'?'↑':columnSort==='date-desc'?'↓':'↕'}</span></button></span></th><th>來源</th><th>關注</th><th className="ic-description-column">事項內容</th><th>分類／部門</th><th className="ic-status-column">最新狀態</th>{subpage === 'closed' ? <th className="ic-closure-column"><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'closed-date'))}>結案日期 <span>{columnSort==='closed-date-asc'?'↑':columnSort==='closed-date-desc'?'↓':'↕'}</span></button></th> : <th className="ic-sync-column">同步</th>}<th className="no-print">操作</th>
+        {canSelectCases&&<th className="no-print ic-select-column"><input type="checkbox" aria-label="選取目前全部內控案件" checked={allSelected} onChange={toggleAllCases} disabled={batchClosing||batchDeleting||!selectableCases.length}/></th>}<th className="ic-vessel-date-column"><span className="table-sort-pair"><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}>船舶 <span>{columnSort==='vessel-asc'?'↑':columnSort==='vessel-desc'?'↓':'↕'}</span></button><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}>報告日期 <span>{columnSort==='date-asc'?'↑':columnSort==='date-desc'?'↓':'↕'}</span></button></span></th><th>來源</th><th>關注</th><th className="ic-description-column">事項內容</th><th>分類／部門</th><th className="ic-status-column">最新狀態</th>{subpage==='open'&&<th className="ic-dl-column">期望完成日期/DL</th>}{subpage === 'closed' ? <th className="ic-closure-column"><button type="button" className="table-sort-button" onClick={()=>setColumnSort(nextListColumnSort(columnSort,'closed-date'))}>結案日期 <span>{columnSort==='closed-date-asc'?'↑':columnSort==='closed-date-desc'?'↓':'↕'}</span></button></th> : <th className="ic-sync-column">同步</th>}<th className="no-print">操作</th>
       </tr></thead><tbody>{paged.items.map(item => {
         const vessel = vessels.find(entry => entry.id === item.vesselId);
         return <tr key={item.id} className={selectedSet.has(item.id)?'batch-selected-row':''}>
@@ -304,6 +309,7 @@ export default function InternalControlPage({ editorOnly=false, loadCase, data, 
           <td className="ic-description-column"><b>{richTextToPlainText(item.description)}</b></td>
           <td>{item.category}{item.equipmentSubcategory && <small>{item.equipmentSubcategory}</small>}<small>{item.departments.join('、') || '未指定部門'}</small></td>
           <td className="ic-status-column">{richTextToPlainText(item.status) || '尚未更新'}<small>更新 {formatTaipeiDate(item.updatedAt)}</small></td>
+          {subpage==='open'&&<td className="ic-dl-column">{(item.expectedDate??data.tasks.find(task=>task.id===item.linkedTaskId)?.expectedDate)||'-'}</td>}
           {subpage === 'closed' ? <td className="ic-closure-column"><b>已結案</b><small>{item.closedDate || '-'}</small></td> : <td className="ic-sync-column"><b>{item.linkedTaskId ? '已同步要事' : '未同步要事'}</b></td>}
           <td className="no-print"><div className="table-actions"><button className="btn small primary" onClick={() => void openCase(item)}>{canEdit ? '更新' : '查看'}</button>{item.linkedTaskId && <button className="btn small ghost" onClick={() => onOpenTask(item.linkedTaskId!)}>要事</button>}</div></td>
         </tr>;
@@ -315,5 +321,6 @@ export default function InternalControlPage({ editorOnly=false, loadCase, data, 
 
     {visibleBatch && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={async (items, projections) => { if (await onCreate(items, data.revision, projections)) { setBatchOpen(false); return true; } return false; }}/>}
     {caseEditor}
+    {closureSelection&&closureSelection.epoch===authorizationEpoch&&closureSelection.userId===user.id&&subpage==='open'&&canClose&&<InternalControlCloseDateDialog count={closureSelection.ids.length} minDate={closureSelection.minDate} busy={batchClosing} onCancel={()=>setClosureSelection(null)} onConfirm={date=>void closeSelectedCases(date)}/>}
   </section>;
 }

@@ -237,7 +237,7 @@ export function internalControlCaseToTask(item: InternalControlCase, options: Ca
     equipmentSubcategory: categories.includes('設備故障') ? (options.equipmentSubcategory || item.equipmentSubcategory) : undefined,
     description: item.description,
     status: item.status,
-    expectedDate: options.expectedDate || '',
+    expectedDate: item.expectedDate ?? options.expectedDate ?? '',
     reportDate: item.reportDate,
     departments: [...item.departments],
     ownerUserIds: [...options.ownerUserIds],
@@ -265,6 +265,7 @@ export function taskToInternalControlCase(task: TaskItem, existing: InternalCont
     id,
     vesselId: task.vesselId,
     reportDate: task.reportDate || taipeiDateKey(task.createdAt),
+    expectedDate: task.expectedDate,
     ...(existing?.vesselResponsibilities ? {vesselResponsibilities:structuredClone(existing.vesselResponsibilities)} : task.vesselResponsibilities ? {vesselResponsibilities:structuredClone(task.vesselResponsibilities)} : {}),
     reportSource: existing?.reportSource || options.reportSource || '日常',
     description: task.description,
@@ -308,6 +309,7 @@ export function syncInternalControlCaseToLinkedTask(item: InternalControlCase, t
     description: item.description,
     status: item.status,
     reportDate: item.reportDate,
+    expectedDate: item.expectedDate ?? task.expectedDate,
     departments: [...item.departments],
     isClosed: item.isClosed,
     closedDate: item.isClosed ? item.closedDate : undefined,
@@ -325,6 +327,7 @@ export function validateInternalControlCase(item: InternalControlCase, equipment
   const errors: string[] = [];
   if (!item.vesselId) errors.push('船舶');
   if (!isValidInternalControlDate(item.reportDate)) errors.push('報告日期');
+  if (item.expectedDate && !isValidInternalControlDate(item.expectedDate)) errors.push('期望完成日期/DL');
   if (item.closedDate && !isValidInternalControlDate(item.closedDate)) errors.push('結案日期');
   if (isValidInternalControlDate(item.reportDate) && isValidInternalControlDate(item.closedDate) && item.closedDate! < item.reportDate) errors.push('結案日期');
   if (!INTERNAL_CONTROL_REPORT_SOURCES.includes(item.reportSource)) errors.push('報告來源');

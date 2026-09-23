@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { AppData, InternalControlCase, InternalControlReportSource, TaskItem, TaskPriority, UserAccount, Vessel } from './types';
 import type { InternalControlTaskProjection } from './internalControlData';
-import { validateInternalControlCase } from './internalControlWorkflow';
+import { isValidInternalControlDate, validateInternalControlCase } from './internalControlWorkflow';
 import { isEligibleTaskOwner } from './permissions';
 import MeetingPeoplePicker from './MeetingPeoplePicker';
 import { uid, todayDate } from './runtimeUtils';
@@ -33,6 +33,7 @@ export type InternalControlBatchRow = {
   status: string;
   departments: string[];
   closedDate: string;
+  expectedDate?: string;
   syncToTask: boolean;
   taskCategories: string[];
   taskEquipmentSubcategory: string;
@@ -42,7 +43,7 @@ export type InternalControlBatchRow = {
 };
 
 export const newInternalControlBatchRow = (category: string): InternalControlBatchRow => ({
-  key: uid('ic-row'), description: '', priority: '低', category, equipmentSubcategory: '', isAware: false, status: '', departments: [], closedDate: '', syncToTask: false,
+  key: uid('ic-row'), description: '', priority: '低', category, equipmentSubcategory: '', isAware: false, status: '', departments: [], closedDate: '', expectedDate: '', syncToTask: false,
   taskCategories: category ? [category] : [], taskEquipmentSubcategory: '', taskExpectedDate: '', taskOwnerUserIds: [], taskIsAbnormal: false,
 });
 
@@ -100,7 +101,7 @@ function TaskProjectionFields({ data, catalog: suppliedCatalog, vesselId, projec
     <div className="ic-task-projection-head"><h4>同步要事設定</h4><small>以下欄位直接寫入要事；必填規則與「新增要事」一致。</small></div>
     <fieldset className="ic-choice-picker" aria-required="true"><legend>要事分類 * <span>已選 {projection.categories.length}</span></legend><div>{categoryChoices.map(value => <label key={value} className={projection.categories.includes(value) ? 'selected' : ''}><input type="checkbox" checked={projection.categories.includes(value)} onChange={() => toggleCategory(value)}/><span>{value}</span></label>)}</div></fieldset>
     {projection.categories.includes('設備故障') && <div className="field"><label>要事設備故障細項 *</label><select required value={projection.equipmentSubcategory || ''} onChange={event => onChange({ ...projection, equipmentSubcategory: event.target.value || undefined })}><option value="">請選擇</option>{catalog.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div>}
-    <div className="grid cols-2 ic-task-projection-meta"><div className="field"><label>預計完成日期</label><input type="date" value={projection.expectedDate} onChange={event => onChange({ ...projection, expectedDate: event.target.value })}/></div><div className="field"><label>涉及部門 *</label><div className="scope-result-note"><b>沿用本案件涉及部門</b><span>請在上方至少選擇一個部門</span></div></div></div>
+    <div className="grid cols-2 ic-task-projection-meta"><div className="field"><label>期望完成日期/DL</label><small>與本案件共用上方日期，修改任一邊均會同步。</small></div><div className="field"><label>涉及部門 *</label><div className="scope-result-note"><b>沿用本案件涉及部門</b><span>請在上方至少選擇一個部門</span></div></div></div>
     <MeetingPeoplePicker label="追蹤窗口" users={eligibleOwners} departments={catalog.departments} selectedIds={projection.ownerUserIds} onChange={ownerUserIds => onChange({ ...projection, ownerUserIds })}/>
   </section>;
 }
@@ -117,7 +118,7 @@ export function BatchCreateModal({ data, user, vessels, close, save, shipSubmiss
   };
   const setRows = (updateRows: (rows: InternalControlBatchRow[]) => InternalControlBatchRow[]) => setDraft({ ...draft, rows: updateRows(rows) });
   const update = (key: string, patch: Partial<InternalControlBatchRow>) => setRows(previous => previous.map(row => row.key === key ? { ...row, ...patch } : row));
-  const projectionFor = (row: InternalControlBatchRow): InternalControlTaskProjection => ({ categories: row.taskCategories, equipmentSubcategory: row.taskEquipmentSubcategory || row.equipmentSubcategory || undefined, expectedDate: row.taskExpectedDate, ownerUserIds: row.taskOwnerUserIds, isAbnormal: row.taskIsAbnormal });
+  const projectionFor = (row: InternalControlBatchRow): InternalControlTaskProjection => ({ categories: row.taskCategories, equipmentSubcategory: row.taskEquipmentSubcategory || row.equipmentSubcategory || undefined, expectedDate: row.expectedDate ?? row.taskExpectedDate, ownerUserIds: row.taskOwnerUserIds, isAbnormal: row.taskIsAbnormal });
   const changeTaskSync = (row: InternalControlBatchRow, checked: boolean) => {
     const choice = internalControlTaskSyncChoice(checked);
     update(row.key, {
@@ -133,7 +134,7 @@ export function BatchCreateModal({ data, user, vessels, close, save, shipSubmiss
     const candidates: InternalControlCase[] = rows.map(row => ({
       id: uid('internal'), vesselId, reportDate, reportSource, description: row.description.trim(), priority: row.priority, category: row.category,
       equipmentSubcategory: row.category === '設備故障' ? row.equipmentSubcategory : undefined, isAware: row.isAware, status: row.status.trim(), departments: row.departments,
-      syncToTask: shipSubmission ? false : row.syncToTask, isClosed: shipSubmission ? false : Boolean(row.closedDate), closedDate: shipSubmission ? undefined : row.closedDate || undefined, createdBy: user.id, updatedBy: user.id, createdAt: at, updatedAt: at, origin: 'internal-control', statusLogs: [],
+      syncToTask: shipSubmission ? false : row.syncToTask, expectedDate: row.expectedDate ?? row.taskExpectedDate, isClosed: false, createdBy: user.id, updatedBy: user.id, createdAt: at, updatedAt: at, origin: 'internal-control', statusLogs: [],
     }));
     if (!vesselId || !reportDate || !reportSource) return alert('請完整填寫船舶、報告日期與報告來源');
     const errors = candidates.flatMap((item, index) => validateInternalControlCase(item).map(error => `第 ${index + 1} 筆：${error}`));
@@ -157,7 +158,7 @@ export function BatchCreateModal({ data, user, vessels, close, save, shipSubmiss
       <div className="ic-batch-row-head"><h3>第 {index + 1} 筆</h3>{rows.length > 1 && <button className="btn small danger" onClick={() => setRows(previous => previous.filter(item => item.key !== row.key))}>刪除本筆</button>}</div>
       <div className="grid cols-3 ic-case-classification-row"><div className="field"><label>關注程度 *</label><select value={row.priority} onChange={event => update(row.key, { priority: event.target.value as TaskPriority })}>{catalog.priorities.map(priority => <option key={priority}>{priority}</option>)}</select></div><div className="field"><label>事件分類 *</label><select value={row.category} onChange={event => { const category = event.target.value; update(row.key, { category, equipmentSubcategory: category === '設備故障' ? row.equipmentSubcategory : '', taskCategories: row.taskCategories.length <= 1 ? [category] : row.taskCategories }); }}>{categories.map(category => <option key={category}>{category}</option>)}</select></div><div className="field"><label>設備故障細項{row.category === '設備故障' ? ' *' : ''}</label><select disabled={row.category !== '設備故障'} value={row.equipmentSubcategory} onChange={event => update(row.key, { equipmentSubcategory: event.target.value })}><option value="">{row.category === '設備故障' ? '請選擇' : '不適用'}</option>{catalog.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-2 ic-case-content-row"><div className="field"><label>事項內容 *</label><textarea value={row.description} onChange={event => update(row.key, { description: event.target.value })}/></div><div className="field"><label>解決計劃／最新狀態 *</label><textarea value={row.status} onChange={event => update(row.key, { status: event.target.value })}/></div></div>
-      <div className="ic-inline-options"><label><input type="checkbox" checked={row.isAware} onChange={event => update(row.key, { isAware: event.target.checked })}/>標記為知曉事項</label>{!shipSubmission && <label><input type="checkbox" checked={row.syncToTask} onChange={event => changeTaskSync(row, event.target.checked)}/>同步到要事</label>}{!shipSubmission && <div className="field"><label>結案日期（可選）</label><input type="date" value={row.closedDate} onChange={event => update(row.key, { closedDate: event.target.value })}/></div>}</div>
+      <div className="ic-inline-options"><label><input type="checkbox" checked={row.isAware} onChange={event => update(row.key, { isAware: event.target.checked })}/>標記為知曉事項</label>{!shipSubmission && <label><input type="checkbox" checked={row.syncToTask} onChange={event => changeTaskSync(row, event.target.checked)}/>同步到要事</label>}<div className="field"><label htmlFor={`ic-dl-${row.key}`}>期望完成日期/DL</label><input id={`ic-dl-${row.key}`} aria-label={`第 ${index + 1} 筆期望完成日期/DL`} type="date" value={row.expectedDate ?? row.taskExpectedDate} onChange={event => update(row.key, { expectedDate: event.target.value })}/></div></div>
       <DepartmentPicker values={row.departments} choices={catalog.departments} onChange={departments => update(row.key, { departments })}/>
       {!shipSubmission && row.syncToTask && <TaskProjectionFields catalog={catalog} vesselId={vesselId} projection={projectionFor(row)} onChange={projection => update(row.key, { taskCategories: projection.categories, taskEquipmentSubcategory: projection.equipmentSubcategory || '', taskExpectedDate: projection.expectedDate, taskOwnerUserIds: projection.ownerUserIds, taskIsAbnormal: projection.isAbnormal === true })}/>}
     </article>)}</div>
@@ -180,19 +181,32 @@ export function prepareInternalControlEditForSave(draft:InternalControlCase,pend
   return next;
 }
 
+export function InternalControlCloseDateDialog({count,minDate,busy,onCancel,onConfirm}:{count:number;minDate:string;busy:boolean;onCancel:()=>void;onConfirm:(date:string)=>void}) {
+  const [date,setDate]=useState('');
+  const [error,setError]=useState('');
+  return <div className="modal-backdrop"><form className="modal ic-close-date-modal" role="dialog" aria-modal="true" aria-labelledby="ic-close-date-title" onSubmit={event=>{event.preventDefault();if(busy)return;if(!isValidInternalControlDate(date)||date<minDate){setError('請選擇有效的結案日期，且不得早於報告日期。');return;}onConfirm(date);}}>
+    <div className="modal-head"><h2 id="ic-close-date-title">確認結案{count>1?`（${count} 筆）`:''}</h2></div>
+    <p>選擇實際結案日期後確認；期望完成日期/DL 不會因此改動。雲端確認成功後才算完成。</p>
+    <div className="field"><label htmlFor="ic-close-date">結案日期 *</label><input id="ic-close-date" aria-label="結案日期" type="date" autoFocus required min={minDate} value={date} disabled={busy} onChange={event=>{setDate(event.target.value);setError('');}}/></div>
+    {error&&<p role="alert">{error}</p>}
+    <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>取消結案</button><button type="submit" className="btn green" disabled={busy}>{busy?'保存中…':'確認結案'}</button></div>
+  </form></div>;
+}
+
 export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelete, showWithdrawSync, canWithdrawSync, withdrawSyncReason, close, save, onWithdrawSync, onDelete }: { item: InternalControlCase; data: AppData; vessels: Vessel[]; canEdit: boolean; canClose: boolean; canDelete: boolean; showWithdrawSync: boolean; canWithdrawSync: boolean; withdrawSyncReason: string; close: () => void; save: (item: InternalControlCase, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>; onWithdrawSync: (item: InternalControlCase) => boolean | Promise<boolean>; onDelete: (item: InternalControlCase) => boolean | Promise<boolean> }) {
   const linkedTask: TaskItem | undefined = item.linkedTaskId ? data.tasks.find(task => task.id === item.linkedTaskId) : undefined;
   const [draft, setDraft] = useState(item);
   const [projection, setProjection] = useState<InternalControlTaskProjection>({
     categories: linkedTask?.categories?.length ? [...linkedTask.categories] : (item.category ? [item.category] : []),
     equipmentSubcategory: linkedTask?.equipmentSubcategory || item.equipmentSubcategory,
-    expectedDate: linkedTask?.expectedDate || '',
+    expectedDate: item.expectedDate ?? linkedTask?.expectedDate ?? '',
     ownerUserIds: linkedTask ? [...linkedTask.ownerUserIds] : defaultOwnerIds(data, item.vesselId),
     isAbnormal: linkedTask?.isAbnormal ?? false,
   });
   const [logText, setLogText] = useState('');
   const [withdrawing,setWithdrawing]=useState(false);
   const [saving,setSaving]=useState(false);
+  const [choosingClosedDate,setChoosingClosedDate]=useState(false);
   const savingRef=useRef(false);
   const categories = unique([...data.settings.taskCategories, draft.category, '設備故障']);
   const change = (patch: Partial<InternalControlCase>) => setDraft(previous => ({ ...previous, ...patch }));
@@ -211,14 +225,14 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
     if (errors.length) return alert(`請完成：${errors.join('、')}`);
     if(confirmation&&!confirm(confirmation))return;
     savingRef.current=true;setSaving(true);
-    try{if(await save(candidate,candidate.syncToTask?projection:undefined))close();}
+    try{if(await save(candidate,candidate.syncToTask?{...projection,expectedDate:candidate.expectedDate??projection.expectedDate}:undefined))close();}
     finally{savingRef.current=false;setSaving(false);}
   };
   const saveClosedState=()=>{
-    if(!canClose)return;
-    const isClosed=!item.isClosed;
-    const confirmation=`確定${isClosed?'結案':'重新開啟'}此內控案件？\n\n本視窗的修改會一併保存${item.linkedTaskId?'，關聯要事也會同步更新':''}。雲端確認後才算完成。`;
-    void submit({...draft,isClosed,closedDate:isClosed?(draft.closedDate||todayDate()):undefined},confirmation);
+    if(!canClose||savingRef.current||withdrawing)return;
+    if(!item.isClosed){setChoosingClosedDate(true);return;}
+    const confirmation=`確定將此內控案件改為未結案？${item.linkedTaskId?'關聯要事也會同步改為未結案。':''}\n\n既有內容、歷程及期望完成日期/DL 均保留。雲端確認後才算完成。`;
+    void submit({...draft,isClosed:false,closedDate:undefined},confirmation);
   };
   const withdrawSync=async()=>{
     if(!canWithdrawSync||withdrawing||savingRef.current)return;
@@ -231,17 +245,18 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
   const vessel = vessels.find(entry => entry.id === draft.vesselId);
   return <div className="modal-backdrop"><div className="modal ic-edit-modal" role="dialog" aria-modal="true">
     <div className="modal-head"><div><h2>更新內控案件</h2><p>{vessel ? vesselDisplayName(vessel) : draft.vesselId}｜{draft.reportDate}｜{draft.reportSource}{draft.linkedTaskId ? '｜已同步要事' : '｜僅內控'}</p></div><button className="btn ghost" disabled={saving||withdrawing} onClick={close}>關閉</button></div>
-    <fieldset disabled={!canEdit||saving||withdrawing}>
+    <fieldset disabled={!canEdit||item.isClosed||saving||withdrawing||choosingClosedDate}>
       <div className="grid cols-3"><div className="field"><label>船舶 *</label><select value={draft.vesselId} onChange={event => { const vesselId = event.target.value; change({ vesselId }); setProjection(previous => ({ ...previous, ownerUserIds: defaultOwnerIds(data, vesselId) })); }}>{vessels.map(value => <option key={value.id} value={value.id}>{vesselDisplayName(value)}</option>)}</select></div><div className="field"><label>報告日期 *</label><input type="date" value={draft.reportDate} onChange={event => change({ reportDate: event.target.value })}/></div><div className="field"><label>報告來源 *</label><select value={draft.reportSource} onChange={event => change({ reportSource: event.target.value as InternalControlReportSource })}>{REPORT_SOURCES.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-3 ic-case-classification-row"><div className="field"><label>關注程度 *</label><select value={draft.priority} onChange={event => change({ priority: event.target.value as TaskPriority })}>{data.settings.priorities.map(priority => <option key={priority}>{priority}</option>)}</select></div><div className="field"><label>事件分類 *</label><select value={draft.category} onChange={event => change({ category: event.target.value, equipmentSubcategory: event.target.value === '設備故障' ? draft.equipmentSubcategory : undefined })}>{categories.map(category => <option key={category}>{category}</option>)}</select></div><div className="field"><label>設備故障細項{draft.category === '設備故障' ? ' *' : ''}</label><select disabled={draft.category !== '設備故障'} value={draft.equipmentSubcategory || ''} onChange={event => change({ equipmentSubcategory: event.target.value })}><option value="">{draft.category === '設備故障' ? '請選擇' : '不適用'}</option>{data.settings.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-2 ic-case-content-row"><div className="field"><label>事項內容 *</label><textarea value={draft.description} onChange={event => change({ description: event.target.value })}/></div><div className="field"><label>解決計劃／最新狀態 *</label><textarea value={draft.status} onChange={event => change({ status: event.target.value })}/></div></div>
-      <div className="ic-inline-options"><label><input type="checkbox" checked={draft.isAware} onChange={event => change({ isAware: event.target.checked })}/>知曉事項</label><label><input type="checkbox" checked={draft.syncToTask} disabled={Boolean(item.linkedTaskId)} onChange={event => changeTaskSync(event.target.checked)}/>{item.linkedTaskId ? '已同步要事' : '同步到要事'}</label></div>
+      <div className="ic-inline-options"><label><input type="checkbox" checked={draft.isAware} onChange={event => change({ isAware: event.target.checked })}/>知曉事項</label><label><input type="checkbox" checked={draft.syncToTask} disabled={Boolean(item.linkedTaskId)} onChange={event => changeTaskSync(event.target.checked)}/>{item.linkedTaskId ? '已同步要事' : '同步到要事'}</label><div className="field"><label htmlFor="ic-edit-dl">期望完成日期/DL</label><input id="ic-edit-dl" aria-label="期望完成日期/DL" type="date" value={draft.expectedDate??linkedTask?.expectedDate??''} onChange={event=>change({expectedDate:event.target.value})}/></div></div>
       <DepartmentPicker values={draft.departments} choices={data.settings.departments} onChange={departments => change({ departments })}/>
       {draft.syncToTask && <TaskProjectionFields data={data} vesselId={draft.vesselId} projection={projection} onChange={setProjection}/>}
       <section className="ic-status-add"><h3>加入狀態記錄</h3><div><textarea value={logText} onChange={event => setLogText(event.target.value)} placeholder="輸入本次最新進度、處理結果或備註…"/><button type="button" className="btn green" onClick={addLog}>加入狀態記錄</button></div></section>
-      <label className="ic-close-toggle"><input type="checkbox" disabled={!canClose} checked={draft.isClosed} onChange={event => change({ isClosed: event.target.checked, closedDate: event.target.checked ? (draft.closedDate || todayDate()) : undefined })}/>點擊結案</label>
+      {item.isClosed&&<p className="muted">已結案｜結案日期：{item.closedDate||'未記錄'}；如需修改，請先改為未結案。</p>}
     </fieldset>
     <section className="status-history"><h3>狀態歷程</h3>{draft.statusLogs.length ? draft.statusLogs.map(log => <article key={log.id}><b>{log.text}</b><small>{log.at ? formatTaipeiDateTime(log.at) : '尚未保存'}｜{log.by || '目前使用者'}</small></article>) : <p className="muted">尚無狀態紀錄</p>}</section>
-    <div className="modal-actions ic-edit-actions">{showWithdrawSync && <button type="button" className="btn red" disabled={!canWithdrawSync||withdrawing||saving} title={!canWithdrawSync?withdrawSyncReason:undefined} onClick={()=>void withdrawSync()}>{withdrawing?'撤回中…':'撤回同步要事'}</button>}{canDelete && <button className="btn danger" disabled={saving||withdrawing} onClick={async () => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`) && await onDelete(item)) close(); }}>刪除案件</button>}<span/><button className="btn ghost" disabled={saving||withdrawing} onClick={close}>取消</button>{canEdit&&canClose&&<button type="button" className="btn green ic-close-save" disabled={saving||withdrawing} onClick={saveClosedState}>{item.isClosed?'重新開啟並保存':'結案並保存'}</button>}{canEdit && <button className="btn primary" disabled={saving||withdrawing} onClick={()=>void submit()}>{saving?'保存中…':'保存更新'}</button>}</div>
+    <div className="modal-actions ic-edit-actions">{showWithdrawSync && <button type="button" className="btn red" disabled={!canWithdrawSync||withdrawing||saving||choosingClosedDate} title={!canWithdrawSync?withdrawSyncReason:undefined} onClick={()=>void withdrawSync()}>{withdrawing?'撤回中…':'撤回同步要事'}</button>}{canDelete && <button className="btn danger" disabled={saving||withdrawing||choosingClosedDate} onClick={async () => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`) && await onDelete(item)) close(); }}>刪除案件</button>}<span/><button className="btn ghost" disabled={saving||withdrawing||choosingClosedDate} onClick={close}>取消</button>{canEdit&&canClose&&<button type="button" className="btn green ic-close-save" disabled={saving||withdrawing||choosingClosedDate} onClick={saveClosedState}>{item.isClosed?'改為未結案':'結案並保存'}</button>}{canEdit && <button className="btn primary" disabled={saving||withdrawing||choosingClosedDate} onClick={()=>void submit()}>{saving?'保存中…':'保存更新'}</button>}</div>
+    {choosingClosedDate&&<InternalControlCloseDateDialog count={1} minDate={draft.reportDate} busy={saving} onCancel={()=>setChoosingClosedDate(false)} onConfirm={date=>{if(canClose)void submit({...draft,isClosed:true,closedDate:date});}}/>}
   </div></div>;
 }

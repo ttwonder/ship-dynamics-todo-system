@@ -7,6 +7,7 @@ import {
 } from './internalControlData';
 import { internalControlEditLockKey } from './exclusiveItemEditLock';
 import { taipeiDateKey } from './taipeiTime';
+import { isValidInternalControlDate } from './internalControlWorkflow';
 
 export function sanitizeInternalControlSelection(
   selectedIds: string[],
@@ -99,6 +100,7 @@ export function closeInternalControlCaseBatchFromDraft(
   selectedCases: Pick<InternalControlCase, 'id' | 'updatedAt'>[],
   actor: InternalControlActor,
   at: string,
+  closedDate = taipeiDateKey(at),
 ): { caseIds: string[]; taskIds: string[] } {
   const caseIds = selectedCases.map(item => item.id);
   if (caseIds.some(id => !id) || new Set(caseIds).size !== caseIds.length) {
@@ -109,6 +111,7 @@ export function closeInternalControlCaseBatchFromDraft(
     if (matches.length !== 1) throw new Error(`內控案件不存在或識別碼重複：${selected.id}`);
     if (matches[0].updatedAt !== selected.updatedAt) throw new Error(`內控案件已由其他人更新：${selected.id}`);
     if (matches[0].isClosed) throw new Error(`內控案件已結案：${selected.id}`);
+    if (!isValidInternalControlDate(closedDate) || closedDate < matches[0].reportDate) throw new Error(`請選擇有效且不早於報告日期的結案日期：${selected.id}`);
   }
   internalControlBatchLockKeys(draft, caseIds);
   const taskIds: string[] = [];
@@ -116,7 +119,7 @@ export function closeInternalControlCaseBatchFromDraft(
     const current = draft.internalControlCases.find(item => item.id === selected.id)!;
     updateInternalControlCase(
       draft,
-      { ...current, isClosed: true, closedDate: taipeiDateKey(at), closedBy: actor.id },
+      { ...current, isClosed: true, closedDate, closedBy: actor.id },
       selected.updatedAt,
       actor,
       at,

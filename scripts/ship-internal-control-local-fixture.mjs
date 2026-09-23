@@ -45,4 +45,5 @@ export async function installShipInternalControlFixture(db,workspace){
   await db.query("insert into ship_dynamics_quiescence_private.transitions values($1,$2,'resumed','{}')",[workspace,transition]);
   await db.query("insert into ship_dynamics_authority_private.current_v1 values($1,$2,1,'records-v1',$3,$4,'resumed')",[workspace,wid,randomUUID(),transition]);
   if(fs.existsSync(shipInternalControlMigration))await db.exec(fs.readFileSync(shipInternalControlMigration,'utf8'));
+  await db.exec(fs.readFileSync('supabase/migrations/20260923120000_ship_internal_control_due_date.sql','utf8'));
 }

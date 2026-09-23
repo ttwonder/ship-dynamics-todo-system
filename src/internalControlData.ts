@@ -198,7 +198,7 @@ const taskProjection = (
   if (ownerUserIds.some(id => !(existing?.vesselId===item.vesselId&&canRetainVesselCommonContact(existing,id,existing.ownerUserIds,draft.users.find(user=>user.id===id)))&&!isEligibleTaskOwner(draft.settings?.rolePermissions, draft.users.find(user => user.id === id), [vessel]))) {
     throw new Error('同步要事的追蹤窗口包含停用、船舶帳號或無最終船舶權限的人員');
   }
-  return { categories, equipmentSubcategory, expectedDate: (input?.expectedDate ?? existing?.expectedDate ?? '').trim(), ownerUserIds, isAbnormal };
+  return { categories, equipmentSubcategory, expectedDate: (item.expectedDate ?? input?.expectedDate ?? existing?.expectedDate ?? '').trim(), ownerUserIds, isAbnormal };
 };
 
 function reciprocalLinkedTask(draft: InternalControlDataDraft, item: InternalControlCase, cancellingTaskId?: string): { index: number; task: TaskItem } | undefined {
@@ -266,6 +266,7 @@ export function createInternalControlCases(
     assignedTaskOwners(draft, item.vesselId);
     if (!item.syncToTask) return;
     const projection = taskProjection(draft, item, projections[item.id]);
+    item.expectedDate = projection.expectedDate;
     const taskId = uniqueTaskId({ tasks: [...draft.tasks, ...createdTasks] }, item.id, true);
     const task = internalControlCaseToTask(item, {
       id: taskId,
@@ -338,6 +339,7 @@ export function updateInternalControlCase(
       ? { ...linkedTask, ownerUserIds: assignedTaskOwners(draft, saved.vesselId) }
       : linkedTask;
     const appliedProjection = taskProjection(draft, saved, projection, projectionExistingTask);
+    saved.expectedDate = appliedProjection.expectedDate;
     linkedTaskUpdate = {
       index: reciprocal.index,
       task: {
@@ -352,6 +354,7 @@ export function updateInternalControlCase(
     };
   } else if (establishingLink) {
     const appliedProjection = taskProjection(draft, saved, projection);
+    saved.expectedDate = appliedProjection.expectedDate;
     const taskId = uniqueTaskId(draft, saved.id);
     linkedTaskCreate = internalControlCaseToTask(saved, { id: taskId, ...appliedProjection, actorId: actor.id, at });
     saved.linkedTaskId = taskId;

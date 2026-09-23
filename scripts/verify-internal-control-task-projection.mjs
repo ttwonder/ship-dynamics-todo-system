@@ -176,9 +176,10 @@ try {
   assert.equal(laterTask?.isAbnormal, false, '既有案件稍後建立同步要事時也必須採用明確 false');
 
   const editedProjection = { categories: [category], expectedDate: '2026-08-15', ownerUserIds: [] };
-  dataLayer.updateInternalControlCase(data, structuredClone(linkedLater), linkedLater.updatedAt, actor, '2026-07-24T02:07:00.000Z', editedProjection);
+  dataLayer.updateInternalControlCase(data, {...structuredClone(linkedLater),expectedDate:editedProjection.expectedDate}, linkedLater.updatedAt, actor, '2026-07-24T02:07:00.000Z', editedProjection);
   const editedTask = data.tasks.find(task => task.id === linkedLater.linkedTaskId);
-  assert.equal(editedTask?.expectedDate, editedProjection.expectedDate, 'edit modal must directly update task-only fields');
+  assert.equal(editedTask?.expectedDate, editedProjection.expectedDate, 'edit modal must update the shared case/task DL');
+  assert.equal(data.internalControlCases.find(c=>c.id===linkedLater.id).expectedDate,editedProjection.expectedDate);
   assert.deepEqual(editedTask?.ownerUserIds, []);
   assert.equal(editedTask?.isAbnormal, false, '後續案件同步未改異常欄位時，不得把既有 false 重設為 true');
 
@@ -346,7 +347,7 @@ try {
 
   assert.ok(pageSource.includes("from './InternalControlModals'") && pageSource.includes('<BatchCreateModal') && pageSource.includes('<CaseEditModal'), 'internal-control page must mount the extracted create and edit modals');
   assert.ok(modalSource.includes('ic-case-classification-row') && modalSource.includes('ic-case-content-row'), 'create and edit forms need explicit classification and content rows');
-  assert.ok(modalSource.includes('同步要事設定') && modalSource.includes('要事分類 *') && modalSource.includes('預計完成日期') && modalSource.includes('追蹤窗口'), 'sync toggle must reveal task-equivalent options');
+  assert.ok(modalSource.includes('同步要事設定') && modalSource.includes('要事分類 *') && modalSource.includes('期望完成日期/DL') && modalSource.includes('與本案件共用上方日期') && modalSource.includes('追蹤窗口'), 'sync toggle must reveal task-equivalent options');
   assert.ok(modalSource.includes('刪除案件') && modalSource.includes('onDelete'), 'edit modal must expose a permission-gated delete action');
   assert.ok(modalSource.includes('撤回同步要事') && modalSource.includes('保留此內控案件') && modalSource.includes('重新同步會建立新的要事') && modalSource.includes('onWithdrawSync'), 'edit modal must expose an explicit confirmed sync-withdrawal action');
   assert.ok(pageSource.includes('internalControlTaskSyncWithdrawalEligibility') && pageSource.includes('canWithdrawSync') && pageSource.includes('onWithdrawTaskSync'), 'internal-control page must gate withdrawal from the shared domain eligibility result');

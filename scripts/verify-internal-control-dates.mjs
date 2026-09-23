@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import {createServer} from 'vite';
+
+// Real domain functions and normalization; synthetic data only.
+const vite=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});
+try {
+  const {createInitialData}=await vite.ssrLoadModule('/src/data/seed.ts');
+  const {normalizeAppData}=await vite.ssrLoadModule('/src/normalize.ts');
+  const {createInternalControlCases,updateInternalControlCase}=await vite.ssrLoadModule('/src/internalControlData.ts');
+  const {taskToInternalControlCase,validateInternalControlCase}=await vite.ssrLoadModule('/src/internalControlWorkflow.ts');
+  const data=createInitialData(),actor={id:'qa-owner',name:'QA OWNER',role:'owner'};
+  const at='2026-09-23T00:00:00.000Z';
+  data.tasks=[];data.internalControlCases=[];
+  const candidate={id:'qa-date-case',vesselId:data.vessels[0].id,reportDate:'2026-09-23',reportSource:'日常',priority:'低',category:'其他',description:'QA independent dates',isAware:false,status:'QA open',departments:[data.settings.departments[0]],syncToTask:false,origin:'internal-control',isClosed:false,expectedDate:'2026-10-10',createdBy:actor.id,updatedBy:actor.id,createdAt:at,updatedAt:at,statusLogs:[]};
+  createInternalControlCases(data,[candidate],actor,at);
+  const roundtrip=normalizeAppData(JSON.parse(JSON.stringify(data)));
+  assert.ok(roundtrip);
+  assert.equal(roundtrip.internalControlCases[0].expectedDate,'2026-10-10','DL survives normalized database readback');
+  assert.equal(roundtrip.internalControlCases[0].isClosed,false,'a planned date does not close the case');
+  assert.equal(roundtrip.internalControlCases[0].closedDate,undefined);
+  assert.ok(validateInternalControlCase({...candidate,expectedDate:'2026-02-30'}).some(x=>x.includes('期望完成日期')),'invalid calendar DL rejected');
+  const legacy=structuredClone(data);delete legacy.internalControlCases[0].expectedDate;
+  legacy.internalControlCases[0].isClosed=true;legacy.internalControlCases[0].closedDate='2026-09-24';
+  const normalizedLegacy=normalizeAppData(legacy);
+  assert.ok(normalizedLegacy);assert.equal(normalizedLegacy.internalControlCases[0].expectedDate,undefined,'no reinterpretation of historical completion dates');
+  assert.equal(normalizedLegacy.internalControlCases[0].closedDate,'2026-09-24');
+  const stored=data.internalControlCases[0];
+  updateInternalControlCase(data,{...stored,syncToTask:true},stored.updatedAt,actor,'2026-09-23T00:01:00.000Z',{categories:['其他'],expectedDate:'2026-12-31',ownerUserIds:[],isAbnormal:false});
+  assert.equal(data.tasks[0].expectedDate,'2026-10-10','case DL is the shared value; hidden stale projection cannot replace it');
+  const linked=data.internalControlCases[0];
+  updateInternalControlCase(data,{...linked,expectedDate:'2026-10-12'},linked.updatedAt,actor,'2026-09-23T00:02:00.000Z');
+  assert.equal(data.tasks[0].expectedDate,'2026-10-12','case edits synchronize task DL');
+  const fromTask=taskToInternalControlCase({...data.tasks[0],expectedDate:'2026-10-15'},data.internalControlCases[0],{actorId:actor.id,at:'2026-09-23T00:03:00.000Z'});
+  assert.equal(fromTask.expectedDate,'2026-10-15','task edits synchronize case DL');
+  assert.equal(taskToInternalControlCase({...data.tasks[0],expectedDate:''},fromTask,{actorId:actor.id,at}).expectedDate,'','intentional clear is not replaced by an older date');
+  const beforeClose=data.internalControlCases[0];
+  updateInternalControlCase(data,{...beforeClose,isClosed:true,closedDate:'2026-09-25'},beforeClose.updatedAt,actor,'2026-09-25T00:00:00.000Z');
+  assert.equal(data.internalControlCases[0].closedDate,'2026-09-25');
+  assert.equal(data.internalControlCases[0].expectedDate,'2026-10-12');
+  assert.equal(data.tasks[0].closedDate,'2026-09-25');
+  const closed=data.internalControlCases[0];
+  updateInternalControlCase(data,{...closed,isClosed:false,closedDate:undefined},closed.updatedAt,actor,'2026-09-25T00:01:00.000Z');
+  assert.equal(data.internalControlCases[0].closedDate,undefined);assert.equal(data.tasks[0].isClosed,false);
+  assert.equal(data.internalControlCases[0].expectedDate,'2026-10-12','reopening retains DL and existing progress');
+  const {closeInternalControlCaseBatchFromDraft}=await vite.ssrLoadModule('/src/batchInternalControlActions.ts');
+  closeInternalControlCaseBatchFromDraft(data,[data.internalControlCases[0]],actor,'2026-09-27T00:00:00.000Z','2026-09-26');
+  assert.equal(data.internalControlCases[0].closedDate,'2026-09-26','batch uses the explicitly selected completion date');
+  assert.equal(data.tasks[0].closedDate,'2026-09-26');
+  console.log('PASS internal-control dates: normalized DL, separate completion, legacy preservation, linked bidirectional DL and reopen');
+} finally {await vite.close();}

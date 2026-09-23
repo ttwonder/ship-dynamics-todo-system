@@ -13,12 +13,13 @@ try {
   data.users=[user];vessel.assignedUserIds=[user.id];
   const props={data,user,vessels:[vessel],close:()=>{},save:async()=>true};
   const shore=renderToStaticMarkup(createElement(BatchCreateModal,props));
-  assert.match(shore,/結案日期（可選）/,'shore creation retains its existing close-on-create control');
+  assert.match(shore,/期望完成日期\/DL/,'shore creation uses planned DL, never close-on-create');assert.doesNotMatch(shore,/結案日期/);
   assert.match(shore,/保存 1 筆案件/);
   const draft={vesselId:vessel.id,reportDate:'2026-09-19',reportSource:'日常',rows:[{key:'row-1',description:'QA 船端訴求',priority:'低',category:'設備故障',equipmentSubcategory:data.settings.equipmentFailureSubcategories[0],isAware:false,status:'待岸端協助',departments:[data.settings.departments[0]],closedDate:'',syncToTask:false,taskCategories:['設備故障'],taskEquipmentSubcategory:'',taskExpectedDate:'',taskOwnerUserIds:[],taskIsAbnormal:false}]};
   const catalog={taskCategories:data.settings.taskCategories,priorities:data.settings.priorities,equipmentFailureSubcategories:data.settings.equipmentFailureSubcategories,departments:data.settings.departments,owners:[{id:user.id,name:user.name,username:user.username,department:user.department,isActive:true}],defaultOwnerIds:[user.id]};
   const ship=renderToStaticMarkup(createElement(BatchCreateModal,{...props,shipSubmission:{draft,catalog,busy:false,pending:false,message:'',onDraftChange:()=>{}}}));
   assert.doesNotMatch(ship,/結案日期/,'ship submission may only create open cases, not pre-closed cases');
+  assert.match(ship,/期望完成日期\/DL/,'shared ship form also exposes the planned date');
   assert.match(ship,/提交 1 筆/);
   assert.match(ship,/報告人姓名＋職務/);assert.match(ship,/<input[^>]+id="ship-internal-reporter"[^>]+required=""/);
   assert.doesNotMatch(shore,/報告人姓名＋職務/,'shore form is unchanged');

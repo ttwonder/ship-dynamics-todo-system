@@ -166,6 +166,7 @@ export interface InternalControlCase {
   id: string;
   vesselId: string;
   reportDate: string;
+  expectedDate?: string;
   reportSource: InternalControlReportSource;
   description: string;
   priority: TaskPriority;

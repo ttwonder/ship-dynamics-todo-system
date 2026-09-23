@@ -141,6 +141,7 @@ function normalizeInternalControlCases(value: unknown, timestamp: string): Inter
       id,
       vesselId: text(item.vesselId),
       reportDate,
+      ...(typeof item.expectedDate === 'string' ? { expectedDate: text(item.expectedDate) } : {}),
       ...retainedVesselResponsibilities(item.vesselResponsibilities),
       reportSource: oneOf(item.reportSource, internalControlReportSources, '日常'),
       description: text(item.description),
@@ -554,6 +555,8 @@ export function normalizeAppData(value: unknown): AppData | null {
       }
       task.internalControlCaseId = linked.id;
       const synced = taskToInternalControlCase(task, linked, { actorId: task.updatedBy || task.createdBy, at: task.updatedAt || timestamp });
+      // Old cases gain the shared DL only on an explicit edit, not a read.
+      if (linked.expectedDate === undefined) delete synced.expectedDate;
       Object.assign(linked, synced);
     }
     claimedInternalControlCaseIds.add(linked.id);
