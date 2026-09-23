@@ -19,7 +19,7 @@ try {
   const emptyOverview=overview([]);
   assert.equal((emptyOverview.match(/<dt>/g)||[]).length,11);
   assert.equal((emptyOverview.match(/>TBA<\/dd>/g)||[]).length,2);
-  assert.match(emptyOverview,/<dt>Next Port &amp; Dock Name<\/dt>/);
+  assert.deepEqual([...emptyOverview.matchAll(/<dt>(.*?)<\/dt>/g)].map(match=>match[1]),['Voy No.','上一港','目前位置','目前航行狀態','目前船舶狀態','Next Port','ETA','ETB','ETD','後續港','後續港 ETA']);
   assert.match(emptyOverview,/<dt>後續港<\/dt><dd>TBA<\/dd>/);
   assert.match(emptyOverview,/<dt>後續港 ETA<\/dt><dd>TBA<\/dd>/);
   assert.match(overview(null),/基本資訊摘要尚未部署/);assert.doesNotMatch(overview(null),/TBA|<dl/);

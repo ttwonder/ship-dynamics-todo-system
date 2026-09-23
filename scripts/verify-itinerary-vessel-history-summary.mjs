@@ -53,12 +53,12 @@ try{
   await check('display: exact first-row fields, per-event LT offsets, separate second-row labels and TBA',async()=>{
     const {itineraryVesselHistorySummary:summary}=await qa.loadModule('/src/itineraryVesselHistorySummary.ts');
     const fields=summary(page.items[0].overviewRows);
-    assert.deepEqual(fields.map(f=>f.label),['上一港','目前位置','目前航行狀態','目前船舶狀態','Voy No.','Next Port & Dock Name','ETA','ETB','ETD','後續港','後續港 ETA']);
-    assert.deepEqual(fields.slice(0,9).map(f=>f.value),['QA FORMAL BUSAN','QA SAVED ANCHORAGE','拋錨','drydock/repair、bunker','HIST-001','QA FORMAL KAOHSIUNG','2026-08-30 08:00 LT (UTC+8)','2026-08-30 10:00 LT (UTC+9)','2026-08-30 20:30 LT (UTC-3:30)']);
+    assert.deepEqual(fields.map(f=>f.label),['Voy No.','上一港','目前位置','目前航行狀態','目前船舶狀態','Next Port','ETA','ETB','ETD','後續港','後續港 ETA']);
+    assert.deepEqual(fields.slice(0,9).map(f=>f.value),['HIST-001','QA FORMAL BUSAN','QA SAVED ANCHORAGE','拋錨','drydock/repair、bunker','QA FORMAL KAOHSIUNG','2026-08-30 08:00 LT (UTC+8)','2026-08-30 10:00 LT (UTC+9)','2026-08-30 20:30 LT (UTC-3:30)']);
     assert.match(fields[9].value,/^QA SUBSEQUENT PORT/);
     assert.equal(fields[10].value,'2026-09-15 05:30 LT (UTC+5:30)');
     const single=summary(page.items[1].overviewRows);
-    assert.deepEqual(single.slice(1,4).map(f=>f.value),['—','—','—']);
+    assert.deepEqual(single.slice(2,5).map(f=>f.value),['—','—','—']);
     assert.deepEqual(single.slice(-2).map(f=>f.value),['TBA','TBA']);
     assert.deepEqual(summary([]).map(f=>f.value),[...Array(9).fill('—'),'TBA','TBA']);
     const noEta=structuredClone(page.items[0].overviewRows);noEta[1].etaUtc=null;

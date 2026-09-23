@@ -410,12 +410,10 @@
 /* Frozen per-vessel card metadata; do not restyle fleet/morning history. */
 .itinerary-vessel-history-panel .itinerary-vessel-history-report{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px}
 .itinerary-vessel-history-summary{grid-column:1/-1;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px 12px;margin:0;font-size:12px;line-height:1.5}
-.itinerary-vessel-history-summary>div{grid-column:span 3;min-width:0;overflow-wrap:anywhere}
+.itinerary-vessel-history-summary>div{grid-column:span 2;min-width:0;overflow-wrap:anywhere}
 .itinerary-vessel-history-summary dt{display:inline;color:var(--muted);font-size:11px;margin-right:5px}
 .itinerary-vessel-history-summary dd{display:inline;margin:0;font-weight:600}
-.itinerary-vessel-history-summary .history-field-voyage,.itinerary-vessel-history-summary .history-field-eta,.itinerary-vessel-history-summary .history-field-etb,.itinerary-vessel-history-summary .history-field-etd{grid-column:span 2}
-.itinerary-vessel-history-summary .history-field-port{grid-column:span 4}
-.itinerary-vessel-history-summary .history-field-subsequentPort,.itinerary-vessel-history-summary .history-field-subsequentEta{border-top:1px dashed var(--line);padding-top:4px}
+.itinerary-vessel-history-summary .history-field-subsequentPort,.itinerary-vessel-history-summary .history-field-subsequentEta{grid-column:span 3;border-top:1px dashed var(--line);padding-top:4px}
 .itinerary-vessel-history-overview-unavailable{grid-column:1/-1}
 @media(max-width:600px){.itinerary-vessel-history-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 10px}.itinerary-vessel-history-summary>div,.itinerary-vessel-history-summary .history-field-voyage{grid-column:span 1}.itinerary-vessel-history-summary .history-field-port,.itinerary-vessel-history-summary .history-field-eta,.itinerary-vessel-history-summary .history-field-etb,.itinerary-vessel-history-summary .history-field-etd,.itinerary-vessel-history-summary .history-field-subsequentPort,.itinerary-vessel-history-summary .history-field-subsequentEta{grid-column:span 2}}
 

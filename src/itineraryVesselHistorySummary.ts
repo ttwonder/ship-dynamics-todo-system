@@ -52,12 +52,12 @@ function time(row: ItineraryHistoryOverviewRow | undefined, field: 'eta' | 'etb'
 export function itineraryVesselHistorySummary(rows: readonly ItineraryHistoryOverviewRow[]) {
   const [first, second] = rows;
   return [
+    { key:'voyage', label:'Voy No.', value:text(first?.voyageNumber) },
     { key:'previousPort', label:'上一港', value:text(first?.previousPortName) },
     { key:'location', label:'目前位置', value:text(first?.currentVesselState?.location) },
     { key:'navigationStatus', label:'目前航行狀態', value:text(first?.currentVesselState?.navigationStatus) },
     { key:'shipStatus', label:'目前船舶狀態', value:text(first?.currentVesselState?.statusList?.map(shipStatusLabel).join('、')) },
-    { key:'voyage', label:'Voy No.', value:text(first?.voyageNumber) },
-    { key:'port', label:'Next Port & Dock Name', value:text(first?.portDockName) },
+    { key:'port', label:'Next Port', value:text(first?.portDockName) },
     { key:'eta', label:'ETA', value:time(first,'eta') },
     { key:'etb', label:'ETB', value:time(first,'etb') },
     { key:'etd', label:'ETD', value:time(first,'etd') },

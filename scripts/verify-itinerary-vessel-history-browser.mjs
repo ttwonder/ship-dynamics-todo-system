@@ -35,8 +35,16 @@ const count=()=>evaluate(`${panel}?.querySelectorAll('.saved-report').length`);
 const ready=async(n)=>until(async()=>await count()===n&&await evaluate(`!${panel}.querySelector('.daily-report-history-error')&&!${panel}.querySelector('[aria-busy=true]')`),'history rows '+n);
 const screen=async name=>{await evaluate("document.fonts.ready.then(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))");fs.writeFileSync(path.join(output,name+'.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png'})).data,'base64'));};
 const summaryGeometry=async()=>{
- const g=await evaluate(`(()=>{const card=${panel}.querySelector('.saved-report');const summary=card.querySelector('.itinerary-vessel-history-summary');const cells=[...summary.children];return{width:innerWidth,scrollWidth:document.documentElement.scrollWidth,cardHeight:card.getBoundingClientRect().height,summaryTop:summary.getBoundingClientRect().top,headerBottom:Math.max(...[card.firstElementChild,card.querySelector('button')].map(n=>n.getBoundingClientRect().bottom)),fields:cells.map(n=>{const r=n.getBoundingClientRect();return{width:r.width,height:r.height,overflow:n.scrollWidth>n.clientWidth+1,visible:getComputedStyle(n).display!=='none'&&getComputedStyle(n).visibility!=='hidden'};})};})()`);
+ const g=await evaluate(`(()=>{const card=${panel}.querySelector('.saved-report');const summary=card.querySelector('.itinerary-vessel-history-summary');const cells=[...summary.children];return{width:innerWidth,scrollWidth:document.documentElement.scrollWidth,cardHeight:card.getBoundingClientRect().height,summaryTop:summary.getBoundingClientRect().top,headerBottom:Math.max(...[card.firstElementChild,card.querySelector('button')].map(n=>n.getBoundingClientRect().bottom)),fields:cells.map(n=>{const r=n.getBoundingClientRect();return{key:n.className.replace('history-field-',''),left:r.left,top:r.top,width:r.width,height:r.height,overflow:n.scrollWidth>n.clientWidth+1,visible:getComputedStyle(n).display!=='none'&&getComputedStyle(n).visibility!=='hidden'};})};})()`);
  evidence.geometry.push(g);assert.ok(g.scrollWidth<=g.width);assert.ok(g.summaryTop>=g.headerBottom);assert.equal(g.fields.length,11);assert.ok(g.fields.every(f=>f.visible&&f.width>0&&f.height>0&&!f.overflow));
+ if(g.width>600){
+  const rows=[];
+  for(const field of [...g.fields].sort((a,b)=>a.top-b.top||a.left-b.left)){
+   let row=rows.find(item=>Math.abs(item.top-field.top)<1);
+   if(!row){row={top:field.top,keys:[]};rows.push(row);}row.keys.push(field.key);
+  }
+  assert.deepEqual(rows.map(row=>row.keys),[['voyage','previousPort','location'],['navigationStatus','shipStatus','port'],['eta','etb','etd'],['subsequentPort','subsequentEta']],'desktop basic fields occupy exactly two rows in the requested order; lower rows stay separate');
+ }
 };
 const check=async(name,fn)=>{await fn();evidence.cases.push({name,status:'PASS'});save();};
 const release=async()=>{assert.ok(held);const target=held;held=null;await call('Fetch.continueResponse',{requestId:target.requestId});await wait(180);};
@@ -83,14 +91,17 @@ try{
   assert.match(rowText,/2026\/09\/04 09:00/,'the actual saved timestamp must remain');
   assert.match(rowText,/手動保存快照/,'manual record labels remain unchanged');
  });
+ await check('desktop-two-row-basic-fields-and-unchanged-lower-rows',async()=>{
+  await evaluate(`${panel}.scrollIntoView({block:'start'});window.scrollBy(0,-100)`);await screen('desktop-history');await summaryGeometry();
+ });
  await check('frozen-card-first-row-and-separate-second-row-without-detail-download',async()=>{
   const cards=await evaluate(`[...${panel}.querySelectorAll('.saved-report')].slice(0,3).map(card=>[...card.querySelectorAll('.itinerary-vessel-history-summary>div')].map(field=>({label:field.querySelector('dt').textContent,value:field.querySelector('dd').textContent})))`);
   assert.equal(cards[0].length,11,'each daily card must render the requested frozen summary fields');
-  assert.deepEqual(cards[0].map(f=>f.label),['上一港','目前位置','目前航行狀態','目前船舶狀態','Voy No.','Next Port & Dock Name','ETA','ETB','ETD','後續港','後續港 ETA']);
-  assert.deepEqual(cards[0].slice(0,9).map(f=>f.value),['QA FORMAL BUSAN','QA SAVED ANCHORAGE','拋錨','drydock/repair、bunker','HIST-001','QA FORMAL KAOHSIUNG','2026-08-30 08:00 LT (UTC+8)','2026-08-30 10:00 LT (UTC+9)','2026-08-30 20:30 LT (UTC-3:30)']);
+  assert.deepEqual(cards[0].map(f=>f.label),['Voy No.','上一港','目前位置','目前航行狀態','目前船舶狀態','Next Port','ETA','ETB','ETD','後續港','後續港 ETA']);
+  assert.deepEqual(cards[0].slice(0,9).map(f=>f.value),['HIST-001','QA FORMAL BUSAN','QA SAVED ANCHORAGE','拋錨','drydock/repair、bunker','QA FORMAL KAOHSIUNG','2026-08-30 08:00 LT (UTC+8)','2026-08-30 10:00 LT (UTC+9)','2026-08-30 20:30 LT (UTC-3:30)']);
   assert.match(cards[0][9].value,/^QA SUBSEQUENT PORT/);assert.equal(cards[0][10].value,'2026-09-15 05:30 LT (UTC+5:30)');
   assert.deepEqual(cards[1].slice(-2).map(f=>f.value),['TBA','TBA']);
-  assert.deepEqual(cards[1].slice(1,4).map(f=>f.value),['—','—','—']);
+  assert.deepEqual(cards[1].slice(2,5).map(f=>f.value),['—','—','—']);
   assert.doesNotMatch(await evaluate(`${panel}.querySelector('.daily-report-history-list').innerText`),/WRONG SECOND|QA THIRD|LIVE PORT|ALTERNATIVE/);
   assert.equal(qa.metrics.slice(start).filter(m=>m.rpc===vesselHistoryRpc&&m.vesselId==='qa-v1').length,1,'one compact page for the selected vessel, no per-card detail requests');
  });
@@ -106,7 +117,7 @@ try{
   await click('檢視行程',panel);await until(()=>evaluate("Boolean(document.querySelector('.itinerary-daily-report-modal'))"),'empty vessel preview');assert.doesNotMatch(await evaluate("document.querySelector('.itinerary-daily-report-modal').innerText"),/QA FORMAL KAOHSIUNG|QA RENAMED ONE/);await click('關閉');
  });
  await check('desktop-scoped-frozen-preview-and-real-pdf',async()=>{
-  await selectVessel('qa-v1');await ready(32);await evaluate(`${panel}.scrollIntoView({block:'start'});window.scrollBy(0,-100)`);await screen('desktop-history');await summaryGeometry();await click('檢視行程',panel);
+  await selectVessel('qa-v1');await ready(32);await click('檢視行程',panel);
   await until(()=>evaluate("document.querySelector('.itinerary-daily-report-modal')?.innerText.includes('QA FORMAL KAOHSIUNG')"),'frozen scoped detail');
   const rendered=await evaluate("document.querySelector('.itinerary-daily-report-modal').innerText");assert.match(rendered,/QA RENAMED ONE｜單船歷程快照/);assert.doesNotMatch(rendered,/qa-v2|LIVE PORT|ALTERNATIVE/);await screen('desktop-preview');
   await evaluate("window.__qaOldTitle=document.title;window.print=()=>{window.__qaPrintTitle=document.title;}");await click('導出／列印 PDF');await until(()=>evaluate("typeof window.__qaPrintTitle==='string'"),'print callback after layout delay');
