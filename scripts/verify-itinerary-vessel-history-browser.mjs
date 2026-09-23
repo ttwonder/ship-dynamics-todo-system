@@ -74,6 +74,10 @@ try{
   assert.match(await text(),/請選擇船舶，查看每天的保存歷史/);await selectVessel('qa-v1');await ready(32);
   assert.equal(await evaluate(`${panel}.querySelectorAll('.itinerary-report-date-group').length`),30);
   assert.equal(await evaluate(`${panel}.querySelector('.itinerary-report-date-group').querySelectorAll('.saved-report').length`),3);
+  const rowText=await evaluate(`${panel}.querySelector('.daily-report-history-list').innerText`);
+  assert.doesNotMatch(rowText,/09:00 自動快照/,'single-vessel entries must omit the redundant scheduled heading');
+  assert.match(rowText,/2026\/09\/04 09:00/,'the actual saved timestamp must remain');
+  assert.match(rowText,/手動保存快照/,'manual record labels remain unchanged');
  });
  await check('pagination-and-native-date-location',async()=>{
   await click('下一頁 →',panel);await ready(5);assert.match(await evaluate(`${panel}.innerText`),/第 2／2 頁/);
