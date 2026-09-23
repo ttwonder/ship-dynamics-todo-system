@@ -21,3 +21,14 @@ export function pdfVesselDisplayName(vessel?: VesselNameSource | null): string {
     ? `${chineseName} ${displayName}`
     : displayName;
 }
+
+/** Shared selector convention: Chinese + English, or English alone when Chinese is absent. */
+export function vesselSelectionDisplayName(vessel?: VesselNameSource | null): string {
+  return pdfVesselDisplayName(vessel);
+}
+
+/** Name-only presentation; never modify the stored snapshot or filter out historical IDs. */
+export function vesselHistoryDisplayName(vesselId: string, savedName: string, names: readonly VesselNameSource[]): string {
+  const vessel = names.find(item => item.id === vesselId);
+  return vesselSelectionDisplayName(vessel || { id:vesselId, name:savedName });
+}

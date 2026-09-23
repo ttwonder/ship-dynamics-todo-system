@@ -8,6 +8,7 @@ try {
   const history=await vite.ssrLoadModule('/src/ReportDailyHistories.tsx');
   const Preview=(await vite.ssrLoadModule('/src/ItineraryDailyReportPreview.tsx')).default;
   const pdf=await vite.ssrLoadModule('/src/itineraryDailyReportPdf.ts');
+
   const page={items:[],page:1,pageSize:30,pageCount:1,total:0,dateTotal:0,reportTotal:0,setToken:'d41d8cd98f00b204e9800998ecf8427e'};
   const markup=renderToStaticMarkup(React.createElement(history.ItineraryDailyHistoryPanel,{pageData:page,loading:false,errorText:'',openingReportId:'',onRefresh(){},onPage(){},onLocate:async()=>false,onOpen(){},onShowVessel(){}}));
   assert.match(markup,/>單船歷程<\/button>/,'existing fleet panel needs the real entry button');
@@ -28,6 +29,31 @@ try {
   const preview=renderToStaticMarkup(React.createElement(Preview,{report,singleVesselName:'QA SHIP',close(){}}));
   assert.match(preview,/單船歷程快照/);assert.match(preview,/QA SHIP/);assert.match(preview,/無正式 Itinerary 內容/);
   assert.match(pdf.itineraryDailyReportPdfTitle(report.businessDate,report.generatedAt,'scheduled','1','QA SHIP'),/QA SHIP/);
+  const beforeReport=JSON.stringify(report);
+  const names=[{id:'v1',name:'測試甲船',fullName:'FPMC QA ALPHA'}];
+  const bilingualPreview=renderToStaticMarkup(React.createElement(Preview,{report,singleVesselName:'QA SHIP',vesselNames:names,close(){}}));
+  assert.match(bilingualPreview,/<h1>測試甲船 FPMC QA ALPHA｜單船歷程快照<\/h1>/,'history preview title uses the bilingual name');
+  assert.match(bilingualPreview,/<h2>測試甲船 FPMC QA ALPHA<\/h2>/,'printed vessel header uses the same bilingual name');
+  const fleetPreview=renderToStaticMarkup(React.createElement(Preview,{report,vesselNames:names,close(){}}));
+  assert.match(fleetPreview,/<h2>測試甲船 FPMC QA ALPHA<\/h2>/,'fleet historical preview uses the same rule');
+  const englishPreview=renderToStaticMarkup(React.createElement(Preview,{report,singleVesselName:'QA SHIP',vesselNames:[{id:'v1',name:'F35',shortName:'F35',fullName:'FPMC 35'}],close(){}}));
+  assert.match(englishPreview,/<h1>FPMC 35｜單船歷程快照<\/h1>/);assert.match(englishPreview,/<h2>FPMC 35<\/h2>/);assert.doesNotMatch(englishPreview,/F35 FPMC/);
+  assert.equal(JSON.stringify(report),beforeReport,'formatting must not rewrite the saved report');
+  const {vesselSelectionDisplayName,vesselHistoryDisplayName}=await vite.ssrLoadModule('/src/vesselDisplay.ts');
+  for(const [vessel,expected] of [
+    [{name:' 測試甲船 ',fullName:' FPMC QA ALPHA '},'測試甲船 FPMC QA ALPHA'],
+    [{name:'',fullName:'FPMC QA BETA'},'FPMC QA BETA'],
+    [{name:'   ',shortName:'F35',fullName:'FPMC 35'},'FPMC 35'],
+    [{name:'F35',shortName:'F35',fullName:'FPMC 35'},'FPMC 35'],
+    [{name:'FPMC 35',fullName:'FPMC 35'},'FPMC 35'],
+    [{name:'測試丙船',fullName:''},'測試丙船'],
+    [{name:'測試丙船',fullName:'測試丙船'},'測試丙船'],
+    [{name:'QA RETIRED ONLY'},'QA RETIRED ONLY'],
+  ]){
+    const before=JSON.stringify(vessel);assert.equal(vesselSelectionDisplayName(vessel),expected);assert.equal(JSON.stringify(vessel),before);
+  }
+  assert.equal(vesselHistoryDisplayName('retired','QA RETIRED ONLY',names),'QA RETIRED ONLY');
+  assert.equal(vesselHistoryDisplayName('v1','QA SHIP',names),'測試甲船 FPMC QA ALPHA');
   console.log('PASS UI contract: entry order, selector, return, scoped preview and named export');
 } catch(error) {failure=error;console.error(error.message);}finally{await vite.close();}
 if(failure)process.exitCode=1;

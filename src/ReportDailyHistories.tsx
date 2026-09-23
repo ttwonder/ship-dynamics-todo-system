@@ -20,6 +20,7 @@ import {
 } from './itineraryDailyReports';
 import ItineraryDailyReportPreview from './ItineraryDailyReportPreview';
 import { itineraryVesselHistorySummary, type ItineraryHistoryOverviewRow } from './itineraryVesselHistorySummary';
+import { vesselHistoryDisplayName, type VesselNameSource } from './vesselDisplay';
 
 function businessDateLabel(value: string): string {
   const [year, month, day] = value.split('-').map(Number);
@@ -124,8 +125,8 @@ export function ItineraryVesselHistoryOverview({ rows }: { rows:ItineraryHistory
   </dl>;
 }
 
-export function ItineraryVesselHistoryPanel({ actorUserId, refreshToken = 0, onBack }: {
-  actorUserId:string; refreshToken?:number; onBack:()=>void;
+export function ItineraryVesselHistoryPanel({ actorUserId, refreshToken = 0, onBack, vesselNames = [] }: {
+  actorUserId:string; refreshToken?:number; onBack:()=>void; vesselNames?:readonly VesselNameSource[];
 }) {
   const { identity, capture } = useItineraryDailyReportContext(actorUserId);
   const [vessels, setVessels] = useState<ItineraryHistoryVessel[]>([]);
@@ -191,7 +192,7 @@ export function ItineraryVesselHistoryPanel({ actorUserId, refreshToken = 0, onB
   return <>
     <div className="panel daily-report-history-panel itinerary-daily-history-panel itinerary-vessel-history-panel">
       <div className="daily-report-history-heading"><div><h2>每日 Itinerary 記錄</h2><small>單船歷程｜09:00 自動快照＋手動快照｜每頁最多 30 天</small></div><div className="itinerary-history-actions"><button className="btn small primary" onClick={onBack}>返回全船記錄</button><button className="btn small ghost" disabled={loading || catalogueLoading} onClick={() => { openGeneration.current += 1; setOpeningReportId(''); setPreview(null); setRefreshCount(value => value + 1); }}>↻ 刷新</button></div></div>
-      <div className="itinerary-vessel-history-filter"><label>船舶<select aria-label="單船歷程船舶" value={query.vesselId} disabled={catalogueLoading} onChange={event => { setDate(''); changeQuery({ vesselId:event.target.value, page:1, date:null }); }}><option value="">{catalogueLoading ? '讀取船舶中…' : '請選擇船舶'}</option>{vessels.map(vessel => <option key={vessel.vesselId} value={vessel.vesselId}>{vessel.vesselName}</option>)}</select></label>
+      <div className="itinerary-vessel-history-filter"><label>船舶<select aria-label="單船歷程船舶" value={query.vesselId} disabled={catalogueLoading} onChange={event => { setDate(''); changeQuery({ vesselId:event.target.value, page:1, date:null }); }}><option value="">{catalogueLoading ? '讀取船舶中…' : '請選擇船舶'}</option>{vessels.map(vessel => <option key={vessel.vesselId} value={vessel.vesselId}>{vesselHistoryDisplayName(vessel.vesselId, vessel.vesselName, vesselNames)}</option>)}</select></label>
         <div className="daily-report-date-locator"><input type="date" aria-label="單船歷程日期" value={date} disabled={!query.vesselId || loading} onChange={event => { setDate(event.target.value); setNotice(''); }}/><button className="btn small ghost" disabled={!query.vesselId || loading} onClick={() => date ? changeQuery({ ...query, date }) : setNotice('請先選擇日期')}>定位日期</button></div>
       </div>
       {notice && <div className="itinerary-vessel-history-notice" role="status">{notice}</div>}
@@ -199,14 +200,14 @@ export function ItineraryVesselHistoryPanel({ actorUserId, refreshToken = 0, onB
       {groups.length ? <div className="daily-report-history-list itinerary-report-date-groups" aria-busy={loading}>{groups.map(group => <section className="itinerary-report-date-group" key={group.date}>
         <div className="itinerary-report-date-heading"><b>{businessDateLabel(group.date)} Itinerary</b><small>{group.reports.length} 份快照</small></div>
         {group.reports.map(report => <div className="saved-report itinerary-vessel-history-report" key={report.reportId}>
-          <div>{report.generatedBy === 'manual' && <b>手動保存快照</b>}<small>{formatTaipeiDateTime(report.generatedAt, false)}｜{report.vesselName}｜{report.rowCount} 列｜Rev.{report.sourceMaxRevision}</small></div>
+          <div>{report.generatedBy === 'manual' && <b>手動保存快照</b>}<small>{formatTaipeiDateTime(report.generatedAt, false)}｜{vesselHistoryDisplayName(query.vesselId, report.vesselName, vesselNames)}｜{report.rowCount} 列｜Rev.{report.sourceMaxRevision}</small></div>
           <button className="btn small ghost" disabled={loading || Boolean(openingReportId)} onClick={() => void open(report)}>{openingReportId === report.reportId ? '載入中…' : '檢視行程'}</button>
           <ItineraryVesselHistoryOverview rows={report.overviewRows}/>
         </div>)}
       </section>)}</div> : !(catalogueError || errorText) && <div className="empty-state compact">{loading || catalogueLoading ? '正在讀取單船歷程…' : !query.vesselId ? vessels.length ? '請選擇船舶，查看每天的保存歷史。' : '尚無每日 Itinerary 記錄' : '這艘船尚無保存記錄'}</div>}
       {pageData && <HistoryPager page={pageData.page} pageCount={pageData.pageCount} pageStart={(pageData.page - 1) * pageData.pageSize} pageSize={pageData.pageSize} total={pageData.dateTotal} onPage={page => changeQuery({ ...query, page, date:null })}/>}
     </div>
-    {preview && <ItineraryDailyReportPreview report={preview} singleVesselName={preview.snapshot.vessels[0].vesselName} close={() => setPreview(null)}/>}
+    {preview && <ItineraryDailyReportPreview report={preview} vesselNames={vesselNames} singleVesselName={preview.snapshot.vessels[0].vesselName} close={() => setPreview(null)}/>}
   </>;
 }
 
@@ -215,11 +216,12 @@ const EMPTY_ITINERARY_PAGE: ItineraryDailyReportPage = {
   setToken:'d41d8cd98f00b204e9800998ecf8427e',
 };
 
-export default function ReportDailyHistories({ actorUserId, morningReports, onOpenMorning, refreshToken = 0 }: {
+export default function ReportDailyHistories({ actorUserId, morningReports, onOpenMorning, refreshToken = 0, vesselNames = [] }: {
   actorUserId:string;
   morningReports:AgendaReport[];
   onOpenMorning:(report:AgendaReport)=>void;
   refreshToken?:number;
+  vesselNames?:readonly VesselNameSource[];
 }) {
   const [pageData, setPageData] = useState<ItineraryDailyReportPage>(EMPTY_ITINERARY_PAGE);
   const [loading, setLoading] = useState(true);
@@ -309,9 +311,9 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
 
   return <>
     <div className="grid cols-2 report-daily-history-grid">
-      {singleVessel ? <ItineraryVesselHistoryPanel key={identity} actorUserId={actorUserId} refreshToken={refreshToken} onBack={() => changeView(false)}/> : <ItineraryDailyHistoryPanel pageData={pageData} loading={loading} errorText={errorText} openingReportId={openingReportId} onRefresh={() => void refresh(pageData.page)} onPage={page => void refresh(page)} onLocate={locate} onOpen={report => void open(report)} onShowVessel={() => changeView(true)}/>}
+      {singleVessel ? <ItineraryVesselHistoryPanel key={identity} actorUserId={actorUserId} refreshToken={refreshToken} vesselNames={vesselNames} onBack={() => changeView(false)}/> : <ItineraryDailyHistoryPanel pageData={pageData} loading={loading} errorText={errorText} openingReportId={openingReportId} onRefresh={() => void refresh(pageData.page)} onPage={page => void refresh(page)} onLocate={locate} onOpen={report => void open(report)} onShowVessel={() => changeView(true)}/>}
       <MorningDailyHistoryPanel reports={morningReports} onOpen={onOpenMorning}/>
     </div>
-    {preview && <ItineraryDailyReportPreview report={preview} close={() => setPreview(null)}/>}
+    {preview && <ItineraryDailyReportPreview report={preview} vesselNames={vesselNames} close={() => setPreview(null)}/>}
   </>;
 }

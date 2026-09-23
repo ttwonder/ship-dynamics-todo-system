@@ -6,11 +6,13 @@ import type { ItineraryDailyReport, ItineraryDailyReportVesselSnapshot } from '.
 import { formatItineraryUtcOffset, instantToWallTime } from './itinerary/itineraryTime';
 import { formatItineraryOperation, resolveItineraryTimeZone, type ItineraryRow } from './itinerary/itineraryTypes';
 import { itineraryExportSummary } from './itinerary/itineraryExportSummary';
+import { vesselHistoryDisplayName, type VesselNameSource } from './vesselDisplay';
 
 interface Props {
   report: ItineraryDailyReport;
   close: () => void;
   singleVesselName?: string;
+  vesselNames?: readonly VesselNameSource[];
 }
 
 const text = (value: unknown, fallback = '—') => {
@@ -56,7 +58,7 @@ function calculationNotes(row: ItineraryRow): string[] {
   return [text(row.notesText, ''), movement, operation].filter(Boolean);
 }
 
-function VesselItinerary({ vessel }: { vessel: ItineraryDailyReportVesselSnapshot }) {
+function VesselItinerary({ vessel, displayName }: { vessel: ItineraryDailyReportVesselSnapshot; displayName:string }) {
   const rows = useMemo(() => [...vessel.rows].sort((left, right) =>
     Number(left.sortOrder || 0) - Number(right.sortOrder || 0)
       || text(left.rowId, '').localeCompare(text(right.rowId, '')),
@@ -64,7 +66,7 @@ function VesselItinerary({ vessel }: { vessel: ItineraryDailyReportVesselSnapsho
   const summary = itineraryExportSummary(rows);
   return <section className="itinerary-daily-report-vessel">
     <header>
-      <div><h2>{vessel.vesselName}</h2><span className="itinerary-daily-report-vessel-summary">{summary.map(field => <span key={field.key}>{field.label}：{field.value}</span>)}</span></div>
+      <div><h2>{displayName}</h2><span className="itinerary-daily-report-vessel-summary">{summary.map(field => <span key={field.key}>{field.label}：{field.value}</span>)}</span></div>
       <p>正式 Rev.{vessel.revision || 0}｜更新：{vessel.updatedAt ? formatTaipeiDateTime(vessel.updatedAt, false) : '尚無正式保存'}</p>
     </header>
     {rows.length ? <table className="itinerary-daily-report-table">
@@ -83,12 +85,16 @@ function VesselItinerary({ vessel }: { vessel: ItineraryDailyReportVesselSnapsho
   </section>;
 }
 
-export default function ItineraryDailyReportPreview({ report, close, singleVesselName }: Props) {
+export default function ItineraryDailyReportPreview({ report, close, singleVesselName, vesselNames = [] }: Props) {
   const shellRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef(close);
   closeRef.current = close;
   const generationLabel = report.generatedBy === 'manual' ? '手動保存' : '09:00 自動';
+  const firstVessel = report.snapshot.vessels[0];
+  const displaySingleVesselName = singleVesselName && firstVessel
+    ? vesselHistoryDisplayName(firstVessel.vesselId, singleVesselName, vesselNames)
+    : singleVesselName;
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -118,16 +124,16 @@ export default function ItineraryDailyReportPreview({ report, close, singleVesse
     <div ref={shellRef} tabIndex={-1} className="report-preview-shell itinerary-daily-report-shell">
       <div className="report-preview-actions no-print">
         <h2 id="itinerary-daily-report-title">{singleVesselName ? '單船歷程快照' : '每日 Itinerary PDF 預覽'}</h2><span>A4 橫向</span><div className="spacer"/>
-        <button className="btn primary" onClick={() => printItineraryDailyReportPdf(report.businessDate, report.generatedAt, report.generatedBy, report.reportId, singleVesselName)}>導出／列印 PDF</button>
+        <button className="btn primary" onClick={() => printItineraryDailyReportPdf(report.businessDate, report.generatedAt, report.generatedBy, report.reportId, displaySingleVesselName)}>導出／列印 PDF</button>
         <button ref={closeButtonRef} className="btn ghost" onClick={close}>關閉</button>
       </div>
       <article className="itinerary-daily-report-paper">
         <header className="itinerary-daily-report-heading">
-          <div><p>FLEET OPERATIONS</p><h1>{singleVesselName ? `${singleVesselName}｜單船歷程快照` : '每日正式 Itinerary 匯整'}</h1></div>
+          <div><p>FLEET OPERATIONS</p><h1>{singleVesselName ? `${displaySingleVesselName}｜單船歷程快照` : '每日正式 Itinerary 匯整'}</h1></div>
           <dl><div><dt>報告日期</dt><dd>{businessDateLabel(report.businessDate)}</dd></div><div><dt>產生時間</dt><dd>{formatTaipeiDateTime(report.generatedAt, false)}（台北）</dd></div><div><dt>產生方式</dt><dd>{generationLabel}</dd></div></dl>
         </header>
         <div className="itinerary-daily-report-kpis"><span>船舶 <b>{report.vesselCount}</b> 艘</span><span>正式行程 <b>{report.rowCount}</b> 列</span><span>來源最高版本 <b>Rev.{report.sourceMaxRevision}</b></span><span>時區 <b>Asia/Taipei</b></span></div>
-        {report.snapshot.vessels.map(vessel => <VesselItinerary key={vessel.vesselId} vessel={vessel}/>)}
+        {report.snapshot.vessels.map(vessel => <VesselItinerary key={vessel.vesselId} vessel={vessel} displayName={vesselHistoryDisplayName(vessel.vesselId, vessel.vesselName, vesselNames)}/>)}
         <footer>{report.generatedBy === 'manual' ? '本報告由 Owner／管理員於上述時間手動建立' : '本報告於台北時間每日 09:00 自動凍結'}；{singleVesselName ? '僅顯示所選船舶當時的正式主 Itinerary' : '僅包含各船正式主 Itinerary'}，不包含備選方案。後續修改不會回寫本快照。</footer>
       </article>
     </div>

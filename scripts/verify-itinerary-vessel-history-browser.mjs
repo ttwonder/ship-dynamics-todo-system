@@ -14,7 +14,7 @@ fs.mkdirSync(evidenceRoot,{recursive:true});
 const output=fs.mkdtempSync(path.join(evidenceRoot,'ship-vessel-history-'));
 const profile=path.join(output,'chrome-profile');
 const evidence={label:'真實原始 App UI＋測試資料＋本機 PGlite；非正式 Supabase',status:'RUNNING',cases:[],errors:[],externalRequests:[],geometry:[],head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()};
-const files=['src/ReportDailyHistories.tsx','src/ItineraryDailyReportPreview.tsx','src/itineraryDailyReports.ts','src/itineraryDailyReportPdf.ts','src/styles.css','scripts/record-storage-local-qa.mjs','scripts/itinerary-vessel-history-fixture.mjs','scripts/verify-itinerary-vessel-history-browser.mjs','supabase/migrations/20260923160000_itinerary_vessel_history.sql','supabase/migrations/20260923170000_itinerary_vessel_history_summary.sql','src/itineraryVesselHistorySummary.ts'];
+const files=['src/App.tsx','src/vesselDisplay.ts','src/ReportDailyHistories.tsx','src/ItineraryDailyReportPreview.tsx','src/itineraryDailyReports.ts','src/itineraryDailyReportPdf.ts','src/styles.css','scripts/record-storage-local-qa.mjs','scripts/itinerary-vessel-history-fixture.mjs','scripts/verify-itinerary-vessel-history-browser.mjs','supabase/migrations/20260923160000_itinerary_vessel_history.sql','supabase/migrations/20260923170000_itinerary_vessel_history_summary.sql','src/itineraryVesselHistorySummary.ts'];
 evidence.inputs=Object.fromEntries(files.map(p=>[p,createHash('sha256').update(fs.readFileSync(p)).digest('hex')]));
 const save=()=>fs.writeFileSync(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2));
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
@@ -54,6 +54,15 @@ try{
  await installMorningOracle(qa.db);await qa.db.exec(fs.readFileSync(schedulerSql,'utf8'));
  for(const file of ['supabase/migrations/20260904161000_appdata_compact_ack_receipts.sql','supabase/migrations/20260817143000_data_management_storage.sql','supabase/migrations/20260818154500_data_management_prune_batch_limit.sql','supabase/normalized-legacy-cutover.sql','supabase/development/20260911_legacy_report_workspace_binding.sql','supabase/development/20260911_business_quiescence.sql','supabase/development/20260911_paused_record_legacy_transfer.sql','supabase/development/20260911_source_authority_publication.sql','supabase/development/20260912_browser_source_authority.sql'])await qa.db.exec(fs.readFileSync(file,'utf8'));
  await installVesselHistory(qa.db);await seedVesselHistory(qa,{overview:true});
+ // All displayed ship names use the bilingual roster; underlying saved reports stay frozen.
+ // name is required by normalizeData: an English-only ship keeps its English alias there.
+ for(const [id,names] of [['qa-v1',{name:'測試一號',shortName:'QA1',fullName:'FPMC QA ONE',isActive:false}],['qa-v2',{name:'QA2',shortName:'QA2',fullName:'FPMC QA TWO'}]]){
+  await qa.db.query("update ship_dynamics_records set value=value||$1::jsonb where workspace_key=$2 and collection='vessels' and entity_id=$3",[JSON.stringify(names),qa.workspace,id]);
+ }
+ // A historical-only ship has no current roster entry and must retain its original option.
+ const historical=(await qa.db.query('select report_id,snapshot from sd_itinerary_daily_reports order by report_id desc limit 1')).rows[0];
+ historical.snapshot.vessels.push({vesselId:'qa-retired',vesselName:'QA RETIRED ONLY',revision:0,updatedAt:null,rows:[]});historical.snapshot.vesselCount+=1;
+ await qa.db.query('update sd_itinerary_daily_reports set snapshot=$1::jsonb,vessel_count=$2 where report_id=$3',[JSON.stringify(historical.snapshot),historical.snapshot.vesselCount,historical.report_id]);
  assert.equal((await fetch(qa.origin+'/__qa/health')).status,200);
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0',`--explicitly-allowed-ports=${new URL(qa.origin).port}`,`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  await until(()=>fs.existsSync(path.join(profile,'DevToolsActivePort')),'Chrome ready');
@@ -82,7 +91,7 @@ try{
  await check('original-report-center-entry-and-neighbor-retention',async()=>{
   await click('報告中心');await until(()=>evaluate(`Boolean(${button('單船歷程')})`),'real fleet entry');
   await evaluate("void(window.__qaMorning=document.querySelector('.morning-daily-history-panel'))");await click('單船歷程');
-  await until(()=>evaluate("document.querySelector('[aria-label=單船歷程船舶]')?.options.length===3"),'SQL catalogue');assert.equal(await evaluate("window.__qaMorning===document.querySelector('.morning-daily-history-panel')"),true);
+  await until(()=>evaluate("document.querySelector('[aria-label=單船歷程船舶]')?.options.length===4"),'SQL catalogue');assert.equal(await evaluate("window.__qaMorning===document.querySelector('.morning-daily-history-panel')"),true);
   assert.match(await text(),/請選擇船舶，查看每天的保存歷史/);await selectVessel('qa-v1');await ready(32);
   assert.equal(await evaluate(`${panel}.querySelectorAll('.itinerary-report-date-group').length`),30);
   assert.equal(await evaluate(`${panel}.querySelector('.itinerary-report-date-group').querySelectorAll('.saved-report').length`),3);
@@ -90,6 +99,13 @@ try{
   assert.doesNotMatch(rowText,/09:00 自動快照/,'single-vessel entries must omit the redundant scheduled heading');
   assert.match(rowText,/2026\/09\/04 09:00/,'the actual saved timestamp must remain');
   assert.match(rowText,/手動保存快照/,'manual record labels remain unchanged');
+ });
+ await check('bilingual-selector-english-only-and-retained-history-with-stable-ids',async()=>{
+  const options=await evaluate("Object.fromEntries([...document.querySelector('[aria-label=單船歷程船舶]').options].filter(o=>o.value).map(o=>[o.value,o.textContent]))");
+  assert.deepEqual(options,{'qa-v1':'測試一號 FPMC QA ONE','qa-v2':'FPMC QA TWO','qa-retired':'QA RETIRED ONLY'},'Chinese + English; no Chinese means English only; inactive and historical-only ships remain selectable');
+  assert.equal(await evaluate("document.querySelector('[aria-label=單船歷程船舶]').value"),'qa-v1','labels must not change selection IDs');
+  const listText=await evaluate(`${panel}.querySelector('.daily-report-history-list').innerText`);
+  assert.match(listText,/測試一號 FPMC QA ONE/);assert.doesNotMatch(listText,/QA RENAMED ONE|FPMC QA TWO/,'history card names follow the same bilingual rule without selecting another ship');
  });
  await check('desktop-two-row-basic-fields-and-unchanged-lower-rows',async()=>{
   await evaluate(`${panel}.scrollIntoView({block:'start'});window.scrollBy(0,-100)`);await screen('desktop-history');await summaryGeometry();
@@ -114,14 +130,17 @@ try{
  await check('sparse-vessel-and-empty-formal-document',async()=>{
   await selectVessel('qa-v2');await ready(5);assert.match(await evaluate(`${panel}.innerText`),/共 3 天/);assert.doesNotMatch(await evaluate(`${panel}.querySelector('.daily-report-history-list').innerText`),/QA RENAMED ONE/);
   assert.deepEqual(await evaluate(`[...${panel}.querySelector('.itinerary-vessel-history-summary').querySelectorAll('dd')].map(n=>n.textContent)`),[...Array(9).fill('—'),'TBA','TBA']);
-  await click('檢視行程',panel);await until(()=>evaluate("Boolean(document.querySelector('.itinerary-daily-report-modal'))"),'empty vessel preview');assert.doesNotMatch(await evaluate("document.querySelector('.itinerary-daily-report-modal').innerText"),/QA FORMAL KAOHSIUNG|QA RENAMED ONE/);await click('關閉');
+  assert.match(await evaluate(`${panel}.querySelector('.daily-report-history-list').innerText`),/FPMC QA TWO/);
+  await click('檢視行程',panel);await until(()=>evaluate("Boolean(document.querySelector('.itinerary-daily-report-modal'))"),'empty vessel preview');const emptyPreview=await evaluate("document.querySelector('.itinerary-daily-report-modal').innerText");assert.match(emptyPreview,/FPMC QA TWO｜單船歷程快照/);assert.doesNotMatch(emptyPreview,/QA FORMAL KAOHSIUNG|QA RENAMED ONE|測試一號|FPMC QA ONE/);await click('關閉');
+  await selectVessel('qa-retired');await ready(1);assert.match(await evaluate(`${panel}.querySelector('.daily-report-history-list').innerText`),/QA RETIRED ONLY/);
+  await click('檢視行程',panel);await until(()=>evaluate("Boolean(document.querySelector('.itinerary-daily-report-modal'))"),'retained historical-only preview');assert.match(await evaluate("document.querySelector('.itinerary-daily-report-modal').innerText"),/QA RETIRED ONLY｜單船歷程快照/);await click('關閉');
  });
  await check('desktop-scoped-frozen-preview-and-real-pdf',async()=>{
   await selectVessel('qa-v1');await ready(32);await click('檢視行程',panel);
   await until(()=>evaluate("document.querySelector('.itinerary-daily-report-modal')?.innerText.includes('QA FORMAL KAOHSIUNG')"),'frozen scoped detail');
-  const rendered=await evaluate("document.querySelector('.itinerary-daily-report-modal').innerText");assert.match(rendered,/QA RENAMED ONE｜單船歷程快照/);assert.doesNotMatch(rendered,/qa-v2|LIVE PORT|ALTERNATIVE/);await screen('desktop-preview');
+  const rendered=await evaluate("document.querySelector('.itinerary-daily-report-modal').innerText");assert.match(rendered,/測試一號 FPMC QA ONE｜單船歷程快照/);assert.equal(await evaluate("document.querySelector('.itinerary-daily-report-vessel h2').textContent"),'測試一號 FPMC QA ONE');assert.doesNotMatch(rendered,/QA RENAMED ONE|FPMC QA TWO|qa-v2|LIVE PORT|ALTERNATIVE/);await screen('desktop-preview');
   await evaluate("window.__qaOldTitle=document.title;window.print=()=>{window.__qaPrintTitle=document.title;}");await click('導出／列印 PDF');await until(()=>evaluate("typeof window.__qaPrintTitle==='string'"),'print callback after layout delay');
-  evidence.pdfTitle=await evaluate('window.__qaPrintTitle');assert.match(evidence.pdfTitle,/單船歷程_QA RENAMED ONE_2026-09-04_130000_手動_R/);
+  evidence.pdfTitle=await evaluate('window.__qaPrintTitle');assert.match(evidence.pdfTitle,/單船歷程_測試一號 FPMC QA ONE_2026-09-04_130000_手動_R/);
   const pdf=await call('Page.printToPDF',{printBackground:true,preferCSSPageSize:true});fs.writeFileSync(path.join(output,'single-vessel.pdf'),Buffer.from(pdf.data,'base64'));
   await evaluate("window.dispatchEvent(new Event('afterprint'))");assert.equal(await evaluate('document.title===window.__qaOldTitle'),true);await click('關閉');
  });
@@ -130,6 +149,14 @@ try{
   const g=await evaluate(`(()=>{const p=${panel}.getBoundingClientRect();return{width:innerWidth,scrollWidth:document.documentElement.scrollWidth,panel:{x:p.x,right:p.right}}})()`);evidence.geometry.push(g);assert.equal(g.width,390);assert.ok(g.scrollWidth<=390);assert.ok(g.panel.x>=0&&g.panel.right<=390);
   await click('檢視行程',panel);await until(()=>evaluate("Boolean(document.querySelector('.itinerary-daily-report-modal'))"),'mobile preview');await screen('mobile-preview');assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'));await click('關閉');
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+ });
+ await check('fleet-historical-preview-uses-the-same-bilingual-names',async()=>{
+  await click('返回全船記錄');await click('檢視橫版 PDF',panel);
+  await until(()=>evaluate("Boolean(document.querySelector('.itinerary-daily-report-modal'))"),'fleet historical preview');
+  const names=await evaluate("[...document.querySelectorAll('.itinerary-daily-report-vessel h2')].map(n=>n.textContent)");
+  const expectedNames={'qa-v1':'測試一號 FPMC QA ONE','qa-v2':'FPMC QA TWO','qa-retired':'QA RETIRED ONLY'};
+  assert.deepEqual(names,historical.snapshot.vessels.map(vessel=>expectedNames[vessel.vesselId]),'bilingual names must preserve the saved vessel order');
+  await screen('fleet-preview');await click('關閉');await click('單船歷程');await selectVessel('qa-v1');await ready(32);
  });
  await check('late-vessel-list-cannot-replace-successor-or-ABA-page',async()=>{
   await selectVessel('qa-v2');await ready(5);holdPredicate=b=>b.p_vessel_id==='qa-v1'&&!b.p_report_id;await selectVessel('qa-v1');await until(()=>held,'held real SQL list');await selectVessel('qa-v2');await ready(5);await release();assert.match(await evaluate(`${panel}.innerText`),/共 3 天/);
