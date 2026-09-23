@@ -14,7 +14,7 @@ fs.mkdirSync(evidenceRoot,{recursive:true});
 const output=fs.mkdtempSync(path.join(evidenceRoot,'ship-vessel-history-'));
 const profile=path.join(output,'chrome-profile');
 const evidence={label:'真實原始 App UI＋測試資料＋本機 PGlite；非正式 Supabase',status:'RUNNING',cases:[],errors:[],externalRequests:[],geometry:[],head:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()};
-const files=['src/ReportDailyHistories.tsx','src/ItineraryDailyReportPreview.tsx','src/itineraryDailyReports.ts','src/itineraryDailyReportPdf.ts','src/styles.css','scripts/record-storage-local-qa.mjs','scripts/itinerary-vessel-history-fixture.mjs','scripts/verify-itinerary-vessel-history-browser.mjs','supabase/migrations/20260923160000_itinerary_vessel_history.sql'];
+const files=['src/ReportDailyHistories.tsx','src/ItineraryDailyReportPreview.tsx','src/itineraryDailyReports.ts','src/itineraryDailyReportPdf.ts','src/styles.css','scripts/record-storage-local-qa.mjs','scripts/itinerary-vessel-history-fixture.mjs','scripts/verify-itinerary-vessel-history-browser.mjs','supabase/migrations/20260923160000_itinerary_vessel_history.sql','supabase/migrations/20260923170000_itinerary_vessel_history_summary.sql','src/itineraryVesselHistorySummary.ts'];
 evidence.inputs=Object.fromEntries(files.map(p=>[p,createHash('sha256').update(fs.readFileSync(p)).digest('hex')]));
 const save=()=>fs.writeFileSync(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2));
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
@@ -34,6 +34,10 @@ const panel="document.querySelector('.itinerary-daily-history-panel')";
 const count=()=>evaluate(`${panel}?.querySelectorAll('.saved-report').length`);
 const ready=async(n)=>until(async()=>await count()===n&&await evaluate(`!${panel}.querySelector('.daily-report-history-error')&&!${panel}.querySelector('[aria-busy=true]')`),'history rows '+n);
 const screen=async name=>{await evaluate("document.fonts.ready.then(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))");fs.writeFileSync(path.join(output,name+'.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png'})).data,'base64'));};
+const summaryGeometry=async()=>{
+ const g=await evaluate(`(()=>{const card=${panel}.querySelector('.saved-report');const summary=card.querySelector('.itinerary-vessel-history-summary');const cells=[...summary.children];return{width:innerWidth,scrollWidth:document.documentElement.scrollWidth,cardHeight:card.getBoundingClientRect().height,summaryTop:summary.getBoundingClientRect().top,headerBottom:Math.max(...[card.firstElementChild,card.querySelector('button')].map(n=>n.getBoundingClientRect().bottom)),fields:cells.map(n=>{const r=n.getBoundingClientRect();return{width:r.width,height:r.height,overflow:n.scrollWidth>n.clientWidth+1,visible:getComputedStyle(n).display!=='none'&&getComputedStyle(n).visibility!=='hidden'};})};})()`);
+ evidence.geometry.push(g);assert.ok(g.scrollWidth<=g.width);assert.ok(g.summaryTop>=g.headerBottom);assert.equal(g.fields.length,11);assert.ok(g.fields.every(f=>f.visible&&f.width>0&&f.height>0&&!f.overflow));
+};
 const check=async(name,fn)=>{await fn();evidence.cases.push({name,status:'PASS'});save();};
 const release=async()=>{assert.ok(held);const target=held;held=null;await call('Fetch.continueResponse',{requestId:target.requestId});await wait(180);};
 try{
@@ -41,7 +45,7 @@ try{
  const {installMorningOracle,schedulerSql}=await import('./record-daily-morning-local-fixture.mjs');
  await installMorningOracle(qa.db);await qa.db.exec(fs.readFileSync(schedulerSql,'utf8'));
  for(const file of ['supabase/migrations/20260904161000_appdata_compact_ack_receipts.sql','supabase/migrations/20260817143000_data_management_storage.sql','supabase/migrations/20260818154500_data_management_prune_batch_limit.sql','supabase/normalized-legacy-cutover.sql','supabase/development/20260911_legacy_report_workspace_binding.sql','supabase/development/20260911_business_quiescence.sql','supabase/development/20260911_paused_record_legacy_transfer.sql','supabase/development/20260911_source_authority_publication.sql','supabase/development/20260912_browser_source_authority.sql'])await qa.db.exec(fs.readFileSync(file,'utf8'));
- await installVesselHistory(qa.db);await seedVesselHistory(qa);
+ await installVesselHistory(qa.db);await seedVesselHistory(qa,{overview:true});
  assert.equal((await fetch(qa.origin+'/__qa/health')).status,200);
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0',`--explicitly-allowed-ports=${new URL(qa.origin).port}`,`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  await until(()=>fs.existsSync(path.join(profile,'DevToolsActivePort')),'Chrome ready');
@@ -79,6 +83,17 @@ try{
   assert.match(rowText,/2026\/09\/04 09:00/,'the actual saved timestamp must remain');
   assert.match(rowText,/手動保存快照/,'manual record labels remain unchanged');
  });
+ await check('frozen-card-first-row-and-separate-second-row-without-detail-download',async()=>{
+  const cards=await evaluate(`[...${panel}.querySelectorAll('.saved-report')].slice(0,3).map(card=>[...card.querySelectorAll('.itinerary-vessel-history-summary>div')].map(field=>({label:field.querySelector('dt').textContent,value:field.querySelector('dd').textContent})))`);
+  assert.equal(cards[0].length,11,'each daily card must render the requested frozen summary fields');
+  assert.deepEqual(cards[0].map(f=>f.label),['上一港','目前位置','目前航行狀態','目前船舶狀態','Voy No.','Next Port & Dock Name','ETA','ETB','ETD','後續港','後續港 ETA']);
+  assert.deepEqual(cards[0].slice(0,9).map(f=>f.value),['QA FORMAL BUSAN','QA SAVED ANCHORAGE','拋錨','drydock/repair、bunker','HIST-001','QA FORMAL KAOHSIUNG','2026-08-30 08:00 LT (UTC+8)','2026-08-30 10:00 LT (UTC+9)','2026-08-30 20:30 LT (UTC-3:30)']);
+  assert.match(cards[0][9].value,/^QA SUBSEQUENT PORT/);assert.equal(cards[0][10].value,'2026-09-15 05:30 LT (UTC+5:30)');
+  assert.deepEqual(cards[1].slice(-2).map(f=>f.value),['TBA','TBA']);
+  assert.deepEqual(cards[1].slice(1,4).map(f=>f.value),['—','—','—']);
+  assert.doesNotMatch(await evaluate(`${panel}.querySelector('.daily-report-history-list').innerText`),/WRONG SECOND|QA THIRD|LIVE PORT|ALTERNATIVE/);
+  assert.equal(qa.metrics.slice(start).filter(m=>m.rpc===vesselHistoryRpc&&m.vesselId==='qa-v1').length,1,'one compact page for the selected vessel, no per-card detail requests');
+ });
  await check('pagination-and-native-date-location',async()=>{
   await click('下一頁 →',panel);await ready(5);assert.match(await evaluate(`${panel}.innerText`),/第 2／2 頁/);
   await click('← 上一頁',panel);await ready(32);
@@ -87,10 +102,11 @@ try{
  });
  await check('sparse-vessel-and-empty-formal-document',async()=>{
   await selectVessel('qa-v2');await ready(5);assert.match(await evaluate(`${panel}.innerText`),/共 3 天/);assert.doesNotMatch(await evaluate(`${panel}.querySelector('.daily-report-history-list').innerText`),/QA RENAMED ONE/);
+  assert.deepEqual(await evaluate(`[...${panel}.querySelector('.itinerary-vessel-history-summary').querySelectorAll('dd')].map(n=>n.textContent)`),[...Array(9).fill('—'),'TBA','TBA']);
   await click('檢視行程',panel);await until(()=>evaluate("Boolean(document.querySelector('.itinerary-daily-report-modal'))"),'empty vessel preview');assert.doesNotMatch(await evaluate("document.querySelector('.itinerary-daily-report-modal').innerText"),/QA FORMAL KAOHSIUNG|QA RENAMED ONE/);await click('關閉');
  });
  await check('desktop-scoped-frozen-preview-and-real-pdf',async()=>{
-  await selectVessel('qa-v1');await ready(32);await evaluate(`${panel}.scrollIntoView({block:'start'});window.scrollBy(0,-100)`);await screen('desktop-history');await click('檢視行程',panel);
+  await selectVessel('qa-v1');await ready(32);await evaluate(`${panel}.scrollIntoView({block:'start'});window.scrollBy(0,-100)`);await screen('desktop-history');await summaryGeometry();await click('檢視行程',panel);
   await until(()=>evaluate("document.querySelector('.itinerary-daily-report-modal')?.innerText.includes('QA FORMAL KAOHSIUNG')"),'frozen scoped detail');
   const rendered=await evaluate("document.querySelector('.itinerary-daily-report-modal').innerText");assert.match(rendered,/QA RENAMED ONE｜單船歷程快照/);assert.doesNotMatch(rendered,/qa-v2|LIVE PORT|ALTERNATIVE/);await screen('desktop-preview');
   await evaluate("window.__qaOldTitle=document.title;window.print=()=>{window.__qaPrintTitle=document.title;}");await click('導出／列印 PDF');await until(()=>evaluate("typeof window.__qaPrintTitle==='string'"),'print callback after layout delay');
@@ -99,7 +115,7 @@ try{
   await evaluate("window.dispatchEvent(new Event('afterprint'))");assert.equal(await evaluate('document.title===window.__qaOldTitle'),true);await click('關閉');
  });
  await check('mobile-390px-history-and-preview-no-document-overflow',async()=>{
-  await call('Emulation.setDeviceMetricsOverride',{width:390,height:900,deviceScaleFactor:1,mobile:true});await evaluate(`${panel}.scrollIntoView({block:'start'});window.scrollBy(0,-100)`);await screen('mobile-history');
+  await call('Emulation.setDeviceMetricsOverride',{width:390,height:900,deviceScaleFactor:1,mobile:true});await evaluate(`${panel}.scrollIntoView({block:'start'});window.scrollBy(0,-100)`);await screen('mobile-history');await summaryGeometry();
   const g=await evaluate(`(()=>{const p=${panel}.getBoundingClientRect();return{width:innerWidth,scrollWidth:document.documentElement.scrollWidth,panel:{x:p.x,right:p.right}}})()`);evidence.geometry.push(g);assert.equal(g.width,390);assert.ok(g.scrollWidth<=390);assert.ok(g.panel.x>=0&&g.panel.right<=390);
   await click('檢視行程',panel);await until(()=>evaluate("Boolean(document.querySelector('.itinerary-daily-report-modal'))"),'mobile preview');await screen('mobile-preview');assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'));await click('關閉');
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});

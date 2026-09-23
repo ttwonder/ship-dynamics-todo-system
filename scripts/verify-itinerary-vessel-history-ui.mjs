@@ -15,6 +15,14 @@ try {
   assert.equal(typeof history.ItineraryVesselHistoryPanel,'function');
   const single=renderToStaticMarkup(React.createElement(history.ItineraryVesselHistoryPanel,{actorUserId:'qa-owner',onBack(){}}));
   assert.match(single,/返回全船記錄/);assert.match(single,/aria-label="單船歷程船舶"/);
+  const overview=rows=>renderToStaticMarkup(React.createElement(history.ItineraryVesselHistoryOverview,{rows}));
+  const emptyOverview=overview([]);
+  assert.equal((emptyOverview.match(/<dt>/g)||[]).length,11);
+  assert.equal((emptyOverview.match(/>TBA<\/dd>/g)||[]).length,2);
+  assert.match(emptyOverview,/<dt>Next Port &amp; Dock Name<\/dt>/);
+  assert.match(emptyOverview,/<dt>後續港<\/dt><dd>TBA<\/dd>/);
+  assert.match(emptyOverview,/<dt>後續港 ETA<\/dt><dd>TBA<\/dd>/);
+  assert.match(overview(null),/基本資訊摘要尚未部署/);assert.doesNotMatch(overview(null),/TBA|<dl/);
   const vessel={vesselId:'v1',vesselName:'QA SHIP',revision:7,updatedAt:null,rows:[]};
   const report={reportId:'1',businessDate:'2026-09-01',timezone:'Asia/Taipei',generatedAt:'2026-09-01T01:00:00Z',generatedBy:'scheduled',generatedByActorId:null,vesselCount:1,rowCount:0,sourceMaxRevision:7,logicalBytes:1,snapshot:{schemaVersion:1,businessDate:'2026-09-01',timezone:'Asia/Taipei',generatedAt:'2026-09-01T01:00:00Z',vesselCount:1,rowCount:0,sourceMaxRevision:7,vessels:[vessel]}};
   const preview=renderToStaticMarkup(React.createElement(Preview,{report,singleVesselName:'QA SHIP',close(){}}));

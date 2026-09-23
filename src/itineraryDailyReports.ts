@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { getSupabaseClient, getSupabaseConfig, type ResolvedSupabaseConfig } from './cloud';
 import { authorityConfig, readBrowserAuthority, sameAuthority, type BrowserAuthority } from './cloudSourceAuthority';
 import type { ItineraryRow } from './itinerary/itineraryTypes';
+import { parseItineraryHistoryOverview, type ItineraryHistoryOverviewRow } from './itineraryVesselHistorySummary';
 
 export const ITINERARY_DAILY_REPORT_DELETE_BATCH_SIZE = 100;
 const RPC_TIMEOUT_MS = 25_000;
@@ -49,7 +50,7 @@ export interface ItineraryHistoryVessel {
 
 export interface ItineraryVesselHistoryPage extends ItineraryDailyReportPage {
   vesselId: string;
-  items: (ItineraryDailyReportSummary & { vesselName: string })[];
+  items: (ItineraryDailyReportSummary & { vesselName: string; overviewRows: ItineraryHistoryOverviewRow[] | null })[];
   locatedDate: string | null;
   found: boolean | null;
 }
@@ -455,9 +456,10 @@ export async function listItineraryVesselHistoryPage(
     throw new Error('單船歷程查詢目標不一致。');
   }
   const items = page.items.map((item, index) => {
-    const vesselName = asText(asObject(asArray(response.reports)[index]).vesselName);
+    const raw = asObject(asArray(response.reports)[index]);
+    const vesselName = asText(raw.vesselName);
     if (item.vesselCount !== 1 || !vesselName) throw new Error('單船歷程快照範圍不正確。');
-    return { ...item, vesselName };
+    return { ...item, vesselName, overviewRows:parseItineraryHistoryOverview(raw.overviewRows, item.rowCount) };
   });
   if (response.found === true && !items.some(item => item.businessDate === businessDate)) {
     throw new Error('單船歷程日期定位不一致。');

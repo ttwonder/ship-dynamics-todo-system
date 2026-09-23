@@ -19,6 +19,7 @@ import {
   type ItineraryDailyReportSummary,
 } from './itineraryDailyReports';
 import ItineraryDailyReportPreview from './ItineraryDailyReportPreview';
+import { itineraryVesselHistorySummary, type ItineraryHistoryOverviewRow } from './itineraryVesselHistorySummary';
 
 function businessDateLabel(value: string): string {
   const [year, month, day] = value.split('-').map(Number);
@@ -116,6 +117,13 @@ export function ItineraryDailyHistoryPanel({ pageData, loading, errorText, openi
   </div>;
 }
 
+export function ItineraryVesselHistoryOverview({ rows }: { rows:ItineraryHistoryOverviewRow[] | null }) {
+  if (rows === null) return <small className="itinerary-vessel-history-overview-unavailable">基本資訊摘要尚未部署，請用「檢視行程」查看。</small>;
+  return <dl className="itinerary-vessel-history-summary" aria-label="當時基本資訊">
+    {itineraryVesselHistorySummary(rows).map(field => <div className={`history-field-${field.key}`} key={field.key}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}
+  </dl>;
+}
+
 export function ItineraryVesselHistoryPanel({ actorUserId, refreshToken = 0, onBack }: {
   actorUserId:string; refreshToken?:number; onBack:()=>void;
 }) {
@@ -190,7 +198,11 @@ export function ItineraryVesselHistoryPanel({ actorUserId, refreshToken = 0, onB
       {(catalogueError || errorText) && <div className="daily-report-history-error" role="alert">{catalogueError || errorText}</div>}
       {groups.length ? <div className="daily-report-history-list itinerary-report-date-groups" aria-busy={loading}>{groups.map(group => <section className="itinerary-report-date-group" key={group.date}>
         <div className="itinerary-report-date-heading"><b>{businessDateLabel(group.date)} Itinerary</b><small>{group.reports.length} 份快照</small></div>
-        {group.reports.map(report => <div className="saved-report" key={report.reportId}><div>{report.generatedBy === 'manual' && <b>手動保存快照</b>}<small>{formatTaipeiDateTime(report.generatedAt, false)}｜{report.vesselName}｜{report.rowCount} 列｜Rev.{report.sourceMaxRevision}</small></div><button className="btn small ghost" disabled={loading || Boolean(openingReportId)} onClick={() => void open(report)}>{openingReportId === report.reportId ? '載入中…' : '檢視行程'}</button></div>)}
+        {group.reports.map(report => <div className="saved-report itinerary-vessel-history-report" key={report.reportId}>
+          <div>{report.generatedBy === 'manual' && <b>手動保存快照</b>}<small>{formatTaipeiDateTime(report.generatedAt, false)}｜{report.vesselName}｜{report.rowCount} 列｜Rev.{report.sourceMaxRevision}</small></div>
+          <button className="btn small ghost" disabled={loading || Boolean(openingReportId)} onClick={() => void open(report)}>{openingReportId === report.reportId ? '載入中…' : '檢視行程'}</button>
+          <ItineraryVesselHistoryOverview rows={report.overviewRows}/>
+        </div>)}
       </section>)}</div> : !(catalogueError || errorText) && <div className="empty-state compact">{loading || catalogueLoading ? '正在讀取單船歷程…' : !query.vesselId ? vessels.length ? '請選擇船舶，查看每天的保存歷史。' : '尚無每日 Itinerary 記錄' : '這艘船尚無保存記錄'}</div>}
       {pageData && <HistoryPager page={pageData.page} pageCount={pageData.pageCount} pageStart={(pageData.page - 1) * pageData.pageSize} pageSize={pageData.pageSize} total={pageData.dateTotal} onPage={page => changeQuery({ ...query, page, date:null })}/>}
     </div>
