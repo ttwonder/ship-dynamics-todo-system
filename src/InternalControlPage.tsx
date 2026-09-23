@@ -45,6 +45,7 @@ type Props = {
   canDelete: boolean;
   canExport: boolean;
   authorizationEpoch: string;
+  editorOnly?: boolean;
   requestedCaseId?: string;
   onRequestedCaseHandled?: () => void;
   onCreate: (items: InternalControlCase[], expectedRevision: number, projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean>;
@@ -73,7 +74,7 @@ const optionList = (values: string[]): MultiOption[] => values.filter(Boolean).m
 const unique = (values: string[]) => Array.from(new Set(values.filter(Boolean)));
 const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' : priority === '高' ? 'high' : priority === '中' ? 'mid' : 'low';
 
-export default function InternalControlPage({ loadCase, data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, requestedCaseId, onRequestedCaseHandled, onCreate, onUpdate, onWithdrawTaskSync, onDelete, onBatchClose, onBatchDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
+export default function InternalControlPage({ editorOnly=false, loadCase, data, user, vessels, canCreate, canEdit, canClose, canDelete, canExport, authorizationEpoch, requestedCaseId, onRequestedCaseHandled, onCreate, onUpdate, onWithdrawTaskSync, onDelete, onBatchClose, onBatchDelete, onOpenTask, claimItemLease, requireItemLease, releaseItemLease, activeItemLeaseKey }: Props) {
   const [subpage, setSubpage] = useState<Subpage>('open');
   const [analysisSelection, setAnalysisSelection] = useState<InternalControlAnalysisSelection>({ dimension: 'category', interval: 'month', focusKey: '' });
   const [filters, setFilters] = useState<InternalControlFilters>(() => emptyFilters(defaultInternalControlVesselSelection(user, vessels)));
@@ -250,6 +251,35 @@ export default function InternalControlPage({ loadCase, data, user, vessels, can
     if(next!=='closed'&&(columnSort==='closed-date-asc'||columnSort==='closed-date-desc'))setColumnSort('created-desc');
   };
 
+  const caseEditor=visibleEditing&&editing?<CaseEditModal
+      item={editing} data={data} vessels={vessels}
+      canEdit={canEdit&&editorWritable} canClose={canClose&&editorWritable} canDelete={canDelete&&editorWritable}
+      showWithdrawSync={Boolean(canEdit&&editingTaskSyncVersion)} canWithdrawSync={canWithdrawSync} withdrawSyncReason={withdrawSyncReason}
+      close={() => void closeEditor()}
+      save={async (candidate, projection) => {
+        if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
+        if (await onUpdate(candidate, editing.updatedAt, data.revision, projection)) {
+          if(!releaseItemLease||await releaseItemLease(internalControlEditLockKey(editing.id)))setEditing(null);
+          return true;
+        }
+        return false;
+      }}
+      onWithdrawSync={async candidate => {
+        if(!editingTaskSyncVersion)return false;
+        if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
+        return onWithdrawTaskSync(candidate,editingTaskSyncVersion.updatedAt,data.revision);
+      }}
+      onDelete={async candidate => {
+        if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
+        if (await onDelete(candidate, data.revision)) {
+          if(!releaseItemLease||await releaseItemLease(internalControlEditLockKey(editing.id)))setEditing(null);
+          return true;
+        }
+        return false;
+      }}
+    />:null;
+  if(editorOnly)return caseEditor;
+
   return <section className="internal-control-page">
     <div className="page-heading"><div><h1>內控異常</h1><p>督導日常、訪船、隨船及外部發現事項的獨立登記、跟進、結案與統計。</p></div><div className="heading-actions no-print">{canCreate && <button className="btn green" onClick={() => {setBatchAuthorizationEpoch(authorizationEpoch);setBatchOpen(true);}}>＋ 批量新增</button>}{canExport && <button className="btn ghost" disabled={!filtered.length} onClick={() => downloadInternalControlExcel(filtered, vessels, summary)}>導出 Excel</button>}{canExport && <button className="btn primary" disabled={subpage==='stats'?!filtered.length:!selectedCases.length} onClick={print}>{subpage==='stats'?'導出 PDF':`導出所選 PDF（${selectedCases.length}）`}</button>}</div></div>
     <div className="ic-tabs no-print" role="tablist"><button className={subpage === 'open' ? 'active' : ''} onClick={() => changeSubpage('open')}>內控未完清單 <b>{scopedCases.filter(item => !item.isClosed).length}</b></button><button className={subpage === 'closed' ? 'active' : ''} onClick={() => changeSubpage('closed')}>內控結案清單 <b>{scopedCases.filter(item => item.isClosed).length}</b></button><button className={subpage === 'stats' ? 'active' : ''} onClick={() => changeSubpage('stats')}>數據統計</button></div>
@@ -284,32 +314,6 @@ export default function InternalControlPage({ loadCase, data, user, vessels, can
     <section className="internal-control-print print-only"><h1>內控異常{ subpage === 'open' ? '未完清單（所選項目）' : subpage === 'closed' ? '結案清單（所選項目）' : '統計報告'}</h1><p>{printSummary}｜共 {printCases.length} 件｜匯出人 {user.name}｜{formatTaipeiDateTime(new Date())}</p>{subpage === 'stats' ? <InternalControlStatsView stats={buildInternalControlStats(printCases, vessels, pdfVesselDisplayName)} cases={printCases} vessels={vessels} fromDate={filters.fromDate} toDate={filters.toDate} filterSummary={analyticsFilterSummary} selection={analysisSelection} onSelectionChange={setAnalysisSelection} formatVesselName={pdfVesselDisplayName} printMode/> : <table><thead><tr><th>船舶</th><th>報告日期／來源</th><th>關注</th><th>事項</th><th>分類／細項</th><th>部門</th><th>狀態</th><th>結案</th></tr></thead><tbody>{printCases.map(item => { const vessel = vessels.find(entry => entry.id === item.vesselId); return <tr key={item.id}><td>{vessel ? pdfVesselDisplayName(vessel) : item.vesselId}</td><td>{item.reportDate}｜{item.reportSource}</td><td>{item.priority}</td><td>{richTextToPlainText(item.description)}</td><td>{item.category}{item.equipmentSubcategory ? `｜${item.equipmentSubcategory}` : ''}</td><td>{item.departments.join('、')}</td><td>{richTextToPlainText(item.status)}</td><td>{item.closedDate || '未結'}</td></tr>; })}</tbody></table>}</section>
 
     {visibleBatch && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={async (items, projections) => { if (await onCreate(items, data.revision, projections)) { setBatchOpen(false); return true; } return false; }}/>}
-    {visibleEditing && editing && <CaseEditModal
-      item={editing} data={data} vessels={vessels}
-      canEdit={canEdit&&editorWritable} canClose={canClose&&editorWritable} canDelete={canDelete&&editorWritable}
-      showWithdrawSync={Boolean(canEdit&&editingTaskSyncVersion)} canWithdrawSync={canWithdrawSync} withdrawSyncReason={withdrawSyncReason}
-      close={() => void closeEditor()}
-      save={async (candidate, projection) => {
-        if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
-        if (await onUpdate(candidate, editing.updatedAt, data.revision, projection)) {
-          if(!releaseItemLease||await releaseItemLease(internalControlEditLockKey(editing.id)))setEditing(null);
-          return true;
-        }
-        return false;
-      }}
-      onWithdrawSync={async candidate => {
-        if(!editingTaskSyncVersion)return false;
-        if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
-        return onWithdrawTaskSync(candidate,editingTaskSyncVersion.updatedAt,data.revision);
-      }}
-      onDelete={async candidate => {
-        if(requireItemLease&&!requireItemLease(internalControlEditLockKey(editing.id)))return false;
-        if (await onDelete(candidate, data.revision)) {
-          if(!releaseItemLease||await releaseItemLease(internalControlEditLockKey(editing.id)))setEditing(null);
-          return true;
-        }
-        return false;
-      }}
-    />}
+    {caseEditor}
   </section>;
 }
