@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createServer } from 'vite';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 const page = fs.readFileSync('src/InternalControlPage.tsx', 'utf8');
 const types = fs.readFileSync('src/types.ts', 'utf8');
@@ -43,6 +45,32 @@ try {
     ['c1', 'c2', 'c3'],
     '同一經管督導篩選組內必須採 OR',
   );
+  const { createAnalyticsFixture } = await server.ssrLoadModule('/scripts/fixtures/internal-control-analytics.ts');
+  const { default: InternalControlPage } = await server.ssrLoadModule('/src/InternalControlPage.tsx');
+  const { default: VesselListFilter } = await server.ssrLoadModule('/src/VesselListFilter.tsx');
+  const { vesselSelectionDisplayName } = await server.ssrLoadModule('/src/vesselDisplay.ts');
+  const fixture = createAnalyticsFixture();
+  fixture.vessels[2].name = 'QA-C'; // Valid English alias when the Chinese name is absent.
+  const frozen = JSON.stringify(fixture.data);
+  const reject = () => { throw new Error('Name presentation must not invoke a mutation'); };
+  const html = renderToStaticMarkup(React.createElement(InternalControlPage, {
+    data: fixture.data, user: fixture.owner, vessels: fixture.vessels, authorizationEpoch: 'qa-bilingual',
+    canCreate: false, canEdit: false, canClose: false, canDelete: false, canExport: true,
+    onCreate: reject, onUpdate: reject, onWithdrawTaskSync: reject, onDelete: reject,
+    onBatchClose: reject, onBatchDelete: reject, onOpenTask: reject,
+  }));
+  const expected = ['測試甲輪 QA ALPHA', '測試乙輪 QA BETA', 'QA GAMMA'];
+  for (const name of expected) {
+    assert.ok(html.includes(`<td><b>${name}</b>`), `內控未完清單船名：${name}`);
+    assert.ok(html.includes(`<span>${name}</span>`), `內控船舶篩選名稱：${name}`);
+  }
+  assert.ok(!html.includes('QA-C QA GAMMA'), '無中文名不得重複英文別名');
+  const selectorProps = { vessels: fixture.vessels, mode: 'custom', selectedVesselIds: ['qa-a', 'qa-c'], onChange: reject, ariaLabel: 'QA selector' };
+  const custom = renderToStaticMarkup(React.createElement(VesselListFilter, { ...selectorProps, formatVesselName: vesselSelectionDisplayName }));
+  for (const name of expected) assert.ok(custom.includes(`<span>${name}</span>`));
+  const unchanged = renderToStaticMarkup(React.createElement(VesselListFilter, selectorProps));
+  assert.ok(unchanged.includes('<span>QA ALPHA</span>') && !unchanged.includes('<span>測試甲輪 QA ALPHA</span>'), '其他頁面不指定 formatter 時保留原顯示');
+  assert.equal(JSON.stringify(fixture.data), frozen, '船名顯示不得改寫案件或船舶資料');
 } finally {
   await server.close();
 }

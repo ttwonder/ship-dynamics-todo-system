@@ -4,12 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer } from 'vite';
+import { createHash } from 'node:crypto';
 
 const evidenceRoot = process.env.QA_EVIDENCE_ROOT || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), '.cache'), 'hermes', 'cache', 'scratch');
 fs.mkdirSync(evidenceRoot, { recursive: true });
 const output = fs.mkdtempSync(path.join(evidenceRoot, 'ic-analytics-'));
 const profile = path.join(output, 'chrome-profile');
 const evidence = { layer: '真實 InternalControlPage UI＋測試資料；非正式環境／非資料庫驗證', cases: [], errors: [], geometry: [] };
+evidence.inputs = Object.fromEntries(['src/InternalControlPage.tsx','src/VesselListFilter.tsx','src/InternalControlStatsView.tsx','src/vesselDisplay.ts','src/internalControlWorkflow.ts','src/internalControlAnalytics.ts','src/listVesselControls.ts','src/styles.css','src/internalControlAnalytics.css','scripts/fixtures/internal-control-analytics.ts','scripts/verify-internal-control-analytics-browser.mjs'].map(file => [file,createHash('sha256').update(fs.readFileSync(file)).digest('hex')]));
 let server, browser, ws, sessionId, id = 0, failure;
 const pending = new Map(), wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(test, label, timeout = 15000) { const end = Date.now() + timeout; while (Date.now() < end) { if (await test()) return; await wait(80); } throw new Error('Timeout: ' + label); }
@@ -19,7 +21,7 @@ const screen = async name => fs.writeFileSync(path.join(output, name + '.png'), 
 const click = text => evaluate(`(() => { const n=[...document.querySelectorAll('button')].find(n=>(n.getAttribute('aria-label')||n.textContent.trim())===${JSON.stringify(text)}&&n.getClientRects().length&&!n.disabled); if(!n) throw new Error('Missing button '+${JSON.stringify(text)}); n.click(); })()`);
 const change = (selector, value) => evaluate(`(() => { const n=document.querySelector(${JSON.stringify(selector)}); if(!n)throw new Error('Missing input '+${JSON.stringify(selector)}); const proto=n instanceof HTMLSelectElement?HTMLSelectElement.prototype:HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(proto,'value').set.call(n,${JSON.stringify(value)}); n.dispatchEvent(new Event(n instanceof HTMLSelectElement?'change':'input',{bubbles:true})); })()`);
 const statsText = () => evaluate("document.querySelector('.internal-control-page > .ic-stats')?.innerText || ''");
-const entry = `import React from 'react';import{createRoot}from'react-dom/client';import InternalControlPage from '/src/InternalControlPage.tsx';import{createAnalyticsFixture}from'/scripts/fixtures/internal-control-analytics.ts';import'/src/styles.css';const {data,owner,vessels}=createAnalyticsFixture();window.__qaMutations=0;const reject=()=>{window.__qaMutations++;throw new Error('Analytics must not mutate data');};createRoot(document.getElementById('root')).render(React.createElement(InternalControlPage,{data,user:owner,vessels,authorizationEpoch:'qa-analytics',canCreate:false,canEdit:false,canClose:false,canDelete:false,canExport:true,onCreate:reject,onUpdate:reject,onWithdrawTaskSync:reject,onDelete:reject,onBatchClose:reject,onBatchDelete:reject,onOpenTask:reject}));`;
+const entry = `import React from 'react';import{createRoot}from'react-dom/client';import InternalControlPage from '/src/InternalControlPage.tsx';import{createAnalyticsFixture}from'/scripts/fixtures/internal-control-analytics.ts';import'/src/styles.css';const {data,owner,vessels}=createAnalyticsFixture();vessels[2].name='QA-C';const before=JSON.stringify(data);window.__qaDataUnchanged=()=>JSON.stringify(data)===before;window.__qaMutations=0;const reject=()=>{window.__qaMutations++;throw new Error('Analytics must not mutate data');};createRoot(document.getElementById('root')).render(React.createElement(InternalControlPage,{data,user:owner,vessels,authorizationEpoch:'qa-analytics',canCreate:false,canEdit:false,canClose:false,canDelete:false,canExport:true,onCreate:reject,onUpdate:reject,onWithdrawTaskSync:reject,onDelete:reject,onBatchClose:reject,onBatchDelete:reject,onOpenTask:reject}));`;
 try {
   server = await createServer({ root: process.cwd(), base: '/', server: { host: '127.0.0.1', port: 0 }, logLevel: 'silent', plugins: [{ name: 'isolated-analytics-qa', configureServer(vite) { vite.middlewares.use((req, res, next) => { res.setHeader('Content-Security-Policy', "connect-src 'self' ws://127.0.0.1:*"); if (req.url === '/__qa_analytics') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); void vite.transformIndexHtml('/__qa_analytics', '<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{padding:8px}.qa-label{padding:5px 8px;margin-bottom:6px;background:#fff0c5;color:#543c00;font-size:12px;font-weight:700}</style></head><body><div class="qa-label">真實 UI＋測試資料｜不連正式環境</div><div id="root"></div><script type="module" src="/@qa-analytics"></script></body></html>').then(html => res.end(html)).catch(next); } else next(); }); }, resolveId(source) { if (source === '/@qa-analytics') return '\0qa-analytics'; }, load(source) { if (source === '\0qa-analytics') return entry; } }] });
   await server.listen(); const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
@@ -30,7 +32,32 @@ try {
   ws.addEventListener('message', event => { const m = JSON.parse(event.data); if (m.id) { const p = pending.get(m.id); if (!p) return; pending.delete(m.id); m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result); } else if (m.method === 'Runtime.exceptionThrown') evidence.errors.push(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text); });
   const { targetId } = await call('Target.createTarget', { url: 'about:blank' }, null); ({ sessionId } = await call('Target.attachToTarget', { targetId, flatten: true }, null)); await call('Runtime.enable'); await call('Page.enable');
   await call('Emulation.setDeviceMetricsOverride', { width: 1280, height: 1000, deviceScaleFactor: 1, mobile: false }); await call('Page.navigate', { url: origin + '/__qa_analytics' });
-  await until(() => evaluate("[...document.querySelectorAll('button')].some(n=>n.textContent==='數據統計')"), 'original component mounted'); await click('數據統計'); await until(() => evaluate("Boolean(document.querySelector('.internal-control-page > .ic-stats'))"), 'stats tab');
+  await until(() => evaluate("[...document.querySelectorAll('button')].some(n=>n.textContent==='數據統計')"), 'original component mounted');
+  const expectedNames = ['測試甲輪 QA ALPHA','測試乙輪 QA BETA','QA GAMMA'];
+  const listNames = () => evaluate("[...document.querySelectorAll('.ic-table tbody tr > td:nth-child(2) > b')].map(n=>n.textContent)");
+  const filterNames = () => evaluate("[...document.querySelectorAll('.vessel-list-filter-options label > span')].map(n=>n.textContent)");
+  const toggleShip = index => evaluate(`document.querySelectorAll('.vessel-list-filter-options input')[${index}].click()`);
+  assert.deepEqual(new Set(await listNames()),new Set(expectedNames),'open list uses bilingual names and English-only fallback');
+  assert.equal((await listNames()).length,5);
+  await evaluate("document.querySelector('[aria-label=內控清單船舶篩選]').click();document.fonts.ready");
+  assert.deepEqual(await filterNames(),expectedNames,'filter names change without changing the English-name option order');
+  await screen('open-list-filter-1280');
+  await toggleShip(0);await toggleShip(2);
+  await until(async()=> (await listNames()).length===2,'exact two-ship open filter');
+  assert.deepEqual(new Set(await listNames()),new Set([expectedNames[0],expectedNames[2]]));
+  assert.deepEqual(await evaluate("[...document.querySelectorAll('.ic-table tbody .ic-description-column b')].map(n=>n.textContent).sort()"),['測試案件 ic-2','測試案件 ic-8']);
+  await click('重設（所有船舶）');await until(async()=>(await listNames()).length===5,'reset open list');
+  await evaluate("document.querySelectorAll('.ic-tabs button')[1].click()");
+  await until(()=>evaluate("document.querySelector('.ic-list-panel h2')?.textContent.startsWith('內控結案清單')"),'closed list');
+  assert.deepEqual(new Set(await listNames()),new Set(expectedNames));assert.equal((await listNames()).length,5);
+  evidence.cases.push('bilingual open/closed list and exact-ID multi-ship filter with English-only fallback');
+  await click('數據統計'); await until(() => evaluate("Boolean(document.querySelector('.internal-control-page > .ic-stats'))"), 'stats tab');
+  assert.deepEqual(await filterNames(),expectedNames);
+  assert.deepEqual(new Set(await evaluate("[...document.querySelectorAll('.internal-control-page > .ic-stats [data-overview-dimension=vessel] .ic-overview-rows div > span')].map(n=>n.textContent)")),new Set(expectedNames));
+  await toggleShip(0);await toggleShip(2);await until(async()=>/目前篩選.*6.*件/.test(await statsText()),'statistics exact two-ship filter');
+  await click('重設（所有船舶）');await until(async()=>/目前篩選.*10.*件/.test(await statsText()),'statistics filter reset');
+  await evaluate("document.querySelector('.vessel-list-filter').open=false");
+  evidence.cases.push('statistics overview and shared filter use bilingual names without changing the cohort');
   await evaluate('document.fonts.ready'); await screen('desktop-entry');
   evidence.geometry.push(await evaluate("({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,oldPanels:[...document.querySelectorAll('.internal-control-page > .ic-stats .ic-stat-grid > .panel')].map(n=>({width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height}))})"));
   assert.ok(await evaluate("Boolean(document.querySelector('[aria-label=\"統計分析面向\"]'))"), 'statistics must provide an interactive percentage/ranking analysis dimension');
@@ -56,11 +83,20 @@ try {
   await change('[aria-label="內控異常關鍵字"]', 'no-matching-case'); await until(async () => /目前篩選.*0.*件/.test(await statsText()), 'empty result'); assert.doesNotMatch(await statsText(), /NaN|Infinity/); assert.match(await statsText(), /沒有符合條件/); evidence.cases.push('zero results never show NaN or stale ranking');
   await click('重設（所有船舶）'); await until(async () => /目前篩選.*10.*件/.test(await statsText()), 'reset original filters');
   await change('[aria-label="統計分析面向"]', 'vessel'); await change('[aria-label="趨勢時間單位"]', 'month');
+  await until(()=>evaluate("document.querySelector('.internal-control-page > .ic-stats').dataset.analysisDimension==='vessel'"),'vessel analysis');
+  for (const [key,name] of [['qa-a',expectedNames[0]],['qa-b',expectedNames[1]],['qa-c',expectedNames[2]]]) assert.ok((await rowText(key)).includes(name));
+  await click('查看 測試甲輪 QA ALPHA 趨勢');await until(()=>evaluate("document.querySelector('.internal-control-page > .ic-stats [data-trend-focus]').dataset.trendFocus==='qa-a'"),'bilingual rank still uses exact vessel ID');
+  assert.match(await evaluate("document.querySelector('.internal-control-page > .ic-stats .ic-trend-context').innerText"),/測試甲輪 QA ALPHA（4 件）/);
+  await click('恢復全部');evidence.cases.push('bilingual ranking and trend focus preserve vessel IDs and counts');
   for (const width of [1280, 820, 390]) {
     await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false }); await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     const geometry = await evaluate("({width:innerWidth,scrollWidth:document.documentElement.scrollWidth,panels:[...document.querySelectorAll('.internal-control-page > .ic-stats [data-overview-dimension]')].map(n=>({width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height})),metrics:document.querySelector('.internal-control-page > .ic-stats .ic-analytics-metrics')?.getBoundingClientRect().height})"); evidence.geometry.push(geometry); assert.ok(geometry.scrollWidth <= width, 'analytics document overflow at ' + width); if (width === 1280) { assert.ok(geometry.panels.every(p=>p.width<340), 'distribution cards must be substantially narrower than half-page panels'); assert.ok(geometry.metrics < 90, 'metrics must stay compact'); }
     await evaluate("document.querySelector('.internal-control-page > .ic-stats').scrollIntoView({block:'start'})"); await screen('analytics-' + width);
     if (width === 390) {
+      await evaluate("document.querySelector('.ic-filter-panel').scrollIntoView({block:'start'});document.querySelector('.vessel-list-filter').open=true");
+      assert.deepEqual(await filterNames(),expectedNames);assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth'));
+      const filterBox=await evaluate("(()=>{const r=document.querySelector('.vessel-list-filter-panel').getBoundingClientRect();return {left:r.left,right:r.right,width:innerWidth};})()");assert.ok(filterBox.left>=0&&filterBox.right<=filterBox.width);
+      await screen('vessel-filter-390');await evaluate("document.querySelector('.vessel-list-filter').open=false");
       await evaluate("document.querySelector('.internal-control-page > .ic-stats .ic-trend-view').scrollIntoView({block:'start'})"); await screen('analytics-390-trend');
       assert.ok(await evaluate("(()=>{const s=document.querySelector('.internal-control-page > .ic-stats svg');return [...s.querySelectorAll('text')].every(t=>{const b=t.getBBox();return b.x>=0&&b.x+b.width<=s.viewBox.baseVal.width;});})()"), 'mobile chart labels stay inside the chart');
     }
@@ -79,7 +115,7 @@ try {
   evidence.pdfPages = (Buffer.from(pdf.data, 'base64').toString('latin1').match(/\/Type\s*\/Page\b/g) || []).length;
   assert.equal(evidence.pdfPages, 1, 'small statistics report must keep its four ranking rows and trend on one page');
   assert.equal(await evaluate("getComputedStyle(document.querySelector('.internal-control-print')).display !== 'none'"), true); evidence.cases.push('print uses the same selected dimension and trend focus');
-  assert.equal(await evaluate('window.__qaMutations'), 0); assert.deepEqual(evidence.errors, []); evidence.cases.push('read-only interaction with no mutations or uncaught exceptions');
+  assert.equal(await evaluate('window.__qaMutations'), 0);assert.equal(await evaluate('window.__qaDataUnchanged()'),true); assert.deepEqual(evidence.errors, []); evidence.cases.push('read-only interaction with no mutations or uncaught exceptions');
 } catch (error) { failure = error; evidence.failure = error.stack || String(error); }
 finally {
   if (ws?.readyState === WebSocket.OPEN) { await call('Browser.close', {}, null).catch(() => {}); ws.close(); }

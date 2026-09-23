@@ -9,9 +9,10 @@ type Props = {
   selectedVesselIds: string[];
   onChange: (selection: VesselListSelection) => void;
   ariaLabel: string;
+  formatVesselName?: (vessel: Vessel) => string;
 };
 
-export default function VesselListFilter({ vessels, mode, selectedVesselIds, onChange, ariaLabel }: Props) {
+export default function VesselListFilter({ vessels, mode, selectedVesselIds, onChange, ariaLabel, formatVesselName = vesselDisplayName }: Props) {
   const radioName = useId();
   const availableVessels = [...vessels]
     .filter(vessel => vessel.isActive !== false)
@@ -40,7 +41,7 @@ export default function VesselListFilter({ vessels, mode, selectedVesselIds, onC
       <div className="vessel-list-filter-options">
         {availableVessels.map(vessel => <label key={vessel.id} className={mode === 'custom' && selectedSet.has(vessel.id) ? 'selected' : ''}>
           <input type="checkbox" checked={mode === 'custom' && selectedSet.has(vessel.id)} onChange={() => toggleVessel(vessel.id)}/>
-          <span>{vesselDisplayName(vessel)}</span>
+          <span>{formatVesselName(vessel)}</span>
         </label>)}
         {!availableVessels.length && <p>目前沒有可選船舶</p>}
       </div>
