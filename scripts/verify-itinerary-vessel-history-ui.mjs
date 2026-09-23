@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import React from 'react';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {createServer} from 'vite';
+const vite=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});
+let failure;
+try {
+  const history=await vite.ssrLoadModule('/src/ReportDailyHistories.tsx');
+  const Preview=(await vite.ssrLoadModule('/src/ItineraryDailyReportPreview.tsx')).default;
+  const pdf=await vite.ssrLoadModule('/src/itineraryDailyReportPdf.ts');
+  const page={items:[],page:1,pageSize:30,pageCount:1,total:0,dateTotal:0,reportTotal:0,setToken:'d41d8cd98f00b204e9800998ecf8427e'};
+  const markup=renderToStaticMarkup(React.createElement(history.ItineraryDailyHistoryPanel,{pageData:page,loading:false,errorText:'',openingReportId:'',onRefresh(){},onPage(){},onLocate:async()=>false,onOpen(){},onShowVessel(){}}));
+  assert.match(markup,/>單船歷程<\/button>/,'existing fleet panel needs the real entry button');
+  assert.ok(markup.indexOf('單船歷程')<markup.indexOf('↻ 刷新'));
+  assert.equal(typeof history.ItineraryVesselHistoryPanel,'function');
+  const single=renderToStaticMarkup(React.createElement(history.ItineraryVesselHistoryPanel,{actorUserId:'qa-owner',onBack(){}}));
+  assert.match(single,/返回全船記錄/);assert.match(single,/aria-label="單船歷程船舶"/);
+  const vessel={vesselId:'v1',vesselName:'QA SHIP',revision:7,updatedAt:null,rows:[]};
+  const report={reportId:'1',businessDate:'2026-09-01',timezone:'Asia/Taipei',generatedAt:'2026-09-01T01:00:00Z',generatedBy:'scheduled',generatedByActorId:null,vesselCount:1,rowCount:0,sourceMaxRevision:7,logicalBytes:1,snapshot:{schemaVersion:1,businessDate:'2026-09-01',timezone:'Asia/Taipei',generatedAt:'2026-09-01T01:00:00Z',vesselCount:1,rowCount:0,sourceMaxRevision:7,vessels:[vessel]}};
+  const preview=renderToStaticMarkup(React.createElement(Preview,{report,singleVesselName:'QA SHIP',close(){}}));
+  assert.match(preview,/單船歷程快照/);assert.match(preview,/QA SHIP/);assert.match(preview,/無正式 Itinerary 內容/);
+  assert.match(pdf.itineraryDailyReportPdfTitle(report.businessDate,report.generatedAt,'scheduled','1','QA SHIP'),/QA SHIP/);
+  console.log('PASS UI contract: entry order, selector, return, scoped preview and named export');
+} catch(error) {failure=error;console.error(error.message);}finally{await vite.close();}
+if(failure)process.exitCode=1;

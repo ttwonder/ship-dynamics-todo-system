@@ -9,6 +9,11 @@ import {
   listItineraryDailyReportPage,
   locateItineraryDailyReport,
   loadItineraryDailyReport,
+  listItineraryHistoryVessels,
+  listItineraryVesselHistoryPage,
+  loadItineraryVesselHistoryReport,
+  type ItineraryHistoryVessel,
+  type ItineraryVesselHistoryPage,
   type ItineraryDailyReport,
   type ItineraryDailyReportPage,
   type ItineraryDailyReportSummary,
@@ -79,7 +84,7 @@ export function MorningDailyHistoryPanel({ reports, onOpen }: { reports:AgendaRe
   </div>;
 }
 
-export function ItineraryDailyHistoryPanel({ pageData, loading, errorText, openingReportId, onRefresh, onPage, onLocate, onOpen }: {
+export function ItineraryDailyHistoryPanel({ pageData, loading, errorText, openingReportId, onRefresh, onPage, onLocate, onOpen, onShowVessel }: {
   pageData:ItineraryDailyReportPage;
   loading:boolean;
   errorText:string;
@@ -88,6 +93,7 @@ export function ItineraryDailyHistoryPanel({ pageData, loading, errorText, openi
   onPage:(page:number)=>void;
   onLocate:(date:string)=>Promise<boolean>;
   onOpen:(report:ItineraryDailyReportSummary)=>void;
+  onShowVessel?:()=>void;
 }) {
   const dateGroups = pageData.items.reduce<Array<{ businessDate:string; reports:ItineraryDailyReportSummary[] }>>((groups, report) => {
     const current = groups[groups.length - 1];
@@ -96,7 +102,7 @@ export function ItineraryDailyHistoryPanel({ pageData, loading, errorText, openi
     return groups;
   }, []);
   return <div className="panel daily-report-history-panel itinerary-daily-history-panel">
-    <div className="daily-report-history-heading"><div><h2>每日 Itinerary 記錄</h2><small>09:00 自動快照＋手動快照｜每頁最多 30 天</small></div><button className="btn small ghost" disabled={loading} onClick={onRefresh}>{loading ? '讀取中…' : '↻ 刷新'}</button></div>
+    <div className="daily-report-history-heading"><div><h2>每日 Itinerary 記錄</h2><small>09:00 自動快照＋手動快照｜每頁最多 30 天</small></div><div className="itinerary-history-actions">{onShowVessel && <button className="btn small primary" onClick={onShowVessel}>單船歷程</button>}<button className="btn small ghost" disabled={loading} onClick={onRefresh}>{loading ? '讀取中…' : '↻ 刷新'}</button></div></div>
     <RemoteDateLocator label="每日 Itinerary 記錄日期" loading={loading} onLocate={onLocate}/>
     {errorText && <div className="daily-report-history-error" role="alert">{errorText}</div>}
     {dateGroups.length ? <div className="daily-report-history-list itinerary-report-date-groups">{dateGroups.map(group => <section className="itinerary-report-date-group" key={group.businessDate}>
@@ -108,6 +114,88 @@ export function ItineraryDailyHistoryPanel({ pageData, loading, errorText, openi
     </section>)}</div> : <div className="empty-state compact">{loading ? '正在讀取每日 Itinerary 記錄…' : '尚無每日 Itinerary 記錄'}</div>}
     <HistoryPager page={pageData.page} pageCount={pageData.pageCount} pageStart={(pageData.page - 1) * pageData.pageSize} pageSize={pageData.pageSize} total={pageData.dateTotal} onPage={onPage}/>
   </div>;
+}
+
+export function ItineraryVesselHistoryPanel({ actorUserId, refreshToken = 0, onBack }: {
+  actorUserId:string; refreshToken?:number; onBack:()=>void;
+}) {
+  const { identity, capture } = useItineraryDailyReportContext(actorUserId);
+  const [vessels, setVessels] = useState<ItineraryHistoryVessel[]>([]);
+  const [catalogueLoading, setCatalogueLoading] = useState(true);
+  const [catalogueError, setCatalogueError] = useState('');
+  const [refreshCount, setRefreshCount] = useState(0);
+  const [query, setQuery] = useState<{ vesselId:string; page:number; date:string | null }>({ vesselId:'', page:1, date:null });
+  const [date, setDate] = useState('');
+  const [notice, setNotice] = useState('');
+  const [pageData, setPageData] = useState<ItineraryVesselHistoryPage | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [errorText, setErrorText] = useState('');
+  const [openingReportId, setOpeningReportId] = useState('');
+  const [preview, setPreview] = useState<ItineraryDailyReport | null>(null);
+  const requestGeneration = useRef(0), openGeneration = useRef(0);
+  const changeQuery = (next: typeof query) => {
+    requestGeneration.current += 1; openGeneration.current += 1;
+    setQuery(next); setPageData(null); setPreview(null); setOpeningReportId('');
+    setErrorText(''); setNotice(''); setLoading(Boolean(next.vesselId));
+  };
+  useEffect(() => {
+    let active = true;
+    const isCurrent = capture();
+    setCatalogueLoading(true); setCatalogueError('');
+    void listItineraryHistoryVessels(actorUserId).then(next => {
+      if (active && isCurrent()) setVessels(next);
+    }).catch(error => {
+      if (active && isCurrent()) { setVessels([]); setCatalogueError(itineraryDailyReportErrorMessage(error)); }
+    }).finally(() => { if (active && isCurrent()) setCatalogueLoading(false); });
+    return () => { active = false; };
+  }, [actorUserId, identity, capture, refreshToken, refreshCount]);
+  useEffect(() => {
+    const generation = ++requestGeneration.current, isCurrent = capture();
+    const current = () => isCurrent() && generation === requestGeneration.current;
+    if (!query.vesselId) { setLoading(false); return; }
+    setLoading(true); setErrorText(''); setNotice('');
+    void listItineraryVesselHistoryPage(query.vesselId, actorUserId, query.page, query.date).then(next => {
+      if (!current()) return;
+      setPageData(next);
+      if (query.date) setNotice(next.found ? `已定位 ${query.date}` : '所選日期沒有這艘船的保存記錄');
+    }).catch(error => {
+      if (current()) { setPageData(null); setErrorText(itineraryDailyReportErrorMessage(error)); }
+    }).finally(() => { if (current()) setLoading(false); });
+    return () => { requestGeneration.current += 1; };
+  }, [actorUserId, identity, capture, query, refreshToken, refreshCount]);
+  useEffect(() => () => { openGeneration.current += 1; }, [identity]);
+  const open = async (summary: ItineraryDailyReportSummary) => {
+    const generation = ++openGeneration.current, isCurrent = capture();
+    const current = () => isCurrent() && generation === openGeneration.current;
+    setOpeningReportId(summary.reportId); setErrorText('');
+    try {
+      const report = await loadItineraryVesselHistoryReport(summary.reportId, query.vesselId, actorUserId);
+      if (current()) setPreview(report);
+    } catch (error) { if (current()) setErrorText(itineraryDailyReportErrorMessage(error)); }
+    finally { if (current()) setOpeningReportId(''); }
+  };
+  const groups = (pageData?.items || []).reduce<Array<{ date:string; reports:ItineraryVesselHistoryPage['items'] }>>((result, report) => {
+    const last = result[result.length - 1];
+    if (last?.date === report.businessDate) last.reports.push(report);
+    else result.push({ date:report.businessDate, reports:[report] });
+    return result;
+  }, []);
+  return <>
+    <div className="panel daily-report-history-panel itinerary-daily-history-panel itinerary-vessel-history-panel">
+      <div className="daily-report-history-heading"><div><h2>每日 Itinerary 記錄</h2><small>單船歷程｜09:00 自動快照＋手動快照｜每頁最多 30 天</small></div><div className="itinerary-history-actions"><button className="btn small primary" onClick={onBack}>返回全船記錄</button><button className="btn small ghost" disabled={loading || catalogueLoading} onClick={() => { openGeneration.current += 1; setOpeningReportId(''); setPreview(null); setRefreshCount(value => value + 1); }}>↻ 刷新</button></div></div>
+      <div className="itinerary-vessel-history-filter"><label>船舶<select aria-label="單船歷程船舶" value={query.vesselId} disabled={catalogueLoading} onChange={event => { setDate(''); changeQuery({ vesselId:event.target.value, page:1, date:null }); }}><option value="">{catalogueLoading ? '讀取船舶中…' : '請選擇船舶'}</option>{vessels.map(vessel => <option key={vessel.vesselId} value={vessel.vesselId}>{vessel.vesselName}</option>)}</select></label>
+        <div className="daily-report-date-locator"><input type="date" aria-label="單船歷程日期" value={date} disabled={!query.vesselId || loading} onChange={event => { setDate(event.target.value); setNotice(''); }}/><button className="btn small ghost" disabled={!query.vesselId || loading} onClick={() => date ? changeQuery({ ...query, date }) : setNotice('請先選擇日期')}>定位日期</button></div>
+      </div>
+      {notice && <div className="itinerary-vessel-history-notice" role="status">{notice}</div>}
+      {(catalogueError || errorText) && <div className="daily-report-history-error" role="alert">{catalogueError || errorText}</div>}
+      {groups.length ? <div className="daily-report-history-list itinerary-report-date-groups" aria-busy={loading}>{groups.map(group => <section className="itinerary-report-date-group" key={group.date}>
+        <div className="itinerary-report-date-heading"><b>{businessDateLabel(group.date)} Itinerary</b><small>{group.reports.length} 份快照</small></div>
+        {group.reports.map(report => <div className="saved-report" key={report.reportId}><div><b>{report.generatedBy === 'scheduled' ? '09:00 自動快照' : '手動保存快照'}</b><small>{formatTaipeiDateTime(report.generatedAt, false)}｜{report.vesselName}｜{report.rowCount} 列｜Rev.{report.sourceMaxRevision}</small></div><button className="btn small ghost" disabled={loading || Boolean(openingReportId)} onClick={() => void open(report)}>{openingReportId === report.reportId ? '載入中…' : '檢視行程'}</button></div>)}
+      </section>)}</div> : !(catalogueError || errorText) && <div className="empty-state compact">{loading || catalogueLoading ? '正在讀取單船歷程…' : !query.vesselId ? vessels.length ? '請選擇船舶，查看每天的保存歷史。' : '尚無每日 Itinerary 記錄' : '這艘船尚無保存記錄'}</div>}
+      {pageData && <HistoryPager page={pageData.page} pageCount={pageData.pageCount} pageStart={(pageData.page - 1) * pageData.pageSize} pageSize={pageData.pageSize} total={pageData.dateTotal} onPage={page => changeQuery({ ...query, page, date:null })}/>}
+    </div>
+    {preview && <ItineraryDailyReportPreview report={preview} singleVesselName={preview.snapshot.vessels[0].vesselName} close={() => setPreview(null)}/>}
+  </>;
 }
 
 const EMPTY_ITINERARY_PAGE: ItineraryDailyReportPage = {
@@ -128,6 +216,11 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
   const [preview, setPreview] = useState<ItineraryDailyReport | null>(null);
   const requestGeneration = useRef(0);
   const { identity, capture } = useItineraryDailyReportContext(actorUserId);
+  const [singleVessel, setSingleVessel] = useState(false);
+  const viewGeneration = useRef(0);
+  const changeView = (single: boolean) => {
+    viewGeneration.current += 1; setPreview(null); setOpeningReportId(''); setSingleVessel(single);
+  };
 
   const refresh = useCallback(async (requestedPage: number) => {
     const generation = ++requestGeneration.current;
@@ -185,7 +278,8 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
 
   const open = async (summary: ItineraryDailyReportSummary) => {
     if (openingReportId) return;
-    const isCurrent = capture();
+    const captured = capture(), generation = viewGeneration.current;
+    const isCurrent = () => captured() && generation === viewGeneration.current;
     if (!isCurrent()) return;
     setOpeningReportId(summary.reportId);
     setErrorText('');
@@ -203,7 +297,7 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
 
   return <>
     <div className="grid cols-2 report-daily-history-grid">
-      <ItineraryDailyHistoryPanel pageData={pageData} loading={loading} errorText={errorText} openingReportId={openingReportId} onRefresh={() => void refresh(pageData.page)} onPage={page => void refresh(page)} onLocate={locate} onOpen={report => void open(report)}/>
+      {singleVessel ? <ItineraryVesselHistoryPanel key={identity} actorUserId={actorUserId} refreshToken={refreshToken} onBack={() => changeView(false)}/> : <ItineraryDailyHistoryPanel pageData={pageData} loading={loading} errorText={errorText} openingReportId={openingReportId} onRefresh={() => void refresh(pageData.page)} onPage={page => void refresh(page)} onLocate={locate} onOpen={report => void open(report)} onShowVessel={() => changeView(true)}/>}
       <MorningDailyHistoryPanel reports={morningReports} onOpen={onOpenMorning}/>
     </div>
     {preview && <ItineraryDailyReportPreview report={preview} close={() => setPreview(null)}/>}

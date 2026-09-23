@@ -42,6 +42,18 @@ export interface ItineraryDailyReportLocation {
   setToken: string;
 }
 
+export interface ItineraryHistoryVessel {
+  vesselId: string;
+  vesselName: string;
+}
+
+export interface ItineraryVesselHistoryPage extends ItineraryDailyReportPage {
+  vesselId: string;
+  items: (ItineraryDailyReportSummary & { vesselName: string })[];
+  locatedDate: string | null;
+  found: boolean | null;
+}
+
 export interface ItineraryDailyReportVesselSnapshot {
   vesselId: string;
   vesselName: string;
@@ -147,6 +159,7 @@ export class ItineraryDailyReportRpcError extends Error {
 
 // Explicit capability routing only; a missing record RPC must never probe legacy.
 const RECORD_REPORT_RPCS = {
+  sd_itinerary_record_report_vessel_history_v1: 'sd_itinerary_record_report_vessel_history_v1',
   sd_save_manual_itinerary_report: 'sd_itinerary_record_report_save_manual_v1',
   sd_itinerary_daily_report_list_v2: 'sd_itinerary_record_report_list_v1',
   sd_itinerary_daily_report_locate_v2: 'sd_itinerary_record_report_locate_v1',
@@ -227,9 +240,13 @@ async function runRpc(
   suppliedClient?: ItineraryDailyReportRpcClient | null,
 ): Promise<Record<string, unknown>> {
   const raw = requiredConfig(config);
-  const reading = ['sd_itinerary_daily_report_list_v2', 'sd_itinerary_daily_report_locate_v2', 'sd_itinerary_daily_report_load_by_id'].includes(name);
+  const vesselHistory = name === 'sd_itinerary_record_report_vessel_history_v1';
+  const reading = vesselHistory || ['sd_itinerary_daily_report_list_v2', 'sd_itinerary_daily_report_locate_v2', 'sd_itinerary_daily_report_load_by_id'].includes(name);
   const binding = reading && !suppliedClient ? await readBrowserAuthority(raw) : null;
   const resolved = binding ? authorityConfig(raw, binding) : raw;
+  if (vesselHistory && resolved.storageMode !== 'records-v1') {
+    throw new ItineraryDailyReportRpcError('VESSEL_HISTORY_SOURCE_UNAVAILABLE', '單船歷程尚未支援目前的資料來源。', true);
+  }
   const client = suppliedClient || getSupabaseClient(resolved) as unknown as ItineraryDailyReportRpcClient | null;
   if (!client) throw new ItineraryDailyReportRpcError('CLOUD_NOT_CONFIGURED', 'Supabase client 不可用。', true);
   const controller = new AbortController();
@@ -243,7 +260,7 @@ async function runRpc(
       const providerCode = asText(asObject(response.error).code, 'RPC_FAILED');
       if (providerCode === 'PGRST202' || providerCode === '42883') {
         throw new ItineraryDailyReportRpcError(
-          'DAILY_ITINERARY_REPORTS_SQL_NOT_DEPLOYED',
+          vesselHistory ? 'VESSEL_HISTORY_SQL_NOT_DEPLOYED' : 'DAILY_ITINERARY_REPORTS_SQL_NOT_DEPLOYED',
           'Daily Itinerary reports migration 尚未部署。',
           true,
         );
@@ -371,6 +388,10 @@ export async function listItineraryDailyReportPage(
     p_page:requestedPage,
     p_page_size:30,
   }, resolved, client);
+  return parseReportPage(response);
+}
+
+function parseReportPage(response: Record<string, unknown>): ItineraryDailyReportPage {
   const page = strictPositiveInteger(response.page);
   const pageSize = strictPositiveInteger(response.pageSize);
   const pageCount = strictPositiveInteger(response.pageCount);
@@ -394,6 +415,69 @@ export async function listItineraryDailyReportPage(
     throw new Error('每日 Itinerary 報告分頁格式不正確。');
   }
   return { items, page, pageSize:30, pageCount, total, dateTotal, reportTotal, setToken };
+}
+
+const vesselHistoryRpc = 'sd_itinerary_record_report_vessel_history_v1' as const;
+function vesselHistoryParams(config: ResolvedSupabaseConfig, actorUserId: string, vesselId: string | null) {
+  if (!actorUserId || (vesselId !== null && !vesselId.trim())) throw new Error('請選擇船舶。');
+  return { p_workspace_key:config.workspaceKey, p_actor_user_id:actorUserId, p_vessel_id:vesselId,
+    p_page:1, p_business_date:null as string | null, p_report_id:null as string | null };
+}
+
+export async function listItineraryHistoryVessels(
+  actorUserId: string, config?: ResolvedSupabaseConfig | null, client?: ItineraryDailyReportRpcClient | null,
+): Promise<ItineraryHistoryVessel[]> {
+  const resolved = requiredConfig(config);
+  const response = await runRpc(vesselHistoryRpc, vesselHistoryParams(resolved, actorUserId, null), resolved, client);
+  if (!Array.isArray(response.vessels)) throw new Error('單船歷程船舶清單格式不正確。');
+  const seen = new Set<string>();
+  return response.vessels.map(value => {
+    const row = asObject(value), vesselId = asText(row.vesselId), vesselName = asText(row.vesselName);
+    if (!vesselId.trim() || !vesselName.trim() || seen.has(vesselId)) throw new Error('單船歷程船舶清單格式不正確。');
+    seen.add(vesselId);
+    return { vesselId, vesselName };
+  });
+}
+
+export async function listItineraryVesselHistoryPage(
+  vesselId: string, actorUserId: string, requestedPage: number, businessDate: string | null = null,
+  config?: ResolvedSupabaseConfig | null, client?: ItineraryDailyReportRpcClient | null,
+): Promise<ItineraryVesselHistoryPage> {
+  if (!Number.isSafeInteger(requestedPage) || requestedPage < 1 || (businessDate !== null && !isBusinessDate(businessDate))) {
+    throw new Error('單船歷程日期或頁碼不正確。');
+  }
+  const resolved = requiredConfig(config);
+  const response = await runRpc(vesselHistoryRpc, { ...vesselHistoryParams(resolved, actorUserId, vesselId),
+    p_page:requestedPage, p_business_date:businessDate }, resolved, client);
+  const page = parseReportPage(response);
+  if (response.vesselId !== vesselId || response.businessDate !== businessDate
+    || (businessDate === null ? response.found !== null : typeof response.found !== 'boolean')) {
+    throw new Error('單船歷程查詢目標不一致。');
+  }
+  const items = page.items.map((item, index) => {
+    const vesselName = asText(asObject(asArray(response.reports)[index]).vesselName);
+    if (item.vesselCount !== 1 || !vesselName) throw new Error('單船歷程快照範圍不正確。');
+    return { ...item, vesselName };
+  });
+  if (response.found === true && !items.some(item => item.businessDate === businessDate)) {
+    throw new Error('單船歷程日期定位不一致。');
+  }
+  return { ...page, items, vesselId, locatedDate:businessDate, found:response.found as boolean | null };
+}
+
+export async function loadItineraryVesselHistoryReport(
+  reportId: string, vesselId: string, actorUserId: string,
+  config?: ResolvedSupabaseConfig | null, client?: ItineraryDailyReportRpcClient | null,
+): Promise<ItineraryDailyReport> {
+  if (!isReportId(reportId)) throw new Error('每日 Itinerary 報告 ID 格式不正確。');
+  const resolved = requiredConfig(config);
+  const response = await runRpc(vesselHistoryRpc, { ...vesselHistoryParams(resolved, actorUserId, vesselId), p_report_id:reportId }, resolved, client);
+  const raw = asObject(response.report), summary = parseSummary(raw), snapshot = parseSnapshot(raw.snapshot, summary);
+  if (response.vesselId !== vesselId || summary.reportId !== reportId
+    || snapshot.vessels.length !== 1 || snapshot.vessels[0].vesselId !== vesselId) {
+    throw new Error('單船歷程快照範圍不正確。');
+  }
+  return { ...summary, snapshot };
 }
 
 export async function locateItineraryDailyReport(
@@ -637,6 +721,8 @@ export async function reconcileLegacyItineraryDailyReportDelete(
 export function itineraryDailyReportErrorMessage(error: unknown): string {
   const code = error instanceof ItineraryDailyReportRpcError ? error.code : '';
   const messages: Record<string, string> = {
+    VESSEL_HISTORY_SQL_NOT_DEPLOYED:'單船歷程查詢尚未部署；請先執行本次 SQL。全船記錄仍可照常使用。',
+    VESSEL_HISTORY_SOURCE_UNAVAILABLE:'單船歷程尚未支援目前的資料來源；請返回全船記錄。',
     CLOUD_NOT_CONFIGURED:'尚未配置 Supabase，無法讀取每日 Itinerary 記錄。',
     DAILY_ITINERARY_REPORTS_SQL_NOT_DEPLOYED:'手動／每日 Itinerary 記錄 SQL 尚未部署。請先執行本次 migration。',
     FORBIDDEN:'目前身份無權讀取每日 Itinerary 記錄。',

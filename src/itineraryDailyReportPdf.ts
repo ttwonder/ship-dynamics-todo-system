@@ -15,9 +15,11 @@ export function itineraryDailyReportPdfTitle(
   generatedAt: string,
   generatedBy: ItineraryDailyReportGeneration,
   reportId: string,
+  vesselName?: string,
 ): string {
   const source = generatedBy === 'manual' ? '手動' : '自動';
-  return `每日正式 Itinerary_${businessDate}_${taipeiTimeToken(generatedAt)}_${source}_R${reportId}`;
+  const vessel = vesselName?.trim().replace(/[\\/:*?"<>|\r\n]+/g, '_');
+  return `${vessel ? `單船歷程_${vessel}` : '每日正式 Itinerary'}_${businessDate}_${taipeiTimeToken(generatedAt)}_${source}_R${reportId}`;
 }
 
 export function printItineraryDailyReportPdf(
@@ -25,9 +27,10 @@ export function printItineraryDailyReportPdf(
   generatedAt: string,
   generatedBy: ItineraryDailyReportGeneration,
   reportId: string,
+  vesselName?: string,
 ): void {
   const previousTitle = document.title;
-  document.title = itineraryDailyReportPdfTitle(businessDate, generatedAt, generatedBy, reportId);
+  document.title = itineraryDailyReportPdfTitle(businessDate, generatedAt, generatedBy, reportId, vesselName);
   document.body.classList.add('printing-itinerary-daily-report');
   let cleaned = false;
   const cleanup = () => {

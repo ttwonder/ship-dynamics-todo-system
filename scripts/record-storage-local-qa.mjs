@@ -40,6 +40,7 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
   prune_ship_dynamics_record_revision_history_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_revisions:jsonb','p_delete_revisions:jsonb'],
   sd_itinerary_record_report_save_manual_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid'],
   sd_itinerary_record_report_list_v1:['p_workspace_key','p_actor_user_id','p_page:integer','p_page_size:integer'],
+  sd_itinerary_record_report_vessel_history_v1:['p_workspace_key','p_actor_user_id','p_vessel_id','p_page:integer','p_business_date:date','p_report_id:bigint'],
   sd_itinerary_record_report_locate_v1:['p_workspace_key','p_business_date:date','p_actor_user_id','p_page_size:integer'],
   sd_itinerary_record_report_load_v1:['p_workspace_key','p_report_id:bigint','p_actor_user_id'],
   sd_itinerary_record_report_delete_ids_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_set_token','p_delete_report_ids:jsonb'],
