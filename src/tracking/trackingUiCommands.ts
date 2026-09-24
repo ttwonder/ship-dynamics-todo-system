@@ -5,11 +5,20 @@ import { runTrackingCommand, type TrackingCommand, type TrackingContext, type Tr
 
 /** UI continuation only: reuse the existing internal-control editor domain API.
  * No new storage protocol or second save queue; App submits one related delta. */
-export type TrackingUiCommand = TrackingCommand | {
+export type TrackingUiCommand = TrackingCommand | (Extract<TrackingCommand, {type:'create'}> & {
+  importClosures: {id:string; date:string; outcome:'completed'|'cancelled'}[];
+}) | {
   type: 'sync-edit';
   items: (TrackingVersion & { item: InternalControlCase; expectedCaseUpdatedAt: string; projection?: InternalControlTaskProjection })[];
 };
 export function runTrackingUiCommand(data: AppData, command: TrackingUiCommand, context: TrackingContext): AppData {
+  if (command.type === 'create' && 'importClosures' in command) {
+    const ids = new Set(command.items.map(i => i.id));
+    if (new Set(command.importClosures.map(i => i.id)).size !== command.importClosures.length || command.importClosures.some(i => !ids.has(i.id))) throw new Error('tracking-import-closure-selection');
+    let next = runTrackingCommand(data, { type:'create', items:command.items }, context);
+    for (const closure of command.importClosures) next = runTrackingCommand(next, { type:'lifecycle', action:'close', date:closure.date, outcome:closure.outcome, targets:[{entry:'tracking', id:closure.id, expectedUpdatedAt:context.at}] }, context);
+    return next;
+  }
   if (command.type !== 'sync-edit') return runTrackingCommand(data, command, context);
   const next = structuredClone(data);
   const actor = next.users.find(user => user.id === context.actorId && user.isActive);

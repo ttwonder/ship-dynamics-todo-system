@@ -1,8 +1,10 @@
 import type { AppData } from '../types';
 import type { TrackingContext } from './trackingWorkflow';
 import type { TrackingUiCommand } from './trackingUiCommands';
+import type { TrackingItem } from './trackingTypes';
 export interface TrackingSubmission { command: TrackingUiCommand; context: TrackingContext; identity: string }
 export interface TrackingUiCallbacks {
+  captureExport?: (vesselId: string) => Promise<{ items: TrackingItem[]; isCurrent: () => boolean } | null>;
   load: (vesselId: string, ids?: string[]) => Promise<AppData | null>;
   submit: (submission: TrackingSubmission) => Promise<boolean>;
   release: () => Promise<boolean>;

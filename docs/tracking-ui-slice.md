@@ -8,7 +8,7 @@ The five literal tabs are `未送船清單`, `已送船清單`, `配件物料總
 
 Implemented: complete applicable F28/F34 source fields, independent original remarks/progress/supplemental notes, optional DL, mutually exclusive ordinary/urgent editing, urgent reference text, complete filters and sorting, 30-row paging/jump, page versus all-filtered selection, personal column display/order/resize/reset, single/batch create, edit, changed-only progress, independent partial/full/corrected delivery, close/date correction/reopen, and explicit one-source/one-case synchronization. Create fixes the vessel and offers an explicit supply/engineering selector. Engineering cancellation is archived with `取消（非完工）`, not counted as completion.
 
-Excel template/import/export/PDF (R11–R12/R21–R23) is the next slice. There are no placeholder export/import buttons. No historical attachment data is imported.
+At this slice's original commit, Excel template/import/export/PDF (R11–R12/R21–R23) remained for the next slice and no placeholder buttons were shipped. The completed integration and release evidence are now documented in `tracking-spreadsheets-release.md`. No historical attachment data is automatically imported.
 
 ## Business/save boundary
 
