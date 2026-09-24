@@ -264,6 +264,8 @@ export function taskToInternalControlCase(task: TaskItem, existing: InternalCont
   return {
     id,
     vesselId: task.vesselId,
+    ...(existing?.trackingItemId ? { trackingItemId:existing.trackingItemId } : {}),
+    ...(existing?.trackingLifecycle ? { trackingLifecycle:structuredClone(existing.trackingLifecycle) } : {}),
     reportDate: task.reportDate || taipeiDateKey(task.createdAt),
     expectedDate: task.expectedDate,
     ...(existing?.vesselResponsibilities ? {vesselResponsibilities:structuredClone(existing.vesselResponsibilities)} : task.vesselResponsibilities ? {vesselResponsibilities:structuredClone(task.vesselResponsibilities)} : {}),
@@ -292,6 +294,7 @@ export function taskToInternalControlCase(task: TaskItem, existing: InternalCont
 export function syncInternalControlCaseToLinkedTask(item: InternalControlCase, task: TaskItem, actorId: string, at: string): TaskItem {
   return {
     ...task,
+    ...(item.trackingLifecycle ? { trackingLifecycle:structuredClone(item.trackingLifecycle) } : {}),
     vesselId: item.vesselId,
     vesselIds: undefined,
     vesselScopeMode: 'vessels',

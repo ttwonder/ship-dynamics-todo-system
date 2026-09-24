@@ -246,7 +246,7 @@ async function fetchCloudRecordScope(cfg:ResolvedSupabaseConfig,supabase:Supabas
       const report=latestManualReport(home.agendaReports,new Date().toISOString());
       const targets=[...(['tasks','internalControlCases','meetings'] as const).flatMap(collection=>home[collection].map(row=>({collection,id:row.id}))),...(report?[{collection:'agendaReports' as const,id:report.id}]:[]),...(typeof scope==='object'?scope.targets:[])];
       const unique=[...new Map(targets.map(t=>[JSON.stringify(t),t])).values()];
-      const detail=await fetchCloudRecordScope(cfg,supabase,{targets:unique},signal);
+      const detail=await fetchCloudRecordScope(cfg,supabase,{targets:unique,...(typeof scope==='object'&&scope.trackingVesselIds?.length?{trackingVesselIds:scope.trackingVesselIds}:{})},signal);
       if(detail&&detail.revision===home.revision)return detail;
     }
     throw new Error('morning-read-revision-changed');
@@ -257,9 +257,17 @@ async function fetchCloudRecordScope(cfg:ResolvedSupabaseConfig,supabase:Supabas
   let cache=scopeCaches.get(scopeKey);
   if(!cache||cache.key!==key){cache={key,sequence:0,published:0,snapshot:null};scopeCaches.set(scopeKey,cache);}
   const owner=cache,base=owner.snapshot,sequence=++owner.sequence;
-  let request=supabase.rpc('read_ship_dynamics_record_scopes_v1',{p_workspace_key:cfg.workspaceKey,p_scope:typeof scope==='string'?scope:'targets',p_targets:typeof scope==='object'?scope.targets:[],p_versions:recordScopeVersions(base)});
+  const args={p_workspace_key:cfg.workspaceKey,p_scope:typeof scope==='string'?scope:'targets',p_targets:typeof scope==='object'?scope.targets:[],p_versions:recordScopeVersions(base)};
+  let request=supabase.rpc('read_ship_dynamics_record_scopes_v2',{...args,p_vessel_ids:typeof scope==='object'?scope.trackingVesselIds || []:[]});
   if(signal)request=request.abortSignal(signal);
-  const {data,error}=await request;signal?.throwIfAborted();if(error)throw error;
+  let {data,error}=await request;signal?.throwIfAborted();
+  // Additive rollout only: older servers may read old modules, never tracking.
+  if(error?.code==='PGRST202'&&!base?.collections.trackingItems&&!(typeof scope==='object'&&(scope.trackingVesselIds?.length||scope.targets.some(t=>t.collection==='trackingItems')))){
+    let legacy=supabase.rpc('read_ship_dynamics_record_scopes_v1',args);
+    if(signal)legacy=legacy.abortSignal(signal);
+    ({data,error}=await legacy);signal?.throwIfAborted();
+  }
+  if(error)throw error;
   const next=consumeRecordScopes(data,cfg.workspaceKey,scope,base);
   if(scopeCaches.get(scopeKey)!==owner)throw new Error('stale-record-scope-config');
   if(sequence<owner.published)return owner.snapshot?normalizedCloudRead(recordScopePayload(owner.snapshot),owner.snapshot.revision):null;

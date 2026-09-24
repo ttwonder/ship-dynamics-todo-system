@@ -1,4 +1,5 @@
 import type { ItineraryOperationalSnapshotEntry } from './itinerary/itineraryOperationalProjection';
+import type { TrackingItem, TrackingEvent } from './tracking/trackingTypes';
 
 export type UserRole = 'owner' | 'admin' | 'operator' | 'vessel';
 export type PermissionKey = 'viewAllVessels' | 'editBusinessContent' | 'createTasks' | 'closeTasks' | 'deleteTasks' | 'manageMeetings' | 'exportReports' | 'enterManagement' | 'manageUsers' | 'manageVessels' | 'viewAuditLogs' | 'manageRolePermissions' | 'manageSystemSettings';
@@ -121,6 +122,7 @@ export interface TaskVesselProgress {
 }
 
 export interface TaskItem {
+  trackingLifecycle?: TrackingEvent[];
   vesselResponsibilities?: VesselResponsibility[];
   id: string;
   vesselId: string;
@@ -162,6 +164,9 @@ export interface TaskItem {
 }
 
 export interface InternalControlCase {
+  trackingItemId?: string;
+  trackingLinkState?: 'invalid';
+  trackingLifecycle?: TrackingEvent[];
   vesselResponsibilities?: VesselResponsibility[];
   id: string;
   vesselId: string;
@@ -320,6 +325,8 @@ export interface AppSettings {
 }
 
 export interface AppData {
+  /** Absent on legacy v1 scoped projections; normal full reads supply an array. */
+  trackingItems?: TrackingItem[];
   revision: number;
   settings: AppSettings;
   users: UserAccount[];

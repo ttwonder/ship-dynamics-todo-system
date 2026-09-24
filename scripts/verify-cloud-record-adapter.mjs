@@ -12,7 +12,7 @@ export async function verifyRecordAdapter({ db, vite, payload, workspace, reques
   const decode = body => ({ workspace:body.p_workspace_key,id:body.p_operation_id,operations:body.p_operations,savedBy:body.p_saved_by,actor:body.p_actor_user_id,guard:body.p_actor_guard,authorization:body.p_authorization_guard,locks:body.p_lock_guards });
   const deferred = () => { let resolve;const promise=new Promise(r=>{resolve=r;});return{promise,resolve}; };
   try {
-    globalThis.window={SHIP_DYNAMICS_SUPABASE_CONFIG:config};
+    globalThis.window={SHIP_DYNAMICS_SUPABASE_CONFIG:config,setInterval,clearInterval};
     globalThis.localStorage={getItem:()=>null,setItem:()=>{throw new Error('No browser storage writes in this fixture');}};
     globalThis.fetch=async (input,init={})=>{
       const url=new URL(String(input));

@@ -3,6 +3,7 @@ import { vesselPatchRequiresCollaborationLock } from './cloudAuthorization';
 import { internalControlCreationLockKey, meetingCreationLockKey } from './exclusiveItemEditLock';
 
 type TaskRelationSnapshot={
+  trackingItems?:readonly {id:string;linkedCaseId?:string;linkState?:string}[];
   tasks:readonly {id:string;sourceMeetingId?:string;internalControlCaseId?:string}[];
   meetings:readonly {id:string}[];
   internalControlCases:readonly {id:string;linkedTaskId?:string}[];
@@ -26,6 +27,7 @@ export function lockKeyForExistingEntity(collection:CloudBlockCollection,entityI
   if(collection==='tasks')return`task:${entityId}`;
   if(collection==='meetings')return`meeting:${entityId}`;
   if(collection==='internalControlCases')return`internal-control:${entityId}`;
+  if(collection==='trackingItems')return`tracking:${entityId}`;
   return null;
 }
 
@@ -62,6 +64,7 @@ export function taskRelationLockKeys(snapshot:TaskRelationSnapshot,taskIds:reado
   for(const item of snapshot.internalControlCases){
     if(item.linkedTaskId&&selectedIds.has(item.linkedTaskId))keys.add(`internal-control:${item.id}`);
   }
+  for(const source of snapshot.trackingItems || [])if(source.linkState==='active'&&source.linkedCaseId&&keys.has(`internal-control:${source.linkedCaseId}`))keys.add(`tracking:${source.id}`);
   return[...keys].sort((left,right)=>left.localeCompare(right));
 }
 
@@ -81,6 +84,10 @@ export function taskInternalControlCreationLockKeys(
 }
 
 export function relatedEntityLockKeysForSection(snapshot:TaskRelationSnapshot,sectionKey:string):string[]{
+  if(sectionKey.startsWith('tracking:')){
+    const source=snapshot.trackingItems?.find(s=>`tracking:${s.id}`===sectionKey);
+    return source?.linkState==='active'&&source.linkedCaseId?[...new Set([sectionKey,...relatedEntityLockKeysForSection(snapshot,`internal-control:${source.linkedCaseId}`)])].sort():[sectionKey];
+  }
   if(sectionKey.startsWith('task:')){
     const taskId=sectionKey.slice('task:'.length);
     return taskRelationLockKeys(snapshot,[taskId]);
@@ -94,7 +101,8 @@ export function relatedEntityLockKeysForSection(snapshot:TaskRelationSnapshot,se
     const caseId=sectionKey.slice('internal-control:'.length);
     const item=snapshot.internalControlCases.find(candidate=>candidate.id===caseId);
     const linkedTaskIds=snapshot.tasks.filter(task=>task.internalControlCaseId===caseId||Boolean(item?.linkedTaskId&&task.id===item.linkedTaskId)).map(task=>task.id);
-    return taskRelationLockKeys(snapshot,linkedTaskIds).concat(sectionKey).filter((key,index,keys)=>keys.indexOf(key)===index).sort((left,right)=>left.localeCompare(right));
+    const sources=(snapshot.trackingItems || []).filter(s=>s.linkState==='active'&&s.linkedCaseId===caseId).map(s=>`tracking:${s.id}`);
+    return taskRelationLockKeys(snapshot,linkedTaskIds).concat(sectionKey,...sources).filter((key,index,keys)=>keys.indexOf(key)===index).sort((left,right)=>left.localeCompare(right));
   }
   return[sectionKey];
 }

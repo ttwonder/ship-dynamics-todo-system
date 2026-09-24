@@ -12,10 +12,11 @@ import { taskVesselIds } from './taskVesselScope';
 import { canRetainVesselCommonContact } from './vesselManagerHandover';
 import { isEligibleTaskOwner } from './permissions';
 import { taipeiDateKey } from './taipeiTime';
+import { convergeTrackingCaseLifecycle, invalidateTrackingCase, sourceForCase, appendTrackingEvent } from './tracking/trackingLifecycle';
 
 export { internalControlTaskSyncWithdrawalEligibility } from './internalControlTaskSyncWithdrawal';
 
-export type InternalControlDataDraft = Pick<AppData, 'users' | 'vessels' | 'tasks' | 'internalControlCases'> & Partial<Pick<AppData, 'settings' | 'notifications' | 'taskDismissals'>>;
+export type InternalControlDataDraft = Pick<AppData, 'users' | 'vessels' | 'tasks' | 'internalControlCases'> & Partial<Pick<AppData, 'settings' | 'notifications' | 'taskDismissals' | 'trackingItems'>>;
 export type InternalControlActor = Pick<UserAccount, 'id' | 'name'>;
 export type InternalControlTaskProjection = {
   categories: string[];
@@ -36,8 +37,12 @@ const withoutClosureTransitionMetadata = ({
   ...item
 }: InternalControlCase) => item;
 
+const stableContent = (value: unknown) => JSON.stringify(value, (_key, entry) =>
+  entry && typeof entry === 'object' && !Array.isArray(entry)
+    ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry);
+
 function assertClosedCaseContentUnchanged(previous: InternalControlCase, candidate: InternalControlCase): void {
-  if (previous.isClosed && JSON.stringify(withoutClosureTransitionMetadata(candidate)) !== JSON.stringify(withoutClosureTransitionMetadata(previous))) {
+  if (previous.isClosed && stableContent(withoutClosureTransitionMetadata(candidate)) !== stableContent(withoutClosureTransitionMetadata(previous))) {
     throw new Error('已結案案件須先重新開啟，才能修改內容或歷程');
   }
 }
@@ -316,7 +321,7 @@ export function updateInternalControlCase(
       saved.closedDate = isValidInternalControlDate(saved.closedDate) ? saved.closedDate : dateAt(at);
       saved.closedBy = actor.id;
     } else {
-      saved.closedDate = previous.closedDate;
+      saved.closedDate = previous.trackingItemId ? saved.closedDate : previous.closedDate;
       saved.closedBy = previous.closedBy;
     }
   } else {
@@ -324,6 +329,7 @@ export function updateInternalControlCase(
     delete saved.closedBy;
   }
   assertValidInternalControlCase(saved);
+  convergeTrackingCaseLifecycle(draft,previous,saved,actor,at);
   const index = draft.internalControlCases.findIndex(item => item.id === saved.id);
   let linkedTaskUpdate: { index: number; task: TaskItem } | undefined;
   let linkedTaskCreate: TaskItem | undefined;
@@ -421,6 +427,8 @@ export function deleteInternalControlCase(
   draft: InternalControlDataDraft,
   caseId: string,
   expectedUpdatedAt: string,
+  actor?: InternalControlActor,
+  at?: string,
 ): { caseId: string; taskId?: string } {
   assertInternalControlLinkIntegrity(draft);
   const matches = draft.internalControlCases.filter(item => item.id === caseId);
@@ -428,6 +436,10 @@ export function deleteInternalControlCase(
   const item = matches[0];
   if (item.updatedAt !== expectedUpdatedAt) throw new Error('內控案件已由其他人更新，請重新開啟');
   let taskId: string | undefined;
+  if(sourceForCase(draft,item)){
+    if(!actor||!at)throw new Error('tracking-delete-actor-required');
+    invalidateTrackingCase(draft,item,actor,at);
+  }
   if (item.linkedTaskId) {
     const reciprocal = reciprocalLinkedTask(draft, item);
     if (!reciprocal) throw new Error('內控與要事同步關聯不是唯一雙向關係');
@@ -487,6 +499,8 @@ export function reconcileInternalControlAfterTaskSave(
       if (errors.length) throw new Error(`內控案件缺少必填欄位：${errors.join('、')}`);
       saved.statusLogs = trustedLogs;
       saved.internalControlCaseId = item.id;
+      convergeTrackingCaseLifecycle(draft,item,synced,actor,at,'task');
+      if(synced.trackingLifecycle)saved.trackingLifecycle=clone(synced.trackingLifecycle);
       if (synced.category === '設備故障') saved.equipmentSubcategory = synced.equipmentSubcategory;
       else delete saved.equipmentSubcategory;
       Object.assign(item, synced);
@@ -535,6 +549,7 @@ export function syncLinkedInternalControlCasesFromTasks(
   });
   draft.tasks = working.tasks;
   draft.internalControlCases = working.internalControlCases;
+  if(working.trackingItems)draft.trackingItems=working.trackingItems;
 }
 
 export function closeLinkedInternalControlCaseAfterTaskDelete(
@@ -565,6 +580,10 @@ export function closeLinkedInternalControlCaseAfterTaskDelete(
   closed.status = '關聯要事已刪除，內控案件保留並結束雙向同步';
   closed.statusLogs = [{ id: uid('ic-log'), at, by: actor.name, byUserId: actor.id, text: closed.status }, ...closed.statusLogs];
   assertValidInternalControlCase(closed);
+  if(sourceForCase(draft,item)){
+    invalidateTrackingCase(draft,item,actor,at);
+    closed.trackingLinkState='invalid';
+  }
   delete item.linkedTaskId;
   Object.assign(item, closed);
   return item;

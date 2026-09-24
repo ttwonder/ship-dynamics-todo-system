@@ -2,7 +2,7 @@ import type { AppData, Vessel, WeeklyAttentionKey } from './types';
 import { actorAuthorizationUnchanged } from './cloudAuthorization';
 import { WEEKLY_ATTENTION_KEYS } from './weeklyAttention';
 
-const COLLECTION_KEYS = ['users', 'vessels', 'tasks', 'internalControlCases', 'meetings', 'agendaReports', 'taskDismissals', 'auditLogs', 'notifications'] as const;
+const COLLECTION_KEYS = ['users', 'vessels', 'tasks', 'internalControlCases', 'meetings', 'agendaReports', 'taskDismissals', 'auditLogs', 'notifications', 'trackingItems'] as const;
 type CollectionKey = typeof COLLECTION_KEYS[number];
 type SnapshotName = 'base' | 'local' | 'remote';
 type Identified = { id: string };
@@ -91,7 +91,7 @@ function detectDependencyConflicts(base: AppData, local: AppData, remote: AppDat
   const remoteSensitive = !equal(base.users, remote.users) || vesselAuthorizationChanged(base,remote) || SENSITIVE_SETTINGS.some(key => settingsKeyChanged(base, remote, key));
   const actorAuthorizationChanged=remoteSensitive&&meaningfulChange(base,local)&&(!actorUserId||!actorAuthorizationUnchanged(base,remote,actorUserId));
   if ((localSensitive && meaningfulChange(base, remote)) || actorAuthorizationChanged) conflicts.push('authorization-domain');
-  const changed = (side: AppData, key: CollectionKey) => changedIds(base[key] as Identified[], side[key] as Identified[]);
+  const changed = (side: AppData, key: CollectionKey) => changedIds((base[key] || []) as Identified[], (side[key] || []) as Identified[]);
   const localTaskIds = changed(local, 'tasks');
   const remoteTaskIds = changed(remote, 'tasks');
   const localCaseIds = changed(local, 'internalControlCases');
@@ -100,6 +100,10 @@ function detectDependencyConflicts(base: AppData, local: AppData, remote: AppDat
   const remoteMeetingIds = changed(remote, 'meetings');
   const localVesselIds = changedVesselScopeIds(base.vessels,local.vessels);
   const remoteVesselIds = changedVesselScopeIds(base.vessels,remote.vessels);
+  const sourceRelations=(side:AppData,ids:Set<string>,kind:'cases'|'tasks'|'vessels')=>relationshipValues(base.trackingItems || [],side.trackingItems || [],ids,source=>kind==='vessels'?[source.vesselId]:source.linkState==='active'?[kind==='cases'?source.linkedCaseId:[...base.internalControlCases,...side.internalControlCases].find(c=>c.id===source.linkedCaseId)?.linkedTaskId || '']:[]);
+  const localSources=changed(local,'trackingItems'),remoteSources=changed(remote,'trackingItems');
+  if(intersects(sourceRelations(local,localSources,'cases'),remoteCaseIds)||intersects(sourceRelations(remote,remoteSources,'cases'),localCaseIds)||intersects(sourceRelations(local,localSources,'tasks'),remoteTaskIds)||intersects(sourceRelations(remote,remoteSources,'tasks'),localTaskIds))conflicts.push('dependency:tracking-group');
+  if(intersects(sourceRelations(local,localSources,'vessels'),remoteVesselIds)||intersects(sourceRelations(remote,remoteSources,'vessels'),localVesselIds))conflicts.push('dependency:tracking-vessel');
   const taskCases = (side: AppData, ids: Set<string>) => relationshipValues(base.tasks, side.tasks, ids, item => [item.internalControlCaseId || '']);
   const taskMeetings = (side: AppData, ids: Set<string>) => relationshipValues(base.tasks, side.tasks, ids, item => [item.sourceMeetingId || '']);
   const taskVessels = (side: AppData, ids: Set<string>) => relationshipValues(base.tasks, side.tasks, ids, item => [item.vesselId || '', ...(item.vesselIds || [])]);
@@ -416,9 +420,9 @@ function mergeCollection(key: CollectionKey, baseItems: Identified[], localItems
 export function rebaseDisjointAppData(base: AppData, local: AppData, remote: AppData, at: string,actorUserId?:string): AppData {
   const conflicts: string[] = [];
   for (const key of COLLECTION_KEYS) {
-    validateCollectionIds(key, 'base', base[key] as Identified[], conflicts);
-    validateCollectionIds(key, 'local', local[key] as Identified[], conflicts);
-    validateCollectionIds(key, 'remote', remote[key] as Identified[], conflicts);
+    validateCollectionIds(key, 'base', (base[key] || []) as Identified[], conflicts);
+    validateCollectionIds(key, 'local', (local[key] || []) as Identified[], conflicts);
+    validateCollectionIds(key, 'remote', (remote[key] || []) as Identified[], conflicts);
   }
   if (conflicts.length) throw new CloudRebaseConflictError([...new Set(conflicts)]);
   detectDependencyConflicts(base,local,remote,conflicts,actorUserId);
@@ -426,7 +430,8 @@ export function rebaseDisjointAppData(base: AppData, local: AppData, remote: App
   const settings = mergeSettingsValue(base.settings, local.settings, remote.settings, 'settings', conflicts) as AppData['settings'];
   const merged = { ...clone(remote), settings } as AppData;
   for (const key of COLLECTION_KEYS) {
-    (merged[key] as Identified[]) = mergeCollection(key, base[key] as Identified[], local[key] as Identified[], remote[key] as Identified[], conflicts) as any;
+    if(key==='trackingItems'&&!base[key]&&!local[key]&&!remote[key])continue;
+    (merged[key] as Identified[]) = mergeCollection(key, (base[key] || []) as Identified[], (local[key] || []) as Identified[], (remote[key] || []) as Identified[], conflicts) as any;
   }
   if (conflicts.length) throw new CloudRebaseConflictError([...new Set(conflicts)]);
   merged.revision = remote.revision + 1;

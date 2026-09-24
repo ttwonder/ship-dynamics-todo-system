@@ -5,6 +5,7 @@ import { buildCloudBlockPatch, type CloudBlockCollection, type CloudBlockPatchOp
 import { taskBelongsToUserWorkCenter } from './workCenterScope';
 import { isTaipeiBusinessDay, taipeiDateKey } from './taipeiTime';
 import { isMeetingTaskSource } from './taskCategories';
+import { trackingProgressEndpointKeys } from './tracking/trackingAuthorization';
 
 export class CloudPatchAuthorizationError extends Error{
   constructor(readonly reason:string){super(`Cloud patch authorization rejected: ${reason}`);this.name='CloudPatchAuthorizationError';}
@@ -77,7 +78,7 @@ const entityVesselIds=(collection:CloudBlockCollection,entity:Record<string,unkn
   if(!entity)return[];
   if(collection==='vessels')return[String(entity.id||'')].filter(Boolean);
   if(collection==='tasks')return[...new Set([String(entity.vesselId||''),...(Array.isArray(entity.vesselIds)?entity.vesselIds.map(String):[])])].filter(Boolean);
-  if(collection==='internalControlCases')return[String(entity.vesselId||'')].filter(Boolean);
+  if(collection==='internalControlCases'||collection==='trackingItems')return[String(entity.vesselId||'')].filter(Boolean);
   if(collection==='meetings')return[...new Set([...(Array.isArray(entity.vessels)?entity.vessels.map(String):[]),...(Array.isArray(entity.vesselIds)?entity.vesselIds.map(String):[])])].filter(Boolean);
   if(collection==='agendaReports')return Array.isArray(entity.vesselIds)?entity.vesselIds.map(String).filter(Boolean):[];
   return[];
@@ -95,7 +96,7 @@ const assertEntityScope=(data:AppData,actor:UserAccount,collection:CloudBlockCol
 const VESSEL_MANAGEMENT_FIELDS=new Set(['id','name','shortName','fullName','fleet','fleetId','fleetCategory','shipType','yearLabel','tonnageLabel','isActive','assignedUserIds','managedByUserIds','delegateManagers']);
 const VESSEL_NON_COLLABORATIVE_FIELDS=new Set([...VESSEL_MANAGEMENT_FIELDS,'updatedAt','updatedBy']);
 const VESSEL_AUTHORIZATION_FIELDS=new Set(['isActive','assignedUserIds','delegateManagers']);
-const STATUS_FIELDS=new Set(['status','statusLogs','isClosed','closedDate','closedBy','reopenedAt','reopenedBy']);
+const STATUS_FIELDS=new Set(['status','statusLogs','isClosed','closedDate','closedBy','reopenedAt','reopenedBy','trackingLifecycle']);
 const SENSITIVE_SETTING_FIELDS=new Set(['sitePasswordHash','rolePermissions','nonOwnerPasswordResetVersion']);
 
 const meetingTaskLifecycleChanged=(expected:Record<string,unknown>|null,value:Record<string,unknown>|null)=>{
@@ -356,9 +357,20 @@ function exactOriginBoundTaskSyncWithdrawals(data:AppData,operations:readonly Cl
   return new Set([taskId]);
 }
 
-function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extract<CloudBlockPatchOperation,{kind:'entity'}>,crossUserTaskDismissalResets:Set<string>,withdrawnTaskIds:Set<string>){
+function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extract<CloudBlockPatchOperation,{kind:'entity'}>,crossUserTaskDismissalResets:Set<string>,withdrawnTaskIds:Set<string>,trackingProgress:Set<string>){
   const {collection,expected,value}=operation;
   const fields=changedFields(expected,value);
+  if(collection==='trackingItems'){
+    if(actor.role==='vessel')throw new CloudPatchAuthorizationError('tracking-shore-only');
+    if(!value)throw new CloudPatchAuthorizationError('tracking-source-delete-forbidden');
+    permission(data,actor,!expected?'createTasks':[...fields].some(f=>['isClosed','closedDate','closedBy','closureOutcome'].includes(f))?'closeTasks':'editBusinessContent');
+    assertEntityScope(data,actor,collection,expected,value);
+    return;
+  }
+  if(trackingProgress.has(`${collection}:${operation.entityId}`)){
+    if(actor.role==='vessel')throw new CloudPatchAuthorizationError('tracking-shore-only');
+    permission(data,actor,'editBusinessContent');assertEntityScope(data,actor,collection,expected,value);return;
+  }
   if(collection==='users'){
     const selfServicePasswordChange=Boolean(expected&&value&&operation.entityId===actor.id&&[...fields].every(field=>field==='passwordHash'||field==='updatedAt'));
     if(selfServicePasswordChange)return;
@@ -524,6 +536,7 @@ export function assertActorAuthorizedForCloudBlockPatch(data:AppData,operations:
   const sideEffects:CloudBlockPatchOperation[]=[];
   const crossUserTaskDismissalResets=authorizedCrossUserTaskDismissalResets(data,operations);
   const withdrawnTaskIds=exactOriginBoundTaskSyncWithdrawals(data,operations,actor);
+  const trackingProgress=trackingProgressEndpointKeys(data,operations,actor.id);
   const entityOperationCollections=new Set(operations.filter((operation):operation is Extract<CloudBlockPatchOperation,{kind:'entity'}>=>operation.kind==='entity').map(operation=>operation.collection));
   let authorizedPrimary=false;
   for(const operation of operations){
@@ -537,7 +550,7 @@ export function assertActorAuthorizedForCloudBlockPatch(data:AppData,operations:
       if([...fields].some(field=>field!=='rolePermissions'&&field!=='lastCloudSyncAt'&&field!=='supervisorOrder'))permission(data,actor,'manageSystemSettings');
       authorizedPrimary=true;
     }else if(operation.kind==='entity'){
-      authorizeEntityOperation(data,actor,operation,crossUserTaskDismissalResets,withdrawnTaskIds);
+      authorizeEntityOperation(data,actor,operation,crossUserTaskDismissalResets,withdrawnTaskIds,trackingProgress);
       authorizedPrimary=true;
     }else{
       if(!entityOperationCollections.has(operation.collection))authorizeOrderOperation(data,actor,operation.collection);

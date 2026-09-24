@@ -4,11 +4,13 @@ export const CLOUD_BLOCK_COLLECTIONS=[
   'users','vessels','tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs',
 ] as const;
 
-const UNORDERED_COLLECTIONS=new Set<CloudBlockCollection>(['taskDismissals']);
+// Keep the v1 read contract above exactly nine collections.
+export const CLOUD_RECORD_COLLECTIONS_V2=[...CLOUD_BLOCK_COLLECTIONS,'trackingItems'] as const;
+const UNORDERED_COLLECTIONS=new Set<CloudBlockCollection>(['taskDismissals','trackingItems']);
 const DERIVED_ORDER_COLLECTIONS=new Set<CloudBlockCollection>(['notifications','auditLogs']);
 const SERVER_OWNED_AUDIT_FIELDS=['ipAddress','ipCountryCode'] as const;
 
-export type CloudBlockCollection=typeof CLOUD_BLOCK_COLLECTIONS[number];
+export type CloudBlockCollection=typeof CLOUD_RECORD_COLLECTIONS_V2[number];
 
 type JsonObject=Record<string,unknown>;
 
@@ -67,7 +69,7 @@ const auditValueForPatch=(expected:JsonObject|null,value:JsonObject|null):JsonOb
 
 const entityArray=(snapshot:AppData,collection:CloudBlockCollection):JsonObject[]=>{
   const value=(snapshot as unknown as Record<string,unknown>)[collection];
-  if(value===undefined&&collection==='taskDismissals')return[];
+  if(value===undefined&&(collection==='taskDismissals'||collection==='trackingItems'))return[];
   if(!Array.isArray(value))throw new TypeError(`${collection} must be a JSON array`);
   return value as JsonObject[];
 };
@@ -88,7 +90,7 @@ const assertOperationShape=(operation:CloudBlockPatchOperation)=>{
   if(operation.kind==='settings'){
     canonical(operation.expected);canonical(operation.value);return;
   }
-  if(!CLOUD_BLOCK_COLLECTIONS.includes(operation.collection))throw new TypeError(`Unsupported cloud block collection: ${String(operation.collection)}`);
+  if(!CLOUD_RECORD_COLLECTIONS_V2.includes(operation.collection))throw new TypeError(`Unsupported cloud block collection: ${String(operation.collection)}`);
   if(operation.kind==='order'){
     if(new Set(operation.expectedIds).size!==operation.expectedIds.length||new Set(operation.valueIds).size!==operation.valueIds.length)throw new TypeError(`duplicate id in ${operation.collection} order operation`);
     return;
@@ -110,7 +112,9 @@ export function buildCloudBlockPatch(base:AppData,next:AppData,storageBase:AppDa
   canonical(jsonBase.settings);canonical(jsonNext.settings);
   canonical(jsonStorageBase.settings);
   if(!equal(jsonBase.settings,jsonNext.settings))operations.push({kind:'settings',expected:clone(jsonStorageBase.settings),value:clone(jsonNext.settings)});
-  for(const collection of CLOUD_BLOCK_COLLECTIONS){
+  for(const collection of CLOUD_RECORD_COLLECTIONS_V2){
+    // Missing coverage is not a request to delete v2 sources.
+    if(collection==='trackingItems'&&next.trackingItems===undefined)continue;
     const baseMap=indexEntities(jsonBase,collection);
     const nextMap=indexEntities(jsonNext,collection);
     const storageMap=indexEntities(jsonStorageBase,collection);
@@ -168,6 +172,7 @@ export function applyCloudBlockPatch(base:AppData,operations:readonly CloudBlock
   }
 
   const result=clone(jsonBase);
+  if(operations.some(op=>op.kind!=='settings'&&op.collection==='trackingItems'))result.trackingItems ||= [];
   for(const operation of operations){
     if(operation.kind==='settings'){
       result.settings=clone(operation.value);

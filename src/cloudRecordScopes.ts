@@ -1,16 +1,18 @@
-import { buildCloudBlockPatch, CLOUD_BLOCK_COLLECTIONS, type CloudBlockPatchOperation } from './cloudBlockPatch';
+import { buildCloudBlockPatch, CLOUD_BLOCK_COLLECTIONS, CLOUD_RECORD_COLLECTIONS_V2, type CloudBlockPatchOperation } from './cloudBlockPatch';
 import type { AppData } from './types';
 import { normalizeAppData } from './normalize';
 import { appDataContentEqual } from './cloudRebase';
 
-export type RecordTarget = { collection: 'tasks' | 'internalControlCases' | 'meetings' | 'agendaReports'; id: string };
-export type RecordReadScope = 'home' | 'full' | 'morning' | { targets: RecordTarget[]; morning?: true };
+export type RecordTarget = { collection: 'tasks' | 'internalControlCases' | 'meetings' | 'agendaReports' | 'trackingItems'; id: string };
+export type RecordReadScope = 'home' | 'full' | 'morning' | { targets: RecordTarget[]; morning?: true; trackingVesselIds?:string[] };
 export const isMorningRecordScope=(scope:RecordReadScope)=>scope==='morning'||(typeof scope==='object'&&scope.morning===true);
 type Row = { version: number; detail?: boolean; value: Record<string, unknown> };
 export const recordScopeKey=(scope:RecordReadScope)=>typeof scope==='string'?scope:JSON.stringify(scope);
 export function unionRecordScopes(left:RecordReadScope,right:RecordReadScope):RecordReadScope {
   if(left==='full'||right==='full')return 'full';
   const targets=[...(typeof left==='object'?left.targets:[]),...(typeof right==='object'?right.targets:[])];
+  const trackingVesselIds=[...new Set([...(typeof left==='object'?left.trackingVesselIds || []:[]),...(typeof right==='object'?right.trackingVesselIds || []:[])])].sort();
+  if(trackingVesselIds.length)return {targets:[...new Map(targets.map(t=>[JSON.stringify([t.collection,t.id]),t])).values()],trackingVesselIds,...(isMorningRecordScope(left)||isMorningRecordScope(right)?{morning:true as const}:{})};
   if(isMorningRecordScope(left)||isMorningRecordScope(right))return {morning:true,targets};
   return targets.length?{targets:[...new Map(targets.map(t=>[JSON.stringify([t.collection,t.id]),t])).values()].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))}:'home';
 }
@@ -19,7 +21,13 @@ export function recordScopeGraph(scope:RecordReadScope,raw:AppData):Set<string> 
   const keys=new Set(typeof scope==='object'?scope.targets.map(t=>key(t.collection,t.id)):[]);
   if(isMorningRecordScope(scope))for(const name of ['tasks','internalControlCases','meetings'] as const)for(const row of raw[name])keys.add(key(name,row.id));
   let changed=true;
-  while(changed){changed=false;for(const task of raw.tasks){
+  while(changed){changed=false;
+  for(const source of raw.trackingItems || []){
+    if(source.linkState!=='active'||!source.linkedCaseId)continue;
+    const links=[key('trackingItems',source.id),key('internalControlCases',source.linkedCaseId)];
+    if(links.some(k=>keys.has(k)))for(const k of links)if(!keys.has(k)){keys.add(k);changed=true;}
+  }
+  for(const task of raw.tasks){
     const links=[key('tasks',task.id)];
     if(task.internalControlCaseId)links.push(key('internalControlCases',task.internalControlCaseId));
     if(task.sourceMeetingId)links.push(key('meetings',task.sourceMeetingId));
@@ -40,9 +48,9 @@ export function recordRecoveryReadScope(base:AppData,local:AppData):RecordReadSc
     const row=value as Record<string,unknown>;
     return Object.prototype.hasOwnProperty.call(row,'snapshot')||(Array.isArray(row.statusLogs)&&row.statusLogs.length>2)||Object.values(row).some(hasDetail);
   };
-  for(const collection of ['tasks','internalControlCases','meetings','agendaReports'] as const){
-    const before=new Map<string,unknown>(base[collection].map((row):[string,unknown]=>[row.id,row]));
-    const after=new Map<string,unknown>(local[collection].map((row):[string,unknown]=>[row.id,row]));
+  for(const collection of ['tasks','internalControlCases','meetings','agendaReports','trackingItems'] as const){
+    const before=new Map<string,unknown>((base[collection] || []).map((row):[string,unknown]=>[row.id,row]));
+    const after=new Map<string,unknown>((local[collection] || []).map((row):[string,unknown]=>[row.id,row]));
     for(const id of new Set([...before.keys(),...after.keys()])){
       const b=before.get(id),l=after.get(id);
       if(JSON.stringify(b)!==JSON.stringify(l)||hasDetail(b)||hasDetail(l))targets.push({collection,id});
@@ -57,11 +65,14 @@ export function recordScopeVersions(base:RecordScopeSnapshot|null) {
   return Object.fromEntries(Object.entries(base?.collections||{}).map(([name,c])=>[name,Object.fromEntries(Object.entries(c.rows).map(([id,r])=>[id,{version:r.version,detail:!!r.detail}]))]));
 }
 export function consumeRecordScopes(value:unknown,workspace:string,scope:RecordReadScope,base:RecordScopeSnapshot|null):RecordScopeSnapshot|null {
-  if(!object(value)||value.protocol!=='ship-dynamics-record-scopes-v1'||value.workspace_key!==workspace||value.scope!==(typeof scope==='string'?scope:'targets')||(typeof scope==='object'&&(!Array.isArray(value.targets)||JSON.stringify(value.targets.map(t=>object(t)?[t.collection,t.id]:null))!==JSON.stringify(scope.targets.map(t=>[t.collection,t.id])))))throw new Error('record-scope-response-mismatch');
+  if(!object(value)||!['ship-dynamics-record-scopes-v1','ship-dynamics-record-scopes-v2'].includes(String(value.protocol))||value.workspace_key!==workspace||value.scope!==(typeof scope==='string'?scope:'targets')||(typeof scope==='object'&&(!Array.isArray(value.targets)||JSON.stringify(value.targets.map(t=>object(t)?[t.collection,t.id]:null))!==JSON.stringify(scope.targets.map(t=>[t.collection,t.id])))))throw new Error('record-scope-response-mismatch');
+  const v2=value.protocol==='ship-dynamics-record-scopes-v2';
+  if(v2&&JSON.stringify(value.vessel_ids)!==JSON.stringify(typeof scope==='object'?scope.trackingVesselIds || []:[]))throw new Error('record-scope-vessel-mismatch');
+  const collectionNames=v2?CLOUD_RECORD_COLLECTIONS_V2:CLOUD_BLOCK_COLLECTIONS;
   if(base&&(base.scopeKey!==recordScopeKey(scope)||base.workspace!==workspace))throw new Error('record-scope-base-mismatch');
   if(value.status==='missing')return null;
   if(value.status!=='scopes'||!Number.isSafeInteger(value.revision)||Number(value.revision)<0||!object(value.root)||!object(value.collections))throw new Error('invalid-record-scope-response');
-  if(Object.keys(value.collections).length!==CLOUD_BLOCK_COLLECTIONS.length||CLOUD_BLOCK_COLLECTIONS.some(name=>!Object.prototype.hasOwnProperty.call(value.collections,name)))throw new Error('invalid-record-scope-collections');
+  if(Object.keys(value.collections).length!==collectionNames.length||collectionNames.some(name=>!Object.prototype.hasOwnProperty.call(value.collections,name)))throw new Error('invalid-record-scope-collections');
   const revision=Number(value.revision);
   if(base&&revision<base.revision)throw new Error('record-scope-version-rollback');
   if(value.root.revision!==revision)throw new Error('record-scope-revision-mismatch');

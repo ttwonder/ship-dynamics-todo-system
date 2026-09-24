@@ -38,7 +38,7 @@ export function validateBatchInternalControlSelection(
   return { ok: true, caseIds, cases: selectedCases as InternalControlCase[] };
 }
 
-type InternalControlLockSnapshot = Pick<InternalControlDataDraft, 'internalControlCases' | 'tasks'>;
+type InternalControlLockSnapshot = Pick<InternalControlDataDraft, 'internalControlCases' | 'tasks' | 'trackingItems'>;
 
 export function internalControlBatchLockKeys(
   snapshot: InternalControlLockSnapshot,
@@ -51,6 +51,7 @@ export function internalControlBatchLockKeys(
     if (matches.length !== 1) throw new Error(`內控案件不存在或識別碼重複：${caseId}`);
     const item = matches[0];
     keys.add(internalControlEditLockKey(item.id));
+    for(const source of snapshot.trackingItems || [])if(source.linkState==='active'&&source.linkedCaseId===item.id)keys.add(`tracking:${source.id}`);
     const forwardClaims = snapshot.tasks.filter(task => task.internalControlCaseId === item.id);
     if (!item.linkedTaskId) {
       if (item.syncToTask === true || forwardClaims.length) throw new Error('內控與要事同步關聯不是唯一雙向關係');
@@ -76,6 +77,8 @@ export function internalControlBatchLockKeys(
 export function deleteInternalControlCaseBatchFromDraft(
   draft: InternalControlDataDraft,
   selectedCases: Pick<InternalControlCase, 'id' | 'updatedAt'>[],
+  actor?: InternalControlActor,
+  at?: string,
 ): { caseIds: string[]; taskIds: string[] } {
   const caseIds = selectedCases.map(item => item.id);
   if (caseIds.some(id => !id) || new Set(caseIds).size !== caseIds.length) {
@@ -89,7 +92,7 @@ export function deleteInternalControlCaseBatchFromDraft(
   internalControlBatchLockKeys(draft, caseIds);
   const taskIds: string[] = [];
   for (const selected of selectedCases) {
-    const deleted = deleteInternalControlCase(draft, selected.id, selected.updatedAt);
+    const deleted = deleteInternalControlCase(draft, selected.id, selected.updatedAt,actor,at);
     if (deleted.taskId) taskIds.push(deleted.taskId);
   }
   return { caseIds, taskIds };

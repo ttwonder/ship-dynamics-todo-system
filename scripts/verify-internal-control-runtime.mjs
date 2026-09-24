@@ -115,8 +115,8 @@ try {
   const removeInternalCaseBranch=appSource.slice(removeInternalCaseStart,removeInternalCaseEnd);
   assert.ok(removeInternalCaseBranch.includes('if(!internalControlDeletionAuthorized({') && !removeInternalCaseBranch.includes('if(!previous.isClosed&&!internalControlDeletionAuthorized'), 'open and already-closed internal-control case deletion must both require delete, close, and scope-cancellation authorization');
   assert.ok(appSource.includes('deleteTaskBatchFromDraft(draft,liveSelection.tasks,liveUser,nowIso());')
-    && appSource.includes('deleteInternalControlCaseBatchFromDraft(draft,liveSelectedInternalCases);')
-    && batchInternalControlSource.includes('const deleted = deleteInternalControlCase(draft, selected.id, selected.updatedAt);')
+    && appSource.includes('deleteInternalControlCaseBatchFromDraft(draft,liveSelectedInternalCases,liveUser,nowIso());')
+    && batchInternalControlSource.includes('const deleted = deleteInternalControlCase(draft, selected.id, selected.updatedAt,actor,at);')
     && !appSource.includes('liveSelection.tasks.forEach(task=>closeLinkedInternalControlCaseAfterTaskDelete'), 'batch deletion must preserve the original task cleanup and apply each selected internal-control relation through the invariant-checking single-case deletion helper');
   assert.ok(appSource.includes("normalizedProgress.status!==previousProgress.status&&newProgressLogCount<1") && appSource.includes("newProgressLogCount>0&&normalizedProgress.statusLogs[0]?.text.trim()!==normalizedProgress.status.trim()"), 'per-vessel status changes must require matching newest history');
 

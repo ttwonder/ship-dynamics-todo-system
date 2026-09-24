@@ -2018,6 +2018,7 @@ export default function App() {
       if(actor.role==='vessel'||!(hasPermission(snapshot.settings.rolePermissions,actor,'editBusinessContent')||hasPermission(snapshot.settings.rolePermissions,actor,'closeTasks')||hasPermission(snapshot.settings.rolePermissions,actor,'deleteTasks')))return false;
       return selectInternalControlCasesVisibleToUser(snapshot.internalControlCases,snapshot.tasks,actor,actorVessels.map(vessel=>vessel.id)).some(item=>internalControlEditLockKey(item.id)===sectionKey);
     }
+    if(sectionKey.startsWith('tracking:'))return actor.role!=='vessel'&&(['editBusinessContent','closeTasks','deleteTasks'] as const).some(p=>hasPermission(snapshot.settings.rolePermissions,actor,p))&&Boolean(snapshot.trackingItems?.some(item=>`tracking:${item.id}`===sectionKey&&actorVessels.some(v=>v.id===item.vesselId)));
     return false;
   };
   const itemLeaseExistsInSnapshot=(sectionKey:string,snapshot:AppData)=>{
@@ -2027,6 +2028,7 @@ export default function App() {
     if(sectionKey.startsWith('task:'))return snapshot.tasks.some(task=>`task:${task.id}`===sectionKey);
     if(sectionKey.startsWith('meeting:'))return snapshot.meetings.some(meeting=>meetingEditLockKey(meeting.id)===sectionKey);
     if(sectionKey.startsWith('internal-control:'))return snapshot.internalControlCases.some(item=>internalControlEditLockKey(item.id)===sectionKey);
+    if(sectionKey.startsWith('tracking:'))return snapshot.trackingItems?.some(item=>`tracking:${item.id}`===sectionKey) || false;
     return false;
   };
   const refreshAfterItemLease=async(sectionKey:string,vesselFreshness=false,ownerIsCurrent:()=>boolean=()=>true):Promise<AppData|null>=>{
@@ -2843,7 +2845,7 @@ export default function App() {
       const scopeVessels=[previous.vesselId,candidate.vesselId].map(id=>prev.vessels.find(vessel=>vessel.id===id&&vessel.isActive));
       if(scopeVessels.some(vessel=>!vessel)||!canAccessAllVessels(prev.settings.rolePermissions,liveUser,scopeVessels as Vessel[])){failure='必須具備原船舶與新船舶的完整權限';return prev;}
       if(!previous.syncToTask&&candidate.syncToTask&&!hasPermission(prev.settings.rolePermissions,liveUser,'createTasks')){failure='目前身份無權建立同步要事';return prev;}
-      if(candidate.isClosed!==previous.isClosed&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')){failure='目前身份無權結案或重新開啟內控案件';return prev;}
+      if((candidate.isClosed!==previous.isClosed||candidate.closedDate!==previous.closedDate)&&!hasPermission(prev.settings.rolePermissions,liveUser,'closeTasks')){failure='目前身份無權結案或重新開啟內控案件';return prev;}
       const draft=clone(prev);
       try{updateInternalControlCase(draft,candidate,expectedUpdatedAt,liveUser,nowIso(),projection);rebindReopenedVesselResponsibilities(prev,draft);}
       catch(error:any){failure=error.message||String(error);return prev;}
@@ -2912,7 +2914,7 @@ export default function App() {
         scopeCancellationAuthorized:canCancelInternalControl(liveUser,vessel),
       })){failure='刪除內控案件需同時具備刪除、結案及此船舶的取消內控權限';return prev;}
       const draft=clone(prev);
-      try{deleteInternalControlCase(draft,candidate.id,candidate.updatedAt);}
+      try{deleteInternalControlCase(draft,candidate.id,candidate.updatedAt,liveUser,nowIso());}
       catch(error:any){failure=error.message||String(error);return prev;}
       applied=true;
       return withAudit(draft,liveUser,'刪除內控異常','internal-control',candidate.id,richTextToPlainText(candidate.description)||candidate.id);
@@ -4268,7 +4270,7 @@ export default function App() {
       });
       try{
         deleteTaskBatchFromDraft(draft,liveSelection.tasks,liveUser,nowIso());
-        deleteInternalControlCaseBatchFromDraft(draft,liveSelectedInternalCases);
+        deleteInternalControlCaseBatchFromDraft(draft,liveSelectedInternalCases,liveUser,nowIso());
       }
       catch(error:any){failure=error.message||String(error);return prev;}
       draft.notifications=[...notices,...draft.notifications].slice(0,1000);

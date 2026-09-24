@@ -1,4 +1,5 @@
 import { retainedVesselResponsibilities } from './vesselManagerHandover';
+import { readTrackingItems } from './tracking/trackingTypes';
 import type {
   AgendaReport,
   AppData,
@@ -144,6 +145,9 @@ function normalizeInternalControlCases(value: unknown, timestamp: string): Inter
       ...(typeof item.expectedDate === 'string' ? { expectedDate: text(item.expectedDate) } : {}),
       ...retainedVesselResponsibilities(item.vesselResponsibilities),
       reportSource: oneOf(item.reportSource, internalControlReportSources, '日常'),
+      ...(typeof item.trackingItemId === 'string' ? { trackingItemId:item.trackingItemId } : {}),
+      ...(item.trackingLinkState === 'invalid' ? { trackingLinkState:'invalid' as const } : {}),
+      ...(Array.isArray(item.trackingLifecycle) ? { trackingLifecycle:structuredClone(item.trackingLifecycle) as InternalControlCase['trackingLifecycle'] } : {}),
       description: text(item.description),
       priority: oneOf(item.priority, priorities, '低'),
       category,
@@ -300,6 +304,8 @@ export function normalizeAppData(value: unknown): AppData | null {
   )) return null;
   const settings = object(raw.settings);
   if (!settings) return null;
+  const trackingItems = readTrackingItems(raw.trackingItems);
+  if (!trackingItems) return null;
   const timestamp = text(raw.updatedAt, nowIso());
   const meetingTaskDescriptionWasProvided = new Map(objects(raw.meetings).map(item => [text(item.id), Object.prototype.hasOwnProperty.call(item, 'taskDescription')]));
   const meetingTaskItemsWereProvided = new Map(objects(raw.meetings).map(item => [text(item.id), Object.prototype.hasOwnProperty.call(item, 'taskItems')]));
@@ -321,6 +327,7 @@ export function normalizeAppData(value: unknown): AppData | null {
   const shouldResetOperatorPasswords = resetVersion < OPERATOR_PASSWORD_RESET_VERSION;
 
   const normalized: AppData = {
+    trackingItems,
     revision: finite(raw.revision),
     updatedAt: timestamp,
     settings: {
@@ -447,6 +454,7 @@ export function normalizeAppData(value: unknown): AppData | null {
       return ({
       id: text(item.id),
       vesselId,
+      ...(Array.isArray(item.trackingLifecycle) ? { trackingLifecycle:structuredClone(item.trackingLifecycle) as InternalControlCase['trackingLifecycle'] } : {}),
       vesselIds,
       vesselScopeMode: oneOf(item.vesselScopeMode, scopeModes, 'vessels'),
       vesselTypeScopes: strings(item.vesselTypeScopes),
