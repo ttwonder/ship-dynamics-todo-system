@@ -56,7 +56,8 @@ export function itineraryOperationalScheduleValue(instant: string | null | undef
   return wall.ok ? `${wall.date}T${wall.time}` : '';
 }
 
-function scheduleValue(row: ItineraryRow, field: ItineraryTimeField): { instant: string | null; timeZone: string; schedule: string } {
+function scheduleValue(row: ItineraryRow | undefined, field: ItineraryTimeField): { instant: string | null; timeZone: string; schedule: string } {
+  if (!row) return { instant: null, timeZone: '', schedule: '' };
   const instant = text(row[field]) || null;
   const timeZone = resolveItineraryTimeZone(row, field).trim();
   return { instant, timeZone, schedule: itineraryOperationalScheduleValue(instant,timeZone) };
@@ -66,13 +67,15 @@ export function projectItineraryOperationalDocument(document: ItineraryDocument,
   const rows = [...document.rows].sort((left, right) => left.sortOrder - right.sortOrder || left.rowId.localeCompare(right.rowId));
   const row = rows[0];
   if (!row) return null;
-  const eta = scheduleValue(row, 'etaUtc');
-  const etb = scheduleValue(row, 'etbUtc');
-  const etd = scheduleValue(row, 'etdUtc');
   const etdInstant = row.etdUtc && normalizeInstant(row.etdUtc) ? Date.parse(row.etdUtc) : NaN;
   const nowInstant = new Date(now).getTime();
-  const nextPort = Number.isFinite(etdInstant) && etdInstant < nowInstant
-    ? text(rows[1]?.portDockName) || 'TBA' : text(row.portDockName);
+  const departed = Number.isFinite(etdInstant) && etdInstant < nowInstant;
+  // Destination and its schedule move together; metadata and cargo stay on row one.
+  const destinationRow = departed ? rows[1] : row;
+  const eta = scheduleValue(destinationRow, 'etaUtc');
+  const etb = scheduleValue(destinationRow, 'etbUtc');
+  const etd = scheduleValue(destinationRow, 'etdUtc');
+  const nextPort = departed ? text(destinationRow?.portDockName) || 'TBA' : text(row.portDockName);
   return {
     source: 'itinerary',
     vesselId: document.vesselId,

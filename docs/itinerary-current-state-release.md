@@ -13,6 +13,8 @@
 
 ## 下一港與時點
 
+> 後續同列修正：下一港與 ETA／ETB／ETD 現在共同使用所選列；不再沿用下述初版的「時間固定首列」。見 [下一港與時間同列修正](itinerary-destination-schedule.md)。本文件其餘 metadata／寫入保護與既有歷史邊界不變；不要為本次修正重跑舊 migration。
+
 按正式列 `sortOrder`／`rowId` 排序。僅當首列 `etdUtc` 為有效 instant 且 **嚴格早於** supplied now，才顯示第二列 `portDockName`；第二列缺席或空白即 `TBA`。相等、未來、缺失、無效 ETD 保持首列。不找第三列、不用備選；上一港、ETA／ETB／ETD、貨載仍取首列。
 
 即時頁面以獨立 15 秒 timer／視窗 focus 重算投影，不依賴資料更改或成功的 cloud poll。historical snapshot 只用 `capturedAt` 算一次，後續顯示不重新推進。兩個既有 scheduled builders 使用同一 captured-time SQL helper；不存在的 scheduler 不會因此被安裝。

@@ -64,7 +64,7 @@ export default function BatchManagedVesselModal({ vessels, lockedVesselIds, read
       <div>
         <h2 id="batch-managed-title">批量更新船舶</h2>
         <small>欄位先暫存在本視窗；按「保存並關閉」才會一次寫入全部修改。</small>
-        <small>上一港、ETA／ETB／ETD 與貨名貨量由 Itinerary 正式首列同步；下一港依首列 ETD 判斷是否採第二列，只可在 Itinerary 修改；目前位置、航行狀態、載況與船舶狀態只可在船端 Itinerary 修改。</small>
+        <small>上一港與貨名貨量由 Itinerary 正式首列同步；下一港依首列 ETD 判斷是否採第二列，ETA／ETB／ETD 跟隨同一列，只可在 Itinerary 修改；目前位置、航行狀態、載況與船舶狀態只可在船端 Itinerary 修改。</small>
         <small>共 {managedVessels.length} 艘；第 {page} / {pageCount} 頁</small>
         {readOnly&&<small className="danger-note">正在等待雲端確認；欄位已暫停，船舶鎖仍保留。</small>}
       </div>

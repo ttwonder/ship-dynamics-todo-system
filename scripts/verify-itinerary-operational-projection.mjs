@@ -18,6 +18,7 @@ try {
     previousPortName: '',
     portDockName: 'WRONG LATER PORT',
     portTimeZone: 'UTC',
+    etaTimeZone: 'UTC', etbTimeZone: 'UTC', etdTimeZone: 'UTC',
     etaUtc: '2026-09-09T00:00:00Z',
     etbUtc: '2026-09-09T01:00:00Z',
     etdUtc: '2026-09-09T02:00:00Z',
@@ -46,6 +47,11 @@ try {
   const projected = projection.projectItineraryOperationalDocument(document, capture);
   const after = projection.projectItineraryOperationalDocument(document, '2026-09-01T08:00:00.001+08:00');
   assert.equal(after.values.portDockName, 'WRONG LATER PORT', 'strictly passed ETD selects sorted formal row two');
+  for (const [field, expected] of [['eta', '2026-09-09T00:00'], ['etb', '2026-09-09T01:00'], ['etd', '2026-09-09T02:00']]) {
+    assert.equal(after.values[`${field}Schedule`], expected, `${field.toUpperCase()} must follow the displayed next port into sorted formal row two`);
+    assert.equal(after.values[`${field}Utc`], document.rows[1][`${field}Utc`]);
+    assert.equal(after.values[`${field}TimeZone`], 'UTC', 'use the selected row timezone, not the first row timezone');
+  }
   assert.equal(after.values.previousPortName, 'BUSAN');
   assert.equal(after.values.cargoQuantityText, first.cargoQuantityText);
   assert.equal(after.rowId, first.rowId);
@@ -54,7 +60,22 @@ try {
     assert.equal(projection.projectItineraryOperationalDocument(d, capture).values.portDockName, '');
   }
   const noSecond = structuredClone(document); noSecond.rows = [first];
-  assert.equal(projection.projectItineraryOperationalDocument(noSecond, '2026-09-02T00:00:00Z').values.portDockName, 'TBA');
+  const absentProjection = projection.projectItineraryOperationalDocument(noSecond, '2026-09-02T00:00:00Z');
+  assert.equal(absentProjection.values.portDockName, 'TBA');
+  for (const field of ['eta', 'etb', 'etd']) {
+    assert.equal(absentProjection.values[`${field}Utc`], null);
+    assert.equal(absentProjection.values[`${field}TimeZone`], '');
+    assert.equal(absentProjection.values[`${field}Schedule`], '', 'absent destination must not reuse previous-port times');
+    const partial = structuredClone(document); partial.rows[1][`${field}Utc`] = null;
+    const partialProjection = projection.projectItineraryOperationalDocument(partial, '2026-09-02T00:00:00Z');
+    assert.equal(partialProjection.values[`${field}Schedule`], '', 'missing second-row time must not borrow from row one');
+    assert.equal(partialProjection.values.portDockName, 'WRONG LATER PORT');
+  }
+  const unchangedDocument = JSON.stringify(document);
+  const unsorted = structuredClone(document); unsorted.rows.reverse();
+  assert.deepEqual(projection.projectItineraryOperationalDocument(unsorted, '2026-09-01T00:00:00.001Z'), after, 'selection follows sortOrder, not array position');
+  assert.equal(JSON.stringify(document), unchangedDocument);
+  assert.deepEqual(projection.projectItineraryOperationalDocument(document, '2026-08-31T23:59:59.999Z'), projected, 'before ETD stays on the first row');
   const blankSecond = structuredClone(document); blankSecond.rows[1].portDockName = '  ';
   blankSecond.rows.push({ ...types.createBlankItineraryRow('third', 10), portDockName: 'NEVER THIRD' });
   assert.equal(projection.projectItineraryOperationalDocument(blankSecond, '2026-09-02T00:00:00Z').values.portDockName, 'TBA');
@@ -112,6 +133,22 @@ try {
   assert.equal(replayed[0].position.lastPort, 'BUSAN');
   assert.equal(replayed[0].position.nextPort, '', 'snapshot is evaluated at capture, not at replay wall clock');
   assert.equal(replayed[1].position.lastPort, 'LEGACY V2');
+  const afterSnapshot = projection.buildItineraryProjectionSnapshot([vessel], records, '2026-09-02T00:00:00Z');
+  const afterReplay = projection.applyItineraryProjectionSnapshot([vessel], afterSnapshot.itineraryProjections)[0];
+  assert.equal(afterReplay.position.eta, '2026-09-09T00:00');
+  assert.equal(afterReplay.position.etb, '2026-09-09T01:00');
+  assert.equal(afterReplay.position.etd, '2026-09-09T02:00');
+  const legacyFrozen = structuredClone(afterSnapshot.itineraryProjections);
+  Object.assign(legacyFrozen['v-1'].values, {
+    etaUtc: first.etaUtc, etaTimeZone: first.etaTimeZone, etaSchedule: '2026-09-01T08:00',
+    etbUtc: first.etbUtc, etbTimeZone: first.etbTimeZone, etbSchedule: '2026-09-01T09:00',
+    etdUtc: first.etdUtc, etdTimeZone: first.etdTimeZone, etdSchedule: '2026-08-31T18:00',
+  });
+  const frozenBytes = JSON.stringify(legacyFrozen);
+  const oldReplay = projection.applyItineraryProjectionSnapshot([vessel], legacyFrozen)[0];
+  assert.equal(oldReplay.position.nextPort, 'WRONG LATER PORT');
+  assert.equal(oldReplay.position.eta, '2026-09-01T08:00', 'previously saved snapshots retain the original frozen times');
+  assert.equal(JSON.stringify(legacyFrozen), frozenBytes);
   assert.throws(
     () => projection.buildItineraryProjectionSnapshot([vessel], { 'v-1': { status: 'error', document: null, checkedAt: null, error: 'offline' } }, '2026-09-03T12:35:00Z'),
     /尚未取得可信的 Itinerary/,
@@ -182,6 +219,7 @@ try {
   assert.match(dashboard, /itineraryOperationalFeed/);
   assert.match(edit, /由 Itinerary 正式首列同步/);
   assert.match(batch, /由 Itinerary 正式首列同步/);
+  for (const source of [edit,batch]) assert.match(source, /ETA／ETB／ETD 跟隨同一列/, 'readonly editor copy must explain the corrected source');
   assert.doesNotMatch(edit, /target\.position\.(lastPort|nextPort|eta|etb|etd)\s*=/);
   assert.match(smartShip, /applyItineraryOperationalWriteMask/);
   assert.match(morning, /itineraryProjections/);
