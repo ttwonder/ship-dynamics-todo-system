@@ -55,7 +55,7 @@ type Props = {
   onBatchClose: (caseIds: string[], closedDate: string) => boolean | Promise<boolean>;
   onBatchDelete: (caseIds: string[]) => boolean | Promise<boolean>;
   onOpenTask: (taskId: string) => void;
-  claimItemLease?: (sectionKey:string,label:string)=>Promise<AppData|null>;
+  claimItemLease?: (sectionKey:string,label:string,sectionKeys?:readonly string[])=>Promise<AppData|null>;
   requireItemLease?: (sectionKey:string)=>boolean;
   releaseItemLease?: (sectionKey:string)=>Promise<boolean>;
   activeItemLeaseKey?: string;
@@ -93,6 +93,8 @@ export default function InternalControlPage({ editorOnly=false, loadCase, data, 
   // Retain only this selection's read projection; all writes still use App's
   // live authorization, relation, CAS and lease checks, never these old rows.
   const batchSelection=useRef<{epoch:string;userId:string;cases:InternalControlCase[]}|null>(null);
+  const closureOpening=useRef(false);
+  useEffect(()=>()=>{batchSelection.current=null;},[]);
   const handledRequestedCaseId=useRef('');
   const visibleVesselIds = useMemo(() => new Set(vessels.map(vessel => vessel.id)), [vessels]);
   const retainedBatch=batchSelection.current?.epoch===authorizationEpoch&&batchSelection.current.userId===user.id?batchSelection.current:null;
@@ -234,13 +236,31 @@ export default function InternalControlPage({ editorOnly=false, loadCase, data, 
   const closeSelectedCases=async(closedDate?:string)=>{
     if(batchClosing||batchDeleting||subpage!=='open'||!selectedCases.length)return;
     if(!canClose)return;
-    if(!closedDate){setClosureSelection({ids:selectedCases.map(item=>item.id),minDate:selectedCases.map(item=>item.reportDate).sort().slice(-1)[0]||'',epoch:authorizationEpoch,userId:user.id});return;}
+    if(!closedDate){
+      if(closureOpening.current)return;
+      closureOpening.current=true;setBatchClosing(true);
+      const attempt={epoch:authorizationEpoch,userId:user.id,cases:[...selectedCases]};
+      batchSelection.current=attempt;
+      const ids=attempt.cases.map(item=>item.id).sort();
+      const keys=ids.map(internalControlEditLockKey);
+      try{
+        const snapshot=claimItemLease?await claimItemLease(keys[0],'內控批量結案',keys):data;
+        if(batchSelection.current!==attempt)return;
+        if(!snapshot){batchSelection.current=null;return;}
+        const cases=ids.map(id=>snapshot.internalControlCases.find(item=>item.id===id));
+        if(cases.some(item=>!item||item.isClosed)){if(releaseItemLease)await releaseItemLease(keys[0]);batchSelection.current=null;return;}
+        attempt.cases=cases as InternalControlCase[];
+        setClosureSelection({ids,minDate:attempt.cases.map(item=>item.reportDate).sort().slice(-1)[0]||'',epoch:authorizationEpoch,userId:user.id});
+      }finally{closureOpening.current=false;setBatchClosing(false);}
+      return;
+    }
     if(!closureSelection||closureSelection.epoch!==authorizationEpoch||closureSelection.userId!==user.id)return;
     const closingIds=closureSelection.ids;
+    if(requireItemLease&&!requireItemLease(internalControlEditLockKey(closingIds[0])))return;
     const attempt={epoch:authorizationEpoch,userId:user.id,cases:selectedCases};
     batchSelection.current=attempt;
     setBatchClosing(true);
-    try{if(await onBatchClose(closingIds,closedDate)&&batchSelection.current===attempt){batchSelection.current=null;setSelectedCaseIds([]);setClosureSelection(null);}}
+    try{if(await onBatchClose(closingIds,closedDate)&&batchSelection.current===attempt){if(releaseItemLease&&!await releaseItemLease(internalControlEditLockKey(closingIds[0])))return;batchSelection.current=null;setSelectedCaseIds([]);setClosureSelection(null);}}
     finally{if(batchSelection.current===attempt||batchSelection.current===null)setBatchClosing(false);}
   };
   const deleteSelectedCases=async()=>{
@@ -321,6 +341,6 @@ export default function InternalControlPage({ editorOnly=false, loadCase, data, 
 
     {visibleBatch && <BatchCreateModal data={data} user={user} vessels={vessels} close={() => setBatchOpen(false)} save={async (items, projections) => { if (await onCreate(items, data.revision, projections)) { setBatchOpen(false); return true; } return false; }}/>}
     {caseEditor}
-    {closureSelection&&closureSelection.epoch===authorizationEpoch&&closureSelection.userId===user.id&&subpage==='open'&&canClose&&<InternalControlCloseDateDialog count={closureSelection.ids.length} minDate={closureSelection.minDate} busy={batchClosing} onCancel={()=>setClosureSelection(null)} onConfirm={date=>void closeSelectedCases(date)}/>}
+    {closureSelection&&closureSelection.epoch===authorizationEpoch&&closureSelection.userId===user.id&&subpage==='open'&&canClose&&<InternalControlCloseDateDialog count={closureSelection.ids.length} minDate={closureSelection.minDate} busy={batchClosing} readOnly={itemLeaseEnforced&&activeItemLeaseKey!==internalControlEditLockKey(closureSelection.ids[0])} onCancel={async()=>{if(releaseItemLease&&!await releaseItemLease(internalControlEditLockKey(closureSelection.ids[0])))return;batchSelection.current=null;setClosureSelection(null);}} onConfirm={date=>void closeSelectedCases(date)}/>}
   </section>;
 }

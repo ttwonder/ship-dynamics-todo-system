@@ -46,16 +46,17 @@ export async function nativeChecks({qa,call,evaluate,click,nodeClick,fill,until,
  });
  await check('native-stale-batch-zero-partial-draft-and-explicit-reconciliation',async()=>{
    await trackingTab('未送船清單');await click('選取全部符合條件 2 項');await click('批量更新進度');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=\"UI-002 最新進度\"]'))"),'stale batch editor');await fill('[aria-label="UI-002 最新進度"]','本機第二項');await fill('[aria-label="UI-003 最新進度"]','本機第三項');
-   await peerUpdate((await readSource('UI-003')).id);const afterPeer=await qa.read();await click('確認保存 2 項');await until(async()=>(await text()).includes('確認結果／重試相同提交'),'rejected stale input retained');assert.deepEqual(await qa.read(),afterPeer);assert.equal(await evaluate("document.querySelector('[aria-label=\"UI-002 最新進度\"]').value"),'本機第二項');
+   await click('取消');await click('保留草稿並繼續');await until(()=>evaluate("!document.querySelector('.modal-backdrop')"),'stale draft stored and entire entry bundle released');
+   await peerUpdate((await readSource('UI-003')).id);const afterPeer=await qa.read();await click('恢復本船未送出草稿');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=\"UI-002 最新進度\"]'))"),'stale draft restored with new entry lock');await click('確認保存 2 項');await until(async()=>(await text()).includes('確認結果／重試相同提交'),'rejected stale input retained');assert.deepEqual(await qa.read(),afterPeer);assert.equal(await evaluate("document.querySelector('[aria-label=\"UI-002 最新進度\"]').value"),'本機第二項');
    let reconciliationReadHeld=false,releaseRead;const readBarrier=new Promise(resolve=>{releaseRead=resolve;});
    qa.setRecordFault({beforeRead:async({name})=>{if(name==='read_ship_dynamics_record_scopes_v2'){reconciliationReadHeld=true;await readBarrier;}}});
    try{
      await click('核對最新資料／解除已拒絕提交');await until(()=>reconciliationReadHeld,'reconciliation latest-data read held');
      assert.equal(await evaluate("document.querySelector('.tracking-modal .modal-actions .btn.primary').disabled"),true,'reconciliation must block another submission until refreshed versions are installed');
      assert.equal(await evaluate("document.querySelector('[aria-label=\"UI-002 最新進度\"]').value"),'本機第二項');assert.deepEqual(await qa.read(),afterPeer);
-     await fill('[aria-label="UI-002 最新進度"]','核對期間的新輸入');
+     assert.equal(await evaluate("document.querySelector('[aria-label=\"UI-002 最新進度\"]').matches(':disabled')"),true,'inputs remain frozen until the whole entry bundle is reacquired');
    }finally{releaseRead?.();qa.setRecordFault(null);}
-   await until(async()=>(await text()).includes('已核對最新版本'),'explicit stale reconciliation finished');assert.equal(await evaluate("document.querySelector('[aria-label=\"UI-002 最新進度\"]').value"),'核對期間的新輸入');await click('確認保存 2 項');await finishEditor();assert.equal((await readSource('UI-002')).progress,'核對期間的新輸入');assert.equal((await readSource('UI-003')).progress,'本機第三項');
+   await until(async()=>(await text()).includes('已核對最新版本'),'explicit stale reconciliation finished');assert.equal(await evaluate("document.querySelector('[aria-label=\"UI-002 最新進度\"]').value"),'本機第二項');await fill('[aria-label="UI-002 最新進度"]','核對後的新輸入');await click('確認保存 2 項');await finishEditor();assert.equal((await readSource('UI-002')).progress,'核對後的新輸入');assert.equal((await readSource('UI-003')).progress,'本機第三項');
  });
  await check('native-engineering-subitems-cancelled-not-completed-date-independence',async()=>{
    await trackingTab('未完成工程單');await click('＋ 新增／批量新增');await fill('[aria-label="第 1 筆 項目編號"]','ENG-001');await fill('[aria-label="第 1 筆 工程分項"]','1');await fill('[aria-label="第 1 筆 內容摘要／工程內容"]','修復分項');await fill('[aria-label="第 1 筆 原備註"]','不可被進度覆寫');await dateInput('[aria-label="第 1 筆 完工日期"]','2026-09-25');await click('＋ 新增一列');await fill('[aria-label="第 2 筆 項目編號"]','ENG-001');await fill('[aria-label="第 2 筆 工程分項"]','2');await fill('[aria-label="第 2 筆 內容摘要／工程內容"]','另一獨立分項');await click('確認保存 2 項');await finishEditor();

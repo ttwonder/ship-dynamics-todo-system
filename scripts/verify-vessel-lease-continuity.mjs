@@ -89,7 +89,7 @@ try{
   const heartbeatConfigMismatchEnd=heartbeat.indexOf('const renewed=',heartbeatConfigMismatchStart);
   const heartbeatConfigMismatch=heartbeat.slice(heartbeatConfigMismatchStart,heartbeatConfigMismatchEnd);
   assert.ok(heartbeatConfigMismatch.includes("lock.sectionKey.startsWith('vessel:')")&&heartbeatConfigMismatch.includes('freezeVesselEditorForLock(lock'),'renewal-side cloud configuration mismatch must freeze and retain a vessel draft rather than call the generic close path');
-  const renewedAwaitEnd=heartbeat.indexOf('const renewed=await');
+  const renewedAwaitEnd=heartbeat.indexOf('const renewals=await');
   const postAwaitConfigStart=heartbeat.indexOf('const renewalAfterAwaitDisposition=',renewedAwaitEnd);
   const postAwaitConfigEnd=heartbeat.indexOf('if(!renewalStillCurrent())',postAwaitConfigStart);
   const postAwaitConfig=heartbeat.slice(postAwaitConfigStart,postAwaitConfigEnd);

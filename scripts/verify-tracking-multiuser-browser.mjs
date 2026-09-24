@@ -7,6 +7,8 @@ import {createNativeRecordQa} from './record-storage-native-qa.mjs';
 import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
 import {installTrackingBrowserMigrations} from './tracking-browser-fixture.mjs';
 import {multiuserChecks} from './tracking-multiuser-browser-checks.mjs';
+import {editEntryChecks} from './edit-entry-browser-checks.mjs';
+const editEntry=process.argv.includes('--edit-entry');
 
 // Original App and ship portal, independent browser identities and real SQL.
 // Synthetic data, random credentials, loopback-only; no production business writes.
@@ -16,8 +18,9 @@ fs.mkdirSync(root,{recursive:true});
 const run=fs.mkdtempSync(path.join(root,'tracking-multiuser-')),profile=path.join(run,'chrome');
 const sha=value=>createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
 const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
-const inputs=['scripts/verify-tracking-multiuser-browser.mjs','scripts/tracking-multiuser-browser-checks.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','scripts/tracking-browser-fixture.mjs','src/App.tsx','src/ShipInternalControlPortal.tsx','src/tracking/TrackingPage.tsx','supabase/migrations/20260924160000_tracking_records.sql'];
+const inputs=['scripts/verify-tracking-multiuser-browser.mjs','scripts/tracking-multiuser-browser-checks.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','scripts/tracking-browser-fixture.mjs','src/App.tsx','src/ShipInternalControlPortal.tsx','src/tracking/TrackingPage.tsx','src/tracking/TrackingModals.tsx','src/tracking/TrackingImportModal.tsx','src/EditModals.tsx','src/InternalControlModals.tsx','src/taskMemberEditor.ts','supabase/migrations/20260924160000_tracking_records.sql','supabase/migrations/20260925020000_edit_lock_holder.sql'];
 const fingerprints=()=>Object.fromEntries(inputs.map(p=>[p,sha(fs.readFileSync(p,'utf8'))]));
+if(editEntry)inputs.push('scripts/edit-entry-browser-checks.mjs','src/editLockBundle.ts','src/collaborationLockPlan.ts','src/InternalControlPage.tsx','src/tracking/trackingUiTypes.ts');
 const evidence={kind:'tracking-multiuser-original-UI-native-PG',label:'真實主站／船端 UI＋測試資料＋本機 PostgreSQL；非正式環境',status:'RUNNING',head:git('rev-parse','HEAD'),inputs:fingerprints(),cases:[],errors:[],external:[],network:[],blocking:[],productionContacted:false};
 let native,qa,browser,ws,failure,next=0,currentCase='setup',barrier;
 const pending=new Map(),pages=[],network=new Map();
@@ -66,8 +69,9 @@ const release=()=>{barrier?.release();barrier=null;};
 const observeBlocking=async b=>{const row=await until(async()=>{const rows=(await native.observer.query("select pid,pg_blocking_pids(pid) blockers from pg_stat_activity where wait_event_type='Lock'")).rows;return rows.find(r=>r.blockers.includes(b.pid));},'independent native transaction actually waits',6500);assert.notEqual(row.pid,b.pid);evidence.blocking.push({caseId:currentCase,ownerPid:b.pid,peerPid:row.pid});};
 try{
  native=await createNativeRecordQa(run,evidence,{httpTransactions:true,beforeCommit:async({context,pid,value})=>{if(barrier&&!barrier.entered&&context.rpc===barrier.rpc&&value?.ok!==false){const b=barrier;b.entered=true;b.pid=pid;b.operationId=context.operationId;await b.ready;}}});
- qa=await createRecordStorageLocalQa({browserAuthority:true,internalControl:true,scopedRead:true,shipInternalControl:true,tracking:true,performanceTrace:true,databaseFactory:async()=>native.adapter,preparePerformanceFixture:initial=>{for(const key of ['tasks','internalControlCases','taskDismissals','notifications','auditLogs'])initial[key]=[];}});
+ qa=await createRecordStorageLocalQa({browserAuthority:true,internalControl:true,scopedRead:true,shipInternalControl:true,tracking:true,taskMember:true,performanceTrace:true,databaseFactory:async()=>native.adapter,preparePerformanceFixture:initial=>{for(const key of ['tasks','internalControlCases','taskDismissals','notifications','auditLogs'])initial[key]=[];}});
  await installTrackingBrowserMigrations(native.adapter);
+ await native.adapter.exec(fs.readFileSync('supabase/migrations/20260925020000_edit_lock_holder.sql','utf8'));
  assert.equal((await (await fetch(qa.origin+'/__qa/health')).json()).kind,'REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES');
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let port,socket;await until(()=>{try{[port,socket]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(port)&&socket?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'Chrome readiness');
@@ -91,7 +95,7 @@ try{
  const baseline=await read(),legacy=(await native.observer.query('select to_jsonb(t) value from ship_dynamics_app_state t order by workspace_key')).rows,formal=await qa.itinerarySnapshot();
  const a=await page('qa-owner'),b=await page('qa-operator');
  assert.notEqual(a.context,b.context);
- await multiuserChecks({a,b,page,qa,native,read,source,until,check,blockNext,release,observeBlocking,evidence,sha,run});
+ await (editEntry?editEntryChecks:multiuserChecks)({a,b,page,qa,native,read,source,until,check,blockNext,release,observeBlocking,evidence,sha,run});
  assert.deepEqual((await native.observer.query('select to_jsonb(t) value from ship_dynamics_app_state t order by workspace_key')).rows,legacy,'legacy authority unchanged');assert.deepEqual(await qa.itinerarySnapshot(),formal,'formal itinerary unchanged');
  const end=await read();for(const key of ['users','vessels','settings','meetings','agendaReports'])assert.deepEqual(end.payload[key],baseline.payload[key],'unrelated '+key);
  assert.deepEqual(evidence.errors,[]);assert.deepEqual(evidence.external,[]);assert.equal(git('rev-parse','HEAD'),evidence.head);assert.deepEqual(fingerprints(),evidence.inputs);evidence.status='PASS';

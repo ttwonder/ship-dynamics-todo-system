@@ -85,7 +85,7 @@ export class TaskMemberEditor {
       if(saved&&(saved.progress?.vesselId!==vesselId||saved.baseline?.vesselId!==vesselId||typeof saved.expected?.member!=='string'||typeof saved.expected?.structure!=='string'))throw new Error('local-member-draft-scope-mismatch');
       const owner=crypto.randomUUID();
       const result=await this.rpc('claim_ship_dynamics_edit_lock',{p_workspace_key:this.config.workspaceKey,p_section_key:fresh.section_key,p_locked_by:owner,p_locked_by_name:this.actorName,p_ttl_seconds:75});
-      if(!result?.ok)throw new Error(result?.code||'lock-conflict');
+      if(!result?.ok)throw new Error(result?.locked_by_name?`此項目正在由 ${result.locked_by_name} 編輯，暫時無法修改。`:result?.code||'lock-conflict');
       if(typeof result.lease_version!=='string'||result.section_key!==fresh.section_key||result.locked_by!==owner)throw new Error('invalid-member-lease');
       const lease:Lease=clone(result);
       if(!this.current(g)){await this.release(lease);return null;}

@@ -111,13 +111,14 @@ function TaskProjectionFields({ data, catalog: suppliedCatalog, vesselId, projec
   </section>;
 }
 
-export function BatchCreateModal({ data, user, vessels, close, save, shipSubmission, sourceForm }: { data?: AppData; user: Pick<UserAccount, 'id'>; vessels: Array<Pick<Vessel, 'id' | 'name' | 'shortName' | 'fullName'>>; close: () => void; save: (items: InternalControlCase[], projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean>; shipSubmission?: ShipInternalControlForm; sourceForm?: Pick<ShipInternalControlForm, 'draft' | 'onDraftChange' | 'busy' | 'pending' | 'message'> & {onReconcile?:()=>void;lockedTaskIds?:string[]} }) {
+export function BatchCreateModal({ data, user, vessels, close, save, shipSubmission, sourceForm }: { data?: AppData; user: Pick<UserAccount, 'id'>; vessels: Array<Pick<Vessel, 'id' | 'name' | 'shortName' | 'fullName'>>; close: () => void; save: (items: InternalControlCase[], projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean>; shipSubmission?: ShipInternalControlForm; sourceForm?: Pick<ShipInternalControlForm, 'draft' | 'onDraftChange' | 'busy' | 'pending' | 'message'> & {onReconcile?:()=>void;lockedTaskIds?:string[];readOnly?:boolean} }) {
   const [localDraft, setLocalDraft] = useState(() => createInternalControlBatchDraft(vessels[0]?.id || '', data?.settings.taskCategories[0] || '設備故障'));
   const draft = shipSubmission?.draft || sourceForm?.draft || localDraft;
   const { vesselId, reportDate, reportSource, rows } = draft;
   const catalog: InternalControlBatchCatalog = shipSubmission ? { ...shipSubmission.catalog, owners: [], defaultOwnerIds: [] } : catalogForVessel(data!, vesselId);
   const categories = unique([...catalog.taskCategories, '設備故障']);
   const setDraft = (next: InternalControlBatchDraft) => {
+    if(sourceForm?.readOnly)return;
     if (shipSubmission) { if (!shipSubmission.busy && !shipSubmission.pending) shipSubmission.onDraftChange(next); }
     else if (sourceForm) sourceForm.onDraftChange(next);
     else setLocalDraft(next);
@@ -135,7 +136,7 @@ export function BatchCreateModal({ data, user, vessels, close, save, shipSubmiss
     });
   };
   const submit = async () => {
-    if (shipSubmission?.busy || sourceForm?.busy) return;
+    if (shipSubmission?.busy || sourceForm?.busy || sourceForm?.readOnly&&!sourceForm.pending) return;
     const at = new Date().toISOString();
     const candidates: InternalControlCase[] = rows.map(row => ({
       id: sourceForm ? row.sourceCaseId! : uid('internal'), vesselId, reportDate: sourceForm ? row.reportDate! : reportDate, reportSource: sourceForm ? row.reportSource! : reportSource, description: row.description.trim(), priority: row.priority, category: row.category,
@@ -172,11 +173,11 @@ export function BatchCreateModal({ data, user, vessels, close, save, shipSubmiss
   </>;
   return <div className="modal-backdrop"><div className="modal ic-batch-modal" role="dialog" aria-modal="true" aria-labelledby="ic-batch-title">
     <div className="modal-head"><div><h2 id="ic-batch-title">{shipSubmission ? '增加內控/訴求' : '批量新增內控異常'}</h2><p>{sourceForm ? '本批固定船舶，每筆報告日期及來源分別核對；每筆來源對應獨立內控案件。' : '共用船舶、報告日期及來源；保存後每列拆成獨立案件。'}</p></div><button className="btn ghost" onClick={close}>關閉</button></div>
-    {sourceForm?.message && <p role="status">{sourceForm.message}</p>}{sourceForm?.pending&&<button className="btn" disabled={sourceForm.busy} onClick={sourceForm.onReconcile}>核對最新資料／解除已拒絕提交</button>}
+    {sourceForm?.message && <p role="status">{sourceForm.message}</p>}{sourceForm?.readOnly&&<p role="status">編輯鎖已失效或尚未取得；原輸入已唯讀保留，不能新增修改或保存。</p>}{(sourceForm?.pending||sourceForm?.readOnly)&&<button className="btn" disabled={sourceForm.busy} onClick={sourceForm.onReconcile}>{sourceForm.pending?'核對最新資料／解除已拒絕提交':'重新取得編輯權／核對最新資料'}</button>}
     {shipSubmission?.message && <div className="ship-ic-form-notice" role="status">{shipSubmission.message}</div>}
     {shipSubmission && <p className="ship-ic-form-notice">提交成功後無法在船端修改；如需更正，請重新提交修正版，多餘項目由辦公室刪除。</p>}
-    {shipSubmission ? <fieldset disabled={shipSubmission.busy || shipSubmission.pending} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{fields}</fieldset> : fields}
-    <div className="modal-actions"><button className="btn ghost" disabled={Boolean(sourceForm || shipSubmission && (shipSubmission.busy || shipSubmission.pending || rows.length >= 100))} onClick={() => setRows(previous => [...previous, newInternalControlBatchRow(categories[0] || '設備故障')])}>＋ 新增一筆</button><button className="btn ghost" onClick={close}>{shipSubmission ? '關閉（保留草稿）' : '取消'}</button><button className="btn primary" disabled={shipSubmission?.busy || sourceForm?.busy} onClick={submit}>{shipSubmission ? (shipSubmission.busy ? '提交中…' : shipSubmission.pending ? '確認結果／重試相同提交' : `提交 ${rows.length} 筆`) : `保存 ${rows.length} 筆案件`}</button></div>
+    {shipSubmission || sourceForm ? <fieldset disabled={shipSubmission ? shipSubmission.busy || shipSubmission.pending : sourceForm?.readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{fields}</fieldset> : fields}
+    <div className="modal-actions"><button className="btn ghost" disabled={Boolean(sourceForm || shipSubmission && (shipSubmission.busy || shipSubmission.pending || rows.length >= 100))} onClick={() => setRows(previous => [...previous, newInternalControlBatchRow(categories[0] || '設備故障')])}>＋ 新增一筆</button><button className="btn ghost" onClick={close}>{shipSubmission ? '關閉（保留草稿）' : '取消'}</button><button className="btn primary" disabled={shipSubmission?.busy || sourceForm?.busy || sourceForm?.readOnly&&!sourceForm.pending} onClick={submit}>{shipSubmission ? (shipSubmission.busy ? '提交中…' : shipSubmission.pending ? '確認結果／重試相同提交' : `提交 ${rows.length} 筆`) : `保存 ${rows.length} 筆案件`}</button></div>
   </div></div>;
 }
 
@@ -189,15 +190,15 @@ export function prepareInternalControlEditForSave(draft:InternalControlCase,pend
   return next;
 }
 
-export function InternalControlCloseDateDialog({count,minDate,busy,onCancel,onConfirm,effect}:{count:number;minDate:string;busy:boolean;effect?:string;onCancel:()=>void;onConfirm:(date:string)=>void}) {
+export function InternalControlCloseDateDialog({count,minDate,busy,readOnly=false,onCancel,onConfirm,effect}:{count:number;minDate:string;busy:boolean;readOnly?:boolean;effect?:string;onCancel:()=>void;onConfirm:(date:string)=>void}) {
   const [date,setDate]=useState('');
   const [error,setError]=useState('');
-  return <div className="modal-backdrop"><form className="modal ic-close-date-modal" role="dialog" aria-modal="true" aria-labelledby="ic-close-date-title" onSubmit={event=>{event.preventDefault();if(busy)return;if(!isValidInternalControlDate(date)||date<minDate){setError('請選擇有效的結案日期，且不得早於報告日期。');return;}onConfirm(date);}}>
+  return <div className="modal-backdrop"><form className="modal ic-close-date-modal" role="dialog" aria-modal="true" aria-labelledby="ic-close-date-title" onSubmit={event=>{event.preventDefault();if(busy||readOnly)return;if(!isValidInternalControlDate(date)||date<minDate){setError('請選擇有效的結案日期，且不得早於報告日期。');return;}onConfirm(date);}}>
     <div className="modal-head"><h2 id="ic-close-date-title">確認結案{count>1?`（${count} 筆）`:''}</h2></div>
     <p>選擇實際結案日期後確認；期望完成日期/DL 不會因此改動。雲端確認成功後才算完成。</p>{effect&&<p>{effect}</p>}
-    <div className="field"><label htmlFor="ic-close-date">結案日期 *</label><input id="ic-close-date" aria-label="結案日期" type="date" autoFocus required min={minDate} value={date} disabled={busy} onChange={event=>{setDate(event.target.value);setError('');}}/></div>
+    <div className="field"><label htmlFor="ic-close-date">結案日期 *</label><input id="ic-close-date" aria-label="結案日期" type="date" autoFocus required min={minDate} value={date} disabled={busy||readOnly} onChange={event=>{setDate(event.target.value);setError('');}}/></div>
     {error&&<p role="alert">{error}</p>}
-    <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>取消結案</button><button type="submit" className="btn green" disabled={busy}>{busy?'保存中…':'確認結案'}</button></div>
+    <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>取消結案</button><button type="submit" className="btn green" disabled={busy||readOnly}>{busy?'保存中…':'確認結案'}</button></div>
   </form></div>;
 }
 

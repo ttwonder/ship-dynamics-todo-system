@@ -7,6 +7,8 @@ export interface TrackingUiCallbacks {
   onPrivateDraftChange?: (token: object, dirty: boolean) => void;
   captureExport?: (vesselId: string) => Promise<{ items: TrackingItem[]; isCurrent: () => boolean } | null>;
   load: (vesselId: string, ids?: string[]) => Promise<AppData | null>;
+  claim: (vesselId: string, ids: string[]) => Promise<AppData | null>;
+  isWritable: (ids: readonly string[]) => boolean;
   submit: (submission: TrackingSubmission) => Promise<boolean>;
   release: () => Promise<boolean>;
   discardRejected?: () => Promise<boolean>;

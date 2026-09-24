@@ -39,6 +39,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   const [importOpen, setImportOpen] = useState(false);
   const importGuard = useRef<null | (() => Promise<boolean>)>(null);
   const requestGeneration = useRef(0); const editGeneration = useRef(0);
+  const openingRef=useRef(false);
   const currentIdentity = useRef(identity); currentIdentity.current = identity;
   const currentCallbacks = useRef(callbacks); currentCallbacks.current = callbacks;
   // Page-local drafts are not AppData deltas and may outlive a rejected lease.
@@ -56,14 +57,16 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     try { if (value) localStorage.setItem(draftKey, JSON.stringify({ draft: value, pending: submission })); else localStorage.removeItem(draftKey); return true; }
     catch { setNotice('本機草稿儲存失敗，請勿關閉頁面。'); return false; }
   };
-  const changeDraft = (value: TrackingDraft) => { editGeneration.current++; const next = { ...value, dirty: true }; draftRef.current = next; setDraft(next); saveLocalDraft(next); };
+  const draftWritable=(value:TrackingDraft)=>value.action==='create'||currentCallbacks.current.isWritable(value.rows.map(row=>row.id));
+  const changeDraft = (value: TrackingDraft) => { if(!draftWritable(value))return; editGeneration.current++; const next = { ...value, dirty: true }; draftRef.current = next; setDraft(next); saveLocalDraft(next); };
   const clearSelection = () => { if (selected.length) setNotice('船舶、標籤或條件已切換；已清除原選取。'); setSelected([]); setPage(1); };
-  const guard = async (): Promise<boolean> => {
+  const guard = async (openingOwnsGuard=false): Promise<boolean> => {
+    if(openingRef.current&&!openingOwnsGuard){setNotice('正在取得編輯權，請稍候。');return false;}
     if (importGuard.current) { if (!await importGuard.current()) return false; setImportOpen(false); }
     if (busyRef.current) { setNotice('仍在等待雲端確認；草稿已保留，請先完成目前提交。'); return false; }
     if (!draftRef.current) return true;
     if (pendingRef.current) { setNotice('原提交尚未確認。請先確認結果；不能放棄未知提交或建立另一筆。'); return false; }
-    if (!draftRef.current.dirty) { setDraft(null); draftRef.current = null; return true; }
+    if (!draftRef.current.dirty) { if(!await callbacks.release())return false; setDraft(null); draftRef.current = null; return true; }
     return new Promise(resolve => setNavigation(() => resolve));
   };
   useEffect(() => { currentCallbacks.current.registerNavigationGuard(() => guard()); return () => currentCallbacks.current.registerNavigationGuard(null); });
@@ -84,13 +87,15 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   const switchView = async (action: () => void) => { if (await guard()) { clearSelection(); action(); } };
   const updateFilters = (value: Record<string, TrackingFilter>) => { clearSelection(); setFilters(value); };
   const start = async (action: TrackingAction, ids = selected) => {
-    if (busyRef.current || loading || !vesselId) return;
-    if (!await guard()) return;
-    if (action === 'create') { const value = makeTrackingDraft(action, [newTrackingItem(vesselId, trackingTabKind(tab))], data); setDraft(value); return; }
+    if (busyRef.current || openingRef.current || loading || !vesselId) return;
+    openingRef.current=true;
+    try{
+    if (!await guard(true)) return;
+    if (action === 'create') { const value = makeTrackingDraft(action, [newTrackingItem(vesselId, trackingTabKind(tab))], data); draftRef.current=value;setDraft(value); return; }
     if (!ids.length) { setNotice('請先勾選項目；沒有選取不會提交。'); return; }
     if (ids.length > 100) { setNotice('每批最多 100 項，請明確分批；不會自動截斷選取。'); return; }
     const owner = identity, generation = ++requestGeneration.current;
-    const fresh = await callbacks.load(vesselId, ids);
+    const fresh = await callbacks.claim(vesselId, [...ids]);
     if (!fresh || currentIdentity.current !== owner || generation !== requestGeneration.current) return;
     let picked = ids.map(id => fresh.trackingItems?.find(row => row.id === id && row.vesselId === vesselId));
     if (picked.some(row => !row)) { setNotice('所選資料已變更，未開啟操作。'); return; }
@@ -103,13 +108,15 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     }
     if ((action === 'close' && picked.some(row => row!.isClosed)) || (['reopen', 'correct-close-date'].includes(action) && picked.some(row => !row!.isClosed))) { setNotice('請先選取相同結案狀態；不會把結案和日期更正混為一個動作。'); return; }
     if (['edit', 'progress'].includes(action) && picked.some(row => row!.isClosed)) { setNotice('已結案項目請先重開，未修改任何資料。'); return; }
-    setDraft(makeTrackingDraft(action, picked as TrackingItem[], fresh)); setPending(null); setNotice('');
+    const value=makeTrackingDraft(action, picked as TrackingItem[], fresh);draftRef.current=value;setDraft(value); setPending(null); setNotice('');
+    }finally{openingRef.current=false;if(!draftRef.current&&currentIdentity.current===identity)await callbacks.release();}
   };
   const submit = async (cases?: InternalControlCase[], projections?: Record<string, InternalControlTaskProjection>): Promise<boolean> => {
     const submittedDraft = draftRef.current; if (!submittedDraft || busyRef.current) return false;
     let submission = pendingRef.current;
     try {
       if (!submission) {
+        if(!draftWritable(submittedDraft)){setNotice('編輯鎖尚未重新取得；原輸入保留，本次未保存。');return false;}
         const command = commandForTrackingDraft(submittedDraft, cases, projections);
         if (!command) { setNotice('沒有變更的進度列；未提交。'); return false; }
         submission = { command: structuredClone(command), context: { actorId: user.id, at: nowIso(), operationId: uid('tracking-operation') }, identity };
@@ -124,7 +131,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
       if (!ok) { setNotice('尚未保存；輸入及精確提交已保留。可確認結果／重試相同提交。'); return false; }
       pendingRef.current = null; setPending(null);
       if (submission.command.type === 'sync') setSyncSuccess(submission.command.items.map(value => ({ id: value.item.id, reference: submittedDraft.rows.find(row => row.id === value.id)!.referenceNo })));
-      if (editGeneration.current === generation) { setDraft(null); draftRef.current = null; saveLocalDraft(null, null); setSelected(previous => previous.filter(id => !submittedDraft.rows.some(row => row.id === id))); setNotice('已收到伺服器確認並讀回。'); }
+      if (editGeneration.current === generation) { if(!await callbacks.release()){setNotice('已保存，編輯鎖尚未完成釋放；請稍後關閉。');return true;} setDraft(null); draftRef.current = null; saveLocalDraft(null, null); setSelected(previous => previous.filter(id => !submittedDraft.rows.some(row => row.id === id))); setNotice('已收到伺服器確認並讀回。'); }
       else {
         const retained = draftRef.current!;
         const latest = dataRef.current.trackingItems || [];
@@ -139,13 +146,13 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   };
   const reconcileRejected=async()=>{
     const value=draftRef.current,owner=identity;
-    if(!value||busyRef.current||!pendingRef.current)return;
+    if(!value||busyRef.current)return;
     if(!confirm(`重新核對以下來源的最新版本，保留輸入但解除「未提交／已證明拒絕」的提交；未知結果不會解除。\n${value.rows.map(row=>`${row.referenceNo} [${row.id}]`).join('\n')}\n核對後請再按保存，或明確移除衝突列。`))return;
     busyRef.current=true;setBusy(true);setNotice('正在核對最新版本；原輸入保留，請等候讀取完成。');
     try {
-      if(!await callbacks.discardRejected?.()||owner!==currentIdentity.current){setNotice('尚未證明提交被拒絕，或身份已變更；精確提交仍保留，請確認原結果。');return;}
+      if(pendingRef.current&&(!await callbacks.discardRejected?.()||owner!==currentIdentity.current)){setNotice('尚未證明提交被拒絕，或身份已變更；精確提交仍保留，請確認原結果。');return;}
       pendingRef.current=null;setPending(null);saveLocalDraft(draftRef.current,null);
-      const fresh=await callbacks.load(vesselId,value.originals.map(row=>row.id));
+      const fresh=await callbacks.claim(vesselId,value.originals.map(row=>row.id));
       if(!fresh||owner!==currentIdentity.current)return;
       const retained=draftRef.current;if(!retained)return;
       const originals=retained.originals.map(row=>fresh.trackingItems?.find(item=>item.id===row.id)||row);
@@ -157,11 +164,22 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   const resolveNavigation = async (choice: 'keep' | 'save' | 'cancel') => {
     if (!navigation) return;
     let allow = false;
-    if (choice === 'keep') { allow = saveLocalDraft(draftRef.current); if (allow) { setDraft(null); draftRef.current = null; setSavedAvailable(true); } }
+    if (choice === 'keep') { allow = saveLocalDraft(draftRef.current)&&await callbacks.release(); if (allow) { setDraft(null); draftRef.current = null; setSavedAvailable(true); } }
     if (choice === 'save') { if (draftRef.current?.action === 'sync') setNotice('請先在內控原表單按保存，以執行原必填校驗。'); else allow = await submit() && !draftRef.current; }
     const resolve = navigation; setNavigation(null); resolve(allow);
   };
   const closeModal = async () => { if (await guard()) { if (await callbacks.release()) { setDraft(null); draftRef.current = null; } } };
+  const restoreDraft=async()=>{
+    if(busyRef.current||openingRef.current)return;
+    const saved=safeRead<SavedDraft>(draftKey),owner=identity;
+    if(!saved||!saved.draft.rows.every(row=>row.vesselId===vesselId))return;
+    openingRef.current=true;
+    try{
+      if(saved.draft.action!=='create'&&!saved.pending)await callbacks.claim(vesselId,saved.draft.rows.map(row=>row.id));
+      if(owner!==currentIdentity.current)return;
+      draftRef.current=saved.draft;setDraft(saved.draft);pendingRef.current=saved.pending;setPending(saved.pending);setSavedAvailable(false);
+    }finally{openingRef.current=false;}
+  };
   const actionButton = (action: TrackingAction, label: string, ids?: string[], disabled = false) => <HelpAction label={label} help={TRACKING_HELP[action]} disabled={disabled || loading || busy} onClick={() => void start(action, ids)}/>;
   const rowActions = (row: TrackingItem): ReactNode => <>
     {canEdit && !row.isClosed && actionButton('edit', '編輯', [row.id])}
@@ -181,13 +199,13 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     <div className="tracking-toolbar"><b>已選 {selected.length} 項</b><button className="btn small" onClick={() => setSelected(rows.map(row => row.id))}>選取全部符合條件 {rows.length} 項</button><button className="btn small" onClick={() => setSelected([])}>清除選取</button>{canEdit && actionButton('progress', '批量更新進度', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'supply' && actionButton('delivery', '批量送船／更正', undefined, !selected.length)}{canClose && actionButton('close', '批量結案', undefined, !selected.length)}{canClose && actionButton('correct-close-date', '修改結案日期', undefined, !selected.length)}{canClose && actionButton('reopen', '重開所選', undefined, !selected.length)}{canCreate && actionButton('sync', '同步所選到內控', undefined, !selected.length)}</div>
     <details className="tracking-preferences"><summary>欄位設定</summary><p>表頭可拖曳欄序，邊界拖曳或方向鍵調欄寬；勾選及編號固定。只保存在本人本機，不影響草稿。</p><button className="btn small" onClick={() => { const value = defaultTrackingPreferences(columns); setPreferences(value); writeTrackingPreferences(prefKey, value); }}>重設欄位配置</button><div>{preferences.order.map((key, index) => { const column = columns.find(c => c.key === key); if (!column) return null; return <span key={key}><label><input type="checkbox" disabled={key === 'referenceNo'} checked={!preferences.hidden.includes(key)} onChange={event => { const value = { ...preferences, hidden: event.target.checked ? preferences.hidden.filter(k => k !== key) : [...preferences.hidden, key] }; setPreferences(value); writeTrackingPreferences(prefKey, value); }}/>{column.label}</label><button className="btn small" aria-label={`將${column.label}前移`} disabled={index < 2 || key === 'referenceNo'} onClick={() => { const order = [...preferences.order]; [order[index - 1], order[index]] = [order[index], order[index - 1]]; const value = { ...preferences, order }; setPreferences(value); writeTrackingPreferences(prefKey, value); }}>←</button></span>; })}</div></details>
     {(notice || loading) && <p role="status" className="tracking-notice">{loading ? '讀取此船最新資料…' : notice}</p>}
-    {savedAvailable && !draft && <button className="btn" onClick={() => { const saved = safeRead<SavedDraft>(draftKey); if (saved && saved.draft.rows.every(row => row.vesselId === vesselId)) { setDraft(saved.draft); setPending(saved.pending); setSavedAvailable(false); } }}>恢復本船未送出草稿</button>}
+    {savedAvailable && !draft && <button className="btn" onClick={()=>void restoreDraft()}>恢復本船未送出草稿</button>}
     {syncSuccess.length > 0 && <aside className="tracking-sync-success" role="status"><strong>已在這邊輸入項目，不要再在內控重複輸入！</strong>{syncSuccess.map(value => <button className="btn small" key={value.id} onClick={() => callbacks.openCase(value.id)}>{value.reference}｜查看內控</button>)}<button className="btn small" onClick={() => setSyncSuccess([])}>關閉提醒</button></aside>}
     {canExport && <TrackingExports query={{vesselId,tab,filters,search,sort}} preferences={preferences} selected={selected} count={rows.length} vesselName={vesselSelectionDisplayName(vessels.find(v=>v.id===vesselId))} identity={identity} workspace={workspace} callbacks={callbacks} blocked={loading||busy||Boolean(draft)||Boolean(pending)||importOpen||!vessels.some(v=>v.id===vesselId&&v.isActive)}/>}
     <TrackingTable rows={rows.slice((page - 1) * 30, page * 30)} columns={columns} preferences={preferences} onPreferences={value => { setPreferences(value); writeTrackingPreferences(prefKey, value); }} sort={sort} onSort={key => setSort(value => ({ key, direction: value.key === key && value.direction === 'asc' ? 'desc' : 'asc' }))} selected={selected} onSelected={setSelected} actions={rowActions}/>
     <TrackingPagination count={rows.length} page={page} onPage={setPage}/>
     {importOpen && <TrackingImportModal key={`${workspace}:${identity}:${vesselId}`} vesselId={vesselId} vesselName={vesselSelectionDisplayName(vessels.find(v=>v.id===vesselId))} workspace={workspace} actorId={user.id} identity={identity} canCreate={canCreate} canClose={canClose} data={data} callbacks={callbacks} onClose={()=>setImportOpen(false)} registerGuard={value=>{importGuard.current=value;}}/>}
-    {draft && draft.action === 'sync' && draft.sync ? <div className="tracking-sync-form"><BatchCreateModal data={data} user={user} vessels={vessels.filter(v => v.id === vesselId)} close={() => void closeModal()} sourceForm={{ draft: draft.sync, onReconcile:()=>void reconcileRejected(),lockedTaskIds:draft.savedCases?.filter(item=>item.linkedTaskId).map(item=>item.id), onDraftChange: value => changeDraft({ ...draft, sync: value }), busy, pending: Boolean(pending), message: [...draft.warnings, draft.savedCases?'提交版本已建立內控；本次只更正同一批已建立案件，不會重複新增。':'', notice].filter(Boolean).join('\n') }} save={async (cases, projections) => { await submit(cases, projections); return false; }}/></div> : draft && <TrackingBusinessModal vesselName={vesselSelectionDisplayName(vessels.find(vessel=>vessel.id===vesselId))} draft={draft} busy={busy} pending={Boolean(pending)} message={notice} affected={affected} onChange={changeDraft} onSave={() => void submit()} onReconcile={() => void reconcileRejected()} onClose={() => void closeModal()}/>}
+    {draft && draft.action === 'sync' && draft.sync ? <div className="tracking-sync-form"><BatchCreateModal data={data} user={user} vessels={vessels.filter(v => v.id === vesselId)} close={() => void closeModal()} sourceForm={{ draft: draft.sync, readOnly:!draftWritable(draft), onReconcile:()=>void reconcileRejected(),lockedTaskIds:draft.savedCases?.filter(item=>item.linkedTaskId).map(item=>item.id), onDraftChange: value => changeDraft({ ...draft, sync: value }), busy, pending: Boolean(pending), message: [...draft.warnings, draft.savedCases?'提交版本已建立內控；本次只更正同一批已建立案件，不會重複新增。':'', notice].filter(Boolean).join('\n') }} save={async (cases, projections) => { await submit(cases, projections); return false; }}/></div> : draft && <TrackingBusinessModal readOnly={!draftWritable(draft)} vesselName={vesselSelectionDisplayName(vessels.find(vessel=>vessel.id===vesselId))} draft={draft} busy={busy} pending={Boolean(pending)} message={notice} affected={affected} onChange={changeDraft} onSave={() => void submit()} onReconcile={() => void reconcileRejected()} onClose={() => void closeModal()}/>}
     {navigation && <div className="modal-backdrop tracking-navigation"><div className="modal" role="dialog" aria-modal="true" aria-label="尚未保存的跟蹤草稿"><h3>尚有實際修改未保存</h3><p>保存須等雲端確認；保留草稿只存於此工作區、本人、本船的瀏覽器。</p><button className="btn primary" onClick={() => void resolveNavigation('save')}>保存後繼續</button><button className="btn" onClick={() => void resolveNavigation('keep')}>保留草稿並繼續</button><button className="btn ghost" onClick={() => void resolveNavigation('cancel')}>取消切換</button></div></div>}
   </section>;
 }

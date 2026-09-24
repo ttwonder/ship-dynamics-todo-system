@@ -97,7 +97,7 @@ try {
     assert.ok(source.includes('renewEditLock('),`${label} heartbeat must use non-creating renewal`);
     assert.ok(!source.includes('claimEditLock('),`${label} heartbeat must not recreate a released lease`);
   }
-  assert.ok(itemHeartbeat.includes("runCloudSaveQueueRpc('單項協作鎖續期'")&&itemHeartbeat.includes('signal=>renewEditLock('),'single-item renewal must have a hard timeout and abort its underlying request');
+  assert.ok(itemHeartbeat.includes("runCloudSaveQueueRpc('單項及關聯協作鎖續期'")&&itemHeartbeat.includes('signal=>renewEditLock(')&&itemHeartbeat.includes('8_000'),'single-item renewal must have a hard timeout and abort its underlying request');
   const currentItemRelease=app.slice(app.indexOf('const releaseCurrentEditLock='),app.indexOf('const closeEditorForLock='));
   assert.ok(currentItemRelease.includes("runCloudSaveQueueRpc('釋放多人協作鎖'")&&currentItemRelease.includes('signal=>releaseEditLock('),'single-item release must have a hard timeout and abort its underlying request');
   assert.ok(app.includes('meetingEditLockKey')&&app.includes('internalControlEditLockKey'),'App must authorize exact meeting and internal-control lock keys');

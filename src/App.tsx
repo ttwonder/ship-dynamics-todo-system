@@ -70,7 +70,7 @@ import ReportDailyHistories from './ReportDailyHistories';
 import ManualItineraryReportSaveButton from './ManualItineraryReportSaveButton';
 import { richTextToPlainText } from './richText';
 import { classifyExpiredLeaseRelease, classifyLeaseRenewalAfterAwait, classifyMutationLeaseFailure, classifyVesselLeaseIncidentClose, classifyVesselLeaseRenewalFailure, conservativeLeaseDeadline, createEditLockCoordinator, editLockAllowsMutation, shouldRenderProductionCloudSafetyGate } from './editLockCoordinator';
-import { acquireEditLockBundle } from './editLockBundle';
+import { acquireEditLockBundle, type OwnedEditLockBundleLease } from './editLockBundle';
 import { batchMutationSessionIsCurrent, createBatchManagedAuthorization, type BatchManagedAuthorization } from './batchManagedAuthorization';
 import { createLeaseReleaseState, pendingTrackedLeases, registerTrackedLease, releaseTrackedLeases, type TrackedLeaseToken } from './leaseReleaseTracker';
 import { runDurableCreationHandoff, waitForDurableCreationHandoff, type DurableCreationHandoffBarrier } from './durableCreationHandoff';
@@ -127,7 +127,7 @@ import {
 type BatchManagedOperation = { id: number; session: number; authorization: BatchManagedAuthorization | null; locks: TrackedLeaseToken[] };
 
 type Tab = 'tracking' | 'dashboard' | 'morning' | 'total' | 'reports' | 'stats' | 'management' | 'meeting' | 'closed' | 'internalControl' | 'work';
-type ActiveEditLock = { sectionKey: string; label: string; status: 'owned' | 'blocked' | 'error'; ownerUserId: string; ownerUserName: string; leaseOwnerId: string; generation: number; authorizationEpoch: string; validatedUntilMs: number; lockedByName?: string };
+type ActiveEditLock = { sectionKey: string; label: string; status: 'owned' | 'blocked' | 'error'; ownerUserId: string; ownerUserName: string; leaseOwnerId: string; generation: number; authorizationEpoch: string; validatedUntilMs: number; lockedByName?: string; bundle?: OwnedEditLockBundleLease[]; bundleSeeds?: string[] };
 type VesselLeaseIncident={sectionKey:string;leaseOwnerId:string;ownerUserId:string;authorizationEpoch:string;mode:'retrying'|'frozen';message:string};
 type PendingCreationRunContext={creationLock:ActiveEditLock;config:ResolvedSupabaseConfig;isCurrent:()=>boolean;adoptRemoteBase:(snapshot:AppData)=>void;adoptCommittedLive:(snapshot:AppData)=>void;updateSubmittedTask:(task:TaskItem)=>Promise<void>;mutationApplied:boolean};
 type EditLockClaimResult = 'owned' | 'blocked' | 'unavailable';
@@ -315,6 +315,7 @@ export default function App() {
   useEffect(()=>()=>{void memberEditor.current?.dispose();},[]);
   const recordReadScope=useRef<RecordReadScope>('home');
   const actionScopeGeneration=useRef(0);
+  const actionScopeReadInFlight=useRef(0);
   const fetchCloudData=async(config?:ResolvedSupabaseConfig|null,signal?:AbortSignal,confirmed?:AppData,scope:RecordReadScope=recordReadScope.current)=>{
     const binding=originalAuthority.current;
     if(config&&!binding)throw new BrowserAuthorityError('browser-authority-unavailable');
@@ -746,7 +747,7 @@ export default function App() {
       ||!confirmedCloudData.current
       ||!appDataContentEqual(liveData.current,confirmedCloudData.current)
     ),
-    hasActiveItemLease:Boolean(activeEditLockRef.current),
+    hasActiveItemLease:Boolean(activeEditLockRef.current||actionScopeReadInFlight.current||pendingClaimConfig.current),
     hasBatchLease:batchManagedOpenRef.current,
     saveInFlight:Boolean(cloudSaveInFlight.current),
   });
@@ -825,6 +826,7 @@ export default function App() {
     };
     const active=activeEditLockRef.current;
     add(active||undefined,active?leaseCloudConfigs.current.get(active.leaseOwnerId):undefined);
+    for(const lease of active?.bundle||[])add({...active!,...lease},leaseCloudConfigs.current.get(lease.leaseOwnerId));
     for(const lock of batchEditLocksRef.current)add(lock,batchLeaseReleaseState.current.records.get(lock.leaseOwnerId));
     for(const {guard,config:guardConfig} of transientCloudBlockLockGuards.current.values())if(sameCloudConfig(guardConfig,config))guards.push(guard);
     return[...new Map(guards.map(guard=>[`${guard.section_key}|${guard.locked_by}`,guard])).values()];
@@ -1349,7 +1351,7 @@ export default function App() {
   };
   // Continuity keeps the exact handoff identity; error/TTL revokes writes, not the draft.
   const freezeRelatedMutationDraft=(lock:ActiveEditLock|null)=>{
-    if(!lock||(!lock.sectionKey.startsWith('task:')&&!lock.sectionKey.startsWith('internal-control:')&&!lock.sectionKey.startsWith('tracking:'))||!relatedMutationHandoffMatchesCurrent(lock))return false;
+    if(!lock||(!lock.bundle&&!relatedMutationHandoffMatchesCurrent(lock))||(!lock.sectionKey.startsWith('task:')&&!lock.sectionKey.startsWith('internal-control:')&&!lock.sectionKey.startsWith('tracking:')))return false;
     const frozen={...lock,status:'error' as const,validatedUntilMs:0};
     activeEditLockRef.current=frozen;
     setActiveEditLock(previous=>relatedMutationLeaseMatches(lock,previous)?frozen:previous);
@@ -1374,14 +1376,21 @@ export default function App() {
       setActiveEditLock(previous=>previous?.leaseOwnerId===lock.leaseOwnerId?null:previous);
       return true;
     }
-    const leaseRecord=leaseCloudConfigs.current.get(lock.leaseOwnerId);
+    const leaseRecord=leaseCloudConfigs.current.get(lock.leaseOwnerId)||lock.bundle?.map(lease=>leaseCloudConfigs.current.get(lease.leaseOwnerId)).find(Boolean);
     if(!leaseRecord){
       activeEditLockRef.current=null;
       setActiveEditLock(previous=>previous?.leaseOwnerId===lock.leaseOwnerId?null:previous);
       return true;
     }
     try{
-      await lockCoordinator.current.run(()=>runCloudSaveQueueRpc('釋放多人協作鎖',signal=>releaseEditLock(leaseRecord.sectionKey,lock.leaseOwnerId,leaseRecord.config,signal),8_000));
+      await lockCoordinator.current.run(async()=>{
+        for(const lease of [...(lock.bundle||[{sectionKey:lock.sectionKey,leaseOwnerId:lock.leaseOwnerId}])].reverse()){
+          const record=leaseCloudConfigs.current.get(lease.leaseOwnerId);
+          if(!record)continue;
+          await runCloudSaveQueueRpc('釋放多人協作鎖',signal=>releaseEditLock(lease.sectionKey,lease.leaseOwnerId,record.config,signal),8_000);
+          leaseCloudConfigs.current.delete(lease.leaseOwnerId);
+        }
+      });
       leaseCloudConfigs.current.delete(lock.leaseOwnerId);
       if(!relatedMutationLeaseMatches(lock,activeEditLockRef.current))return true;
       activeEditLockRef.current=null;
@@ -1507,7 +1516,8 @@ export default function App() {
               return;
             }
           }
-          const renewed=await runCloudSaveQueueRpc('單項協作鎖續期',signal=>renewEditLock(lock.sectionKey,lock.leaseOwnerId,75,leaseRecord.config,signal),8_000);
+          const renewals=await Promise.all((lock.bundle||[{sectionKey:lock.sectionKey,leaseOwnerId:lock.leaseOwnerId}]).map(lease=>runCloudSaveQueueRpc('單項及關聯協作鎖續期',signal=>renewEditLock(lease.sectionKey,lease.leaseOwnerId,75,leaseRecord.config,signal),8_000)));
+          const renewed=renewals.find(value=>!value.ok)||{ok:true,lockedByName:undefined,expiresAt:new Date(Math.min(...renewals.map(value=>Date.parse(value.expiresAt||'')))).toISOString()};
           const renewalStillCurrent=()=>lockCoordinator.current.isCurrent(lock.generation)&&liveAuthorizationEpoch.current===lock.authorizationEpoch&&liveAuthorizedEditLockKeys.current.has(lock.sectionKey);
           const matchingCreationHandoff=creationHandoffInFlight.current?.leaseOwnerId===lock.leaseOwnerId?creationHandoffInFlight.current:null;
           const renewalAfterAwaitDisposition=classifyLeaseRenewalAfterAwait({
@@ -1761,7 +1771,7 @@ export default function App() {
     if(authorizationChanged||staleLock){clearVesselLeaseIncident();releaseCurrentEditLock();}
   }, [authorizationEpoch,activeEditLock?.authorizationEpoch,activeEditLock?.ownerUserId,currentUser?.id,creationHandoffVersion]);
 
-  const claimEditingLock=async(sectionKey:string,label:string,stillWanted?:()=>boolean,announceBlocked=true,liveAuthorized?:()=>boolean):Promise<EditLockClaimResult>=>{
+  const claimEditingLock=async(sectionKey:string,label:string,stillWanted?:()=>boolean,announceBlocked=true,liveAuthorized?:()=>boolean,selectedKeys?:readonly string[]):Promise<EditLockClaimResult>=>{
     if(!currentUser)return 'unavailable';
     const previousLock=activeEditLockRef.current;
     if(previousLock?.status==='owned'&&!await ensureCloudDurableBeforeLeaseRelease(previousLock.sectionKey))return 'unavailable';
@@ -1800,23 +1810,53 @@ export default function App() {
       if((stillWanted&&!stillWanted())||!lockCoordinator.current.isCurrent(generation)||liveAuthorizationEpoch.current!==claimAuthorizationEpoch||!authorizedNow())return 'unavailable';
       leaseCloudConfigs.current.set(leaseOwnerId,{sectionKey,config:leaseConfig});
       try{
-        const lock=await runCloudSaveQueueRpc('取得多人協作鎖',signal=>claimEditLock(sectionKey,leaseOwnerId,ownerUserName,75,leaseConfig,signal),8_000);
+        const grouped=/^(task:|internal-control:|tracking:|meeting:)/.test(sectionKey);
+        let bundle:OwnedEditLockBundleLease[]|undefined;
+        const seeds=[...new Set(selectedKeys||[sectionKey])].sort();
+        const keysFor=(snapshot:AppData)=>[...new Set(seeds.flatMap(key=>relatedEntityLockKeysForSection(snapshot,key)))].sort();
+        const current=()=>sameCloudConfig(getSupabaseConfig(),leaseConfig)&&(!stillWanted||stillWanted())&&lockCoordinator.current.isCurrent(generation)&&liveAuthorizationEpoch.current===claimAuthorizationEpoch&&authorizedNow();
+        const releaseBundleLease=async(lease:{sectionKey:string;leaseOwnerId:string})=>{
+          await runCloudSaveQueueRpc('回滾編輯進場鎖',signal=>releaseEditLock(lease.sectionKey,lease.leaseOwnerId,leaseConfig,signal),8_000);
+          leaseCloudConfigs.current.delete(lease.leaseOwnerId);
+        };
+        const lock=await (async()=>{
+          if(!grouped)return runCloudSaveQueueRpc('取得多人協作鎖',signal=>claimEditLock(sectionKey,leaseOwnerId,ownerUserName,75,leaseConfig,signal),8_000);
+          const targets=seeds.flatMap(key=>{const at=key.indexOf(':'),prefix=key.slice(0,at),id=key.slice(at+1);return [{collection:({'task':'tasks','internal-control':'internalControlCases','tracking':'trackingItems','meeting':'meetings'} as const)[prefix as 'task'] ,id}];});
+          const scope=unionRecordScopes(recordReadScope.current,{targets});
+          const planning=await fetchCloudData(leaseConfig,undefined,undefined,scope);
+          if(!planning||!current()||seeds.some(key=>!itemLeaseExistsInSnapshot(key,planning)||!itemLeaseIsAuthorizedInSnapshot(key,planning)))throw new Error('所選項目或編輯權限已變更');
+          const planned=keysFor(planning);
+          const requests=planned.map(key=>({sectionKey:key,label:`${label}｜${key}`,leaseOwnerId:key===sectionKey?leaseOwnerId:`${ownerUserId}:${crypto.randomUUID()}`}));
+          const result=await acquireEditLockBundle(requests,request=>{
+            leaseCloudConfigs.current.set(request.leaseOwnerId,{sectionKey:request.sectionKey,config:leaseConfig});
+            return runCloudSaveQueueRpc('取得編輯進場整組鎖',signal=>claimEditLock(request.sectionKey,request.leaseOwnerId,ownerUserName,75,leaseConfig,signal),8_000);
+          },releaseBundleLease,current);
+          if(result.status==='blocked')return {ok:false,lockedByName:result.lockedByName};
+          if(result.status!=='owned')throw new Error('未能完整取得編輯鎖；本次不開放輸入');
+          bundle=result.leases;
+          const fresh=await fetchCloudData(leaseConfig,undefined,undefined,scope);
+          if(!fresh||!current()||JSON.stringify(keysFor(fresh))!==JSON.stringify(planned)||seeds.some(key=>!itemLeaseExistsInSnapshot(key,fresh)||!itemLeaseIsAuthorizedInSnapshot(key,fresh)))throw new Error('關聯或權限在取得鎖期間已變更；請重新開啟');
+          assertRemoteExtendsDurableHistory(cloudIdentity(leaseConfig),null,fresh);
+          recordReadScope.current=scope;lastCloudRevision.current=fresh.revision;confirmCloudSnapshot(cloudIdentity(leaseConfig),fresh);liveData.current=fresh;setData(fresh);
+          return {ok:true,expiresAt:new Date(Math.min(...bundle.map(value=>Date.parse(value.expiresAt||'')))).toISOString()};
+        })().catch(async error=>{if(bundle)await Promise.allSettled(bundle.map(releaseBundleLease));throw error;});
         const configStillCurrent=sameCloudConfig(getSupabaseConfig(),leaseConfig);
         if(!configStillCurrent&&lockCoordinator.current.isCurrent(generation))lockCoordinator.current.invalidate();
         if(!configStillCurrent||(stillWanted&&!stillWanted())||!lockCoordinator.current.isCurrent(generation)||liveAuthorizationEpoch.current!==claimAuthorizationEpoch||!authorizedNow()){
-          if(lock.ok){await runCloudSaveQueueRpc('清理失效多人協作鎖',signal=>releaseEditLock(sectionKey,leaseOwnerId,leaseConfig,signal),8_000);leaseCloudConfigs.current.delete(leaseOwnerId);}
+          if(lock.ok){for(const lease of bundle||[{sectionKey,leaseOwnerId}])await releaseBundleLease(lease);}
           else leaseCloudConfigs.current.delete(leaseOwnerId);
           return 'unavailable';
         }
         if(!lock.ok){
           leaseCloudConfigs.current.delete(leaseOwnerId);
           const lockedByName=lock.lockedByName||'其他使用者';
-          setActiveEditLock({...lockState,status:'blocked',lockedByName});
+          activeEditLockRef.current={...lockState,status:'blocked',lockedByName};
+          setActiveEditLock(activeEditLockRef.current);
           setSensitiveCloudStatus(`此項目正在由 ${lockedByName} 編輯，已阻止打開以避免覆蓋對方內容`,sectionKey);
           if(announceBlocked)alert(`此項目正在由 ${lockedByName} 編輯；為避免覆蓋對方內容，請稍後再試或先按「同步最新」。`);
           return 'blocked';
         }
-        const ownedLock:ActiveEditLock={...lockState,status:'owned',validatedUntilMs:conservativeLeaseDeadline(lock.expiresAt)};
+        const ownedLock:ActiveEditLock={...lockState,status:'owned',validatedUntilMs:conservativeLeaseDeadline(lock.expiresAt),...(bundle?{bundle,bundleSeeds:seeds}:{})};
         activeEditLockRef.current=ownedLock;
         setActiveEditLock(ownedLock);
         clearVesselLeaseIncident(sectionKey);
@@ -2090,9 +2130,9 @@ export default function App() {
       return null;
     }
   };
-  const claimExclusiveItemLease=async(sectionKey:string,label:string):Promise<AppData|null>=>{
+  const claimExclusiveItemLease=async(sectionKey:string,label:string,selectedKeys?:readonly string[]):Promise<AppData|null>=>{
     const liveAuthorized=()=>itemLeaseExistsInSnapshot(sectionKey,liveData.current)&&itemLeaseIsAuthorizedInSnapshot(sectionKey,liveData.current);
-    if(await claimEditingLock(sectionKey,label,undefined,true,liveAuthorized)!=='owned')return null;
+    if(await claimEditingLock(sectionKey,label,undefined,true,liveAuthorized,selectedKeys)!=='owned')return null;
     return refreshAfterItemLease(sectionKey);
   };
   const releaseExclusiveItemLease=async(sectionKey:string)=>{
@@ -2371,6 +2411,9 @@ export default function App() {
 
   const loadRecordActionScope=async(scope:RecordReadScope,ownerIsCurrent:()=>boolean=()=>true,forceFresh=false):Promise<boolean>=>{
     if(!ownerIsCurrent())return false;
+    actionScopeReadInFlight.current++;
+    try{
+    if(activeEditLockRef.current?.status==='blocked'&&!activeEditLockRef.current.bundle&&!await releaseCurrentEditLock())return false;
     const generation=++actionScopeGeneration.current;
     const config=getSupabaseConfig();
     if(!config||(!forceFresh&&originalAuthority.current&&(authorityConfig(config,originalAuthority.current).readMode!=='scoped-v1'||recordScopeKey(recordReadScope.current)===recordScopeKey(scope))))return true;
@@ -2392,6 +2435,7 @@ export default function App() {
       liveData.current=remote;setData(remote);lastCloudRevision.current=remote.revision;
       return true;
     }catch(error:any){if(isCurrent())alert(error.message||String(error));return false;}
+    }finally{actionScopeReadInFlight.current--;}
   };
   const freshPageData=():AppData|null=>{
     const snapshot=liveData.current,actor=snapshot.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);
@@ -2536,7 +2580,7 @@ export default function App() {
       const editor=new TaskMemberEditor(memberConfig,actor,currentUser.name,task.id,()=>requestIsCurrent()&&liveCurrentUserId.current===actor&&identitySessionGeneration.current===session&&liveAuthorizationEpoch.current===epoch&&sameCloudConfig(memberConfig,getSupabaseConfig())&&originalAuthority.current===memberAuthority,()=>setMemberEditorVersion(v=>v+1),()=>requestIsCurrent()&&liveCurrentUserId.current===actor&&identitySessionGeneration.current===session&&liveAuthorizationEpoch.current===epoch);
       memberEditor.current=editor;
       const selected=await editor.select(scope);
-      if(!selected||!requestIsCurrent()){await editor.close();if(memberEditor.current===editor)memberEditor.current=null;return 'failed';}
+      if(!selected||!requestIsCurrent()){if(requestIsCurrent()&&editor.message)alert(editor.message);await editor.close();if(memberEditor.current===editor)memberEditor.current=null;return 'failed';}
       setTaskProgressVesselId(scope);setTaskEditorRequestGeneration(requestGeneration);setTaskEditorAuthorizationEpoch(epoch);setEditingTaskId(task.id);return 'opened';
     }
     const claimResult=await claimEditingLock(`task:${task.id}`, `待辦｜${label.slice(0, 28)}`,requestIsCurrent,false);
@@ -2647,6 +2691,25 @@ export default function App() {
     setCreatingTask({ id, vesselId, priority:'中', isAware:false, isAbnormal:false, isInternalControl:false, sourceType:'morning', category:'', categories:[], description:'', status:'', expectedDate:'', reportDate:todayDate(), departments:[], ownerUserIds: liveUser.role==='vessel' ? [] : assignedOwnerUserIds, isClosed:false, createdBy:liveUser.id, updatedBy:liveUser.id, createdAt:nowIso(), updatedAt:nowIso(), statusLogs:[] });
     return true;
   };
+  const retainTrackingEditorLeases=async(lock:ActiveEditLock,leases:OwnedEditLockBundleLease[],config:ResolvedSupabaseConfig)=>{
+    if(!relatedMutationLeaseMatches(lock,activeEditLockRef.current))return;
+    const all=[...new Map([...(activeEditLockRef.current?.bundle||[]),...leases].map(lease=>[lease.sectionKey,lease])).values()];
+    const seeds=[...new Set([...(lock.bundleSeeds||[lock.sectionKey]),...all.filter(lease=>lease.sectionKey.startsWith('tracking:')).map(lease=>lease.sectionKey)])];
+    const keys=[...new Set(seeds.flatMap(key=>relatedEntityLockKeysForSection(liveData.current,key)))].sort();
+    const requests=keys.filter(key=>!all.some(lease=>lease.sectionKey===key)).map(key=>({sectionKey:key,label:`跟蹤關聯｜${key}`,leaseOwnerId:`${lock.ownerUserId}:${crypto.randomUUID()}`}));
+    for(const lease of all)leaseCloudConfigs.current.set(lease.leaseOwnerId,{sectionKey:lease.sectionKey,config});
+    const current=()=>relatedMutationLeaseMatches(lock,activeEditLockRef.current)&&lockCoordinator.current.isCurrent(lock.generation)&&sameCloudConfig(config,getSupabaseConfig())&&liveAuthorizationEpoch.current===lock.authorizationEpoch;
+    const result=await acquireEditLockBundle(requests,request=>{
+      leaseCloudConfigs.current.set(request.leaseOwnerId,{sectionKey:request.sectionKey,config});
+      return runCloudSaveQueueRpc('保留新建關聯編輯鎖',signal=>claimEditLock(request.sectionKey,request.leaseOwnerId,lock.ownerUserName,75,config,signal),8_000);
+    },async request=>{await runCloudSaveQueueRpc('回滾新建關聯編輯鎖',signal=>releaseEditLock(request.sectionKey,request.leaseOwnerId,config,signal),8_000);leaseCloudConfigs.current.delete(request.leaseOwnerId);},current);
+    if(result.status==='owned')all.push(...result.leases);
+    if(!current())return;
+    const latest=activeEditLockRef.current!;
+    const owned={...latest,bundle:all,bundleSeeds:seeds,validatedUntilMs:Math.min(latest.validatedUntilMs,...leases.map(lease=>conservativeLeaseDeadline(lease.expiresAt)),...(result.status==='owned'?result.leases.map(lease=>conservativeLeaseDeadline(lease.expiresAt)):[]))};
+    activeEditLockRef.current=owned;setActiveEditLock(owned);
+    if(result.status!=='owned')freezeRelatedMutationDraft(owned);
+  };
   const runDurableRelatedMutation=async(sectionKey:string,label:string,apply:()=>boolean,additionalLockKeys:(snapshot:AppData)=>readonly string[]=()=>[],onRecordPrepared?:(attempt:TrackingRecordAttempt)=>void):Promise<boolean>=>{
     if(!requireMutationLease(sectionKey))return false;
     const config=getSupabaseConfig();
@@ -2693,7 +2756,8 @@ export default function App() {
       alert(`無法安全規劃${label}的完整關聯鎖：${error.message||error}`);
       return false;
     }
-    const requests=plannedLockKeys.filter(key=>key!==sectionKey).map(key=>({sectionKey:key,label:`${label}｜${key}`,leaseOwnerId:uid('related-lease')}));
+    const ownedEntryKeys=new Set((expectedLease.bundle||[]).map(lease=>lease.sectionKey));
+    const requests=plannedLockKeys.filter(key=>key!==sectionKey&&!ownedEntryKeys.has(key)).map(key=>({sectionKey:key,label:`${label}｜${key}`,leaseOwnerId:uid('related-lease')}));
     const releaseRequest=async(request:{sectionKey:string;leaseOwnerId:string})=>runCloudSaveQueueRpc('釋放關聯鎖',signal=>releaseEditLock(request.sectionKey,request.leaseOwnerId,config,signal),8_000);
     const result=await acquireEditLockBundle(
       requests,
@@ -2769,6 +2833,12 @@ export default function App() {
       if(!identityIsCurrent())throw new StaleAsyncConfigError();
       if(!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current))throw new Error('雲端尚未確認最新關聯修改');
       durableConfirmed=true;
+      if(sectionKey.startsWith('tracking:')){
+        await stopHeartbeat();
+        await retainTrackingEditorLeases(expectedLease,result.leases,config);
+        clearGuards();
+        return true;
+      }
       const released=await releaseRelated();
       if(!released)setCloudStatus(`${label}已保存，但部分關聯鎖將於租期屆滿後自動釋放`);
       return true;
@@ -2808,6 +2878,7 @@ export default function App() {
       return false;
     }finally{
       mutationHandoff.finish(!applied||durableConfirmed,durableConfirmed);
+      if(!applied&&relatedMutationHandoffInFlight.current===mutationHandoff)relatedMutationHandoffInFlight.current=null;
       if(relatedMutationHandoffInFlight.current===mutationHandoff)setRelatedMutationHandoffVersion(value=>value+1);
     }
     }finally{relatedMutationAdmissionInFlight.current=false;}
@@ -2828,6 +2899,16 @@ export default function App() {
     const fresh=await loadTrackingScope(vesselId);
     if(!fresh||!current())return null;
     return {items:structuredClone((fresh.trackingItems||[]).filter(row=>row.vesselId===vesselId)),isCurrent:current};
+  };
+  const claimTrackingEditor=async(vesselId:string,ids:string[]):Promise<AppData|null>=>{
+    if(!ids.length||ids.length>100||new Set(ids).size!==ids.length)return null;
+    const owner=trackingIdentity();
+    const snapshot=await claimExclusiveItemLease(`tracking:${ids[0]}`,'配件／物料／工程跟蹤',ids.map(id=>`tracking:${id}`));
+    return owner===trackingIdentity()&&snapshot?.trackingItems?.filter(item=>ids.includes(item.id)).every(item=>item.vesselId===vesselId)?snapshot:null;
+  };
+  const trackingEditorIsWritable=(ids:readonly string[])=>{
+    const lock=activeEditLockRef.current;
+    return Boolean(lock&&lock.sectionKey.startsWith('tracking:')&&mutationLeaseIsOwned(lock.sectionKey)&&ids.every(id=>lock.bundle?.some(lease=>lease.sectionKey===`tracking:${id}`)));
   };
   const reconcileTrackingReceipt=async(submission:TrackingSubmission,record:TrackingRecordAttempt):Promise<boolean>=>{
     const config=getSupabaseConfig(),owner=submission.identity,pendingWarning=saveToastRef.current;
@@ -2854,9 +2935,10 @@ export default function App() {
       if(same&&pendingWarning===saveToastRef.current&&pendingWarning?.kind==='warning'&&['保存結果尚未確認','雲端已確認保存，畫面更新尚未完成'].includes(pendingWarning.title))dismissSaveToast();
       relatedMutationHandoffInFlight.current=null;
       // Release only the original owners; never a successor's guard.
-      await Promise.allSettled(record.guards.filter(guard=>guard.section_key!==activeEditLockRef.current?.sectionKey).map(guard=>runCloudSaveQueueRpc('釋放原跟蹤關聯鎖',signal=>releaseEditLock(guard.section_key,guard.locked_by,config,signal),8_000)));
+      await Promise.allSettled(record.guards.filter(guard=>guard.section_key!==activeEditLockRef.current?.sectionKey&&!activeEditLockRef.current?.bundle?.some(lease=>lease.sectionKey===guard.section_key&&lease.leaseOwnerId===guard.locked_by)).map(guard=>runCloudSaveQueueRpc('釋放原跟蹤關聯鎖',signal=>releaseEditLock(guard.section_key,guard.locked_by,config,signal),8_000)));
       for(const [key,value] of transientCloudBlockLockGuards.current)if(record.guards.some(guard=>guard.section_key===value.guard.section_key&&guard.locked_by===value.guard.locked_by))transientCloudBlockLockGuards.current.delete(key);
-      check();const primary=trackingAttempt.current?.sectionKey;if(primary){await releaseExclusiveItemLease(primary);trackingCreationAdmissions.current.delete(primary);}
+      check();
+      if(activeEditLockRef.current?.sectionKey.startsWith('tracking:'))await retainTrackingEditorLeases(activeEditLockRef.current,[],config);
       localStorage.removeItem(trackingReceiptKey(owner,submission.context.operationId));if(trackingAttempt.current)trackingAttempt.current.confirmed=true;return true;
     }catch(error){if(current())setCloudStatus(`原提交尚未安全確認；精確資料及草稿保留：${cloudErrorMessage(error)}`);return false;}
   };
@@ -2878,7 +2960,9 @@ export default function App() {
     const command=structuredClone(submission.command);
     const ids=command.type==='lifecycle'?command.targets.map(target=>target.id):command.items.map(item=>item.id);
     if(!ids.length||ids.length>100||new Set(ids).size!==ids.length)return false;
-    const primary=`tracking:${ids[0]}`;
+    const editor=activeEditLockRef.current;
+    const admitted=Boolean(editor?.sectionKey.startsWith('tracking:')&&ids.every(id=>editor.bundleSeeds?.includes(`tracking:${id}`)));
+    const primary=admitted?editor!.sectionKey:`tracking:${ids[0]}`;
     const attempt={submission:structuredClone(submission),sectionKey:primary,applied:false,confirmed:false};
     trackingAttempt.current=attempt;
     try {
@@ -2887,7 +2971,8 @@ export default function App() {
         trackingCreationAdmissions.current.set(primary,{actorId:submission.context.actorId,vesselId:first.vesselId,identity:owner});
       }
       // Admission for an absent, reserved source is explicit, not projected existence.
-      if(!await claimExclusiveItemLease(primary,'配件／物料／工程跟蹤')||!isCurrent())return false;
+      if(admitted){if(!requireMutationLease(primary))return false;}
+      else if(!await claimExclusiveItemLease(primary,'配件／物料／工程跟蹤',command.type==='create'?undefined:ids.map(id=>`tracking:${id}`))||!isCurrent())return false;
       const keys=(snapshot:AppData)=>[
         ...ids.flatMap(id=>relatedEntityLockKeysForSection(snapshot,`tracking:${id}`)),
         ...(command.type==='sync'?command.items.map(input=>internalControlCreationLockKey(input.item.id)):[]),
@@ -2907,8 +2992,8 @@ export default function App() {
         return accepted;
       };
       const confirmed=await runDurableRelatedMutation(primary,'跟蹤保存',apply,keys,record=>{if(!isCurrent())throw new StaleAsyncConfigError();localStorage.setItem(trackingReceiptKey(owner,submission.context.operationId),JSON.stringify(record));});
-      if(confirmed&&isCurrent()){localStorage.removeItem(trackingReceiptKey(owner,submission.context.operationId));attempt.confirmed=true;await releaseExclusiveItemLease(primary);trackingCreationAdmissions.current.delete(primary);return true;}
-      if(!attempt.applied){await releaseExclusiveItemLease(primary);trackingCreationAdmissions.current.delete(primary);}
+      if(confirmed&&isCurrent()){localStorage.removeItem(trackingReceiptKey(owner,submission.context.operationId));attempt.confirmed=true;return true;}
+      if(!attempt.applied&&!admitted){await releaseExclusiveItemLease(primary);trackingCreationAdmissions.current.delete(primary);}
       return false;
     }catch(error){if(isCurrent())alert(error instanceof Error?error.message:String(error));return false;}
   };
@@ -2921,7 +3006,7 @@ export default function App() {
   };
   const releaseTracking=async()=>{
     const attempt=trackingAttempt.current;
-    if(!attempt)return true;
+    if(!attempt){const lock=activeEditLockRef.current;return lock?.sectionKey.startsWith('tracking:')?releaseExclusiveItemLease(lock.sectionKey):true;}
     if(attempt.submission.identity!==trackingIdentity())return false;
     if(!await releaseExclusiveItemLease(attempt.sectionKey))return false;
     trackingCreationAdmissions.current.delete(attempt.sectionKey);
@@ -3924,6 +4009,10 @@ export default function App() {
       alert(`無法安全規劃${label}的完整關聯鎖：${error.message||error}`);
       return false;
     }
+    const entry=activeEditLockRef.current;
+    if(entry?.bundle&&entry.status==='owned'&&entry.ownerUserId===actorId&&entry.authorizationEpoch===expectedAuthorizationEpoch&&plannedLockKeys.every(key=>entry.bundle!.some(lease=>lease.sectionKey===key))){
+      return runDurableRelatedMutation(entry.sectionKey,label,()=>mutation(liveData.current),()=>plannedLockKeys);
+    }
     const requests=plannedLockKeys.map(sectionKey=>({sectionKey,label:`${label}｜${sectionKey}`,leaseOwnerId:uid('task-batch-lease')}));
     const releaseRequest=async(request:{sectionKey:string;leaseOwnerId:string})=>runCloudSaveQueueRpc('釋放批量關聯鎖',signal=>releaseEditLock(request.sectionKey,request.leaseOwnerId,config,signal),8_000);
     const result=await acquireEditLockBundle(
@@ -4824,7 +4913,7 @@ export default function App() {
     }
   };
   const readOnlyTask=taskEditorAuthorizationEpoch===authorizationEpoch?taskReadOnlyData?.tasks.find(task=>task.id===editingTaskId):undefined;
-  const retainedRelatedTask=activeEditLock?.sectionKey===`task:${editingTaskId}`&&relatedMutationHandoffMatchesCurrent(activeEditLock)
+  const retainedRelatedTask=activeEditLock?.sectionKey===`task:${editingTaskId}`&&(activeEditLock.bundle||relatedMutationHandoffMatchesCurrent(activeEditLock))
     ?confirmedCloudData.current?.tasks.find(task=>task.id===editingTaskId):undefined;
   const editingTask=taskEditorAuthorizationEpoch===authorizationEpoch?((memberEditor.current?.taskId===editingTaskId?memberEditor.current.task:undefined)||readOnlyTask||(creatingTask&&canCreateTasks?selectTasksVisibleToUser([creatingTask],currentUser,taskVisibilityRelationships)[0]:roleVisibleTasks.find(task=>task.id===editingTaskId)||retainedRelatedTask)):undefined;
   const taskEditorData=taskReadOnlyData?taskReadOnlyData as unknown as AppData:roleVisibleData;
@@ -5172,7 +5261,7 @@ export default function App() {
       <div className={`cloud-strip save-status-strip no-print ${visibleSavePhase}`} aria-live="polite"><span className="save-phase"><b>{savePhaseLabel[visibleSavePhase]}</b><small>{visibleSaveStatus}</small></span><span className="spacer"/>{tab==='dashboard'&&!selectedVesselDetailId&&<button className={`btn small browser-recovery-entry ${staleBrowserRecoveryOffered?'red':'ghost'}`} onClick={()=>openBrowserRecovery()} title={staleBrowserRecoveryOffered?'開啟瀏覽器修復與完整本機重設':'修復此瀏覽器的顯示或載入問題'}>修復此瀏覽器</button>}<button className={`btn small ${cloudWriteBlocked&&visibleSavePhase==='error'?'primary guidance-active':'ghost'}`} onClick={syncLatest} disabled={isSaveBusy}>同步最新（安全合併）</button><button className={`btn small ${visibleSavePhase==='error'?'red':visibleSavePhase==='dirty'?'primary':'green'} ${!cloudWriteBlocked&&visibleSavePhase==='error'?'guidance-active':''}`} onClick={saveChanges} disabled={isSaveBusy}>{saveButtonLabel}</button></div>
       {itineraryOperationalProblem&&<aside className="collaboration-banner stale no-print" role="status"><b>Itinerary 營運資訊同步異常</b><span>{itineraryOperationalProblem.error||'目前保留最後確認版本；正式早會及報告會停止，直到能重新確認雲端正式 Itinerary。'}</span></aside>}
       {(visibleSavePhase!=='saved'||pendingTaskCreations.length>0)&&<aside className={`unsaved-work-guidance no-print ${cloudWriteBlocked?'conflict':'pending'}`} role="alert"><b>{pendingTaskCreations.length>0?`有 ${pendingTaskCreations.length} 筆新增要事正在等待雲端保存`:cloudWriteBlocked?'這些修改還沒有保存到雲端':'關閉前請先完成上傳保存'}</b>{pendingTaskCreations.length>0?<span>草稿已保存在這個瀏覽器，系統會在其他人完成船舶更新後自動重讀最新雲端資料並重試。請保持本頁開啟。</span>:cloudWriteBlocked?<ol><li>先點擊「同步最新（安全合併）」</li><li>同步完成後，再點擊「重新保存」</li></ol>:<span>{hasManagementPrivateDraft()?`${tab==='tracking'?'跟蹤':'管理'}表單尚有未提交的修改，請回到各表單按保存；上方保存不會提交這些欄位。`:'請先點擊上方的保存按鈕，並等待雲端確認。'}</span>}<strong>直到畫面顯示「已保存到雲端」，看到「已保存到雲端」後再關閉網頁、瀏覽器或電腦；否則尚未上傳的修改可能遺失。</strong>{pendingTaskCreations.some(intent=>intent.state==='attention')&&<small>其中有草稿因身份、權限或資料識別異常而暫停自動保存；請勿關閉頁面，並先確認頁首提示。</small>}</aside>}
-      {currentUser.role!=='vessel'&&activeEditLock&&authorizedEditLockKeys.has(activeEditLock.sectionKey)&&activeEditLock.authorizationEpoch===authorizationEpoch&&activeEditLock.ownerUserId===currentUser.id && <div className={`collaboration-banner no-print ${activeEditLock.status}`}><b>多人協作安全</b><span>{activeEditLock.status==='owned' ? `你正在編輯：${activeEditLock.label}；系統已建立短時鎖定，保存仍會做 revision 衝突檢查。` : activeEditLock.status==='blocked' ? `此項目正在由 ${activeEditLock.lockedByName || '其他使用者'} 編輯，已阻止打開以避免覆蓋對方內容。` : preservedCreationDraft ? '新增要事協作鎖已失效；草稿仍以唯讀方式保留，請複製內容後關閉並重新取得協作鎖。' : `無法確認 ${activeEditLock.label} 的編輯鎖；編輯器已關閉，請重試釋放。`}</span>{activeEditLock.status!=='owned'&&<button className="btn small ghost" onClick={resolveEditLockNotice}>{activeEditLock.status==='blocked'?'知道了':preservedCreationDraft?'關閉唯讀草稿':'重試釋放並關閉'}</button>}</div>}
+      {currentUser.role!=='vessel'&&activeEditLock&&authorizedEditLockKeys.has(activeEditLock.sectionKey)&&activeEditLock.authorizationEpoch===authorizationEpoch&&activeEditLock.ownerUserId===currentUser.id && <div className={`collaboration-banner no-print ${activeEditLock.status}`}><b>多人協作安全</b><span>{activeEditLock.status==='owned' ? `你正在編輯：${activeEditLock.label}；系統已建立短時鎖定，保存仍會做 revision 衝突檢查。` : activeEditLock.status==='blocked' ? `此項目正在由 ${activeEditLock.lockedByName || '其他使用者'} 編輯，已阻止打開以避免覆蓋對方內容。` : preservedCreationDraft ? '新增要事協作鎖已失效；草稿仍以唯讀方式保留，請複製內容後關閉並重新取得協作鎖。' : activeEditLock.bundle ? `無法確認 ${activeEditLock.label} 的完整編輯權；草稿已唯讀保留，核對最新資料並重新取得編輯權後才可繼續。` : `無法確認 ${activeEditLock.label} 的編輯鎖；編輯器已關閉，請重試釋放。`}</span>{activeEditLock.status!=='owned'&&<button className="btn small ghost" onClick={resolveEditLockNotice}>{activeEditLock.status==='blocked'?'知道了':preservedCreationDraft?'關閉唯讀草稿':'重試釋放並關閉'}</button>}</div>}
       <div className="print-only app-print-header"><h2>{printTitle || data.settings.systemTitle}</h2><p>列印時間：{formatTaipeiDateTime(new Date())}｜列印人：{currentUser.name}</p></div>
       {canAccessTab(currentUser,tab) && <>{tab==='dashboard' && selectedVesselDetail && <VesselDetailPage vessel={selectedVesselDetail} data={roleVisibleData} currentUser={currentUser} itineraryFeedRecord={itineraryOperationalFeed.records[selectedVesselDetail.id]} onBack={closeVesselDetail} onOpenInternalControl={()=>{if(!canAccessTab(currentUser,'internalControl'))return;navigateToTab('internalControl');}} onEditVessel={()=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(selectedVesselDetail.id);}} onAddTask={()=>addTaskForVessel(selectedVesselDetail.id)} onEditTask={id=>{const task=roleVisibleTasks.find(item=>item.id===id);if(task)openTask(task,selectedVesselDetail.id);}} canEditVessel={canEditBusinessContent} canCreateTasks={canCreateTasks} canEditTasks={canEditBusinessContent&&currentUser.role!=='vessel'} canViewInternalControl={canAccessTab(currentUser,'internalControl')} />}
       {tab==='dashboard' && !selectedVesselDetail && <DashboardView user={currentUser} itineraryActor={{userId:currentUser.id}} itineraryOperationalFeed={itineraryOperationalFeed} users={roleVisibleData.users} supervisorOrder={data.settings.supervisorOrder} onSaveSupervisorOrder={(ids,expected)=>commitManagement(draft=>{const actor=draft.users.find(user=>user.id===currentUser.id&&user.isActive);if(!actor||(actor.role!=='owner'&&actor.role!=='admin'))throw new Error('只有 Owner／管理員可保存督導排序');if(JSON.stringify(draft.settings.supervisorOrder||[])!==JSON.stringify(expected||[]))throw new Error('督導排序已被其他管理員更新，請取消後重新排序。');draft.settings.supervisorOrder=[...ids];},'update-supervisor-order','settings','supervisorOrder','調整督導選單排序')} vessels={dashboardVessels} tasks={roleVisibleTasks} calendarTasks={data.tasks} internalControlCases={roleVisibleData.internalControlCases} meetings={dashboardMeetings} selected={agendaSelection} setSelected={setAgendaSelection} batchSelected={batchSelectedVesselIds} setBatchSelected={setBatchSelectedVesselIds} onOpenVessel={openVesselDetail} onEdit={id=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(id);}} onAddTask={addTaskForVessel} onToggleAttention={toggleDashboardVesselAttention} attentionSaveStates={vesselAttentionSaveStates} onRetryAttentionSave={retryDashboardVesselAttention} onAdjustAttention={adjustDashboardVesselAttention} onStartMeeting={(requestedIds) => { if (requestedIds) { const allowedIds=new Set(activeVessels.map(vessel=>vessel.id)); setAgendaSelection(Array.from(new Set(requestedIds.filter(id=>allowedIds.has(id))))); } else if (!agendaSelection.length) { const priority = activeVessels.filter(v => morningDiscussionTasks(roleVisibleTasks,roleVisibleMeetings).some(t => taskHasVessel(t,v.id) && !taskIsClosedForVessel(t,v.id) && (t.priority==='急'||t.priority==='高'))).slice(0,4).map(v=>v.id); setAgendaSelection(priority.length ? priority : activeVessels.slice(0,4).map(v=>v.id)); } navigateToTab('morning'); }} onOpenReport={openReportPreview} onTaskMetric={jumpToTaskList} onOpenBatchManagedVessels={()=>{void openBatchManagedVessels();}} canEdit={canEditBusinessContent} canCreateTasks={canCreateTasks} canUseMeetings={canUseMeetingWorkspace} canUseReports={canExportReports} />}
@@ -5197,7 +5286,7 @@ export default function App() {
       />}
       {tab==='closed' && <ListPanel title="已結案清單" tasks={closedTasks} statsTasks={closedStatsTasks} data={roleVisibleData} visibleVessels={activeVessels} filters={closedFilters} setFilters={setClosedFilters} fleetTags={fleetTags} userMap={userMap} exportedBy={currentUser.name} onEdit={openTask} onPrint={() => print('已結案清單')} batchContext={listBatchContext} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
       {(tab==='internalControl'||tab==='work') && canAccessTab(currentUser,'internalControl') && <InternalControlPage key={tab} editorOnly={tab==='work'} loadCase={loadInternalControlScope} data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onWithdrawTaskSync={withdrawInternalCaseTaskSync} onDelete={removeInternalCase} onBatchClose={(caseIds,closedDate)=>batchCompleteTasks([],caseIds,closedDate)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
-      {tab==='tracking'&&currentUser.role!=='vessel'&&<TrackingPage key={`${currentUser.id}:${identitySessionGeneration.current}:${cloudWorkspaceIdentity(getSupabaseConfig())}`} data={roleVisibleData} vessels={activeVessels} user={currentUser} workspace={cloudWorkspaceIdentity(getSupabaseConfig())} identity={trackingIdentity()} canCreate={canCreateTasks} canEdit={canEditBusinessContent} canClose={canCloseTasks} canExport={canExportReports} callbacks={{onPrivateDraftChange:onManagementPrivateDraftChange,captureExport:captureTrackingExport,load:loadTrackingScope,submit:submitTracking,release:releaseTracking,discardRejected:discardTrackingRejected,registerNavigationGuard:guard=>{trackingNavigationGuard.current=guard;},openCase:caseId=>{setRequestedInternalControlCaseId(caseId);void navigateToTab('internalControl');}}}/>}
+      {tab==='tracking'&&currentUser.role!=='vessel'&&<TrackingPage key={`${currentUser.id}:${identitySessionGeneration.current}:${cloudWorkspaceIdentity(getSupabaseConfig())}`} data={roleVisibleData} vessels={activeVessels} user={currentUser} workspace={cloudWorkspaceIdentity(getSupabaseConfig())} identity={trackingIdentity()} canCreate={canCreateTasks} canEdit={canEditBusinessContent} canClose={canCloseTasks} canExport={canExportReports} callbacks={{onPrivateDraftChange:onManagementPrivateDraftChange,captureExport:captureTrackingExport,load:loadTrackingScope,claim:claimTrackingEditor,isWritable:trackingEditorIsWritable,submit:submitTracking,release:releaseTracking,discardRejected:discardTrackingRejected,registerNavigationGuard:guard=>{trackingNavigationGuard.current=guard;},openCase:caseId=>{setRequestedInternalControlCaseId(caseId);void navigateToTab('internalControl');}}}/>}
       {tab==='stats' && <DataAnalysisView data={roleVisibleData} vessels={canViewAllVessels?reportVessels:activeVessels} />}
       {tab==='meeting' && <TemporaryMeetingsPage loadMeetings={loadMeetingScope} authorizationEpoch={authorizationEpoch} data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} canCloseTasks={canCloseTasks&&currentUser.role!=='vessel'} onOpenDecisionTask={openMeetingTaskFromMeetingPage} onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
 

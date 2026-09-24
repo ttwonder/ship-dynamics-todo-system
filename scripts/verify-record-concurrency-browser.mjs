@@ -154,8 +154,8 @@ try{
  const after=await read();verifyBusiness(before,after,{'qa-v1':'U1 B UNSAVED THEN SAVED','qa-v2':'U1 A SAVED'});await freshReadback('U1',after);
  receipt.cases.push({caseId:'U1',layer:'real-ui-native-sql',status:'PASS',sameDraftNode:true,uniqueAudits:2,completeFreshReads:3});save();console.log('PASS U1',run);
  currentCase='U2';await a.sync();await b.sync();const base=await read();await a.open('qa-v2');await b.open('qa-v1');
- await a.fill(field,'U2 A SAVED');await b.fill(field,'U2 B RETRIED SAVED');await b.eval(`void(window.__draftNode=${field})`);
- rendezvous=true;await Promise.all([a.submit(),b.submit()]);await until(()=>paused.length===2,'two real outgoing original saves');rendezvous=false;
+ await a.fill(field,'U2 A SAVED');await b.fill(field,'U2 B SAVED');await b.eval(`void(window.__draftNode=${field})`);
+ rendezvous=true;await a.submit();await until(()=>paused.some(p=>p.actor==='qa-owner'),'A outgoing envelope before B intent');await b.submit();await until(()=>paused.length===2,'two real outgoing original saves');rendezvous=false;
  const pa=paused.find(p=>p.actor==='qa-owner'),pb=paused.find(p=>p.actor==='qa-operator');assert.ok(pa&&pb);assert.deepEqual(pa.auditExpected,pb.auditExpected,'same base audit order');assert.ok(Array.isArray(pa.auditExpected));
  receipt.rendezvous=paused.map(({requestId,session,...safe})=>safe);barrier={operationId:pa.operationId};
  await call('Fetch.continueRequest',{requestId:pa.requestId},pa.session);await until(()=>barrier.entered,'A SQL before COMMIT',4000);
@@ -163,13 +163,15 @@ try{
  const blocking=await until(async()=>{const rows=(await native.observer.query("select pid,state,wait_event_type,wait_event,pg_blocking_pids(pid) blockers from pg_stat_activity where application_name like 'record_native_http_%' and wait_event_type='Lock'")).rows;return rows.find(r=>r.blockers.includes(barrier.pid));},'actual PG B waits for A',4000);
  const btx=receipt.httpTransactions.find(r=>r.operationId===pb.operationId);assert.equal(blocking.pid,btx.pid);assert.notEqual(blocking.pid,barrier.pid);
  assert.equal((await read()).revision,base.revision,'A uncommitted not published');assert.equal((await locks()).length,2,'no premature lease release');
- assert.equal(await b.eval(`window.__draftNode===${field}&&window.__draftNode.value==='U2 B RETRIED SAVED'`),true);
+ assert.equal(await b.eval(`window.__draftNode===${field}&&window.__draftNode.value==='U2 B SAVED'`),true);
  receipt.blocking={aPid:barrier.pid,bPid:blocking.pid,...blocking};save();await b.screen('U2-native-wait-draft');releaseCommit();barrier=null;
- await until(()=>a.saved(),'U2 A ACK');await until(()=>b.saved(),'U2 B original automatic retry ACK');await until(async()=>(await locks()).length===0,'U2 release');
- await until(()=>receipt.network.some(r=>r.operationId!==pb.operationId&&r.actor==='qa-operator'&&r.caseId==='U2'&&r.rpc===patchRpc&&r.result==='SQL_OK'),'actual HTTP retry response');
- const chain=receipt.network.filter(r=>r.caseId==='U2'&&r.actor==='qa-operator'&&r.rpc===patchRpc);assert.equal(chain.length,2);assert.equal(chain[0].result,'block-conflict');assert.equal(chain[0].conflictKey,'order:auditLogs');assert.equal(chain[1].result,'SQL_OK');assert.notEqual(chain[0].operationId,chain[1].operationId);assert.notEqual(chain[0].payloadHash,chain[1].payloadHash);assert.ok(chain.every(r=>r.httpStatus===200));
- assert.ok(receipt.network.some(r=>r.actor==='qa-operator'&&r.started>=chain[0].started&&r.started<chain[1].started&&/^read_ship_dynamics_record/.test(r.rpc)),'App fetch between conflict and retry');
- const final=await read();verifyBusiness(base,final,{'qa-v1':'U2 B RETRIED SAVED','qa-v2':'U2 A SAVED'});await freshReadback('U2',final);await b.screen('U2-ACK');
+ await until(()=>a.saved(),'U2 A ACK');await until(()=>b.saved(),'U2 B original save ACK');await until(async()=>(await locks()).length===0,'U2 release');
+ // Installed release05 merges append-only audit order before CAS. Both real
+ // overlapping saves must ACK directly; an obsolete forced-retry oracle would
+ // reject the intended server merge. No HTTP response or SQL result is mocked.
+ await until(()=>receipt.network.some(r=>r.operationId===pb.operationId&&r.caseId==='U2'&&r.rpc===patchRpc&&r.finished),'actual B HTTP response');
+ const chain=receipt.network.filter(r=>r.caseId==='U2'&&r.actor==='qa-operator'&&r.rpc===patchRpc);assert.equal(chain.length,1);assert.equal(chain[0].result,'SQL_OK');assert.equal(chain[0].operationId,pb.operationId);assert.equal(chain[0].httpStatus,200);
+ const final=await read();verifyBusiness(base,final,{'qa-v1':'U2 B SAVED','qa-v2':'U2 A SAVED'});await freshReadback('U2',final);await b.screen('U2-ACK');
  currentCase='D3';const cancelBase=await read();await b.open('qa-v1');await b.fill(field,'D3 CANCEL ONLY');await b.sync();
  await b.click('取消並關閉');await until(()=>b.saved(),'D3 cancel clears only editor feedback');await until(async()=>(await locks()).length===0,'D3 cancel releases');
  assert.deepEqual(await read(),cancelBase,'D3 cancel does not submit draft');
@@ -180,7 +182,7 @@ try{
  assert.equal(await b.saved(),true);assert.deepEqual(await read(),cancelBase);
  receipt.cases.push({caseId:'D4',layer:'real-ui-native-sql',status:'PASS',cleanSyncAndSave:true});
  assert.deepEqual(await qa.itinerarySnapshot(),formal);assert.deepEqual(await untouched(),other);assert.deepEqual(receipt.errors,[]);assert.deepEqual(receipt.blockedExternal,[]);
- receipt.cases.push({caseId:'U2',layer:'real-ui-native-sql-controlled-schedule',status:'PASS',automaticRetry:true,retryChain:chain,blocking:receipt.blocking,uniqueAudits:2,completeFreshReads:3});receipt.status='PASS';save();console.log('PASS U2',run);
+ receipt.cases.push({caseId:'U2',layer:'real-ui-native-sql-controlled-schedule',status:'PASS',automaticRetry:false,databaseAuditMerge:true,saveChain:chain,blocking:receipt.blocking,uniqueAudits:2,completeFreshReads:3});receipt.status='PASS';save();console.log('PASS U2',run);
 }catch(e){failure=e;receipt.status='FAIL';receipt.failure={caseId:currentCase,message:e.message,stack:e.stack?.split('\n').slice(0,5)};for(const p of actors.filter(p=>!p.reader)){try{receipt['failureText-'+p.actor]=(await p.text()).slice(0,8000);await p.screen('failure-'+p.actor);}catch{}}console.error(JSON.stringify({status:'FAIL',caseId:currentCase,error:e.message,run}));}
 finally{
  releaseCommit?.();rendezvous=false;receipt.metrics=qa?.metrics||[];

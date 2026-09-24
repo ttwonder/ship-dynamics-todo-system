@@ -32,6 +32,10 @@ try{
   assert.equal(await x.select('vessel'),null);assert.deepEqual(dispatched,[]);assert.equal(map.get(key),raw);results.push('PENDING-MISMATCH-'+field);
  }
  const raw=JSON.stringify({params,draft:JSON.stringify(progress),unknownEnvelope:{retained:[2,1]}});map.set(key,raw);
+ const denied=new TaskMemberEditor(config,'other-actor','Other','blocked-task',()=>true,()=>{});
+ denied.rpc=async name=>name==='read_ship_dynamics_task_member_v1'?{ok:true,protocol:'ship-dynamics-task-member-v1',task:{id:'blocked-task'},progress:{vesselId:'vessel'},section_key:'member',expected:{member:'m',structure:'s',source:[]}}:{ok:false,code:'parent-child-lock-conflict',locked_by_name:'QA OWNER'};
+ assert.equal(await denied.select('vessel'),null);assert.ok(denied.message.includes('QA OWNER'),'blocked member editor must name the actual holder');
+ assert.ok(source.includes('if(requestIsCurrent()&&editor.message)alert(editor.message)'),'initial member-open rejection must surface its message before disposal');results.push('MEMBER-HOLDER-DENIAL-SURFACED');
  const x=new TaskMemberEditor(config,'actor','Actor','task',()=>true,()=>{});x.scope='vessel';x.contexts.set('vessel',{progress,expected:{member:'NEW-CAS-MUST-NOT-ADOPT'}});
  const wire=[];x.rpc=async(name,args)=>{wire.push([name,structuredClone(args)]);if(name==='save_ship_dynamics_task_member_v1')throw new Error('uncertain network');return {status:'missing'};};
  assert.equal(await x.save({id:'task',vesselProgress:[progress]},'vessel',async()=>{throw new Error('must not publish');}),false);

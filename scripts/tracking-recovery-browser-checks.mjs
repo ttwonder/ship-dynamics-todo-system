@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-export async function recoveryChecks({qa,call,evaluate,click,nodeClick,fill,until,text,screen,check,rowAction,trackingTab,dateInput,finishEditor,leases,select}){
+export async function recoveryChecks({qa,call,evaluate,click,nodeClick,fill,until,text,screen,check,rowAction,trackingTab,dateInput,finishEditor,leases,select,dialogs}){
  const source=async ref=>(await qa.read()).payload.trackingItems.find(r=>r.referenceNo===ref);
- await check('native-lease-conflict-zero-write-and-exact-retry',async()=>{
-   await trackingTab('未送船清單');await rowAction('UI-002','進度');await fill('[aria-label="UI-002 最新進度"]','取得鎖後才保存');const item=await source('UI-002'),key='tracking:'+item.id;
+ await check('native-lease-conflict-entry-zero-write-and-owner-release',async()=>{
+   await trackingTab('未送船清單');const item=await source('UI-002'),key='tracking:'+item.id;
    const lease=(await qa.db.query("select claim_ship_dynamics_edit_lock($1,$2,'qa-other-lease','QA other editor',300) r",[qa.workspace,key])).rows[0].r;assert.equal(lease.ok,true);const before=await qa.read();
-   await click('確認保存 1 項');await until(async()=>(await text()).includes('確認結果／重試相同提交'),'lease conflict draft retained');assert.deepEqual(await qa.read(),before);assert.equal(await evaluate("document.querySelector('[aria-label=\"UI-002 最新進度\"]').value"),'取得鎖後才保存');
-   await qa.db.query('select release_ship_dynamics_edit_lock($1,$2,$3)',[qa.workspace,key,'qa-other-lease']);await click('確認結果／重試相同提交');await finishEditor();assert.equal((await source('UI-002')).progress,'取得鎖後才保存');
+   const dialogStart=dialogs.length;await nodeClick(`[...document.querySelector('[data-tracking-id="${item.id}"]').querySelectorAll('button')].find(n=>n.innerText==='進度')`);
+   await until(()=>dialogs.slice(dialogStart).some(d=>d.message.includes('QA other editor')),'holder named in original alert before editor opens');assert.equal(await evaluate("Boolean(document.querySelector('[aria-label=\"UI-002 最新進度\"]'))"),false);assert.deepEqual(await qa.read(),before);
+   await qa.db.query('select release_ship_dynamics_edit_lock($1,$2,$3)',[qa.workspace,key,'qa-other-lease']);await rowAction('UI-002','進度');await fill('[aria-label="UI-002 最新進度"]','取得鎖後才保存');await click('確認保存 1 項');await finishEditor();assert.equal((await source('UI-002')).progress,'取得鎖後才保存');
  });
  await check('native-unknown-ACK-exact-operation-replay-one-history',async()=>{
    await rowAction('UI-002','進度');await fill('[aria-label="UI-002 最新進度"]','未知ACK但只一筆歷程');const before=await qa.read(),requests=[];

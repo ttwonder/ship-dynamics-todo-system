@@ -10,7 +10,7 @@ const output=fs.mkdtempSync(path.join(process.env.QA_EVIDENCE_ROOT||os.tmpdir(),
 const profile=path.join(output,'chrome-profile');
 const b1=process.env.QA_RELATED_DRAFT_B1==='1';
 let native,qa,browser,ws,failure=null,sessionId,releaseHeldReceipt,expectDeleteRejection=false;
-const pending=new Map(),evidence={label:'真實 UI＋測試資料；原生 PostgreSQL，非 hosted Supabase',scenarios:[],errors:[],blockedExternal:[],metrics:[]};
+const pending=new Map(),evidence={label:'真實 UI＋測試資料；原生 PostgreSQL，非 hosted Supabase',scenarios:[],errors:[],blockedExternal:[],metrics:[],dialogs:[]};
 let id=0;
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const until=async(test,label,timeout=25_000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(await test())return;await wait(100);}throw new Error(`QA timeout: ${label}`);};
@@ -170,7 +170,7 @@ try{
    await rowAction('UI-001','重開此案');await click('確認保存 1 項');await finishEditor();saved=await qa.read();source=saved.payload.trackingItems.find(r=>r.referenceNo==='UI-001');assert.equal(source.isClosed,false);assert.equal(source.closedDate,undefined);assert.equal(source.actualDeliveryDate,'2026-09-25');assert.equal(source.events.filter(e=>e.action==='reopen').length,1);
    await rowAction('UI-001','進度');await fill('[aria-label="UI-001 最新進度"]','第二次進度');await click('確認保存 1 項');await finishEditor();saved=await qa.read();source=saved.payload.trackingItems.find(r=>r.referenceNo==='UI-001');assert.equal(saved.payload.internalControlCases.find(c=>c.id===source.linkedCaseId).status,'第二次進度');
  });
- const context={qa,call,evaluate,click,nodeClick,fill,until,text,screen,check,rowAction,trackingTab,dateInput,finishEditor,leases,select,labelInput,fillNode,field};
+ const context={qa,call,evaluate,click,nodeClick,fill,until,text,screen,check,rowAction,trackingTab,dateInput,finishEditor,leases,select,labelInput,fillNode,field,dialogs:evidence.dialogs};
  await (await import('./tracking-native-browser-checks.mjs')).nativeChecks(context);
  await (await import('./tracking-recovery-browser-checks.mjs')).recoveryChecks(context);
  assert.deepEqual((await qa.db.query('select to_jsonb(t) value from ship_dynamics_app_state t order by workspace_key')).rows,legacyBefore,'record-native UI never modifies legacy');

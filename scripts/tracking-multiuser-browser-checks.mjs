@@ -10,6 +10,9 @@ export async function multiuserChecks(c){
  const saveProgress=async(p,ref,value)=>{await p.progress(ref,value);await p.submit();await p.done();assert.equal((await source(ref)).progress,value);};
  const draft=async(p,ref,value)=>assert.equal(await p.eval(`document.querySelector('[aria-label="${ref} 最新進度"]')?.value`),value,'exact retained '+p.actor+' draft');
  const syncTaskCheckbox=p=>p.tap("[...document.querySelectorAll('.ic-batch-row label')].find(n=>n.innerText.trim()==='同步到要事').querySelector('input')");
+ const stash=async p=>{await p.click('取消');await p.click('保留草稿並繼續');await until(()=>p.eval("!document.querySelector('.modal-backdrop')"),'private draft kept, editor released');};
+ const restore=async p=>{await p.click('恢復本船未送出草稿');await until(()=>p.eval("!!document.querySelector('.tracking-modal')"),'draft restored through normal admission');};
+ const denySource=async(p,ref)=>{const from=(evidence.dialogs||[]).length;await p.activate(`[...(${p.row(ref)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()==='進度')`);await until(()=>evidence.dialogs.slice(from).some(d=>d.actor===p.actor&&d.type==='alert'&&d.message.includes('QA OWNER')),'peer denied before source editing');assert.equal(await p.eval("!!document.querySelector('.tracking-modal')"),false);};
  await check('M01-distinct-actors-same-vessel-different-items-real-overlap',async()=>{
   await a.click('＋ 新增／批量新增');
   for(let i=1;i<=4;i++){if(i>1)await a.click('＋ 新增一列');await a.fill(`[aria-label="第 ${i} 筆 項目編號"]`,'MC-00'+i);await a.fill(`[aria-label="第 ${i} 筆 內容摘要／工程內容"]`,'多人驗收獨立來源 '+i);}
@@ -20,23 +23,23 @@ export async function multiuserChecks(c){
   await a.done();await b.done();assert.equal((await source('MC-001')).progress,'甲保存第一項');assert.equal((await source('MC-002')).progress,'乙保存第二項');assert.equal((await read()).revision,before.revision+2);await graph();
  });
  await check('M02-same-item-held-ACK-peer-lock-CAS-retains-draft',async()=>{
-  await a.sync();await b.sync();await a.progress('MC-001','甲同項先保存');await b.progress('MC-001','乙同項待核對');
+  await a.sync();await b.sync();await b.progress('MC-001','乙同項待核對');await stash(b);await a.progress('MC-001','甲同項先保存');
   let held=false,done;const barrier=new Promise(r=>done=r);qa.setRecordFault({after:async({name,body})=>{if(name===mainRpc&&body.p_actor_user_id==='qa-owner'){held=true;await barrier;}}});
-  try{await a.submit();await until(()=>held,'committed A receipt held');await b.submit();await b.pending();await draft(b,'MC-001','乙同項待核對');assert.equal((await source('MC-001')).progress,'甲同項先保存');await b.screen('M02-peer-blocked-draft');}finally{done();qa.setRecordFault(null);}
-  await a.done();const priorDialogs=(evidence.dialogs||[]).length;await b.click('確認結果／重試相同提交');await until(()=>evidence.dialogs.slice(priorDialogs).some(d=>d.actor==='qa-operator'&&d.message==='tracking-stale-source'),'stale exact retry alert');await b.pending();const winner=await read();await draft(b,'MC-001','乙同項待核對');assert.equal(await b.eval("!!document.querySelector('.save-status-strip.saved')"),false,'rejected tracking draft must not advertise globally saved');assert.ok((await b.text()).includes('跟蹤表單尚有未提交的修改'),'feedback names the current tracking form');await b.screen('M02-safe-blocked-draft');await b.reconcile();assert.deepEqual(await read(),winner,'reconciliation is read only');await b.submit();await b.done();const s=await source('MC-001');for(const text of ['甲同項先保存','乙同項待核對'])assert.equal(s.statusLogs.filter(l=>l.text===text).length,1);assert.equal(s.progress,'乙同項待核對');
+  try{await a.submit();await until(()=>held,'committed A receipt held');await denySource(b,'MC-001');assert.equal((await source('MC-001')).progress,'甲同項先保存');await b.screen('M02-peer-blocked-draft');}finally{done();qa.setRecordFault(null);}
+  await a.done();await restore(b);await b.submit();await b.pending();const priorDialogs=(evidence.dialogs||[]).length;await b.click('確認結果／重試相同提交');await until(()=>evidence.dialogs.slice(priorDialogs).some(d=>d.actor==='qa-operator'&&d.message==='tracking-stale-source'),'stale exact retry alert');await b.pending();const winner=await read();await draft(b,'MC-001','乙同項待核對');assert.equal(await b.eval("!!document.querySelector('.save-status-strip.saved')"),false,'rejected tracking draft must not advertise globally saved');assert.ok((await b.text()).includes('跟蹤表單尚有未提交的修改'),'feedback names the current tracking form');await b.screen('M02-safe-blocked-draft');await b.reconcile();assert.deepEqual(await read(),winner,'reconciliation is read only');await b.submit();await b.done();const s=await source('MC-001');for(const text of ['甲同項先保存','乙同項待核對'])assert.equal(s.statusLogs.filter(l=>l.text===text).length,1);assert.equal(s.progress,'乙同項待核對');
  });
  await check('M03-stale-member-rejects-whole-batch-no-partial-write',async()=>{
   await a.sync();await b.sync();for(const ref of ['MC-001','MC-002'])await b.tap(`(${b.row(ref)}).querySelector('input[type=checkbox]')`);await b.click('批量更新進度');await b.fill('[aria-label="MC-001 最新進度"]','乙批次第一項');await b.fill('[aria-label="MC-002 最新進度"]','乙批次第二項');
-  await saveProgress(a,'MC-002','甲在批次期間更新第二項');const peer=await read();await b.submit(2);await b.pending();assert.deepEqual(await read(),peer,'no partial batch writes');await draft(b,'MC-001','乙批次第一項');await draft(b,'MC-002','乙批次第二項');await b.reconcile();await b.submit(2);await b.done();assert.equal((await read()).revision,peer.revision+1);assert.equal((await source('MC-001')).progress,'乙批次第一項');assert.equal((await source('MC-002')).progress,'乙批次第二項');
+  await stash(b);await saveProgress(a,'MC-002','甲在批次期間更新第二項');const peer=await read();await restore(b);await b.submit(2);await b.pending();assert.deepEqual(await read(),peer,'no partial batch writes');await draft(b,'MC-001','乙批次第一項');await draft(b,'MC-002','乙批次第二項');await b.reconcile();await b.submit(2);await b.done();assert.equal((await read()).revision,peer.revision+1);assert.equal((await source('MC-001')).progress,'乙批次第一項');assert.equal((await source('MC-002')).progress,'乙批次第二項');
  });
  await check('M04-linked-case-edit-blocks-peer-source-and-preserves-history',async()=>{
   await a.sync();
   for(const ref of ['MC-001','MC-003','MC-004']){await a.action(ref,'同步到內控');await syncTaskCheckbox(a);await a.click('保存 1 筆案件');await a.done();}
-  await graph();await b.sync();await b.progress('MC-001','乙關聯來源進度');await a.action('MC-001','查看內控／已同步');await until(()=>a.eval("!!document.querySelector('.ic-edit-modal')"),'case editor');
+  await graph();await b.sync();await b.progress('MC-001','乙關聯來源進度');await stash(b);await a.action('MC-001','查看內控／已同步');await until(()=>a.eval("!!document.querySelector('.ic-edit-modal')"),'case editor');
   await a.fill('.ic-status-add textarea','甲主頁內控進度');await a.click('加入狀態記錄');
-  const before=await read();await b.submit();await b.pending();assert.deepEqual(await read(),before);await draft(b,'MC-001','乙關聯來源進度');
+  const before=await read();await denySource(b,'MC-001');assert.deepEqual(await read(),before);
   await a.click('保存更新');await a.done();assert.equal((await group('MC-001')).item.status,'甲主頁內控進度');
-  await b.click('確認結果／重試相同提交');await b.done();const g=await group('MC-001');assert.equal(g.item.status,'乙關聯來源進度');assert.equal(g.s.progress,'乙關聯來源進度');assert.ok(g.item.statusLogs.some(l=>l.text==='甲主頁內控進度'),'peer case history retained when source progress is later appended');assert.ok(g.task);await graph();
+  await restore(b);await b.submit();await b.done();const g=await group('MC-001');assert.equal(g.item.status,'乙關聯來源進度');assert.equal(g.s.progress,'乙關聯來源進度');assert.ok(g.item.statusLogs.some(l=>l.text==='甲主頁內控進度'),'peer case history retained when source progress is later appended');assert.ok(g.task);await graph();
  });
  await check('M05-two-actors-source-case-task-close-and-reopen',async()=>{
   await a.tracking();await a.sync();await b.sync();await a.action('MC-001','結案');await a.date('[aria-label=結案日期]','2026-09-26');await a.submit();await a.done();await graph();assert.equal((await group('MC-001')).task.isClosed,true);
@@ -45,15 +48,15 @@ export async function multiuserChecks(c){
   await b.tracking();await b.sync();await b.action('MC-001','重開此案');await b.submit();await b.done();await graph();const g=await group('MC-001');assert.equal(g.s.isClosed,false);assert.equal(g.s.actualDeliveryDate,undefined,'closure never means delivered');assert.equal(g.s.deliveryStatus,'not-delivered');assert.ok(g.s.events.filter(e=>e.action==='reopen').length>=2);
  });
  await check('M06-case-delete-vs-peer-source-draft-no-resurrection',async()=>{
-  await a.tracking();await a.sync();await b.sync();await b.progress('MC-003','乙刪案後保留來源進度');const before=await group('MC-003');await a.action('MC-003','查看內控／已同步');await a.click('刪除案件');await a.done();
+  await a.tracking();await a.sync();await b.sync();await b.progress('MC-003','乙刪案後保留來源進度');await stash(b);const before=await group('MC-003');await a.action('MC-003','查看內控／已同步');await a.click('刪除案件');await a.done();
   let after=await read();assert.ok(!after.payload.internalControlCases.some(i=>i.id===before.item.id));assert.ok(!after.payload.tasks.some(t=>t.id===before.task.id));assert.notEqual((await source('MC-003')).linkState,'active');
-  await b.submit();await b.pending();assert.deepEqual(await read(),after,'stale save cannot revive deleted case/task');await draft(b,'MC-003','乙刪案後保留來源進度');await b.reconcile();await b.submit();await b.done();
+  await restore(b);await b.submit();await b.pending();assert.deepEqual(await read(),after,'stale save cannot revive deleted case/task');await draft(b,'MC-003','乙刪案後保留來源進度');await b.reconcile();await b.submit();await b.done();
   after=await read();assert.equal((await source('MC-003')).progress,'乙刪案後保留來源進度');assert.ok(!after.payload.internalControlCases.some(i=>i.id===before.item.id));assert.ok(!after.payload.tasks.some(t=>t.id===before.task.id));await graph();
  });
  await check('M07-task-delete-vs-peer-source-edit-keeps-case-unlinked',async()=>{
-  await a.tracking();await a.sync();await b.sync();await b.progress('MC-004','乙刪要事後來源進度');const before=await group('MC-004');await a.openTask('MC-004');await a.click('刪除待辦');await a.done();
+  await a.tracking();await a.sync();await b.sync();await b.progress('MC-004','乙刪要事後來源進度');await stash(b);const before=await group('MC-004');await a.openTask('MC-004');await a.click('刪除待辦');await a.done();
   let g=await group('MC-004');assert.ok(g.item);assert.equal(g.item.syncToTask,false);assert.equal(g.item.linkedTaskId,undefined);assert.equal(g.s.linkState,'invalid');assert.equal(g.item.trackingLinkState,'invalid');assert.ok(!g.data.tasks.some(t=>t.id===before.task.id));const retainedCase=structuredClone(g.item);
-  await b.submit();await until(async()=>!await b.eval("!!document.querySelector('.tracking-modal')")||(await b.text()).includes('確認結果／重試相同提交'),'peer save terminal');
+  await restore(b);await b.submit();await until(async()=>!await b.eval("!!document.querySelector('.tracking-modal')")||(await b.text()).includes('確認結果／重試相同提交'),'peer save terminal');
   if(await b.eval("!!document.querySelector('.tracking-modal')")){await b.reconcile();await b.submit();}await b.done();
   g=await group('MC-004');assert.equal(g.s.progress,'乙刪要事後來源進度');assert.deepEqual(g.item,retainedCase,'invalidated link must not resume source-to-case writes');assert.equal(g.item.syncToTask,false);assert.equal(g.s.isClosed,before.s.isClosed);assert.ok(!g.data.tasks.some(t=>t.id===before.task.id));await graph();
  });

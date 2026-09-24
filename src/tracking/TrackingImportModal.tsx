@@ -47,6 +47,7 @@ export default function TrackingImportModal({vesselId,vesselName,workspace,actor
    next.parsed!.sheets.forEach(s=>s.rows.forEach(r=>{if(ids.includes(r.item.id)){r.saved=true;r.selected=false;}}));
    next.batches.push({operation:pending.context.operationId,ids,at:pending.context.at});
    if(!write(next))return false;
+   if(!await live.current.callbacks.release()){setNotice('本批已確認保存，編輯鎖尚未釋放；請稍後關閉導入。');return true;}
    setNotice(`本批 ${ids.length} 項已確認並權威讀回。其他批次尚未提交；各批不構成同一交易。`);return true;
   }catch(e){if(isCurrent())setNotice(e instanceof Error?e.message:String(e));return false;}
   finally{if(isCurrent()){busyRef.current=false;setBusy(false);}}

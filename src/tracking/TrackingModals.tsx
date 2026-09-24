@@ -51,8 +51,8 @@ export function commandForTrackingDraft(draft: TrackingDraft, cases?: InternalCo
 export function trackingAffectedLabels(data: AppData, rows: TrackingItem[]) {
   return rows.map(row => { const group = resolveTrackingGroup(data, row.id); return `${row.referenceNo} ${row.subitemNo || ''} [${row.id}]${group.item ? ` → 內控 [${group.item.id}] ${group.item.description}` : '（僅來源）'}${group.task ? ` → 要事 [${group.task.id}]` : ''}`; });
 }
-export function TrackingBusinessModal({ draft, busy, pending, message, affected, vesselName, onChange, onSave, onReconcile, onClose }: {
-  draft: TrackingDraft; busy: boolean; pending: boolean; message: string; affected: string[]; vesselName: string;
+export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, message, affected, vesselName, onChange, onSave, onReconcile, onClose }: {
+  draft: TrackingDraft; busy: boolean; pending: boolean; readOnly?: boolean; message: string; affected: string[]; vesselName: string;
   onChange: (draft: TrackingDraft) => void; onSave: () => void; onReconcile: () => void; onClose: () => void;
 }) {
   const titles: Record<TrackingAction, string> = { create: '新增／批量新增跟蹤', edit: '編輯跟蹤項目', progress: '批量更新最新進度', delivery: '送船確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
@@ -63,6 +63,7 @@ export function TrackingBusinessModal({ draft, busy, pending, message, affected,
     <div className="modal-head"><h2 id="tracking-modal-title">{titles[draft.action]}</h2><button type="button" className="btn ghost" onClick={onClose}>關閉</button></div>
     <p>{TRACKING_HELP[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
     <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>
+    <fieldset disabled={readOnly} style={{border:0,padding:0,margin:0,minWidth:0}}>
     {draft.action === 'create' && <label>新增跟蹤類型<select aria-label="新增跟蹤類型" disabled={pending} value={draft.rows[0].kind} onChange={event=>change({rows:draft.rows.map(row=>({...row,kind:event.target.value as TrackingKind}))})}><option value="supply">配件物料</option><option value="engineering">工程</option></select><small>同一批採同船、同類型；切換類型不更換原草稿 ID。</small></label>}
     {!formFields && <ul className="tracking-affected" aria-label="實際影響範圍">{affected.map(label => <li key={label}>{label}</li>)}</ul>}
     {draft.action === 'progress' ? draft.rows.map(row => <label className="tracking-progress-row" key={row.id}>{row.referenceNo} {row.subitemNo} [{row.id}]<small>最新已讀值：{draft.originals.find(value=>value.id===row.id)?.progress || "（空白）"}</small>{!pending && draft.rows.length>1 && <button type="button" className="btn small" onClick={()=>change({rows:draft.rows.filter(value=>value.id!==row.id),originals:draft.originals.filter(value=>value.id!==row.id)})}>從本批移除 {row.referenceNo}</button>}<textarea aria-label={`${row.referenceNo} 最新進度`} value={row.progress} onChange={event => update(row.id, { progress: event.target.value })}/></label>) : formFields ? draft.rows.map((row, index) => <fieldset className="tracking-form-row" key={row.id}><legend>第 {index + 1} 筆｜{row.id}</legend><div className="tracking-form-grid">
@@ -75,7 +76,9 @@ export function TrackingBusinessModal({ draft, busy, pending, message, affected,
       {draft.action === 'close' && draft.rows.some(row => row.kind === 'engineering') && <label>工程結案結果<select aria-label="工程結案結果" value={draft.outcome} onChange={event => change({ outcome: event.target.value as TrackingDraft['outcome'] })}><option value="completed">完工</option><option value="cancelled">取消（非完工）</option></select></label>}
       {draft.action === 'correct-close-date' && <ul>{draft.rows.map(row => <li key={row.id}>{row.referenceNo}：{row.closedDate} → {draft.date || '請選擇新日期'}</li>)}</ul>}
     </>}
-    {message && <p role="status">{message}</p>}{pending && <button type="button" className="btn" disabled={busy} onClick={onReconcile}>核對最新資料／解除已拒絕提交</button>}
-    <div className="modal-actions">{draft.action === 'create' && <button type="button" className="btn ghost" disabled={pending || draft.rows.length >= 100} onClick={() => change({ rows: [...draft.rows, newTrackingItem(draft.rows[0].vesselId, draft.rows[0].kind)] })}>＋ 新增一列</button>}<button type="button" className="btn ghost" onClick={onClose}>取消</button><button className="btn primary" disabled={busy}>{busy ? '等待雲端確認…' : pending ? '確認結果／重試相同提交' : `確認保存 ${draft.rows.length} 項`}</button></div>
+    </fieldset>
+    {readOnly&&<p role="status">編輯鎖已失效或尚未取得；原輸入已唯讀保留，不能新增修改或保存。請重新取得編輯權並核對最新資料。</p>}
+    {message && <p role="status">{message}</p>}{(pending||readOnly) && <button type="button" className="btn" disabled={busy} onClick={onReconcile}>{pending?'核對最新資料／解除已拒絕提交':'重新取得編輯權／核對最新資料'}</button>}
+    <div className="modal-actions">{draft.action === 'create' && <button type="button" className="btn ghost" disabled={pending || draft.rows.length >= 100} onClick={() => change({ rows: [...draft.rows, newTrackingItem(draft.rows[0].vesselId, draft.rows[0].kind)] })}>＋ 新增一列</button>}<button type="button" className="btn ghost" onClick={onClose}>取消</button><button className="btn primary" disabled={busy||readOnly&&!pending}>{busy ? '等待雲端確認…' : pending ? '確認結果／重試相同提交' : `確認保存 ${draft.rows.length} 項`}</button></div>
   </form></div>;
 }
