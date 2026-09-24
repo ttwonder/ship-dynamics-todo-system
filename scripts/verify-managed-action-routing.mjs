@@ -115,7 +115,7 @@ for(const bridge of [false,true])await check(`MR-S05-save-read-coverage-${bridge
  const operations=source.match(/const operations=(commandConfig\.readMode[^;\r\n]+);/);assert.ok(operations);
  vm.runInContext(compile(operations[0]),e);assert.equal(x.state.patchScope,bridge?'full':'home');
  const ackAst=ts.createSourceFile('App.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),acks=[];
- const scan=n=>{if(ts.isCallExpression(n)&&n.expression.getText(ackAst)==='fetchCloudDataRpc'&&n.arguments[0]?.getText(ackAst)==='commandConfig')acks.push(n.parent.getText(ackAst));ts.forEachChild(n,scan);};scan(ackAst);assert.equal(acks.length,1);
+ const scan=n=>{if(ts.isCallExpression(n)&&n.expression.getText(ackAst)==='fetchCloudDataRpc'&&n.arguments[0]?.getText(ackAst)==='commandConfig'&&n.arguments[3]?.getText(ackAst)==='commandReadScope')acks.push(n.parent.getText(ackAst));ts.forEachChild(n,scan);};scan(ackAst);assert.equal(acks.length,1);
  vm.runInContext(compile(`globalThis.readAfterAck=${acks[0]};`),e);await e.readAfterAck();assert.equal(x.state.reads[1].scope,bridge?'full':'home');
  e.originalAuthority.current=e.pending.authorityOwner;
  const publishStart=source.indexOf("              if(pending.authorityOwner!==originalAuthority.current)throw new BrowserAuthorityError('browser-authority-confirmation-stale');"),publishEnd=source.indexOf('              lastCloudRevision.current =',publishStart);assert.ok(publishStart>=0&&publishEnd>publishStart);

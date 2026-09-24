@@ -64,7 +64,9 @@ const holdDeletion=async(action,selector,expectedDraft)=>{
 const leases=async()=> (await qa.db.query("select section_key,locked_by from ship_dynamics_edit_locks where workspace_key='isolated-record-ui-qa' and expires_at>now() order by section_key")).rows;
 
 try{
- qa=await createRecordStorageLocalQa({internalControl:true});
+ qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,tracking:true});
+ await (await import('./tracking-browser-fixture.mjs')).installTrackingBrowserMigrations(qa.db);
+ qa.itineraryBaseline=await qa.itinerarySnapshot(); // Capture AFTER current schema installation, before UI mutations.
  assert.equal((await fetch(`${qa.origin}/__qa/health`)).status,200);
  const chrome='C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));
  browser=spawn(chrome,['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
@@ -83,7 +85,7 @@ try{
    if(rejected)evidence.expectedDeleteRejection=message.params.message;
    // Disposal of the isolated failure page only; NOT a product save/close claim.
    const disposeFailurePage=message.params.type==='beforeunload'&&evidence.rejectedDelete?.draftRetained===true;
-   const expected=disposeFailurePage||rejected||abnormal||(message.params.type==='confirm'&&/^(確定撤回同步要事|確定刪除此內控案件|確定刪除待辦|同步最新會保留本機修改)/.test(message.params.message))||(message.params.type==='alert'&&/^(同步要事已撤回；|請務必在FLOW系統中申報异常|請務必在FLOW系統中申報異常)/.test(message.params.message));
+   const expected=disposeFailurePage||rejected||abnormal||(message.params.type==='confirm'&&/^(確定將此內控案件改為未結案|確定撤回同步要事|確定刪除此內控案件|確定刪除待辦|同步最新會保留本機修改)/.test(message.params.message))||(message.params.type==='alert'&&/^(同步要事已撤回；|請務必在FLOW系統中申報异常|請務必在FLOW系統中申報異常)/.test(message.params.message));
    if(!expected)evidence.errors.push('Unexpected QA dialog: '+message.params.message);
    void call('Page.handleJavaScriptDialog',{accept:expected&&!abnormal},message.sessionId).catch(error=>evidence.errors.push(error.message));
   }
@@ -132,9 +134,9 @@ try{
   assert.deepEqual(await leases(),[]);await snapshot('source-update');
  });
  await check('case completion closes both ends; original closed-list reopen clears closure on both',async()=>{
-  await openCase('QA SOURCE UPDATE');await nodeClick(labelInput('點擊結案'));await click('保存更新');await finishEditor();
+  await openCase('QA SOURCE UPDATE');await click('結案並保存');await until(()=>evaluate('Boolean(document.querySelector("[aria-label=結案日期]"))'),'close date form');await evaluate(`(()=>{const n=document.querySelector('[aria-label=結案日期]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'2026-09-24');n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);await click('確認結案');await finishEditor();
   let pair=await main();assert.equal(pair.c.isClosed,true);assert.equal(pair.t.isClosed,true);assert.ok(pair.c.closedDate);assert.equal(pair.t.closedDate,pair.c.closedDate);await snapshot('closed');
-  await tab('內控結案清單');await openCase('QA SOURCE UPDATE');await nodeClick(labelInput('點擊結案'));await click('保存更新');await finishEditor();
+  await tab('內控結案清單');await openCase('QA SOURCE UPDATE');await click('改為未結案');await finishEditor();
   pair=await main();for(const entity of [pair.c,pair.t]){assert.equal(entity.isClosed,false);assert.equal(entity.closedDate,undefined);assert.equal(entity.closedBy,undefined);}
   await tab('內控未完清單');await snapshot('reopened');
  });

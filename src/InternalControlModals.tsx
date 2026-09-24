@@ -5,9 +5,10 @@ import { isValidInternalControlDate, validateInternalControlCase } from './inter
 import { isEligibleTaskOwner } from './permissions';
 import MeetingPeoplePicker from './MeetingPeoplePicker';
 import { uid, todayDate } from './runtimeUtils';
-import { vesselDisplayName } from './vesselDisplay';
+import { vesselDisplayName, vesselSelectionDisplayName } from './vesselDisplay';
 import { formatTaipeiDateTime } from './taipeiTime';
 import { richTextToPlainText } from './richText';
+import { trackingLifecycleExplanation, TrackingLifecycleHint } from './tracking/TrackingLifecycleHint';
 
 const REPORT_SOURCES: InternalControlReportSource[] = ['日常', '訪船', '隨船', '外部'];
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))];
@@ -25,6 +26,10 @@ export function internalControlTaskSyncChoice(
 
 export type InternalControlBatchRow = {
   key: string;
+  sourceCaseId?: string;
+  sourceReference?: string;
+  reportDate?: string;
+  reportSource?: InternalControlReportSource;
   description: string;
   priority: TaskPriority;
   category: string;
@@ -106,14 +111,15 @@ function TaskProjectionFields({ data, catalog: suppliedCatalog, vesselId, projec
   </section>;
 }
 
-export function BatchCreateModal({ data, user, vessels, close, save, shipSubmission }: { data?: AppData; user: Pick<UserAccount, 'id'>; vessels: Array<Pick<Vessel, 'id' | 'name' | 'shortName' | 'fullName'>>; close: () => void; save: (items: InternalControlCase[], projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean>; shipSubmission?: ShipInternalControlForm }) {
+export function BatchCreateModal({ data, user, vessels, close, save, shipSubmission, sourceForm }: { data?: AppData; user: Pick<UserAccount, 'id'>; vessels: Array<Pick<Vessel, 'id' | 'name' | 'shortName' | 'fullName'>>; close: () => void; save: (items: InternalControlCase[], projections: Record<string, InternalControlTaskProjection>) => boolean | Promise<boolean>; shipSubmission?: ShipInternalControlForm; sourceForm?: Pick<ShipInternalControlForm, 'draft' | 'onDraftChange' | 'busy' | 'pending' | 'message'> & {onReconcile?:()=>void;lockedTaskIds?:string[]} }) {
   const [localDraft, setLocalDraft] = useState(() => createInternalControlBatchDraft(vessels[0]?.id || '', data?.settings.taskCategories[0] || '設備故障'));
-  const draft = shipSubmission?.draft || localDraft;
+  const draft = shipSubmission?.draft || sourceForm?.draft || localDraft;
   const { vesselId, reportDate, reportSource, rows } = draft;
   const catalog: InternalControlBatchCatalog = shipSubmission ? { ...shipSubmission.catalog, owners: [], defaultOwnerIds: [] } : catalogForVessel(data!, vesselId);
   const categories = unique([...catalog.taskCategories, '設備故障']);
   const setDraft = (next: InternalControlBatchDraft) => {
     if (shipSubmission) { if (!shipSubmission.busy && !shipSubmission.pending) shipSubmission.onDraftChange(next); }
+    else if (sourceForm) sourceForm.onDraftChange(next);
     else setLocalDraft(next);
   };
   const setRows = (updateRows: (rows: InternalControlBatchRow[]) => InternalControlBatchRow[]) => setDraft({ ...draft, rows: updateRows(rows) });
@@ -129,10 +135,10 @@ export function BatchCreateModal({ data, user, vessels, close, save, shipSubmiss
     });
   };
   const submit = async () => {
-    if (shipSubmission?.busy) return;
+    if (shipSubmission?.busy || sourceForm?.busy) return;
     const at = new Date().toISOString();
     const candidates: InternalControlCase[] = rows.map(row => ({
-      id: uid('internal'), vesselId, reportDate, reportSource, description: row.description.trim(), priority: row.priority, category: row.category,
+      id: sourceForm ? row.sourceCaseId! : uid('internal'), vesselId, reportDate: sourceForm ? row.reportDate! : reportDate, reportSource: sourceForm ? row.reportSource! : reportSource, description: row.description.trim(), priority: row.priority, category: row.category,
       equipmentSubcategory: row.category === '設備故障' ? row.equipmentSubcategory : undefined, isAware: row.isAware, status: row.status.trim(), departments: row.departments,
       syncToTask: shipSubmission ? false : row.syncToTask, expectedDate: row.expectedDate ?? row.taskExpectedDate, isClosed: false, createdBy: user.id, updatedBy: user.id, createdAt: at, updatedAt: at, origin: 'internal-control', statusLogs: [],
     }));
@@ -148,27 +154,29 @@ export function BatchCreateModal({ data, user, vessels, close, save, shipSubmiss
     if (await save(candidates, projections)) close();
   };
   const changeVessel = (nextVesselId: string) => {
-    if (shipSubmission) return;
+    if (shipSubmission || sourceForm) return;
     setDraft({ ...draft, vesselId: nextVesselId, rows: rows.map(row => row.syncToTask ? { ...row, taskOwnerUserIds: defaultOwnerIds(data!, nextVesselId) } : row) });
   };
   const fields = <>
     {shipSubmission && <div className="field ship-ic-reporter"><label htmlFor="ship-internal-reporter">報告人姓名＋職務 *</label><input id="ship-internal-reporter" type="text" required maxLength={120} placeholder="例如：王小明／大副" value={draft.reporterNameAndRole || ''} onChange={event => setDraft({ ...draft, reporterNameAndRole: event.target.value })}/><small>本批共用，會自動附在每筆事項內容末尾。{shipSubmission.pending && !draft.reporterNameAndRole && '舊版待確認提交將依原內容確認，不補寫或改動原提交。'}</small></div>}
-    <div className="grid cols-3"><div className="field"><label>船舶 *</label><select value={vesselId} disabled={Boolean(shipSubmission)} onChange={event => changeVessel(event.target.value)}>{vessels.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div><div className="field"><label>報告日期 *</label><input type="date" value={reportDate} onChange={event => setDraft({ ...draft, reportDate: event.target.value })}/></div><div className="field"><label>報告來源 *</label><select value={reportSource} onChange={event => setDraft({ ...draft, reportSource: event.target.value as InternalControlReportSource })}>{REPORT_SOURCES.map(source => <option key={source}>{source}</option>)}</select></div></div>
+    {sourceForm ? <p>船舶：{vesselSelectionDisplayName(vessels.find(vessel=>vessel.id===vesselId))}；每筆報告日期及來源分別核對。</p> : <><div className="grid cols-3"><div className="field"><label>船舶 *</label><select value={vesselId} disabled={Boolean(shipSubmission || sourceForm)} onChange={event => changeVessel(event.target.value)}>{vessels.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div><div className="field"><label>報告日期 *</label><input type="date" value={reportDate} onChange={event => setDraft({ ...draft, reportDate: event.target.value })}/></div><div className="field"><label>報告來源 *</label><select value={reportSource} onChange={event => setDraft({ ...draft, reportSource: event.target.value as InternalControlReportSource })}>{REPORT_SOURCES.map(source => <option key={source}>{source}</option>)}</select></div></div></>}
     <div className="ic-batch-rows">{rows.map((row, index) => <article className="ic-batch-row" key={row.key}>
-      <div className="ic-batch-row-head"><h3>第 {index + 1} 筆</h3>{rows.length > 1 && <button className="btn small danger" onClick={() => setRows(previous => previous.filter(item => item.key !== row.key))}>刪除本筆</button>}</div>
+      <div className="ic-batch-row-head"><h3>第 {index + 1} 筆</h3>{!sourceForm && rows.length > 1 && <button className="btn small danger" onClick={() => setRows(previous => previous.filter(item => item.key !== row.key))}>刪除本筆</button>}</div>
+      {sourceForm && <div className="grid cols-3"><b>{row.sourceReference}</b><div className="field"><label>本筆報告日期 *</label><input type="date" value={row.reportDate || ''} onChange={event => update(row.key, { reportDate: event.target.value })}/></div><div className="field"><label>本筆報告來源 *</label><select value={row.reportSource} onChange={event => update(row.key, { reportSource: event.target.value as InternalControlReportSource })}>{REPORT_SOURCES.map(source => <option key={source}>{source}</option>)}</select></div></div>}
       <div className="grid cols-3 ic-case-classification-row"><div className="field"><label>關注程度 *</label><select value={row.priority} onChange={event => update(row.key, { priority: event.target.value as TaskPriority })}>{catalog.priorities.map(priority => <option key={priority}>{priority}</option>)}</select></div><div className="field"><label>事件分類 *</label><select value={row.category} onChange={event => { const category = event.target.value; update(row.key, { category, equipmentSubcategory: category === '設備故障' ? row.equipmentSubcategory : '', taskCategories: row.taskCategories.length <= 1 ? [category] : row.taskCategories }); }}>{categories.map(category => <option key={category}>{category}</option>)}</select></div><div className="field"><label>設備故障細項{row.category === '設備故障' ? ' *' : ''}</label><select disabled={row.category !== '設備故障'} value={row.equipmentSubcategory} onChange={event => update(row.key, { equipmentSubcategory: event.target.value })}><option value="">{row.category === '設備故障' ? '請選擇' : '不適用'}</option>{catalog.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-2 ic-case-content-row"><div className="field"><label>事項內容 *</label><textarea value={row.description} onChange={event => update(row.key, { description: event.target.value })}/></div><div className="field"><label>解決計劃／最新狀態 *</label><textarea value={row.status} onChange={event => update(row.key, { status: event.target.value })}/></div></div>
-      <div className="ic-inline-options"><label><input type="checkbox" checked={row.isAware} onChange={event => update(row.key, { isAware: event.target.checked })}/>標記為知曉事項</label>{!shipSubmission && <label><input type="checkbox" checked={row.syncToTask} onChange={event => changeTaskSync(row, event.target.checked)}/>同步到要事</label>}<div className="field"><label htmlFor={`ic-dl-${row.key}`}>期望完成日期/DL</label><input id={`ic-dl-${row.key}`} aria-label={`第 ${index + 1} 筆期望完成日期/DL`} type="date" value={row.expectedDate ?? row.taskExpectedDate} onChange={event => update(row.key, { expectedDate: event.target.value })}/></div></div>
+      <div className="ic-inline-options"><label><input type="checkbox" checked={row.isAware} onChange={event => update(row.key, { isAware: event.target.checked })}/>標記為知曉事項</label>{!shipSubmission && <label><input type="checkbox" checked={row.syncToTask} disabled={sourceForm?.lockedTaskIds?.includes(row.sourceCaseId || "")} onChange={event => changeTaskSync(row, event.target.checked)}/>同步到要事</label>}<div className="field"><label htmlFor={`ic-dl-${row.key}`}>期望完成日期/DL</label><input id={`ic-dl-${row.key}`} aria-label={`第 ${index + 1} 筆期望完成日期/DL`} type="date" value={row.expectedDate ?? row.taskExpectedDate} onChange={event => update(row.key, { expectedDate: event.target.value })}/></div></div>
       <DepartmentPicker values={row.departments} choices={catalog.departments} onChange={departments => update(row.key, { departments })}/>
       {!shipSubmission && row.syncToTask && <TaskProjectionFields catalog={catalog} vesselId={vesselId} projection={projectionFor(row)} onChange={projection => update(row.key, { taskCategories: projection.categories, taskEquipmentSubcategory: projection.equipmentSubcategory || '', taskExpectedDate: projection.expectedDate, taskOwnerUserIds: projection.ownerUserIds, taskIsAbnormal: projection.isAbnormal === true })}/>}
     </article>)}</div>
   </>;
   return <div className="modal-backdrop"><div className="modal ic-batch-modal" role="dialog" aria-modal="true" aria-labelledby="ic-batch-title">
-    <div className="modal-head"><div><h2 id="ic-batch-title">{shipSubmission ? '增加內控/訴求' : '批量新增內控異常'}</h2><p>共用船舶、報告日期及來源；保存後每列拆成獨立案件。</p></div><button className="btn ghost" onClick={close}>關閉</button></div>
+    <div className="modal-head"><div><h2 id="ic-batch-title">{shipSubmission ? '增加內控/訴求' : '批量新增內控異常'}</h2><p>{sourceForm ? '本批固定船舶，每筆報告日期及來源分別核對；每筆來源對應獨立內控案件。' : '共用船舶、報告日期及來源；保存後每列拆成獨立案件。'}</p></div><button className="btn ghost" onClick={close}>關閉</button></div>
+    {sourceForm?.message && <p role="status">{sourceForm.message}</p>}{sourceForm?.pending&&<button className="btn" disabled={sourceForm.busy} onClick={sourceForm.onReconcile}>核對最新資料／解除已拒絕提交</button>}
     {shipSubmission?.message && <div className="ship-ic-form-notice" role="status">{shipSubmission.message}</div>}
     {shipSubmission && <p className="ship-ic-form-notice">提交成功後無法在船端修改；如需更正，請重新提交修正版，多餘項目由辦公室刪除。</p>}
     {shipSubmission ? <fieldset disabled={shipSubmission.busy || shipSubmission.pending} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{fields}</fieldset> : fields}
-    <div className="modal-actions"><button className="btn ghost" disabled={Boolean(shipSubmission && (shipSubmission.busy || shipSubmission.pending || rows.length >= 100))} onClick={() => setRows(previous => [...previous, newInternalControlBatchRow(categories[0] || '設備故障')])}>＋ 新增一筆</button><button className="btn ghost" onClick={close}>{shipSubmission ? '關閉（保留草稿）' : '取消'}</button><button className="btn primary" disabled={shipSubmission?.busy} onClick={submit}>{shipSubmission ? (shipSubmission.busy ? '提交中…' : shipSubmission.pending ? '確認結果／重試相同提交' : `提交 ${rows.length} 筆`) : `保存 ${rows.length} 筆案件`}</button></div>
+    <div className="modal-actions"><button className="btn ghost" disabled={Boolean(sourceForm || shipSubmission && (shipSubmission.busy || shipSubmission.pending || rows.length >= 100))} onClick={() => setRows(previous => [...previous, newInternalControlBatchRow(categories[0] || '設備故障')])}>＋ 新增一筆</button><button className="btn ghost" onClick={close}>{shipSubmission ? '關閉（保留草稿）' : '取消'}</button><button className="btn primary" disabled={shipSubmission?.busy || sourceForm?.busy} onClick={submit}>{shipSubmission ? (shipSubmission.busy ? '提交中…' : shipSubmission.pending ? '確認結果／重試相同提交' : `提交 ${rows.length} 筆`) : `保存 ${rows.length} 筆案件`}</button></div>
   </div></div>;
 }
 
@@ -181,12 +189,12 @@ export function prepareInternalControlEditForSave(draft:InternalControlCase,pend
   return next;
 }
 
-export function InternalControlCloseDateDialog({count,minDate,busy,onCancel,onConfirm}:{count:number;minDate:string;busy:boolean;onCancel:()=>void;onConfirm:(date:string)=>void}) {
+export function InternalControlCloseDateDialog({count,minDate,busy,onCancel,onConfirm,effect}:{count:number;minDate:string;busy:boolean;effect?:string;onCancel:()=>void;onConfirm:(date:string)=>void}) {
   const [date,setDate]=useState('');
   const [error,setError]=useState('');
   return <div className="modal-backdrop"><form className="modal ic-close-date-modal" role="dialog" aria-modal="true" aria-labelledby="ic-close-date-title" onSubmit={event=>{event.preventDefault();if(busy)return;if(!isValidInternalControlDate(date)||date<minDate){setError('請選擇有效的結案日期，且不得早於報告日期。');return;}onConfirm(date);}}>
     <div className="modal-head"><h2 id="ic-close-date-title">確認結案{count>1?`（${count} 筆）`:''}</h2></div>
-    <p>選擇實際結案日期後確認；期望完成日期/DL 不會因此改動。雲端確認成功後才算完成。</p>
+    <p>選擇實際結案日期後確認；期望完成日期/DL 不會因此改動。雲端確認成功後才算完成。</p>{effect&&<p>{effect}</p>}
     <div className="field"><label htmlFor="ic-close-date">結案日期 *</label><input id="ic-close-date" aria-label="結案日期" type="date" autoFocus required min={minDate} value={date} disabled={busy} onChange={event=>{setDate(event.target.value);setError('');}}/></div>
     {error&&<p role="alert">{error}</p>}
     <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>取消結案</button><button type="submit" className="btn green" disabled={busy}>{busy?'保存中…':'確認結案'}</button></div>
@@ -194,6 +202,7 @@ export function InternalControlCloseDateDialog({count,minDate,busy,onCancel,onCo
 }
 
 export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelete, showWithdrawSync, canWithdrawSync, withdrawSyncReason, close, save, onWithdrawSync, onDelete }: { item: InternalControlCase; data: AppData; vessels: Vessel[]; canEdit: boolean; canClose: boolean; canDelete: boolean; showWithdrawSync: boolean; canWithdrawSync: boolean; withdrawSyncReason: string; close: () => void; save: (item: InternalControlCase, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>; onWithdrawSync: (item: InternalControlCase) => boolean | Promise<boolean>; onDelete: (item: InternalControlCase) => boolean | Promise<boolean> }) {
+  const trackingEffect=trackingLifecycleExplanation(data,item.id);
   const linkedTask: TaskItem | undefined = item.linkedTaskId ? data.tasks.find(task => task.id === item.linkedTaskId) : undefined;
   const [draft, setDraft] = useState(item);
   const [projection, setProjection] = useState<InternalControlTaskProjection>({
@@ -232,7 +241,7 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
     if(!canClose||savingRef.current||withdrawing)return;
     if(!item.isClosed){setChoosingClosedDate(true);return;}
     const confirmation=`確定將此內控案件改為未結案？${item.linkedTaskId?'關聯要事也會同步改為未結案。':''}\n\n既有內容、歷程及期望完成日期/DL 均保留。雲端確認後才算完成。`;
-    void submit({...draft,isClosed:false,closedDate:undefined},confirmation);
+    void submit({...draft,isClosed:false,closedDate:undefined},confirmation+(trackingEffect?'\n\n'+trackingEffect:''));
   };
   const withdrawSync=async()=>{
     if(!canWithdrawSync||withdrawing||savingRef.current)return;
@@ -245,6 +254,7 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
   const vessel = vessels.find(entry => entry.id === draft.vesselId);
   return <div className="modal-backdrop"><div className="modal ic-edit-modal" role="dialog" aria-modal="true">
     <div className="modal-head"><div><h2>更新內控案件</h2><p>{vessel ? vesselDisplayName(vessel) : draft.vesselId}｜{draft.reportDate}｜{draft.reportSource}{draft.linkedTaskId ? '｜已同步要事' : '｜僅內控'}</p></div><button className="btn ghost" disabled={saving||withdrawing} onClick={close}>關閉</button></div>
+    <TrackingLifecycleHint text={trackingEffect}/>
     <fieldset disabled={!canEdit||item.isClosed||saving||withdrawing||choosingClosedDate}>
       <div className="grid cols-3"><div className="field"><label>船舶 *</label><select value={draft.vesselId} onChange={event => { const vesselId = event.target.value; change({ vesselId }); setProjection(previous => ({ ...previous, ownerUserIds: defaultOwnerIds(data, vesselId) })); }}>{vessels.map(value => <option key={value.id} value={value.id}>{vesselDisplayName(value)}</option>)}</select></div><div className="field"><label>報告日期 *</label><input type="date" value={draft.reportDate} onChange={event => change({ reportDate: event.target.value })}/></div><div className="field"><label>報告來源 *</label><select value={draft.reportSource} onChange={event => change({ reportSource: event.target.value as InternalControlReportSource })}>{REPORT_SOURCES.map(value => <option key={value}>{value}</option>)}</select></div></div>
       <div className="grid cols-3 ic-case-classification-row"><div className="field"><label>關注程度 *</label><select value={draft.priority} onChange={event => change({ priority: event.target.value as TaskPriority })}>{data.settings.priorities.map(priority => <option key={priority}>{priority}</option>)}</select></div><div className="field"><label>事件分類 *</label><select value={draft.category} onChange={event => change({ category: event.target.value, equipmentSubcategory: event.target.value === '設備故障' ? draft.equipmentSubcategory : undefined })}>{categories.map(category => <option key={category}>{category}</option>)}</select></div><div className="field"><label>設備故障細項{draft.category === '設備故障' ? ' *' : ''}</label><select disabled={draft.category !== '設備故障'} value={draft.equipmentSubcategory || ''} onChange={event => change({ equipmentSubcategory: event.target.value })}><option value="">{draft.category === '設備故障' ? '請選擇' : '不適用'}</option>{data.settings.equipmentFailureSubcategories.map(value => <option key={value}>{value}</option>)}</select></div></div>
@@ -256,7 +266,7 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
       {item.isClosed&&<p className="muted">已結案｜結案日期：{item.closedDate||'未記錄'}；如需修改，請先改為未結案。</p>}
     </fieldset>
     <section className="status-history"><h3>狀態歷程</h3>{draft.statusLogs.length ? draft.statusLogs.map(log => <article key={log.id}><b>{log.text}</b><small>{log.at ? formatTaipeiDateTime(log.at) : '尚未保存'}｜{log.by || '目前使用者'}</small></article>) : <p className="muted">尚無狀態紀錄</p>}</section>
-    <div className="modal-actions ic-edit-actions">{showWithdrawSync && <button type="button" className="btn red" disabled={!canWithdrawSync||withdrawing||saving||choosingClosedDate} title={!canWithdrawSync?withdrawSyncReason:undefined} onClick={()=>void withdrawSync()}>{withdrawing?'撤回中…':'撤回同步要事'}</button>}{canDelete && <button className="btn danger" disabled={saving||withdrawing||choosingClosedDate} onClick={async () => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`) && await onDelete(item)) close(); }}>刪除案件</button>}<span/><button className="btn ghost" disabled={saving||withdrawing||choosingClosedDate} onClick={close}>取消</button>{canEdit&&canClose&&<button type="button" className="btn green ic-close-save" disabled={saving||withdrawing||choosingClosedDate} onClick={saveClosedState}>{item.isClosed?'改為未結案':'結案並保存'}</button>}{canEdit && <button className="btn primary" disabled={saving||withdrawing||choosingClosedDate} onClick={()=>void submit()}>{saving?'保存中…':'保存更新'}</button>}</div>
-    {choosingClosedDate&&<InternalControlCloseDateDialog count={1} minDate={draft.reportDate} busy={saving} onCancel={()=>setChoosingClosedDate(false)} onConfirm={date=>{if(canClose)void submit({...draft,isClosed:true,closedDate:date});}}/>}
+    <div className="modal-actions ic-edit-actions">{showWithdrawSync && <button type="button" className="btn red" disabled={!canWithdrawSync||withdrawing||saving||choosingClosedDate} title={!canWithdrawSync?withdrawSyncReason:undefined} onClick={()=>void withdrawSync()}>{withdrawing?'撤回中…':'撤回同步要事'}</button>}{canDelete && <button className="btn danger" disabled={saving||withdrawing||choosingClosedDate} onClick={async () => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`) && await onDelete(item)) close(); }}>刪除案件</button>}<span/><button className="btn ghost" disabled={saving||withdrawing||choosingClosedDate} onClick={close}>取消</button>{canEdit&&canClose&&<button type="button" className="btn green ic-close-save" title={trackingEffect || undefined} disabled={saving||withdrawing||choosingClosedDate} onClick={saveClosedState}>{item.isClosed?'改為未結案':'結案並保存'}</button>}{canEdit && <button className="btn primary" disabled={saving||withdrawing||choosingClosedDate} onClick={()=>void submit()}>{saving?'保存中…':'保存更新'}</button>}</div>
+    {choosingClosedDate&&<InternalControlCloseDateDialog effect={trackingEffect} count={1} minDate={draft.reportDate} busy={saving} onCancel={()=>setChoosingClosedDate(false)} onConfirm={date=>{if(canClose)void submit({...draft,isClosed:true,closedDate:date});}}/>}
   </div></div>;
 }

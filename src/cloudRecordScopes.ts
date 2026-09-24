@@ -56,7 +56,8 @@ export function recordRecoveryReadScope(base:AppData,local:AppData):RecordReadSc
       if(JSON.stringify(b)!==JSON.stringify(l)||hasDetail(b)||hasDetail(l))targets.push({collection,id});
     }
   }
-  return unionRecordScopes('home',{targets});
+  const trackingVesselIds=[...new Set([...(base.trackingItems || []),...(local.trackingItems || [])].map(row=>row.vesselId))].sort();
+  return unionRecordScopes('home',{targets,trackingVesselIds});
 }
 export type RecordScopeSnapshot = { scopeKey:string; workspace:string; revision: number; root: Record<string, unknown>; collections: Record<string, { ids: string[]; rows: Record<string, Row> }> };
 const clone=<T>(v:T):T=>JSON.parse(JSON.stringify(v));

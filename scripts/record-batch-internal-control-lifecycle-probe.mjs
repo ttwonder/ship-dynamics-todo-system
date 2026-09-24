@@ -16,7 +16,11 @@ export async function run(fixture){
   const count=()=>host.querySelector('.batch-selection-count')?.textContent;
   try{
    render();await tick();for(const id of ids){row(id).querySelector('input').click();await tick();}
-   [...host.querySelectorAll('button')].find(n=>n.textContent.trim()===(action==='close'?'批量結案（2）':'批量刪除（2）')).click();await tick();assert(settle,'original callback pending');
+   [...host.querySelectorAll('button')].find(n=>n.textContent.trim()===(action==='close'?'批量結案（2）':'批量刪除（2）')).click();await tick();
+   if(action==='close'){
+    const date=host.querySelector('[aria-label="結案日期"]');assert(date,'current explicit date confirmation');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(date,'2026-09-24');date.dispatchEvent(new Event('input',{bubbles:true}));date.dispatchEvent(new Event('change',{bubbles:true}));await tick();[...host.querySelectorAll('button')].find(n=>n.textContent.trim()==='確認結案').click();await tick();
+   }
+   assert(settle,'original callback pending');
    current={...base,internalControlCases:action==='delete'?base.internalControlCases.filter(c=>!ids.includes(c.id)):base.internalControlCases.map(c=>ids.includes(c.id)?{...c,isClosed:true}:c)};render();await tick();
    assert(count()==='已選 2','optimistic '+action+' cleared pending selection');assert(ids.every(id=>row(id)?.querySelector('input')?.checked),'pending selected rows lost');
    if(outcome==='epoch'){epoch='successor';render();await tick();assert(count()==='已選 0','stale authority retained selection');settle(true);await tick();assert(count()==='已選 0','late success restored stale selection');}

@@ -6,6 +6,10 @@ import { createInitialData } from './data/seed';
 import type { AgendaReport, AppData, FilterState, InternalControlCase, MorningReportSnapshot, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, sanitizeAppDataForStorage, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
 import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlockPatchV2UnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, applyCloudBlockPatchV2, claimEditLock, cloudStoragePayloadFor, fetchCloudData as fetchCloudDataRpc, getCloudBlockPatchReceipt, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
+import TrackingPage from './tracking/TrackingPage';
+import { runTrackingUiCommand } from './tracking/trackingUiCommands';
+import { trackingReceiptKey, type TrackingRecordAttempt } from './tracking/trackingSaveRecovery';
+import type { TrackingSubmission } from './tracking/trackingUiTypes';
 import { isMorningRecordScope, buildRecordScopePatch, cleanRecordHomeCacheMatches, recordRecoveryReadScope, unionRecordScopes, recordScopeKey, type RecordReadScope } from './cloudRecordScopes';
 import { CloudBlockPatchConfirmedRefreshError, CloudBlockPatchOutcomeUnknownError, runCloudBlockPatchWithReceipt } from './cloudBlockReceipt';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
@@ -122,7 +126,7 @@ import {
 
 type BatchManagedOperation = { id: number; session: number; authorization: BatchManagedAuthorization | null; locks: TrackedLeaseToken[] };
 
-type Tab = 'dashboard' | 'morning' | 'total' | 'reports' | 'stats' | 'management' | 'meeting' | 'closed' | 'internalControl' | 'work';
+type Tab = 'tracking' | 'dashboard' | 'morning' | 'total' | 'reports' | 'stats' | 'management' | 'meeting' | 'closed' | 'internalControl' | 'work';
 type ActiveEditLock = { sectionKey: string; label: string; status: 'owned' | 'blocked' | 'error'; ownerUserId: string; ownerUserName: string; leaseOwnerId: string; generation: number; authorizationEpoch: string; validatedUntilMs: number; lockedByName?: string };
 type VesselLeaseIncident={sectionKey:string;leaseOwnerId:string;ownerUserId:string;authorizationEpoch:string;mode:'retrying'|'frozen';message:string};
 type PendingCreationRunContext={creationLock:ActiveEditLock;config:ResolvedSupabaseConfig;isCurrent:()=>boolean;adoptRemoteBase:(snapshot:AppData)=>void;adoptCommittedLive:(snapshot:AppData)=>void;updateSubmittedTask:(task:TaskItem)=>Promise<void>;mutationApplied:boolean};
@@ -137,7 +141,7 @@ type CloudBlockLockGuard={section_key:string;locked_by:string};
 type RelatedMutationEditorHandoff=DurableRelatedMutationHandoff&{discardRejected?:()=>Promise<boolean>};
 import { BrowserAuthorityError, readBrowserAuthority, sameAuthority, authorityConfig, authorityFloorIdentity, readBoundCloudData, assertAuthorityAdmission, assertAuthorityBridge, type BrowserAuthority } from './cloudSourceAuthority';
 
-type PendingCloudSaveIntent={authority?:BrowserAuthority;authorityOwner:BrowserAuthority|null;handoverReadRevision?:number;snapshot:AppData;baseSnapshot:AppData|null;token:ReturnType<ReturnType<typeof createAsyncConfigCoordinator>['begin']>;savedBy:string;actorUserId:string;identityGeneration:number;lockGuards:CloudBlockLockGuard[];isCurrent:()=>boolean;canSubmit:()=>boolean;renderRebase:boolean;visibleBaseline:AppData|null};
+type PendingCloudSaveIntent={onRecordPrepared?:(attempt:TrackingRecordAttempt)=>void;authority?:BrowserAuthority;authorityOwner:BrowserAuthority|null;handoverReadRevision?:number;snapshot:AppData;baseSnapshot:AppData|null;token:ReturnType<ReturnType<typeof createAsyncConfigCoordinator>['begin']>;savedBy:string;actorUserId:string;identityGeneration:number;lockGuards:CloudBlockLockGuard[];isCurrent:()=>boolean;canSubmit:()=>boolean;renderRebase:boolean;visibleBaseline:AppData|null};
 
 export function selectCreationDraftForQuarantine(input:{ownerUserId:string;leaseOwnerId:string;currentTask:TaskItem|null;latest?:CreationDraftRecord;attempt?:CreationDraftRecord}){
   const retained=input.latest?.leaseOwnerId===input.leaseOwnerId?input.latest.task:input.attempt?.leaseOwnerId===input.leaseOwnerId?input.attempt.task:input.currentTask;
@@ -447,6 +451,10 @@ export default function App() {
   const creationHandoffInFlight=useRef<DurableCreationHandoffBarrier|null>(null);
   const relatedMutationHandoffInFlight=useRef<RelatedMutationEditorHandoff|null>(null);
   const relatedMutationAdmissionInFlight=useRef(false);
+  const trackingNavigationGuard=useRef<null|(()=>Promise<boolean>)>(null);
+  const trackingCreationAdmissions=useRef(new Map<string,{vesselId:string;actorId:string;identity:string}>());
+  const trackingAttempt=useRef<{submission:TrackingSubmission;sectionKey:string;applied:boolean;confirmed:boolean}|null>(null);
+  const trackingIdentity=()=>JSON.stringify([liveCurrentUserId.current,identitySessionGeneration.current,liveAuthorizationEpoch.current,cloudConfigIdentity(getSupabaseConfig())]);
   const creationAttempts=useRef(new Map<string,{leaseOwnerId:string;task:TaskItem}>());
   const latestCreationDrafts=useRef(new Map<string,{leaseOwnerId:string;task:TaskItem}>());
   const confirmedCreationLeases=useRef(new Set<string>());
@@ -821,7 +829,7 @@ export default function App() {
     for(const {guard,config:guardConfig} of transientCloudBlockLockGuards.current.values())if(sameCloudConfig(guardConfig,config))guards.push(guard);
     return[...new Map(guards.map(guard=>[`${guard.section_key}|${guard.locked_by}`,guard])).values()];
   };
-  const enqueueCloudSave = (snapshot: AppData,isCurrent:()=>boolean=()=>true,renderRebase=true,canSubmit:()=>boolean=isCurrent,handoverReadRevision?:number,authoritySave?:{binding:BrowserAuthority;base:AppData}): Promise<void> => {
+  const enqueueCloudSave = (snapshot: AppData,isCurrent:()=>boolean=()=>true,renderRebase=true,canSubmit:()=>boolean=isCurrent,handoverReadRevision?:number,authoritySave?:{binding:BrowserAuthority;base:AppData},onRecordPrepared?:(attempt:TrackingRecordAttempt)=>void): Promise<void> => {
     if(!isCurrent()||(relatedMutationHandoffMatchesCurrent(activeEditLockRef.current)&&!mutationLeaseIsOwned(activeEditLockRef.current!.sectionKey)))return Promise.reject(new StaleAsyncConfigError());
     const requestConfig=getSupabaseConfig();
     if (!requestConfig||!hasCurrentCloudIdentity()) return Promise.reject(new Error('雲端工作區 identity 已變更'));
@@ -829,7 +837,7 @@ export default function App() {
     const requestActorUserId=currentUser?.id||'';
     const requestIdentityGeneration=identitySessionGeneration.current;
     hasUnsavedWork.current=true;
-    const completion=pendingCloudData.current.enqueue({authority:authoritySave?.binding??originalAuthority.current??undefined,authorityOwner:originalAuthority.current,handoverReadRevision,snapshot,baseSnapshot:authoritySave?clone(authoritySave.base):confirmedCloudData.current?clone(confirmedCloudData.current):null,token:requestToken,savedBy:currentUser?.name||'unknown',actorUserId:requestActorUserId,identityGeneration:requestIdentityGeneration,lockGuards:captureCloudBlockLockGuards(requestConfig),renderRebase,visibleBaseline:renderRebase?null:clone(liveData.current),isCurrent,canSubmit});
+    const completion=pendingCloudData.current.enqueue({onRecordPrepared,authority:authoritySave?.binding??originalAuthority.current??undefined,authorityOwner:originalAuthority.current,handoverReadRevision,snapshot,baseSnapshot:authoritySave?clone(authoritySave.base):confirmedCloudData.current?clone(confirmedCloudData.current):null,token:requestToken,savedBy:currentUser?.name||'unknown',actorUserId:requestActorUserId,identityGeneration:requestIdentityGeneration,lockGuards:captureCloudBlockLockGuards(requestConfig),renderRebase,visibleBaseline:renderRebase?null:clone(liveData.current),isCurrent,canSubmit});
     clearStaleSaveSuccessToast();
     const validateCompletion=()=>{if(!isCurrent()||liveCurrentUserId.current!==requestActorUserId||identitySessionGeneration.current!==requestIdentityGeneration||!configIoCoordinator.current.isCurrent(requestToken,getSupabaseConfig()))throw new StaleAsyncConfigError();};
     if (cloudSaveInFlight.current) return completion.then(validateCompletion);
@@ -955,6 +963,7 @@ export default function App() {
                         if(!isCurrent()||!pendingActorIsCurrent()||!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!hasCurrentCloudIdentity())throw new StaleAsyncConfigError();
                       };
                       try{
+                        pending.onRecordPrepared?.({operationId,operations:clone(operations),savedBy,actorId:actorUserId,actorGuard:clone(actorGuard),authorizationGuard:strictAuthorizationGuard?clone(strictAuthorizationGuard):null,guards:clone(guards),scope:commandReadScope,authority:pending.authority,visibleSnapshot:clone(liveData.current)});
                         const receipt=await runCloudBlockPatchWithReceipt({
                           operationId,
                           submit:async id=>{if(!canSubmit())throw new StaleAsyncConfigError();if(pending.authority)await assertAuthorityAdmission(token.config,pending.authority);assertOperationCurrent();return configIoCoordinator.current.run(token,getSupabaseConfig,()=>runCloudSaveQueueRpc(
@@ -1164,7 +1173,7 @@ export default function App() {
       const floor=Math.max(durableCloudRevisionFloors.current.get(historyIdentity)??-1,base?.revision??-1);
       // Discover source before interpreting persisted history; dirty old global
       // intent may expand coverage, but never changes the connection or source.
-      const readScope=authorityConfig(config,binding).readMode==='scoped-v1'&&trustedLocalIdentity&&base&&!appDataContentEqual(data,base)?recordRecoveryReadScope(base,data):recordReadScope.current;
+      const readScope=authorityConfig(config,binding).readMode==='scoped-v1'&&trustedLocalIdentity&&base&&(!appDataContentEqual(data,base)||(base.trackingItems?.length || 0)>0)?recordRecoveryReadScope(base,data):recordReadScope.current;
       const remote=await readBoundCloudData(config,binding,undefined,undefined,readScope);
       return {remote,binding,base,floor,readScope};
     }).then(({remote,binding,base,floor,readScope}) => {
@@ -1340,7 +1349,7 @@ export default function App() {
   };
   // Continuity keeps the exact handoff identity; error/TTL revokes writes, not the draft.
   const freezeRelatedMutationDraft=(lock:ActiveEditLock|null)=>{
-    if(!lock||(!lock.sectionKey.startsWith('task:')&&!lock.sectionKey.startsWith('internal-control:'))||!relatedMutationHandoffMatchesCurrent(lock))return false;
+    if(!lock||(!lock.sectionKey.startsWith('task:')&&!lock.sectionKey.startsWith('internal-control:')&&!lock.sectionKey.startsWith('tracking:'))||!relatedMutationHandoffMatchesCurrent(lock))return false;
     const frozen={...lock,status:'error' as const,validatedUntilMs:0};
     activeEditLockRef.current=frozen;
     setActiveEditLock(previous=>relatedMutationLeaseMatches(lock,previous)?frozen:previous);
@@ -1978,7 +1987,9 @@ export default function App() {
     ...roleVisibleTasks.filter(taskLockIsAuthorized).map(task=>`task:${task.id}`),
     ...(canEditMeetings?roleVisibleMeetings.map(meeting=>meetingEditLockKey(meeting.id)):[]),
     ...(canMutateInternalControl?roleVisibleInternalControlCases.map(item=>internalControlEditLockKey(item.id)):[]),
-  ]),[canEditBusinessContent,canCreateTasks,canEditMeetings,canMutateInternalControl,currentUser,activeVessels,roleVisibleTasks,roleVisibleMeetings,roleVisibleInternalControlCases,data.settings.rolePermissions,activeEditLock?.sectionKey]);
+    ...(currentUser?.role!=='vessel'&&(canCreateTasks||canEditBusinessContent||canCloseTasks)?(data.trackingItems||[]).filter(item=>activeVessels.some(v=>v.id===item.vesselId)).map(item=>`tracking:${item.id}`):[]),
+    ...(activeEditLock&&trackingCreationAdmissions.current.has(activeEditLock.sectionKey)&&canCreateTasks&&trackingCreationAdmissions.current.get(activeEditLock.sectionKey)?.actorId===currentUser?.id?[activeEditLock.sectionKey]:[]),
+  ]),[canEditBusinessContent,canCreateTasks,canEditMeetings,canMutateInternalControl,currentUser,activeVessels,roleVisibleTasks,roleVisibleMeetings,roleVisibleInternalControlCases,data.trackingItems,data.settings.rolePermissions,activeEditLock?.sectionKey]);
   const authorizedEditLockKey=[...authorizedEditLockKeys].sort().join('|');
   liveAuthorizedEditLockKeys.current=new Set(authorizedEditLockKeys);
   // A locally removed item still owns its lease until this exact mutation settles.
@@ -2018,7 +2029,9 @@ export default function App() {
       if(actor.role==='vessel'||!(hasPermission(snapshot.settings.rolePermissions,actor,'editBusinessContent')||hasPermission(snapshot.settings.rolePermissions,actor,'closeTasks')||hasPermission(snapshot.settings.rolePermissions,actor,'deleteTasks')))return false;
       return selectInternalControlCasesVisibleToUser(snapshot.internalControlCases,snapshot.tasks,actor,actorVessels.map(vessel=>vessel.id)).some(item=>internalControlEditLockKey(item.id)===sectionKey);
     }
-    if(sectionKey.startsWith('tracking:'))return actor.role!=='vessel'&&(['editBusinessContent','closeTasks','deleteTasks'] as const).some(p=>hasPermission(snapshot.settings.rolePermissions,actor,p))&&Boolean(snapshot.trackingItems?.some(item=>`tracking:${item.id}`===sectionKey&&actorVessels.some(v=>v.id===item.vesselId)));
+    const trackingAdmission=trackingCreationAdmissions.current.get(sectionKey);
+    if(trackingAdmission&&!snapshot.trackingItems?.some(item=>`tracking:${item.id}`===sectionKey))return trackingAdmission.actorId===actor.id&&trackingAdmission.identity===trackingIdentity()&&actor.role!=='vessel'&&hasPermission(snapshot.settings.rolePermissions,actor,'createTasks')&&actorVessels.some(v=>v.id===trackingAdmission.vesselId);
+    if(sectionKey.startsWith('tracking:'))return actor.role!=='vessel'&&(['createTasks','editBusinessContent','closeTasks','deleteTasks'] as const).some(p=>hasPermission(snapshot.settings.rolePermissions,actor,p))&&Boolean(snapshot.trackingItems?.some(item=>`tracking:${item.id}`===sectionKey&&actorVessels.some(v=>v.id===item.vesselId)));
     return false;
   };
   const itemLeaseExistsInSnapshot=(sectionKey:string,snapshot:AppData)=>{
@@ -2028,7 +2041,7 @@ export default function App() {
     if(sectionKey.startsWith('task:'))return snapshot.tasks.some(task=>`task:${task.id}`===sectionKey);
     if(sectionKey.startsWith('meeting:'))return snapshot.meetings.some(meeting=>meetingEditLockKey(meeting.id)===sectionKey);
     if(sectionKey.startsWith('internal-control:'))return snapshot.internalControlCases.some(item=>internalControlEditLockKey(item.id)===sectionKey);
-    if(sectionKey.startsWith('tracking:'))return snapshot.trackingItems?.some(item=>`tracking:${item.id}`===sectionKey) || false;
+    if(sectionKey.startsWith('tracking:'))return Boolean(snapshot.trackingItems?.some(item=>`tracking:${item.id}`===sectionKey)||trackingCreationAdmissions.current.has(sectionKey));
     return false;
   };
   const refreshAfterItemLease=async(sectionKey:string,vesselFreshness=false,ownerIsCurrent:()=>boolean=()=>true):Promise<AppData|null>=>{
@@ -2046,7 +2059,7 @@ export default function App() {
       const confirmed=confirmedCloudData.current;
       if(!confirmed)throw new Error('沒有可驗證的已保存雲端基線');
       const token=configIoCoordinator.current.begin(leaseConfig);
-      const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('internal-control:')?{targets:[{collection:'internalControlCases',id:sectionKey.slice('internal-control:'.length)}]}:sectionKey.startsWith('meeting:')?{targets:[{collection:'meetings',id:sectionKey.slice('meeting:'.length)}]}:sectionKey.startsWith('vessel:')||isTaskCreationLockKey(sectionKey)||isInternalControlCreationLockKey(sectionKey)||isMeetingCreationLockKey(sectionKey)?recordReadScope.current:'full';
+      const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('internal-control:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'internalControlCases',id:sectionKey.slice('internal-control:'.length)}]}):sectionKey.startsWith('tracking:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'trackingItems',id:sectionKey.slice('tracking:'.length)}]}):sectionKey.startsWith('meeting:')?{targets:[{collection:'meetings',id:sectionKey.slice('meeting:'.length)}]}:sectionKey.startsWith('vessel:')||isTaskCreationLockKey(sectionKey)||isInternalControlCreationLockKey(sectionKey)||isMeetingCreationLockKey(sectionKey)?recordReadScope.current:'full';
       const leaseAuthority=originalAuthority.current;
       const coverageChanged=Boolean(leaseAuthority&&authorityConfig(leaseConfig,leaseAuthority).readMode==='scoped-v1'&&recordScopeKey(scope)!==recordScopeKey(recordReadScope.current));
       const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,coverageChanged?config=>fetchCloudData(config,undefined,undefined,scope):vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
@@ -2393,6 +2406,7 @@ export default function App() {
   const loadMeetingScope=async(meetingIds:string[]):Promise<AppData|null>=>await loadRecordActionScope({targets:meetingIds.map(id=>({collection:'meetings' as const,id}))})?freshPageData():null;
   const loadInternalControlScope=async(caseId:string):Promise<AppData|null>=>await loadRecordActionScope({targets:[{collection:'internalControlCases',id:caseId}]})?freshPageData():null;
   const navigateToTab = async (nextTab:Tab) => {
+    if(nextTab!==tab&&trackingNavigationGuard.current&&!await trackingNavigationGuard.current())return;
     if(memberEditor.current)return; // Explicit editor close/discard owns its lifecycle.
     const incident=vesselLeaseIncidentRef.current;
     if(editingVesselId&&incident&&classifyVesselLeaseIncidentClose(incident.mode)==='confirm-discard'&&incident.sectionKey===`vessel:${editingVesselId}`){
@@ -2410,7 +2424,7 @@ export default function App() {
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId('');
     const statsOwner=(nextTab==='stats'||nextTab==='reports'||nextTab==='morning'||nextTab==='management')?{generation:actionScopeGeneration.current+1,actor:liveCurrentUserId.current,session:identitySessionGeneration.current}:null;
-    if(!await loadRecordActionScope(nextTab==='morning'?'morning':(['dashboard','total','closed','work','internalControl','meeting','stats','reports','management'] as Tab[]).includes(nextTab)?'home':'full'))return;
+    if(!await loadRecordActionScope(nextTab==='morning'?'morning':(['tracking','dashboard','total','closed','work','internalControl','meeting','stats','reports','management'] as Tab[]).includes(nextTab)?'home':'full'))return;
     if(statsOwner&&(statsOwner.generation!==actionScopeGeneration.current||statsOwner.actor!==liveCurrentUserId.current||statsOwner.session!==identitySessionGeneration.current))return;
     if(nextTab==='meeting'){
       const snapshot=liveData.current,actor=snapshot.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);
@@ -2633,7 +2647,7 @@ export default function App() {
     setCreatingTask({ id, vesselId, priority:'中', isAware:false, isAbnormal:false, isInternalControl:false, sourceType:'morning', category:'', categories:[], description:'', status:'', expectedDate:'', reportDate:todayDate(), departments:[], ownerUserIds: liveUser.role==='vessel' ? [] : assignedOwnerUserIds, isClosed:false, createdBy:liveUser.id, updatedBy:liveUser.id, createdAt:nowIso(), updatedAt:nowIso(), statusLogs:[] });
     return true;
   };
-  const runDurableRelatedMutation=async(sectionKey:string,label:string,apply:()=>boolean,additionalLockKeys:(snapshot:AppData)=>readonly string[]=()=>[]):Promise<boolean>=>{
+  const runDurableRelatedMutation=async(sectionKey:string,label:string,apply:()=>boolean,additionalLockKeys:(snapshot:AppData)=>readonly string[]=()=>[],onRecordPrepared?:(attempt:TrackingRecordAttempt)=>void):Promise<boolean>=>{
     if(!requireMutationLease(sectionKey))return false;
     const config=getSupabaseConfig();
     if(!config)return apply();
@@ -2751,7 +2765,7 @@ export default function App() {
       if(!applied){await releaseRelated();return false;}
       if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
       assertBundleActive();
-      await enqueueCloudSave(liveData.current,identityIsCurrent,true,sessionIsCurrent);
+      await enqueueCloudSave(liveData.current,identityIsCurrent,true,sessionIsCurrent,undefined,undefined,onRecordPrepared);
       if(!identityIsCurrent())throw new StaleAsyncConfigError();
       if(!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current))throw new Error('雲端尚未確認最新關聯修改');
       durableConfirmed=true;
@@ -2797,6 +2811,110 @@ export default function App() {
       if(relatedMutationHandoffInFlight.current===mutationHandoff)setRelatedMutationHandoffVersion(value=>value+1);
     }
     }finally{relatedMutationAdmissionInFlight.current=false;}
+  };
+  const loadTrackingScope=async(vesselId:string,ids:string[]=[]):Promise<AppData|null>=>{
+    const owner=trackingIdentity();
+    const allowed=()=>{const snapshot=liveData.current,actor=snapshot.users.find(u=>u.id===liveCurrentUserId.current&&u.isActive),vessel=snapshot.vessels.find(v=>v.id===vesselId&&v.isActive);return Boolean(owner===trackingIdentity()&&actor&&actor.role!=='vessel'&&vessel&&canAccessAllVessels(snapshot.settings.rolePermissions,actor,[vessel]));};
+    if(!allowed())return null;
+    const scope=unionRecordScopes(recordReadScope.current,{targets:ids.map(id=>({collection:'trackingItems' as const,id})),trackingVesselIds:[vesselId]});
+    return await loadRecordActionScope(scope,allowed,true)&&allowed()?freshPageData():null;
+  };
+  const reconcileTrackingReceipt=async(submission:TrackingSubmission,record:TrackingRecordAttempt):Promise<boolean>=>{
+    const config=getSupabaseConfig(),owner=submission.identity;
+    const current=()=>Boolean(config&&owner===trackingIdentity()&&record.actorId===liveCurrentUserId.current);
+    if(!config||!current())return false;
+    const commandConfig=record.authority?authorityConfig(config,record.authority):config;
+    const check=()=>{if(!current())throw new StaleAsyncConfigError();};
+    const lookup=(id:string)=>runCloudSaveQueueRpc('確認原跟蹤提交',signal=>getCloudBlockPatchReceipt(id,record.operations,record.savedBy,record.actorId,record.actorGuard,record.authorizationGuard,record.guards,commandConfig,signal),8_000);
+    try{
+      if(record.authority){const live=await readBrowserAuthority(config);check();if(!sameAuthority(record.authority,live))return false;}
+      let receipt=await lookup(record.operationId);check();
+      if(receipt.status==='missing'){
+        const primary=trackingAttempt.current?.sectionKey;
+        if(!primary||!mutationLeaseIsOwned(primary))return false;
+        receipt=await runCloudBlockPatchWithReceipt({operationId:record.operationId,assertCurrent:check,lookup,shouldReconcile:error=>!(error instanceof CloudBlockPatchRejectedError||error instanceof CloudBlockPatchConflictError||error instanceof StaleAsyncConfigError),submit:async id=>{check();if(!mutationLeaseIsOwned(primary))throw new StaleAsyncConfigError();if(record.authority)await assertAuthorityAdmission(config,record.authority);check();return runCloudSaveQueueRpc('重試原跟蹤提交',signal=>applyCloudBlockPatchV2(id,record.operations,record.savedBy,record.actorId,record.actorGuard,record.authorizationGuard,record.guards,commandConfig,signal),12_000);}});
+      }
+      check();const remote=await fetchCloudDataRpc(commandConfig,undefined,undefined,record.scope);check();
+      if(!remote||remote.revision<receipt.revision)throw new CloudBlockPatchConfirmedRefreshError(receipt);
+      assertRemoteExtendsDurableHistory(activeCloudIdentity.current,null,remote,record.authority);
+      const visible=appDataContentEqual(liveData.current,record.visibleSnapshot)?remote:rebaseDisjointAppData(record.visibleSnapshot,liveData.current,remote,nowIso(),record.actorId);
+      check();recordReadScope.current=record.scope;confirmCloudSnapshot(activeCloudIdentity.current,remote);lastCloudRevision.current=remote.revision;liveData.current=visible;flushSync(()=>setData(visible));
+      const same=appDataContentEqual(visible,remote);hasUnsavedWork.current=!same;setCloudWriteBlocked(false);setSavePhase(same?'saved':'dirty');setCloudStatus(same?'原跟蹤提交已確認並權威讀回':'原提交已確認，另有修改待保存');
+      relatedMutationHandoffInFlight.current=null;
+      // Release only the original owners; never a successor's guard.
+      await Promise.allSettled(record.guards.filter(guard=>guard.section_key!==activeEditLockRef.current?.sectionKey).map(guard=>runCloudSaveQueueRpc('釋放原跟蹤關聯鎖',signal=>releaseEditLock(guard.section_key,guard.locked_by,config,signal),8_000)));
+      for(const [key,value] of transientCloudBlockLockGuards.current)if(record.guards.some(guard=>guard.section_key===value.guard.section_key&&guard.locked_by===value.guard.locked_by))transientCloudBlockLockGuards.current.delete(key);
+      check();const primary=trackingAttempt.current?.sectionKey;if(primary){await releaseExclusiveItemLease(primary);trackingCreationAdmissions.current.delete(primary);}
+      localStorage.removeItem(trackingReceiptKey(owner,submission.context.operationId));if(trackingAttempt.current)trackingAttempt.current.confirmed=true;return true;
+    }catch(error){if(current())setCloudStatus(`原提交尚未安全確認；精確資料及草稿保留：${cloudErrorMessage(error)}`);return false;}
+  };
+  const submitTracking=async(submission:TrackingSubmission):Promise<boolean>=>{
+    const owner=submission.identity;
+    const isCurrent=()=>owner===trackingIdentity()&&submission.context.actorId===liveCurrentUserId.current;
+    if(!isCurrent()||!getSupabaseConfig()){alert('跟蹤操作需要同一登入工作階段及雲端確認；原草稿保留。');return false;}
+    const previous=trackingAttempt.current;
+    const stored=localStorage.getItem(trackingReceiptKey(owner,submission.context.operationId));
+    if(stored){try{return await reconcileTrackingReceipt(submission,JSON.parse(stored) as TrackingRecordAttempt);}catch{return false;}}
+    if(previous?.submission.context.operationId===submission.context.operationId){
+      if(JSON.stringify(previous.submission)!==JSON.stringify(submission))return false;
+      if(previous.confirmed)return true;
+      if(previous.applied){
+        setCloudStatus('原提交尚未確認且缺少精確請求；草稿保留，禁止重建或更換 operation。');return false;
+      }
+    }
+    if(previous?.applied&&!previous.confirmed){alert('前一筆追蹤提交尚未確認，不可建立另一筆。');return false;}
+    const command=structuredClone(submission.command);
+    const ids=command.type==='lifecycle'?command.targets.map(target=>target.id):command.items.map(item=>item.id);
+    if(!ids.length||ids.length>100||new Set(ids).size!==ids.length)return false;
+    const primary=`tracking:${ids[0]}`;
+    const attempt={submission:structuredClone(submission),sectionKey:primary,applied:false,confirmed:false};
+    trackingAttempt.current=attempt;
+    try {
+      if(command.type==='create'){
+        const first=command.items[0];
+        trackingCreationAdmissions.current.set(primary,{actorId:submission.context.actorId,vesselId:first.vesselId,identity:owner});
+      }
+      // Admission for an absent, reserved source is explicit, not projected existence.
+      if(!await claimExclusiveItemLease(primary,'配件／物料／工程跟蹤')||!isCurrent())return false;
+      const keys=(snapshot:AppData)=>[
+        ...ids.flatMap(id=>relatedEntityLockKeysForSection(snapshot,`tracking:${id}`)),
+        ...(command.type==='sync'?command.items.map(input=>internalControlCreationLockKey(input.item.id)):[]),
+      ];
+      const apply=()=>{
+        if(!isCurrent())return false;
+        let accepted=false;
+        flushSync(()=>setData(prev=>{
+          if(!isCurrent())return prev;
+          try {
+            const next=runTrackingUiCommand(prev,command,submission.context);
+            const actor=prev.users.find(user=>user.id===submission.context.actorId&&user.isActive)!;
+            accepted=true;attempt.applied=true;
+            return withAudit(next,actor,`跟蹤${command.type==='lifecycle'?command.action:command.type}`,'tracking',ids.join(','),`精確來源 ${ids.join(',')}｜來源操作 ${submission.context.operationId}`);
+          }catch(error){alert(error instanceof Error?error.message:String(error));return prev;}
+        }));
+        return accepted;
+      };
+      const confirmed=await runDurableRelatedMutation(primary,'跟蹤保存',apply,keys,record=>{if(!isCurrent())throw new StaleAsyncConfigError();localStorage.setItem(trackingReceiptKey(owner,submission.context.operationId),JSON.stringify(record));});
+      if(confirmed&&isCurrent()){localStorage.removeItem(trackingReceiptKey(owner,submission.context.operationId));attempt.confirmed=true;await releaseExclusiveItemLease(primary);trackingCreationAdmissions.current.delete(primary);return true;}
+      if(!attempt.applied){await releaseExclusiveItemLease(primary);trackingCreationAdmissions.current.delete(primary);}
+      return false;
+    }catch(error){if(isCurrent())alert(error instanceof Error?error.message:String(error));return false;}
+  };
+  const discardTrackingRejected=async()=>{
+    const attempt=trackingAttempt.current;
+    if(!attempt||attempt.submission.identity!==trackingIdentity())return false;
+    if(attempt.applied){const handoff=relatedMutationHandoffInFlight.current;if(!handoff?.discardRejected||handoff.pending||!await handoff.discardRejected())return false;}
+    if(!await releaseExclusiveItemLease(attempt.sectionKey))return false;
+    trackingCreationAdmissions.current.delete(attempt.sectionKey);localStorage.removeItem(trackingReceiptKey(attempt.submission.identity,attempt.submission.context.operationId));trackingAttempt.current=null;return true;
+  };
+  const releaseTracking=async()=>{
+    const attempt=trackingAttempt.current;
+    if(!attempt)return true;
+    if(attempt.submission.identity!==trackingIdentity())return false;
+    if(!await releaseExclusiveItemLease(attempt.sectionKey))return false;
+    trackingCreationAdmissions.current.delete(attempt.sectionKey);
+    trackingAttempt.current=null;
+    return true;
   };
   const createInternalCases = async (items: InternalControlCase[], expectedRevision: number, projections: Record<string, InternalControlTaskProjection> = {}) => {
     const sectionKey=internalControlCreationLockKey(uid('internal-control-batch'));
@@ -4628,6 +4746,7 @@ export default function App() {
     }
   };
   const leaveCurrentIdentity = async () => {
+    if(trackingNavigationGuard.current&&!await trackingNavigationGuard.current())return;
     if(vesselLeaseIncidentRef.current&&!await closeVesselEditorRef.current(activeEditLockRef.current))return;
     if(memberEditor.current||activeEditLockRef.current||batchManagedOpenRef.current){
       alert('目前仍有編輯中的項目；請先保存或關閉目前編輯器，再切換或退出身份。');
@@ -5031,7 +5150,7 @@ export default function App() {
     <header className="topbar no-print"><div className="topbar-inner">
       <div className="brand"><img className="brand-icon" src={fpmcLogo} alt="台塑 LOGO" /><span><b>{SYSTEM_TITLE}</b><small>{SYSTEM_SUBTITLE}</small></span></div>
       <nav className="nav topbar-primary-nav">
-        {([['dashboard','船隊看板'],['morning','早會工作台'],['meeting','臨會/專題'],['work',`我的待辦${myWorkTaskCount?`（${myWorkTaskCount}）`:''}`],['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['internalControl','內控異常'],['reports','報告中心'],['stats','數據分析'],['management','管理']] as [Tab,string][]).filter(([k])=>canAccessTab(currentUser, k)&&(k!=='reports'||canExportReports)&&(k!=='management'||canEnterManagement)).map(([k,label]) => <button key={k} className={`${tab===k?'active':''} ${tab!==k&&['dashboard','work','internalControl'].includes(k)?'gradient-nav-label':''}`.trim()} onClick={() => { if (!canAccessTab(currentUser,k)) return; if (k==='reports' && !canExportReports) return alert('目前角色未獲授權預覽或匯出報告'); if (k==='management' && !requireManage()) return; navigateToTab(k); }}>{label}</button>)}
+        {([['dashboard','船隊看板'],['morning','早會工作台'],['meeting','臨會/專題'],['work',`我的待辦${myWorkTaskCount?`（${myWorkTaskCount}）`:''}`],['total',currentUser.role==='vessel'?'本船待辦':'待辦總表'],['closed','已結案'],['internalControl','內控異常'],['tracking','配件/物料/工程跟蹤'],['reports','報告中心'],['stats','數據分析'],['management','管理']] as [Tab,string][]).filter(([k])=>canAccessTab(currentUser, k)&&(k!=='reports'||canExportReports)&&(k!=='management'||canEnterManagement)).map(([k,label]) => <button key={k} className={`${tab===k?'active':''} ${tab!==k&&['dashboard','work','internalControl'].includes(k)?'gradient-nav-label':''}`.trim()} onClick={() => { if (!canAccessTab(currentUser,k)) return; if (k==='reports' && !canExportReports) return alert('目前角色未獲授權預覽或匯出報告'); if (k==='management' && !requireManage()) return; navigateToTab(k); }}>{label}</button>)}
       </nav>
       <div className="user-chip"><span className="cloud-dot"/><button type="button" className="user-name-btn" onClick={() => setPasswordModalOpen(true)} title="修改個人密碼">{currentUser.name}｜{roleLabel(currentUser.role)}</button><button className="btn small ghost" onClick={() => void leaveCurrentIdentity()}>切換/退出</button></div>
     </div></header>
@@ -5066,6 +5185,7 @@ export default function App() {
       />}
       {tab==='closed' && <ListPanel title="已結案清單" tasks={closedTasks} statsTasks={closedStatsTasks} data={roleVisibleData} visibleVessels={activeVessels} filters={closedFilters} setFilters={setClosedFilters} fleetTags={fleetTags} userMap={userMap} exportedBy={currentUser.name} onEdit={openTask} onPrint={() => print('已結案清單')} batchContext={listBatchContext} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
       {(tab==='internalControl'||tab==='work') && canAccessTab(currentUser,'internalControl') && <InternalControlPage key={tab} editorOnly={tab==='work'} loadCase={loadInternalControlScope} data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onWithdrawTaskSync={withdrawInternalCaseTaskSync} onDelete={removeInternalCase} onBatchClose={(caseIds,closedDate)=>batchCompleteTasks([],caseIds,closedDate)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
+      {tab==='tracking'&&currentUser.role!=='vessel'&&<TrackingPage key={`${currentUser.id}:${identitySessionGeneration.current}:${cloudWorkspaceIdentity(getSupabaseConfig())}`} data={roleVisibleData} vessels={activeVessels} user={currentUser} workspace={cloudWorkspaceIdentity(getSupabaseConfig())} identity={trackingIdentity()} canCreate={canCreateTasks} canEdit={canEditBusinessContent} canClose={canCloseTasks} callbacks={{load:loadTrackingScope,submit:submitTracking,release:releaseTracking,discardRejected:discardTrackingRejected,registerNavigationGuard:guard=>{trackingNavigationGuard.current=guard;},openCase:caseId=>{setRequestedInternalControlCaseId(caseId);void navigateToTab('internalControl');}}}/>}
       {tab==='stats' && <DataAnalysisView data={roleVisibleData} vessels={canViewAllVessels?reportVessels:activeVessels} />}
       {tab==='meeting' && <TemporaryMeetingsPage loadMeetings={loadMeetingScope} authorizationEpoch={authorizationEpoch} data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} canCloseTasks={canCloseTasks&&currentUser.role!=='vessel'} onOpenDecisionTask={openMeetingTaskFromMeetingPage} onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
 

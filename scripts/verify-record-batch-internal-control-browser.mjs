@@ -58,7 +58,9 @@ const fillRich=async(label,value)=>{await nodeClick(`document.querySelector('[co
 const leases=async()=> (await qa.db.query("select section_key,locked_by from ship_dynamics_edit_locks where workspace_key='isolated-record-ui-qa' and expires_at>now() order by section_key")).rows;
 
 try{
- qa=await createRecordStorageLocalQa({internalControl:true});
+ qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,tracking:true});
+ await (await import('./tracking-browser-fixture.mjs')).installTrackingBrowserMigrations(qa.db);
+ qa.itineraryBaseline=await qa.itinerarySnapshot(); // Capture AFTER current schema installation, before UI mutations.
  assert.equal((await fetch(`${qa.origin}/__qa/health`)).status,200);
  const chrome='C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));
  browser=spawn(chrome,['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
@@ -135,16 +137,17 @@ try{
   releaseHeldReceipt();releaseHeldReceipt=null;await finishEditor();qa.setRecordFault(null);
   const events=qa.metrics.slice(start);assert.equal(events.filter(m=>m.rpc==='apply_ship_dynamics_record_patch_v1'&&m.status==='SQL_OK').length,1);assert.equal(new Set(events.filter(m=>m.rpc==='apply_ship_dynamics_record_patch_v1').map(m=>m.operationId)).size,1);const status=events.findIndex(m=>m.rpc==='get_ship_dynamics_record_receipt_v1'&&m.status==='SQL_OK');assert.ok(status>=0);assert.ok(events.findIndex(m=>m.rpc==='release_ship_dynamics_edit_lock')>status);await snapshot('batch-create-recovered');
  });
+ const confirmCloseDate=async()=>{await until(()=>evaluate('Boolean(document.querySelector("[aria-label=結案日期]"))'),'close date form');await evaluate(`(()=>{const n=document.querySelector('[aria-label=結案日期]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'2026-09-24');n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);await click('確認結案');};
  const labels=['QA BATCH A 1','QA BATCH A 2','QA BATCH B 1','QA withdraw'];
  await check('original create cancel and declined close/delete preserve selection with zero patch or lease',async()=>{
   const before=await qa.read(),start=qa.metrics.length;await createBatch('qa-v1','QA CANCEL');await click('取消');await until(async()=>!await evaluate("Boolean(document.querySelector('.modal-backdrop'))"),'batch cancelled');
-  await selectCases(labels);declineConfirmation=true;await click('批量結案（4）');await until(async()=>(await text()).includes('批量結案（4）'),'declined close settles');await click('批量刪除（4）');await until(async()=>(await text()).includes('批量刪除（4）'),'declined delete settles');declineConfirmation=false;
+  await selectCases(labels);declineConfirmation=true;await click('批量結案（4）');await click('取消結案');await until(async()=>(await text()).includes('批量結案（4）'),'declined close settles');await click('批量刪除（4）');await until(async()=>(await text()).includes('批量刪除（4）'),'declined delete settles');declineConfirmation=false;
   assert.equal(await selectedCount(),'已選 4');assert.deepEqual(await qa.read(),before);assert.equal(qa.metrics.slice(start).filter(m=>m.rpc==='apply_ship_dynamics_record_patch_v1').length,0);assert.deepEqual(await leases(),[]);
  });
  await check('multi-vessel batch close lost ACK retains selection then closes both ends only after confirmation',async()=>{
   let dropped=false,lookup=false,submitted;const held=new Promise(resolve=>{releaseHeldReceipt=resolve;});const start=qa.metrics.length,before=await qa.read();
   qa.setRecordFault({before:async({name,body})=>{if(name==='get_ship_dynamics_record_receipt_v1'&&dropped){lookup=true;assert.deepEqual(body,submitted);await held;}},after:async({name,body,value})=>{if(name==='apply_ship_dynamics_record_patch_v1'&&!dropped){assert.equal(value.ok,true);dropped=true;submitted=structuredClone(body);return true;}return false;}});
-  await click('批量結案（4）');await until(()=>lookup,'batch close same operation status');
+  await click('批量結案（4）');await confirmCloseDate();await until(()=>lookup,'batch close same operation status');
   assert.equal(await selectedCount(),'已選 4','unconfirmed batch must not clear the original selection');
   assert.equal(qa.metrics.slice(start).filter(m=>m.rpc==='release_ship_dynamics_edit_lock').length,0);await screen('batch-close-lost-ack');
   const committed=await snapshot('batch-close-committed-before-status');assert.equal(committed.revision,before.revision+1);
@@ -167,7 +170,7 @@ try{
   await click('切換/退出');await until(async()=>(await text()).includes('人員登入／切換'),'operator login');await select(`document.querySelector('[aria-label="登入人員"]')`,'qa-operator');await fill('input[type="password"]',qa.password);await click('登入');await until(async()=>(await text()).includes('QA OPERATOR｜操作員'),'operator identity');await click('內控異常');await until(async()=>(await text()).includes('QA case-delete'),'assigned list');await wait(1600);await until(async()=>(await text()).includes('已安全保存'),'operator read receipts settled');
   const before=await qa.read(),start=qa.metrics.length;assert.ok(!(await text()).includes('QA restricted'));assert.ok(!(await text()).includes('QA VESSEL 2'));assert.equal(await evaluate("[...document.querySelectorAll('.ic-batch-toolbar button')].filter(n=>n.innerText.includes('批量刪除')).length"),0);
   await createBatch('qa-v1','QA OPERATOR BATCH');assert.deepEqual(await evaluate(`[...(${field('船舶 *','select')}).options].map(o=>o.value)`),['qa-v1']);await click('取消');await until(async()=>!await evaluate("Boolean(document.querySelector('.modal-backdrop'))"),'operator cancel');assert.deepEqual(await qa.read(),before);assert.equal(qa.metrics.slice(start).filter(m=>m.rpc==='apply_ship_dynamics_record_patch_v1').length,0);
-  await createBatch('qa-v1','QA OPERATOR BATCH');await click('保存 2 筆案件');await finishEditor();await selectCases(['QA OPERATOR BATCH 1','QA OPERATOR BATCH 2']);await click('批量結案（2）');await finishBatch();
+  await createBatch('qa-v1','QA OPERATOR BATCH');await click('保存 2 筆案件');await finishEditor();await selectCases(['QA OPERATOR BATCH 1','QA OPERATOR BATCH 2']);await click('批量結案（2）');await confirmCloseDate();await finishBatch();
   const saved=await snapshot('operator-batch-closed'),created=saved.payload.internalControlCases.filter(c=>c.description.startsWith('QA OPERATOR BATCH'));assert.equal(created.length,2);for(const c of created){assert.equal(c.createdBy,'qa-operator');assert.equal(c.closedBy,'qa-operator');assert.equal(c.isClosed,true);if(c.linkedTaskId)assert.equal(saved.payload.tasks.find(t=>t.id===c.linkedTaskId).isClosed,true);}await screen('operator-batch');
  });
  await check('fresh document reload and debounce readback preserve unselected records and formal/history/legacy authority',async()=>{

@@ -12,6 +12,7 @@ import MeetingPeoplePicker from './MeetingPeoplePicker';
 import { isRichTextEmpty, richTextToPlainText } from './richText';
 import { taskIsClosedForVessel, taskProgressForVessel, taskVesselProgressSummary, usesPerVesselProgress } from './taskVesselProgress';
 import { categoryChoicesForTask } from './taskCategories';
+import { trackingLifecycleExplanation, TrackingLifecycleHint } from './tracking/TrackingLifecycleHint';
 import { clearScheduleValue, composeScheduleValue, scheduleDateValue, scheduleTimeValue } from './scheduleTime';
 import { formatTaipeiDateTime } from './taipeiTime';
 import { buildPlannedTaskSchedule, isPlannedDurationEditingInput, normalizePlannedStartDate, parsePlannedDurationInput, plannedDurationInputAfterDateChange } from './taskPlannedSchedule';
@@ -218,6 +219,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const editingSingleVessel=perVesselMode&&progressScope!=='overall';
   const globalReadOnly=readOnly||saving||editingSingleVessel||(perVesselMode&&!canEditOverall);
   const change = (fn: (target: TaskItem) => void) => {if(saving&&!onProgressScopeChange)return;draftEditVersion.current++;setDraft(previous => { if (!previous) return previous; const next=clone(previous); fn(next); next.updatedAt=nowIso(); next.updatedBy=currentUser.id; if(creating)onDraftChange?.(clone(next)); return next; });};
+  const trackingEffect=currentUser.role!=='vessel'?trackingLifecycleExplanation(data,task.internalControlCaseId):'';
   const selectedProgress=editingSingleVessel?taskProgressForVessel(draft,progressScope):{vesselId:'overall',status:draft.status,isClosed:draft.isClosed,closedDate:draft.closedDate,closedBy:draft.closedBy,updatedAt:draft.updatedAt,updatedBy:draft.updatedBy,statusLogs:draft.statusLogs};
   const changeProgress=(fn:(progress:ReturnType<typeof taskProgressForVessel>)=>void)=>change(target=>{
     if(progressScope==='overall'){
@@ -278,7 +280,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     if (saved.isClosed) { saved.closedDate ||= todayDate(); saved.closedBy ||= currentUser.id; }
     else { delete saved.closedDate; delete saved.closedBy; }
     setSaving(true);
-    try{if (await onSave(saved, creating, expectedUpdatedAtRef.current, expectedRevisionRef.current)) close();}
+    try{if(trackingEffect&&(saved.isClosed!==task.isClosed||saved.closedDate!==task.closedDate)&&!confirm(`確認保存本次結案／重開變更？\n${trackingEffect}`))return;if (await onSave(saved, creating, expectedUpdatedAtRef.current, expectedRevisionRef.current)) close();}
     finally{setSaving(false);}
   };
   const remove = async () => {
@@ -303,7 +305,8 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const plannedSchedule=parsedPlannedDuration.ok&&parsedPlannedDuration.value!==undefined
     ?buildPlannedTaskSchedule(draft.plannedStartDate,parsedPlannedDuration.value,'UTC')
     :null;
-  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" disabled={saving} onClick={()=>void remove()}>刪除待辦</button>}{!readOnly&&!creating&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} disabled={saving} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" disabled={saving} onClick={close}>{readOnly?'關閉':creating?'取消並關閉':'取消'}</button>{!readOnly&&<button className="btn primary" disabled={saving} onClick={save}>{saving?'正在確認雲端…':creating?'保存並關閉':'保存變更'}</button>}</div></div>
+  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" disabled={saving} onClick={()=>void remove()}>刪除待辦</button>}{!readOnly&&!creating&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} title={trackingEffect || undefined} disabled={saving} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" disabled={saving} onClick={close}>{readOnly?'關閉':creating?'取消並關閉':'取消'}</button>{!readOnly&&<button className="btn primary" disabled={saving} onClick={save}>{saving?'正在確認雲端…':creating?'保存並關閉':'保存變更'}</button>}</div></div>
+    <TrackingLifecycleHint text={trackingEffect}/>
     {readOnly&&readOnlyReason&&<div className="callout info read-only-server-note" role="status"><b>只讀詳情</b><span>{readOnlyReason}；此頁不可修改或保存。</span></div>}
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
     {perVesselMode&&<section className="vessel-progress-scope"><div className="field"><label>進度範圍</label><select aria-label="待辦進度範圍" value={progressScope} onChange={event=>{void changeProgressScope(event.target.value);}}>{visibleScopeIds.map(id=>{const vessel=data.vessels.find(item=>item.id===id);return <option key={id} value={id}>單船進度｜{vessel?vesselDisplayName(vessel):id}</option>})}{canEditOverall&&<option value="overall">總體進度｜全部涉船</option>}</select></div><div className="progress-scope-note"><b>單船 {progressSummary.completed}/{progressSummary.total} 已結案</b><span>{editingSingleVessel?'目前操作只会更新所选船舶，不影响总体及其他船舶。':'目前操作会更新整项会议待办的总体进度。'}</span></div></section>}

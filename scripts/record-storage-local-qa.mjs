@@ -11,7 +11,7 @@ import {shipInternalControlRpcArgs} from './ship-internal-control-local-fixture.
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({manualReportAuthority=false,browserAuthority=false,dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,shipInternalControl=false,performanceTrace=false,scopedRead=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
+export async function createRecordStorageLocalQa({manualReportAuthority=false,browserAuthority=false,dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,shipInternalControl=false,performanceTrace=false,scopedRead=false,tracking=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
  if(preparePerformanceFixture&&!performanceTrace)throw new Error('Performance fixture requires explicit performanceTrace');
  // Opt-in private native QA supplies an already identity-verified connection.
  // The existing browser/PGlite default and migration/seed chain stay unchanged.
@@ -46,6 +46,7 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
   sd_itinerary_record_report_delete_ids_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_set_token','p_delete_report_ids:jsonb'],
   sd_itinerary_record_report_delete_dates_v1:['p_workspace_key','p_actor_user_id','p_operation_id:uuid','p_expected_set_token','p_delete_dates:jsonb'],
   sd_itinerary_record_load_many_v1:['p_workspace_key','p_vessel_ids:text[]','p_actor_user_id'],
+  ...(tracking?{read_ship_dynamics_record_scopes_v2:['p_workspace_key','p_scope','p_versions:jsonb','p_targets:jsonb','p_vessel_ids:jsonb']}:{}),
   read_ship_dynamics_record_scopes_v1:['p_workspace_key','p_scope','p_versions:jsonb','p_targets:jsonb'],
   read_ship_dynamics_records_v1:['p_workspace_key'],
   read_ship_dynamics_record_delta_v1:['p_workspace_key','p_base_revision:integer','p_base_token'],
@@ -121,6 +122,7 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
      const start=performance.now();
      // Opt-in measurements only. Never persist request bodies, keys or credentials.
      const trace=performanceTrace?{requestBytes:length,requestStartedMs:performance.timeOrigin+start,baseRevision:body.p_base_revision??null,scope:body.p_scope??null}:null;
+     if(internalControl&&name==='read_ship_dynamics_record_scopes_v2'&&recordFault?.beforeRead)await recordFault.beforeRead({name,body,db,metrics});
      if(internalControl&&recordFault?.before&&(taskMember||(shipInternalControl&&Object.hasOwn(shipInternalControlRpcArgs,name))||['apply_ship_dynamics_record_patch_v1','get_ship_dynamics_record_receipt_v1','renew_ship_dynamics_edit_lock'].includes(name)))await recordFault.before({name,body,db,metrics});
      try{
       const value=await db.transaction(async tx=>{
