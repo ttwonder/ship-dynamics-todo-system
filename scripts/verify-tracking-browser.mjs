@@ -146,6 +146,9 @@ try{
  const rowAction=async(reference,label)=>{await until(()=>evaluate(`Boolean([...(${trackingRow(reference)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()===${JSON.stringify(label)}&&!n.disabled))`),'ready source '+reference);await nodeClick(`[...(${trackingRow(reference)}).querySelectorAll('button')].find(n=>n.innerText.trim()===${JSON.stringify(label)})`);await until(()=>evaluate("Boolean(document.querySelector('[role=dialog]'))"),'tracking '+label+' dialog');};
  const dateInput=async(selector,value)=>{await until(()=>evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`),"date field ready");await evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n||n.disabled)throw new Error('date input unavailable');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(selector)}).value`),value);};
  const trackingTab=async(label)=>{await nodeClick(`[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith(${JSON.stringify(label)}))`);};
+ if(process.argv.includes('--layout-only')){
+   await (await import('./tracking-layout-browser-checks.mjs')).layoutChecks({qa,call,evaluate,click,nodeClick,fill,until,text,screen,check,rowAction,finishEditor,output});
+ }else{
  await check('source-sync-reuses-original-form-one-case-no-default-task',async()=>{
    await rowAction('UI-001','同步到內控');
    assert.ok((await text()).includes('批量新增內控異常'));
@@ -175,6 +178,7 @@ try{
  await (await import('./tracking-recovery-browser-checks.mjs')).recoveryChecks(context);
  assert.deepEqual((await qa.db.query('select to_jsonb(t) value from ship_dynamics_app_state t order by workspace_key')).rows,legacyBefore,'record-native UI never modifies legacy');
  await (await import('./tracking-component-browser-checks.mjs')).componentChecks(context);
+ }
  assert.equal(evidence.errors.length,0,JSON.stringify(evidence.errors));
  console.log(JSON.stringify({qa:'TRACKING_UI_PASS',output,scenarios:evidence.scenarios}));
 }catch(error){failure=error;try{evidence.failureText=await text();await snapshot('failure-readback');await screen('failure');}catch{};evidence.error=error.message;console.error(JSON.stringify({qa:'FAILED',error:error.message,output,body:evidence.failureText?.slice(0,9000)}));}

@@ -1,5 +1,6 @@
 import type { AppData, InternalControlCase } from '../types';
 import { todayDate, uid } from '../runtimeUtils';
+import { formatTaipeiDateTime } from '../taipeiTime';
 import { prepareInternalControlEditForSave, newInternalControlBatchRow, type InternalControlBatchDraft } from '../InternalControlModals';
 import { prefillTrackingCase, TRACKING_EDIT_FIELDS } from './trackingWorkflow';
 import type { TrackingItem, TrackingKind, TrackingDeliveryStatus } from './trackingTypes';
@@ -59,14 +60,27 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, me
   const change = (patch: Partial<TrackingDraft>) => onChange({ ...draft, ...patch, dirty: true });
   const update = (id: string, patch: Partial<TrackingItem>) => change({ rows: draft.rows.map(row => row.id === id ? { ...row, ...patch } : row) });
   const formFields = ['create', 'edit'].includes(draft.action);
-  return <div className="modal-backdrop"><form className="modal tracking-modal" role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
+  return <div className="modal-backdrop"><form className={`modal tracking-modal${draft.action === 'progress' ? ' tracking-progress-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
     <div className="modal-head"><h2 id="tracking-modal-title">{titles[draft.action]}</h2><button type="button" className="btn ghost" onClick={onClose}>關閉</button></div>
     <p>{TRACKING_HELP[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
     <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>
     <fieldset disabled={readOnly} style={{border:0,padding:0,margin:0,minWidth:0}}>
     {draft.action === 'create' && <label>新增跟蹤類型<select aria-label="新增跟蹤類型" disabled={pending} value={draft.rows[0].kind} onChange={event=>change({rows:draft.rows.map(row=>({...row,kind:event.target.value as TrackingKind}))})}><option value="supply">配件物料</option><option value="engineering">工程</option></select><small>同一批採同船、同類型；切換類型不更換原草稿 ID。</small></label>}
     {!formFields && <ul className="tracking-affected" aria-label="實際影響範圍">{affected.map(label => <li key={label}>{label}</li>)}</ul>}
-    {draft.action === 'progress' ? draft.rows.map(row => <label className="tracking-progress-row" key={row.id}>{row.referenceNo} {row.subitemNo} [{row.id}]<small>最新已讀值：{draft.originals.find(value=>value.id===row.id)?.progress || "（空白）"}</small>{!pending && draft.rows.length>1 && <button type="button" className="btn small" onClick={()=>change({rows:draft.rows.filter(value=>value.id!==row.id),originals:draft.originals.filter(value=>value.id!==row.id)})}>從本批移除 {row.referenceNo}</button>}<textarea aria-label={`${row.referenceNo} 最新進度`} value={row.progress} onChange={event => update(row.id, { progress: event.target.value })}/></label>) : formFields ? draft.rows.map((row, index) => <fieldset className="tracking-form-row" key={row.id}><legend>第 {index + 1} 筆｜{row.id}</legend><div className="tracking-form-grid">
+    {draft.action === 'progress' ? draft.rows.map(row => {
+      const original = draft.originals.find(value => value.id === row.id);
+      const history = original?.statusLogs || [];
+      return <div className="tracking-progress-row" key={row.id}>
+        <label htmlFor={`tracking-progress-${row.id}`}>{row.referenceNo} {row.subitemNo} [{row.id}]</label>
+        <small>最新已讀值：{original?.progress || '（空白）'}</small>
+        {!pending && draft.rows.length > 1 && <button type="button" className="btn small" onClick={() => change({ rows: draft.rows.filter(value => value.id !== row.id), originals: draft.originals.filter(value => value.id !== row.id) })}>從本批移除 {row.referenceNo}</button>}
+        <textarea id={`tracking-progress-${row.id}`} aria-label={`${row.referenceNo} 最新進度`} value={row.progress} onChange={event => update(row.id, { progress: event.target.value })}/>
+        <details className="tracking-progress-history" aria-label="進度更新記錄" open>
+          <summary>進度更新記錄（{history.length}）</summary>
+          {history.length ? <div>{history.map(log => <article key={log.id}><small><time dateTime={log.at}>{formatTaipeiDateTime(log.at)}</time>（UTC+8）｜{log.by}</small><p>{log.text}</p></article>)}</div> : <p>尚無已保存的進度記錄。</p>}
+        </details>
+      </div>;
+    }) : formFields ? draft.rows.map((row, index) => <fieldset className="tracking-form-row" key={row.id}><legend>第 {index + 1} 筆｜{row.id}</legend><div className="tracking-form-grid">
       {trackingColumnsFor(row.kind).filter(column => column.editable).map(column => <label key={column.key}>{column.label}{column.required ? ' *' : ''}{column.type === 'date' ? <input type="date" required={column.required} aria-label={`第 ${index + 1} 筆 ${column.label}`} value={column.value(row)} onChange={event => update(row.id, { [column.key]: event.target.value })}/> : <textarea required={column.required} rows={['description', 'supplementalNotes', 'originalRemarks'].includes(column.key) ? 3 : 1} aria-label={`第 ${index + 1} 筆 ${column.label}`} value={column.value(row)} onChange={event => update(row.id, { [column.key]: column.key === 'urgentSubtypes' ? event.target.value.split('、').filter(Boolean) : event.target.value })}/>}</label>)}
       <div className="tracking-urgency"><label><input type="checkbox" checked={row.urgency === 'normal'} onChange={() => update(row.id, { urgency: 'normal' })}/>普通</label><label><input type="checkbox" checked={row.urgency === 'urgent'} onChange={() => update(row.id, { urgency: 'urgent' })}/>緊急</label></div>
       {draft.action === 'create' && <label>最新進度<textarea aria-label={`第 ${index + 1} 筆 最新進度`} value={row.progress} onChange={event => update(row.id, { progress: event.target.value })}/></label>}
