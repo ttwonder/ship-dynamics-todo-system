@@ -61,7 +61,9 @@ export async function importRecoveryChecks(c) {
     assert.deepEqual(await qa.read(),committed);await click('取消導入');
   });
   await check('import-confirmed-record-survives-real-document-reload',async()=>{
-    await call('Page.reload');await until(async()=>(await text()).includes('人員登入／切換')||(await text()).includes('QA OWNER'),'fresh App document',45000);
+    await until(()=>evaluate("!document.querySelector('.modal-backdrop')&&Boolean(document.querySelector('.save-status-strip.saved'))"),'closed import has settled before reload');
+    await evaluate("void(window.__qaOriginalImportDocument=true)");
+    await call('Page.reload');await until(async()=>await evaluate("window.__qaOriginalImportDocument!==true")&&((await text()).includes('人員登入／切換')||(await text()).includes('QA OWNER')),'fresh App document',45000);
     if((await text()).includes('人員登入／切換')){await fill('input[type="password"]',qa.password);await click('登入');}
     await until(async()=>(await text()).includes('QA OWNER')&&!(await text()).includes('人員登入／切換'),'original Owner login');
     await click('配件/物料/工程跟蹤');await until(()=>evaluate("Boolean(document.querySelector('.tracking-page'))"),'fresh tracking page');

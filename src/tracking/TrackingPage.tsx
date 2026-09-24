@@ -41,6 +41,11 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   const requestGeneration = useRef(0); const editGeneration = useRef(0);
   const currentIdentity = useRef(identity); currentIdentity.current = identity;
   const currentCallbacks = useRef(callbacks); currentCallbacks.current = callbacks;
+  // Page-local drafts are not AppData deltas and may outlive a rejected lease.
+  // Feed the existing actor-scoped status channel without changing save/lock rules.
+  const draftFeedbackToken = useRef({});
+  useEffect(() => { currentCallbacks.current.onPrivateDraftChange?.(draftFeedbackToken.current, Boolean(draft?.dirty || pending)); });
+  useEffect(() => () => { currentCallbacks.current.onPrivateDraftChange?.(draftFeedbackToken.current, false); }, []);
   const draftKey = JSON.stringify(['tracking-unsent-v1', workspace, user.id, vesselId]);
   const columns = trackingColumnsFor(trackingTabKind(tab));
   const prefKey = trackingPreferenceKey(workspace, user.id, tab);

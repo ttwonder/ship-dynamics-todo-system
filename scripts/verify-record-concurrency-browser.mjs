@@ -6,6 +6,7 @@ import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {createNativeRecordQa} from './record-storage-native-qa.mjs';
 import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
+import {installTrackingBrowserMigrations} from './tracking-browser-fixture.mjs';
 
 // QA-only: original main.tsx -> App, native input, synthetic identities.
 // No setters, write helpers, fabricated responses, external hosts or user profile.
@@ -96,7 +97,8 @@ try{
  native=await createNativeRecordQa(run,receipt,{httpTransactions:true,beforeCommit:async({context,pid,value})=>{
   if(barrier&&context.operationId===barrier.operationId){assert.equal(value.ok,true,'A real SQL executed successfully');barrier.pid=pid;barrier.entered=true;save();await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('private commit barrier budget exceeded')),6000);releaseCommit=()=>{clearTimeout(timer);resolve();};});}
  }});
- qa=await createRecordStorageLocalQa({internalControl:true,databaseFactory:async()=>native.adapter});
+ qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,shipInternalControl:true,scopedRead:true,tracking:true,databaseFactory:async()=>native.adapter});
+ await installTrackingBrowserMigrations(native.adapter);
  receipt.origin=qa.origin;assert.equal((await (await fetch(qa.origin+'/__qa/health')).json()).kind,'REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES');
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let socketPath;await until(()=>{try{[chromePort,socketPath]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(chromePort)&&socketPath?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'Chrome handshake');

@@ -44,6 +44,10 @@
 
 原生 browser／SQL 指令需要先前已驗證的本機 runtime prerequisites，見 `tracking-ui-slice.md`；不可改指向正式 DB。原始 logs、screenshots、XLSX／PDF 與 cleanup receipt 在 repo 外 `C:/Users/tuotu/AppData/Local/hermes/cache/scratch/tracking-spreadsheet-implementation/`，最終摘要另保存於交接證據包；不把它們或私有 configuration 加入 Git。
 
+## 多人保存驗收補充
+
+兩位不同登入者及獨立船端 context 的原 UI＋原生 PostgreSQL 矩陣與後續保存提示修正，見 [多人保存與同步驗收](tracking-multiuser-acceptance.md)。包含同船異項／同項、批量原子性、刪改不復活、有效關聯結案／重開及未知 ACK 精確恢復；與本頁單次匯入匯出證據分開列示。本機 PASS 不代表正式多人環境已驗收。
+
 ## 正式上線仍須依序完成
 
 1. 只安裝 `supabase/migrations/20260924160000_tracking_records.sql`，從已提交的完整原始 blob 建立唯讀 Preview。使用者自行 Ctrl+C、貼入正確 Supabase 專案的新 query、Run。**不重跑 08–12、不解除舊 source freeze、不執行任何重新匯入。**
