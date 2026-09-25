@@ -2,12 +2,12 @@ import type { AppData } from '../types';
 import type { TrackingContext } from './trackingWorkflow';
 import type { TrackingUiCommand } from './trackingUiCommands';
 import type { TrackingItem } from './trackingTypes';
-export interface TrackingSubmission { command: TrackingUiCommand; context: TrackingContext; identity: string }
+export interface TrackingSubmission { command: TrackingUiCommand; context: TrackingContext; identity: string; reporterNameAndRole?: string }
 export interface TrackingUiCallbacks {
   onPrivateDraftChange?: (token: object, dirty: boolean) => void;
   captureExport?: (vesselId: string) => Promise<{ items: TrackingItem[]; isCurrent: () => boolean } | null>;
   load: (vesselId: string, ids?: string[]) => Promise<AppData | null>;
-  claim: (vesselId: string, ids: string[]) => Promise<AppData | null>;
+  claim: (vesselId: string, ids: string[], creation?: boolean) => Promise<AppData | null>;
   isWritable: (ids: readonly string[]) => boolean;
   submit: (submission: TrackingSubmission) => Promise<boolean>;
   release: () => Promise<boolean>;
@@ -25,3 +25,16 @@ export const TRACKING_HELP = {
   'correct-close-date': '同步更正本案與有效關聯內控／要事的本次結案日期，保留舊值及更正歷程；不改送船或完工日期。',
   sync: '每筆來源建立一件內控，首次預填可核對。預設不同步要事，只有岸端有權人員可明確選擇。已同步者不重複建立。',
 } as const;
+
+export type TrackingAudience = 'shore' | 'ship';
+// Presentation only. Public write authority belongs to the dedicated server API.
+export const SHIP_TRACKING_HELP: Record<keyof typeof TRACKING_HELP, string> = {
+  ...TRACKING_HELP,
+  create: '只新增跟蹤來源，不會自動建立內控。保存後等待雲端確認。',
+  progress: '逐筆修改最新進度，只保存有變更的列；有效關聯的內控在同一交易追加歷程。已結案請先重開。',
+  close: '本案不再追蹤；有效關聯的內控同步結案。不會把物料標成已送船，也不會填入工程完工日期。',
+  reopen: '將本案及有效關聯的內控恢復未結案；送船狀態、送船日期、完工日期、DL 及歷程保留。',
+  'correct-close-date': '同步更正本案與有效關聯內控的本次結案日期，保留舊值及更正歷程；不改送船或完工日期。',
+  sync: '每筆來源建立一件內控，首次預填可核對；報告人姓名＋職務會附在內文。已同步者不重複建立。',
+};
+export const trackingHelp = (audience: TrackingAudience) => audience === 'ship' ? SHIP_TRACKING_HELP : TRACKING_HELP;

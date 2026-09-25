@@ -41,6 +41,7 @@ export default defineConfig({
         main:resolve(process.cwd(),'index.html'),
         shipItinerary:resolve(process.cwd(),'ship-itinerary.html'),
         shipInternalControl:resolve(process.cwd(),'ship-internal-control.html'),
+        shipTracking:resolve(process.cwd(),'packageorwork-tracking.html'),
       },
     },
   },

@@ -8,7 +8,7 @@ import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
 import {installTrackingBrowserMigrations} from './tracking-browser-fixture.mjs';
 import {multiuserChecks} from './tracking-multiuser-browser-checks.mjs';
 import {editEntryChecks} from './edit-entry-browser-checks.mjs';
-const editEntry=process.argv.includes('--edit-entry');
+const editEntry=process.argv.includes('--edit-entry'),shipTracking=process.argv.includes('--ship-tracking');
 
 // Original App and ship portal, independent browser identities and real SQL.
 // Synthetic data, random credentials, loopback-only; no production business writes.
@@ -19,6 +19,7 @@ const run=fs.mkdtempSync(path.join(root,'tracking-multiuser-')),profile=path.joi
 const sha=value=>createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex');
 const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
 const inputs=['scripts/verify-tracking-multiuser-browser.mjs','scripts/tracking-multiuser-browser-checks.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','scripts/tracking-browser-fixture.mjs','src/App.tsx','src/ShipInternalControlPortal.tsx','src/tracking/TrackingPage.tsx','src/tracking/TrackingModals.tsx','src/tracking/TrackingImportModal.tsx','src/EditModals.tsx','src/InternalControlModals.tsx','src/taskMemberEditor.ts','supabase/migrations/20260924160000_tracking_records.sql','supabase/migrations/20260925020000_edit_lock_holder.sql'];
+if(shipTracking)inputs.push('scripts/ship-tracking-multiuser-checks.mjs','src/tracking/ShipTrackingPortal.tsx','src/tracking/shipTracking.ts','packageorwork-tracking.html','supabase/migrations/20260925080000_ship_tracking_public.sql');
 const fingerprints=()=>Object.fromEntries(inputs.map(p=>[p,sha(fs.readFileSync(p,'utf8'))]));
 if(editEntry)inputs.push('scripts/edit-entry-browser-checks.mjs','src/editLockBundle.ts','src/collaborationLockPlan.ts','src/InternalControlPage.tsx','src/tracking/trackingUiTypes.ts');
 const evidence={kind:'tracking-multiuser-original-UI-native-PG',label:'真實主站／船端 UI＋測試資料＋本機 PostgreSQL；非正式環境',status:'RUNNING',head:git('rev-parse','HEAD'),inputs:fingerprints(),cases:[],errors:[],external:[],network:[],blocking:[],productionContacted:false};
@@ -45,7 +46,7 @@ async function page(actor,ship=false){
  p.choose=async(selector,value)=>{const i=await p.eval(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});n.focus();return [...n.options].findIndex(o=>o.value===${JSON.stringify(value)});})()`);assert.ok(i>=0,'option '+value);await p.key('Home');for(let n=0;n<i;n++)await p.key('ArrowDown');await p.key('Enter');await until(()=>p.eval(`document.querySelector(${JSON.stringify(selector)}).value===${JSON.stringify(value)}`),'selected '+value);};
  p.date=async(selector,value)=>{await p.eval(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n||n.disabled)throw Error('date field missing');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);};
  p.screen=async name=>fs.writeFileSync(path.join(run,name+'-'+actor+'.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png'},s)).data,'base64'));
- p.done=()=>until(async()=>await p.eval("!document.querySelector('.modal-backdrop')")&&(await p.text()).includes('已安全保存'),'ACK and original editor close '+actor);
+ p.done=()=>until(async()=>await p.eval("!document.querySelector('.modal-backdrop')")&&(await p.text()).includes(ship==='tracking'?'已收到伺服器確認並讀回':'已安全保存'),'ACK and original editor close '+actor);
  p.sync=async()=>{const start=evidence.network.length;await p.click('同步最新（安全合併）');await until(()=>evidence.network.slice(start).some(n=>n.actor===actor&&/^read_ship_dynamics_record/.test(n.rpc)&&n.finished),'real sync read '+actor);await until(()=>p.eval("[...document.querySelectorAll('button')].some(n=>n.innerText.trim()==='同步最新（安全合併）'&&!n.disabled)&&!document.querySelector('.save-status-strip.saving')"),'sync idle '+actor);};
  p.tracking=async()=>{if(!await p.eval("!!document.querySelector('.tracking-page')"))await p.click('配件/物料/工程跟蹤');await until(()=>p.eval("!!document.querySelector('.tracking-page')"),'tracking mounted');await p.choose('[aria-label=跟蹤船舶]','qa-v1');await p.activate("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('配件物料總清單'))");await until(()=>p.eval("!!document.querySelector('.tracking-heading button:not(:disabled)')"),'tracking ready');};
  p.row=ref=>`[...document.querySelectorAll('.tracking-table tbody tr')].find(n=>n.querySelector('.tracking-reference')?.innerText.includes(${JSON.stringify(ref)}))`;
@@ -58,8 +59,9 @@ async function page(actor,ship=false){
  for(const name of ['Page.enable','Runtime.enable','Network.enable'])await call(name,{},s);
  await call('Fetch.enable',{patterns:[{urlPattern:'*',requestStage:'Request'}]},s);
  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},s);
- await call('Page.navigate',{url:qa.origin+(ship?'/ship-internal-control.html':'')},s);
- if(ship){await until(()=>p.eval("document.querySelector('#ship-internal-vessel')?.options.length===3"),'ship roster');await p.choose('#ship-internal-vessel','qa-v1');await until(()=>p.eval("!![...document.querySelectorAll('button')].find(n=>n.innerText.includes('增加內控/訴求')&&!n.disabled)"),'ship ready');}
+ await call('Page.navigate',{url:qa.origin+(ship==='tracking'?'/packageorwork-tracking.html':ship?'/ship-internal-control.html':'')},s);
+ if(ship==='tracking'){await until(()=>p.eval("!!document.querySelector('.tracking-page')&&!document.body.innerText.includes('讀取此船最新資料')"),'ship tracking ready');}
+ else if(ship){await until(()=>p.eval("document.querySelector('#ship-internal-vessel')?.options.length===3"),'ship roster');await p.choose('#ship-internal-vessel','qa-v1');await until(()=>p.eval("!![...document.querySelectorAll('button')].find(n=>n.innerText.includes('增加內控/訴求')&&!n.disabled)"),'ship ready');}
  else{await until(async()=>(await p.text()).includes('請輸入管理者設定的進站密碼。'),'site gate');await p.fill('input[type=password]',qa.password);await p.click('進入系統');await until(()=>p.eval("!!document.querySelector('[aria-label=登入人員]')"),'personnel login');await p.choose('[aria-label=登入人員]',actor);await p.fill('input[type=password]',qa.password);await p.click('登入');await until(()=>p.eval("!!document.querySelector('nav')&&!document.body.innerText.includes('人員登入／切換')"),'logged in');await p.tracking();}
  return p;
 }
@@ -69,9 +71,10 @@ const release=()=>{barrier?.release();barrier=null;};
 const observeBlocking=async b=>{const row=await until(async()=>{const rows=(await native.observer.query("select pid,pg_blocking_pids(pid) blockers from pg_stat_activity where wait_event_type='Lock'")).rows;return rows.find(r=>r.blockers.includes(b.pid));},'independent native transaction actually waits',6500);assert.notEqual(row.pid,b.pid);evidence.blocking.push({caseId:currentCase,ownerPid:b.pid,peerPid:row.pid});};
 try{
  native=await createNativeRecordQa(run,evidence,{httpTransactions:true,beforeCommit:async({context,pid,value})=>{if(barrier&&!barrier.entered&&context.rpc===barrier.rpc&&value?.ok!==false){const b=barrier;b.entered=true;b.pid=pid;b.operationId=context.operationId;await b.ready;}}});
- qa=await createRecordStorageLocalQa({browserAuthority:true,internalControl:true,scopedRead:true,shipInternalControl:true,tracking:true,taskMember:true,performanceTrace:true,databaseFactory:async()=>native.adapter,preparePerformanceFixture:initial=>{for(const key of ['tasks','internalControlCases','taskDismissals','notifications','auditLogs'])initial[key]=[];}});
+ qa=await createRecordStorageLocalQa({browserAuthority:true,internalControl:true,scopedRead:true,shipInternalControl:true,shipTracking,tracking:true,taskMember:true,performanceTrace:true,databaseFactory:async()=>native.adapter,preparePerformanceFixture:initial=>{for(const key of ['tasks','internalControlCases','taskDismissals','notifications','auditLogs'])initial[key]=[];}});
  await installTrackingBrowserMigrations(native.adapter);
  await native.adapter.exec(fs.readFileSync('supabase/migrations/20260925020000_edit_lock_holder.sql','utf8'));
+ if(shipTracking)await native.adapter.exec(fs.readFileSync('supabase/migrations/20260925080000_ship_tracking_public.sql','utf8'));
  assert.equal((await (await fetch(qa.origin+'/__qa/health')).json()).kind,'REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES');
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let port,socket;await until(()=>{try{[port,socket]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(port)&&socket?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'Chrome readiness');
@@ -95,7 +98,8 @@ try{
  const baseline=await read(),legacy=(await native.observer.query('select to_jsonb(t) value from ship_dynamics_app_state t order by workspace_key')).rows,formal=await qa.itinerarySnapshot();
  const a=await page('qa-owner'),b=await page('qa-operator');
  assert.notEqual(a.context,b.context);
- await (editEntry?editEntryChecks:multiuserChecks)({a,b,page,qa,native,read,source,until,check,blockNext,release,observeBlocking,evidence,sha,run});
+ const checks=shipTracking?(await import('./ship-tracking-multiuser-checks.mjs')).shipTrackingChecks:editEntry?editEntryChecks:multiuserChecks;
+ await checks({a,b,page,qa,native,read,source,until,check,blockNext,release,observeBlocking,evidence,sha,run});
  assert.deepEqual((await native.observer.query('select to_jsonb(t) value from ship_dynamics_app_state t order by workspace_key')).rows,legacy,'legacy authority unchanged');assert.deepEqual(await qa.itinerarySnapshot(),formal,'formal itinerary unchanged');
  const end=await read();for(const key of ['users','vessels','settings','meetings','agendaReports'])assert.deepEqual(end.payload[key],baseline.payload[key],'unrelated '+key);
  assert.deepEqual(evidence.errors,[]);assert.deepEqual(evidence.external,[]);assert.equal(git('rev-parse','HEAD'),evidence.head);assert.deepEqual(fingerprints(),evidence.inputs);evidence.status='PASS';

@@ -6,7 +6,7 @@ import { prefillTrackingCase, TRACKING_EDIT_FIELDS } from './trackingWorkflow';
 import type { TrackingItem, TrackingKind, TrackingDeliveryStatus } from './trackingTypes';
 import { trackingColumnsFor } from './trackingColumns';
 import { resolveTrackingGroup } from './trackingLifecycle';
-import { TRACKING_HELP } from './trackingUiTypes';
+import { TRACKING_HELP, trackingHelp, type TrackingAudience } from './trackingUiTypes';
 import type { InternalControlTaskProjection } from '../internalControlData';
 import type { TrackingUiCommand } from './trackingUiCommands';
 
@@ -52,8 +52,8 @@ export function commandForTrackingDraft(draft: TrackingDraft, cases?: InternalCo
 export function trackingAffectedLabels(data: AppData, rows: TrackingItem[]) {
   return rows.map(row => { const group = resolveTrackingGroup(data, row.id); return `${row.referenceNo} ${row.subitemNo || ''} [${row.id}]${group.item ? ` → 內控 [${group.item.id}] ${group.item.description}` : '（僅來源）'}${group.task ? ` → 要事 [${group.task.id}]` : ''}`; });
 }
-export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, message, affected, vesselName, onChange, onSave, onReconcile, onClose }: {
-  draft: TrackingDraft; busy: boolean; pending: boolean; readOnly?: boolean; message: string; affected: string[]; vesselName: string;
+export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, audience='shore', message, affected, vesselName, onChange, onSave, onReconcile, onClose }: {
+  draft: TrackingDraft; busy: boolean; pending: boolean; readOnly?: boolean; audience?: TrackingAudience; message: string; affected: string[]; vesselName: string;
   onChange: (draft: TrackingDraft) => void; onSave: () => void; onReconcile: () => void; onClose: () => void;
 }) {
   const titles: Record<TrackingAction, string> = { create: '新增／批量新增跟蹤', edit: '編輯跟蹤項目', progress: '批量更新最新進度', delivery: '送船確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
@@ -62,7 +62,7 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, me
   const formFields = ['create', 'edit'].includes(draft.action);
   return <div className="modal-backdrop"><form className={`modal tracking-modal${draft.action === 'progress' ? ' tracking-progress-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
     <div className="modal-head"><h2 id="tracking-modal-title">{titles[draft.action]}</h2><button type="button" className="btn ghost" onClick={onClose}>關閉</button></div>
-    <p>{TRACKING_HELP[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
+    <p>{trackingHelp(audience)[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
     <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>
     <fieldset disabled={readOnly} style={{border:0,padding:0,margin:0,minWidth:0}}>
     {draft.action === 'create' && <label>新增跟蹤類型<select aria-label="新增跟蹤類型" disabled={pending} value={draft.rows[0].kind} onChange={event=>change({rows:draft.rows.map(row=>({...row,kind:event.target.value as TrackingKind}))})}><option value="supply">配件物料</option><option value="engineering">工程</option></select><small>同一批採同船、同類型；切換類型不更換原草稿 ID。</small></label>}

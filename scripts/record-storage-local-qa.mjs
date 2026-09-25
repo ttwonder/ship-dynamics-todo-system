@@ -11,7 +11,7 @@ import {shipInternalControlRpcArgs} from './ship-internal-control-local-fixture.
 
 // Internal QA only: real mounted UI + synthetic data + real embedded PostgreSQL.
 // NOT hosted Supabase/PostgREST/Realtime. No remote URL or credential input.
-export async function createRecordStorageLocalQa({manualReportAuthority=false,browserAuthority=false,dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,shipInternalControl=false,performanceTrace=false,scopedRead=false,tracking=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
+export async function createRecordStorageLocalQa({manualReportAuthority=false,browserAuthority=false,dataManagement=false,dailyMorning=false,internalControl=false,shipExcel=false,shipInternalControl=false,shipTracking=false,performanceTrace=false,scopedRead=false,tracking=false,taskMember=false,preparePerformanceFixture=null,databaseFactory=null,handoverMigrationFixture=null,legacySnapshot=false}={}) {
  if(preparePerformanceFixture&&!performanceTrace)throw new Error('Performance fixture requires explicit performanceTrace');
  // Opt-in private native QA supplies an already identity-verified connection.
  // The existing browser/PGlite default and migration/seed chain stay unchanged.
@@ -33,6 +33,7 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
   ...(browserAuthority?{read_ship_dynamics_browser_authority_v1:['p_workspace_key'],apply_ship_dynamics_block_patch_v2:requestArgs,get_ship_dynamics_block_patch_receipt:requestArgs}:{}),
   ...(shipExcel?shipExcelRpcArgs:{}),
   ...(shipInternalControl?shipInternalControlRpcArgs:{}),
+   ...(shipTracking?{ship_dynamics_tracking_public_v1:['p_workspace_key','p_vessel_id','p_actor_key:uuid','p_holder:uuid','p_action','p_payload:jsonb']}:{}),
   ...recordWriteArgs,
   ...(taskMember?Object.fromEntries(['save_ship_dynamics_task_member_v1','get_ship_dynamics_task_member_receipt_v1'].map(name=>[name,['p_workspace_key','p_operation_id','p_task_id','p_vessel_id','p_command:jsonb','p_expected:jsonb','p_actor_user_id','p_actor_guard:jsonb','p_lock_guards:jsonb']])):{}),
   ...(taskMember?{read_ship_dynamics_task_member_v1:['p_workspace_key','p_task_id','p_vessel_id','p_actor_user_id'],renew_ship_dynamics_task_member_lock_v1:['p_workspace_key','p_section_key','p_locked_by','p_lease_version','p_ttl_seconds:integer'],release_ship_dynamics_task_member_lock_v1:['p_workspace_key','p_section_key','p_locked_by','p_lease_version']}:{}),
@@ -127,7 +128,7 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
      try{
       const value=await db.transaction(async tx=>{
        if(trace)trace.sqlStartedMs=performance.timeOrigin+performance.now();
-       if(browserAuthority&&name==='read_ship_dynamics_browser_authority_v1'||shipExcel&&Object.hasOwn(shipExcelRpcArgs,name)||shipInternalControl&&Object.hasOwn(shipInternalControlRpcArgs,name))await tx.exec('set local role anon');
+       if(browserAuthority&&name==='read_ship_dynamics_browser_authority_v1'||shipExcel&&Object.hasOwn(shipExcelRpcArgs,name)||shipInternalControl&&Object.hasOwn(shipInternalControlRpcArgs,name)||shipTracking&&name==='ship_dynamics_tracking_public_v1')await tx.exec('set local role anon');
        await tx.query("select set_config('request.headers',$1,true)",[JSON.stringify({'x-forwarded-for':'192.0.2.30','cf-ipcountry':'TW'})]);
        const params=args.map(arg=>{const[key,type]=arg.split(':');if(body[key]==null)return null;return type==='jsonb'?JSON.stringify(body[key]):body[key];});
        const result=(await tx.query(`select public.${name}(${args.map((arg,index)=>`$${index+1}::${arg.split(':')[1]||'text'}`).join(',')}) as result`,params)).rows[0].result;

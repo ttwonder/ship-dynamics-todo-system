@@ -1,0 +1,8 @@
+.ship-tracking-portal{min-width:0;grid-template-columns:minmax(0,1fr)}
+.ship-tracking-portal>.ship-portal-header{flex-wrap:wrap;min-width:0}
+.ship-tracking-portal>.ship-portal-header>div{min-width:0;flex:1 1 auto}
+.ship-tracking-portal>.ship-portal-header p{font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.ship-tracking-portal>.tracking-page{padding:0 6px 6px;border:1px solid var(--line);border-radius:8px;background:var(--paper,#fff)}
+.ship-tracking-portal .ship-tracking-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.ship-tracking-portal .ship-tracking-case{width:min(920px,calc(100vw - 16px));max-height:calc(100dvh - 24px);overflow:auto}
+@media print{.ship-tracking-portal>.ship-portal-header,.ship-tracking-portal>.ship-notice{display:none!important}}
