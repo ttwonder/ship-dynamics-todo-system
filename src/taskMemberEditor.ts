@@ -186,5 +186,5 @@ export class TaskMemberEditor {
   }
   async suspend(){++this.generation;this.writable=false;if(this.timer)clearInterval(this.timer);this.timer=null;const lease=this.lease;this.lease=null;await this.release(lease);}
   async dispose(){this.disposed=true;++this.generation;if(this.timer)clearInterval(this.timer);this.timer=null;const lease=this.lease;this.lease=null;try{await this.release(lease);}catch{/* only the captured old lease may expire */}}
-  async close(){if(this.busy)return false;for(const scope of this.contexts.keys())if(!localStorage.getItem(memberPendingKey(this.config,this.actorId,this.taskId,scope)))this.drafts.removeDraft(this.workspace(),this.actorId,this.draftEntity(scope));this.disposed=true;++this.generation;if(this.timer)clearInterval(this.timer);this.timer=null;const lease=this.lease;this.lease=null;await this.release(lease);return true;}
+  async close(confirmedScope?:string){if(this.busy)return false;for(const scope of this.contexts.keys())if((!confirmedScope||scope===confirmedScope)&&!localStorage.getItem(memberPendingKey(this.config,this.actorId,this.taskId,scope)))this.drafts.removeDraft(this.workspace(),this.actorId,this.draftEntity(scope));this.disposed=true;++this.generation;if(this.timer)clearInterval(this.timer);this.timer=null;const lease=this.lease;this.lease=null;await this.release(lease);return true;}
 }

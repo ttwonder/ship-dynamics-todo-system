@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { preserveItineraryCurrentVesselState, createBlankItineraryRow, createItineraryId, ITINERARY_TIME_ZONE_FIELDS, resolveItineraryTimeZone, type ItineraryDocument, type ItineraryRow, type ItineraryTimeField } from './itineraryTypes';
 import { pendingOperationForDocument } from './itineraryOperation';
-import { resequenceItineraryRows } from './itineraryDomain';
+import { recalculateItineraryRows, resequenceItineraryRows } from './itineraryDomain';
 import { instantToWallTime, wallTimeToInstant } from './itineraryTime';
 import { deleteItineraryDraft, itineraryDraftKey, saveItineraryDraft, type ItineraryPendingOperation } from './itineraryDraftStore';
 import { validateItineraryDocument } from './itineraryValidation';
@@ -108,7 +108,14 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   };
   const updateRow = (rowId: string, patch: Partial<ItineraryRow>) => updateDraft(current => ({
     ...current,
-    rows: current.rows.map(row => row.rowId === rowId ? { ...row, ...patch } : row),
+    rows: current.rows.map(row => {
+      if (row.rowId !== rowId) return row;
+      const updated = { ...row, ...patch };
+      // Keep the SQL-derived duration consistent without recalculating the
+      // office editor's manually entered dates or unrelated row fields.
+      if ('operationRateMtPerHour' in patch || 'operationQuantityMt' in patch) updated.operationHours = recalculateItineraryRows([updated]).rows[0].operationHours;
+      return updated;
+    }),
   }));
 
   useEffect(() => {

@@ -71,8 +71,8 @@ export const categoryChoicesForTask = (task: Pick<TaskItem, 'sourceType' | 'sour
 
 export function normalizeMeetingTaskCategoryList(categories: unknown, choices: string[] = [...REQUIRED_MEETING_TASK_CATEGORIES]): string[] {
   const allowed = choices.length ? choices : [...REQUIRED_MEETING_TASK_CATEGORIES];
-  const allowedSet = new Set(allowed);
-  const list = Array.isArray(categories) ? categories.filter((item): item is string => typeof item === 'string') : [];
-  const clean = Array.from(new Set(list.map(item => item.trim()).filter(item => item && allowedSet.has(item))));
+  // Choices govern new selection/defaults, not already-saved historical values.
+  const list = Array.isArray(categories) ? categories.filter((item): item is string => typeof item === 'string') : typeof categories === 'string' ? [categories] : [];
+  const clean = Array.from(new Set(list.map(item => item.trim()).filter(Boolean)));
   return clean.length ? clean : [allowed[0]];
 }

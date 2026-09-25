@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { LocalDemoItineraryBackend, type ItineraryLease } from './itineraryCollaboration';
 import { createDemoItineraryDocuments } from './itineraryDemoData';
 import { ITINERARY_DEMO_VESSELS } from './itineraryDemoVessels';
-import { deleteItineraryDraft, itineraryDraftKey, readItineraryDraft, saveItineraryDraft, type ItineraryPendingOperation } from './itineraryDraftStore';
+import { deleteItineraryDraft, deleteItineraryDraftIfUnchanged, itineraryDraftKey, readItineraryDraft, saveItineraryDraft, type ItineraryPendingOperation } from './itineraryDraftStore';
 import { downloadItineraryWorkbook, downloadItineraryWorkbookWithAlternatives, parseItineraryWorkbook } from './itineraryExcel';
 import { formatItinerarySaveConfirmation, formatRelativeUpdatedAt } from './itineraryTime';
 import { createEmptyItineraryDocument, createItineraryId, type ItineraryDocument } from './itineraryTypes';
@@ -24,6 +24,7 @@ import ShipItineraryBriefDialog from './ShipItineraryBriefDialog';
 import { shipItineraryVesselOptionName, sortShipItineraryVesselsByEnglishName } from './itineraryVesselDisplay';
 
 interface EditorState {
+  session: object;
   draft: ItineraryDocument;
   baseRevision: number;
   lease: ItineraryLease;
@@ -102,9 +103,15 @@ export default function ShipItineraryPortal() {
   const vessels = demoMode ? ITINERARY_DEMO_VESSELS : cloudVessels;
   const vesselOptions = useMemo(() => sortShipItineraryVesselsByEnglishName(vessels), [vessels]);
   const [selectedVesselId, setSelectedVesselId] = useState('');
+  const selectedVesselRef = useRef(''), openGeneration = useRef(0);
   const [latest, setLatest] = useState<ItineraryDocument | null>(null);
-  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [editor, setEditorState] = useState<EditorState | null>(null);
   const editorRef = useRef<EditorState | null>(null);
+  const setEditor = (next: EditorState | null | ((previous: EditorState | null) => EditorState | null)) => {
+    const value = typeof next === 'function' ? next(editorRef.current) : next;
+    editorRef.current = value;
+    setEditorState(value);
+  };
   const [notice, setNoticeState] = useState<PortalNotice | null>(null);
   const [noticeNowMs, setNoticeNowMs] = useState(() => Date.now());
   const setNotice = (text: string) => setNoticeState(text ? { kind: 'text', text } : null);
@@ -113,7 +120,6 @@ export default function ShipItineraryPortal() {
   const [briefOpen, setBriefOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { editorRef.current = editor; }, [editor]);
 
   useEffect(() => {
     if (notice?.kind !== 'saved') return;
@@ -137,6 +143,7 @@ export default function ShipItineraryPortal() {
 
   useEffect(() => {
     if (!backend || !selectedVesselId) { setLatest(null); return; }
+    setLatest(null);
     let current = true;
     void Promise.resolve(backend.loadDocument(selectedVesselId)).then(document => {
       if (!current) return;
@@ -206,12 +213,15 @@ export default function ShipItineraryPortal() {
   }, [backend]);
 
   const startEditing = async (mode: 'blank' | 'latest') => {
-    if (!backend || !latest) return;
+    if (!backend || !latest || latest.vesselId !== selectedVesselRef.current) return;
     if (mode === 'blank' && !window.confirm('這將清空之前的記錄，如要更新，請點擊“從最新狀態修改”。是否繼續？')) return;
+    const generation = ++openGeneration.current;
+    const current = () => generation === openGeneration.current && latest.vesselId === selectedVesselRef.current;
     const vessel = vessels.find(item => item.id === latest.vesselId);
     const claim = localBackend
       ? await localBackend.claimLease(latest.vesselId, { holderId, holderLabel: `船端：${vessel?.name || latest.vesselName}` }, 75)
       : await cloudBackend!.claimLease(latest.vesselId, holderId, 75);
+    if (!current()) { if (claim.ok) await backend.releaseLease(claim.lease); return; }
     if (claim.ok === false) {
       setNotice(`目前由「${claim.holderLabel}」編輯中，暫時不能修改。`);
       return;
@@ -225,21 +235,25 @@ export default function ShipItineraryPortal() {
       setNotice(error instanceof Error ? error.message : '取得最新 Itinerary 失敗，未開啟編輯器。');
       return;
     }
+    if (!current()) { await backend.releaseLease(claim.lease); return; }
     setLatest(previous => selectLatestItineraryDocument(previous, editingBase));
     let draft = createShipDraft(editingBase, mode);
     let pendingOperation: ItineraryPendingOperation | undefined;
     const key = itineraryDraftKey(editingBase.workspaceKey, editingBase.vesselId, draftActorId);
     const saved = await readItineraryDraft(key);
+    if (!current()) { await backend.releaseLease(claim.lease); return; }
     if (mode === 'blank') await deleteItineraryDraft(key);
     else if (saved && saved.baseRevision === editingBase.revision && window.confirm('找到本機草稿，是否恢復？')) {
       draft = saved.document;
       pendingOperation = saved.pendingOperation;
     }
-    setEditor({ draft, baseRevision: editingBase.revision, lease: claim.lease, dirty: mode === 'blank' ? false : Boolean(saved), readOnly: false, remoteUpdated: false, pendingOperation });
+    if (!current()) { await backend.releaseLease(claim.lease); return; }
+    setEditor({ session: {}, draft, baseRevision: editingBase.revision, lease: claim.lease, dirty: mode === 'blank' ? false : Boolean(saved), readOnly: false, remoteUpdated: false, pendingOperation });
     setNotice('');
   };
 
   const closeEditor = () => {
+    openGeneration.current++;
     if (editor && backend) void backend.releaseLease(editor.lease);
     setEditor(null);
   };
@@ -252,7 +266,7 @@ export default function ShipItineraryPortal() {
   };
 
   const saveEditor = async () => {
-    if (!editor || !backend || editor.readOnly || editor.remoteUpdated) return;
+    if (!editor || !backend || saving || editor.readOnly || editor.remoteUpdated || editor.draft.vesselId !== selectedVesselRef.current) return;
     if (!hasShipPreviousPortName(editor.draft)) { setNotice('請填寫上一港名稱。'); return; }
     if (!hasShipDraftBusinessContent(editor.draft)) { setNotice('請至少填寫一列 Itinerary 資料。'); return; }
     const candidate = trimTrailingBlankShipRows(editor.draft);
@@ -265,15 +279,41 @@ export default function ShipItineraryPortal() {
     await saveItineraryDraft({ key: itineraryDraftKey(editor.draft.workspaceKey, editor.draft.vesselId, draftActorId), workspaceKey: editor.draft.workspaceKey, vesselId: editor.draft.vesselId, actorId: draftActorId, baseRevision: editor.baseRevision, savedAt: new Date().toISOString(), document: validation.value, pendingOperation });
     const result = await backend.save({ document: validation.value, expectedRevision: editor.baseRevision, operationId: pendingOperation.id, lease: editor.lease, actorLabel: `船端：${editor.draft.vesselName}` });
     setSaving(false);
+    const ownsEditor = () => editorRef.current?.session === editor.session;
+    if (!ownsEditor()) return;
     if (result.ok === false) {
       setNotice(saveError(result.code));
       setEditor(previous => previous ? { ...previous, pendingOperation: result.code === 'unknown-outcome' ? pendingOperation : undefined, readOnly: result.code === 'unknown-outcome' ? previous.readOnly : result.code === 'revision-conflict' || result.code === 'lease-expired' || result.code === 'lease-mismatch' ? true : previous.readOnly, remoteUpdated: result.code === 'revision-conflict' } : previous);
       if (result.code !== 'unknown-outcome') await saveItineraryDraft({ key: itineraryDraftKey(editor.draft.workspaceKey, editor.draft.vesselId, draftActorId), workspaceKey: editor.draft.workspaceKey, vesselId: editor.draft.vesselId, actorId: draftActorId, baseRevision: editor.baseRevision, savedAt: new Date().toISOString(), document: validation.value });
       return;
     }
-    await deleteItineraryDraft(itineraryDraftKey(result.document.workspaceKey, result.document.vesselId, draftActorId));
+    const key = itineraryDraftKey(result.document.workspaceKey, result.document.vesselId, draftActorId);
+    setLatest(previous => selectLatestItineraryDocument(previous, withPublicVesselName(result.document, vessels.find(vessel => vessel.id === result.document.vesselId))));
+    const unchanged = () => ownsEditor() && editorRef.current?.draft === editor.draft;
+    const retainLaterDraft = async () => {
+      const current = editorRef.current;
+      if (!current || !ownsEditor()) return;
+      const next = { ...current, draft: { ...current.draft, revision: result.document.revision, updatedAt: result.document.updatedAt }, baseRevision: result.document.revision, pendingOperation: undefined, readOnly: true };
+      setEditor(next);
+      await saveItineraryDraft({ key, workspaceKey: next.draft.workspaceKey, vesselId: next.draft.vesselId, actorId: draftActorId, baseRevision: next.baseRevision, savedAt: new Date().toISOString(), document: next.draft });
+      if (!ownsEditor()) return;
+      // A successful SQL save consumes its lease. Keep the later draft and
+      // obtain a fresh fence; expectedRevision remains the exact confirmed one.
+      try {
+        const claim = localBackend
+          ? await localBackend.claimLease(next.draft.vesselId, { holderId, holderLabel: `船端：${next.draft.vesselName}` }, 75)
+          : await cloudBackend!.claimLease(next.draft.vesselId, holderId, 75);
+        if (!ownsEditor()) { if (claim.ok) await backend.releaseLease(claim.lease); return; }
+        if (claim.ok === true) setEditor(previous => previous ? { ...previous, lease: claim.lease, readOnly: previous.remoteUpdated } : previous);
+        else setNotice(`目前由「${claim.holderLabel}」編輯中，暫時不能修改。`);
+      } catch { if (ownsEditor()) setNotice('編輯鎖更新失敗；已凍結畫面並保留草稿。'); }
+    };
+    if (!unchanged()) { await retainLaterDraft(); return; }
+    const stored = await readItineraryDraft(key);
+    if (!unchanged()) { await retainLaterDraft(); return; }
+    if (stored && !await deleteItineraryDraftIfUnchanged(stored, unchanged)) { await retainLaterDraft(); return; }
+    if (!unchanged()) { await retainLaterDraft(); return; }
     void backend.releaseLease(editor.lease);
-    setLatest(withPublicVesselName(result.document, vessels.find(vessel => vessel.id === result.document.vesselId)));
     setEditor(null);
     setNoticeState({ kind: 'saved', updatedAt: result.document.updatedAt });
   };
@@ -327,7 +367,7 @@ export default function ShipItineraryPortal() {
       return;
     }
     setLatest(previous => selectLatestItineraryDocument(previous, editingBase));
-    setEditor({ draft: createShipDraft(editingBase, 'latest'), baseRevision: editingBase.revision, lease: claim.lease, dirty: false, readOnly: false, remoteUpdated: false, pendingOperation: undefined });
+    setEditor({ session: {}, draft: createShipDraft(editingBase, 'latest'), baseRevision: editingBase.revision, lease: claim.lease, dirty: false, readOnly: false, remoteUpdated: false, pendingOperation: undefined });
     setNotice('已載入最新版本；先前草稿仍保留至下一次修改。');
   };
 
@@ -360,7 +400,7 @@ export default function ShipItineraryPortal() {
   return <main className="ship-portal-shell">
     <header className="ship-portal-header ship-itinerary-header"><div>{demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div>
       <a className="ship-internal-control-shortcut" href={`${import.meta.env.BASE_URL}ship-internal-control.html`} target="_blank" rel="noopener noreferrer" title="另開分頁前往船端內控／訴求">內控異常/訴求/報告需求</a>
-      <div className="ship-vessel-picker"><div className="ship-vessel-picker-label"><button type="button" className="btn ghost small" onClick={() => setBriefOpen(true)}>簡要說明</button><label htmlFor="ship-vessel-select">船名</label></div><select id="ship-vessel-select" value={selectedVesselId} disabled={Boolean(editor)} onChange={event => setSelectedVesselId(event.target.value)}><option value="">請選擇船舶</option>{vesselOptions.map(vessel => <option value={vessel.id} key={vessel.id}>{shipItineraryVesselOptionName(vessel)}</option>)}</select></div></header>
+      <div className="ship-vessel-picker"><div className="ship-vessel-picker-label"><button type="button" className="btn ghost small" onClick={() => setBriefOpen(true)}>簡要說明</button><label htmlFor="ship-vessel-select">船名</label></div><select id="ship-vessel-select" value={selectedVesselId} disabled={Boolean(editor)} onChange={event => { selectedVesselRef.current = event.target.value; openGeneration.current++; setLatest(null); setSelectedVesselId(event.target.value); }}><option value="">請選擇船舶</option>{vesselOptions.map(vessel => <option value={vessel.id} key={vessel.id}>{shipItineraryVesselOptionName(vessel)}</option>)}</select></div></header>
     {briefOpen && <ShipItineraryBriefDialog onClose={() => setBriefOpen(false)} />}
     {notice && <div className="ship-notice">{notice.kind === 'saved' ? formatItinerarySaveConfirmation(notice.updatedAt, noticeNowMs) : notice.text}</div>}
     {!selectedVesselId && <div className="ship-state-card compact"><b>先選擇船名</b><span>再選擇從空白或最新狀態開始。</span></div>}

@@ -80,7 +80,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
   const [selectedVesselId, setSelectedVesselId] = useState(activeVessels[0]?.id || '');
   const [creatingUser, setCreatingUser] = useState(false);
   const [creatingVessel, setCreatingVessel] = useState(false);
-  const person = useManagementDraft<UserDraft>(() => userDraft(currentUser, '', activeVessels), reportDraft('persistent'));
+  const person = useManagementDraft<UserDraft>(() => userDraft(currentUser, '', data.vessels), reportDraft('persistent'));
   const personDraft=person.value, setPersonDraft=person.edit;
   const ship = useManagementDraft<VesselDraft>(() => vesselDraft(activeVessels[0]), reportDraft('persistent'));
   const shipDraft=ship.value, setShipDraft=ship.edit;
@@ -113,7 +113,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
   useEffect(() => {
     if (creatingUser) return;
     const selected = data.users.find(u => u.id === selectedUserId);
-    if (selected) person.refresh(userDraft(selected, '', activeVessels));
+    if (selected) person.refresh(userDraft(selected, '', data.vessels));
   }, [selectedUserId, data.revision, creatingUser, currentUser.id, owner]);
   useEffect(() => {
     if (creatingVessel) return;
@@ -147,7 +147,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
     if (!allowDiscard(person.isDirty())) return false;
     setCreatingUser(false);
     setSelectedUserId(id);
-    person.initialize(userDraft(user, '', activeVessels));
+    person.initialize(userDraft(user, '', data.vessels));
     setAssignmentQuery('');
     return true;
   };
@@ -211,12 +211,12 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
     const id = creatingUser ? newUserId.current : selectedUserId;
     const selected = targetUser;
     if (!creatingUser && !selected) return;
-    if (selected?.id === currentUser.id && personDraft.role !== 'owner') return alert('目前登入的 Owner 不可降級自己');
+    if (owner && selected?.id === currentUser.id && personDraft.role !== 'owner') return alert('目前登入的 Owner 不可降級自己');
     const passwordRequired = personDraft.role === 'owner' || personDraft.role === 'admin';
     const passwordHash = personDraft.password ? await sha256(personDraft.password) : selected?.passwordHash || '';
-    const managedIds = personDraft.role === 'owner' ? [] : activeVessels.filter(v => personDraft.managedVesselIds.includes(v.id)).map(v => v.id);
+    const managedIds = personDraft.role === 'owner' ? [] : data.vessels.filter(v => personDraft.managedVesselIds.includes(v.id)).map(v => v.id);
     const delegateVessels = canManageVesselAssignments({ role: personDraft.role, isActive: personDraft.isActive })
-      ? activeVessels.filter(v => !managedIds.includes(v.id) && personDraft.delegateVessels.some(delegate => delegate.vesselId === v.id)).map(v => ({ vesselId: v.id, isActive: Boolean(personDraft.delegateVessels.find(delegate => delegate.vesselId === v.id)?.isActive) }))
+      ? data.vessels.filter(v => !managedIds.includes(v.id) && personDraft.delegateVessels.some(delegate => delegate.vesselId === v.id)).map(v => ({ vesselId: v.id, isActive: Boolean(personDraft.delegateVessels.find(delegate => delegate.vesselId === v.id)?.isActive) }))
       : [];
     if(!transaction()||!continuation.sameEditor())return;
     const saved=await commit(d => {
@@ -282,11 +282,14 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
     if (!canManageVessels) return alert('目前角色未獲授權管理船舶');
     if (!shipDraft.shortName.trim() && !shipDraft.name.trim()) return alert('請填寫船名或簡稱');
     const id = creatingVessel ? newVesselId.current : selectedVesselId;
-    const assignedIds = activeUsers.filter(u => canManageVesselAssignments(u) && shipDraft.assignedUserIds.includes(u.id)).map(u => u.id);
-    const delegateManagers = shipDraft.delegateManagers.filter(delegate => activeUsers.some(user => canManageVesselAssignments(user) && user.id === delegate.userId && !assignedIds.includes(user.id)));
     if(!transaction()||!continuation.sameEditor())return;
+    let confirmedDraft = shipDraft;
     const saved=await commit(d => {
       let vessel = d.vessels.find(v => v.id === id);
+      if (!creatingVessel && !vessel) throw new Error('船舶資料已變更，原草稿已保留');
+      const submitted = creatingVessel ? shipDraft : continuation.merge(vesselDraft(vessel));
+      const assignedIds = d.users.filter(u => canManageVesselAssignments(u) && submitted.assignedUserIds.includes(u.id)).map(u => u.id);
+      const delegateManagers = submitted.delegateManagers.filter(delegate => d.users.some(user => canManageVesselAssignments(user) && user.id === delegate.userId && !assignedIds.includes(user.id)));
       if (!vessel) {
         const at = nowIso();
         vessel = {
@@ -298,18 +301,20 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
         };
         d.vessels.push(vessel);
       }
-      Object.assign(vessel, { name: shipDraft.name.trim() || shipDraft.shortName.trim(), shortName: shipDraft.shortName.trim() || shipDraft.name.trim(), fullName: shipDraft.fullName.trim(), shipType: shipDraft.shipType.trim(), yearLabel: shipDraft.yearLabel.trim(), tonnageLabel: shipDraft.tonnageLabel.trim(), fleetCategory: shipDraft.fleetCategory, isActive: shipDraft.isActive, assignedUserIds: assignedIds, delegateManagers, updatedAt: nowIso() });
+      Object.assign(vessel, { name: submitted.name.trim() || submitted.shortName.trim(), shortName: submitted.shortName.trim() || submitted.name.trim(), fullName: submitted.fullName.trim(), shipType: submitted.shipType.trim(), yearLabel: submitted.yearLabel.trim(), tonnageLabel: submitted.tonnageLabel.trim(), fleetCategory: submitted.fleetCategory, isActive: submitted.isActive, assignedUserIds: assignedIds, delegateManagers, updatedAt: nowIso() });
       d.users.forEach(u => {
-        if (!shipDraft.isActive && u.role === 'vessel' && u.managedVesselIds.includes(id)) u.isActive = false;
+        if (!submitted.isActive && u.role === 'vessel' && u.managedVesselIds.includes(id)) u.isActive = false;
         if (u.role === 'owner') { u.managedVesselIds = []; return; }
         if (!canManageVesselAssignments(u)) { vessel.delegateManagers = (vessel.delegateManagers || []).filter(delegate => delegate.userId !== u.id); return; }
         const assigned = assignedIds.includes(u.id);
         u.managedVesselIds = assigned ? Array.from(new Set([...(u.managedVesselIds || []), id])) : (u.managedVesselIds || []).filter(vesselId => vesselId !== id);
         if (assigned) vessel.delegateManagers = (vessel.delegateManagers || []).filter(delegate => delegate.userId !== u.id);
       });
+      confirmedDraft = vesselDraft(vessel);
     }, creatingVessel ? '新增船舶' : '更新船舶', 'vessel', id, vesselDisplayName(shipDraft), transaction);
     if(!saved||!continuation.unchanged())return;
     continuation.clean();
+    ship.refresh(confirmedDraft);
     setCreatingVessel(false);
     setSelectedVesselId(id);
     setSaveNotice(`✓ ${creatingVessel ? '船舶已建立' : '船舶資料已保存'}`);
@@ -538,7 +543,7 @@ function AttentionGuide() {
 
 function RolePermissionMatrix({ matrix, editable, onChange }: { matrix:RolePermissions; editable:boolean; onChange:(role:UserRole,key:PermissionKey,value:boolean)=>void }) {
   const roles: UserRole[] = ['owner','admin','operator','vessel'];
-  const isFixed = (role:UserRole, key:PermissionKey) => role === 'owner' || role === 'vessel' || key === 'enterManagement' || key === 'deleteTasks' || key === 'manageRolePermissions' || key === 'manageSystemSettings' || (role === 'operator' && ['manageUsers','manageVessels','viewAuditLogs'].includes(key));
+  const isFixed = (role:UserRole, key:PermissionKey) => role === 'owner' || role === 'vessel' || key === 'enterManagement' || key === 'manageUsers' || key === 'deleteTasks' || key === 'manageRolePermissions' || key === 'manageSystemSettings' || (role === 'operator' && ['manageUsers','manageVessels','viewAuditLogs'].includes(key));
   return <div className="management-editor permission-editor"><EditorHeading title="角色權限矩陣" subtitle={editable ? '只有 Owner 可以調整；變更會寫入雲端主資料與操作紀錄。' : '目前為唯讀。只有 Owner 可以調整角色權限。'}/><div className="permission-legend"><span>● 可使用</span><span>○ 不可使用</span><span>🔒 固定安全規則</span></div>{(['業務內容','管理功能'] as const).map(group => <EditorSection key={group} title={group}><div className="permission-table"><div className="permission-row permission-head"><b>權限項目</b>{roles.map(role=><b key={role}>{roleLabel(role)}</b>)}</div>{PERMISSION_KEYS.filter(key=>PERMISSION_LABELS[key].group===group).map(key=><div className="permission-row" key={key}><span><b>{PERMISSION_LABELS[key].label}</b>{PERMISSION_LABELS[key].fixed&&<small>{PERMISSION_LABELS[key].fixed}</small>}</span>{roles.map(role=>{const fixed=isFixed(role,key);const checked=matrix[role][key];return <label key={role} className={`permission-switch ${checked?'enabled':''} ${fixed?'fixed':''}`} title={fixed?'固定安全規則':editable?'點擊切換':'僅 Owner 可調整'}><input type="checkbox" checked={checked} disabled={!editable||fixed} onChange={event=>onChange(role,key,event.target.checked)}/><i/><em>{fixed?'🔒':checked?'開':'關'}</em></label>;})}</div>)}</div></EditorSection>)}</div>;
 }
 

@@ -160,7 +160,7 @@ export function VesselEditModal({ vessel, data, currentUser, close, onSave, addT
   </div></div>;
 }
 
-export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, canEditOverall, initialProgressVesselId = '', onProgressScopeChange, memberConfirmation, memberDraftChanged, memberQuickStatus, readOnly = false, readOnlyReason = '', close, onDraftChange, onSave, onSaveVesselProgress, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; canEditOverall: boolean; initialProgressVesselId?: string; onProgressScopeChange?: (scope:string)=>Promise<TaskItem|null>; memberConfirmation?: import('./taskMemberEditor').MemberConfirmation; memberDraftChanged?: (task:TaskItem,scope:string,quickStatus:string)=>void; memberQuickStatus?: string; readOnly?: boolean; readOnlyReason?: string; close: () => void; onDraftChange?: (task: TaskItem) => void; onSave: (task: TaskItem, creating: boolean, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onSaveVesselProgress: (task: TaskItem, vesselId: string, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onDelete: () => boolean | Promise<boolean> }) {
+export function TaskEditModal({ task, creating = false, data, visibleVessels, currentUser, canClose, canDelete, canCancelInternalControl, canEditOverall, initialProgressVesselId = '', onProgressScopeChange, memberConfirmation, memberDraftChanged, memberQuickStatus, readOnly = false, readOnlyReason = '', close, closeConfirmedMember, onDraftChange, onSave, onSaveVesselProgress, onDelete }: { task?: TaskItem; creating?: boolean; data: AppData; visibleVessels: Vessel[]; currentUser: UserAccount; canClose: boolean; canDelete: boolean; canCancelInternalControl: boolean; canEditOverall: boolean; initialProgressVesselId?: string; onProgressScopeChange?: (scope:string)=>Promise<TaskItem|null>; memberConfirmation?: import('./taskMemberEditor').MemberConfirmation; memberDraftChanged?: (task:TaskItem,scope:string,quickStatus:string)=>void; memberQuickStatus?: string; readOnly?: boolean; readOnlyReason?: string; close: () => void; closeConfirmedMember?: (scope:string) => void; onDraftChange?: (task: TaskItem) => void; onSave: (task: TaskItem, creating: boolean, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onSaveVesselProgress: (task: TaskItem, vesselId: string, expectedUpdatedAt: string, expectedRevision: number) => boolean | Promise<boolean>; onDelete: () => boolean | Promise<boolean> }) {
   const [saving,setSaving]=useState(false);
   useEscapeClose(()=>{if(!saving)close();});
   const [draft, setDraft] = useState<TaskItem | null>(() => task ? clone(task) : null);
@@ -217,6 +217,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const taskScopeIds=taskVesselIds(draft);
   const visibleScopeIds=taskScopeIds.filter(id=>visibleVessels.some(vessel=>vessel.id===id));
   const editingSingleVessel=perVesselMode&&progressScope!=='overall';
+  const lifecycleReadOnly=readOnly||!canClose||(perVesselMode&&!editingSingleVessel);
   const globalReadOnly=readOnly||saving||editingSingleVessel||(perVesselMode&&!canEditOverall);
   const change = (fn: (target: TaskItem) => void) => {if(saving&&!onProgressScopeChange)return;draftEditVersion.current++;setDraft(previous => { if (!previous) return previous; const next=clone(previous); fn(next); next.updatedAt=nowIso(); next.updatedBy=currentUser.id; if(creating)onDraftChange?.(clone(next)); return next; });};
   const trackingEffect=currentUser.role!=='vessel'?trackingLifecycleExplanation(data,task.internalControlCaseId):'';
@@ -236,7 +237,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   });
   const addStatus = () => { const value=quickStatus.trim(); if(!value||readOnly)return; changeProgress(target=>{target.status=value;target.statusLogs.unshift({id:uid('log'),at:nowIso(),by:currentUser.name,byUserId:currentUser.id,text:value});});setQuickStatus(''); };
   const toggleClosed = () => {
-    if (!canClose||readOnly) return alert('目前角色未獲授權結案或重新開啟待辦');
+    if (lifecycleReadOnly) return alert('請切換至已授權的單船進度，或確認目前身份可結案此待辦');
     if (selectedProgress.isClosed) {
       changeProgress(target=>{target.isClosed=false;delete target.closedDate;delete target.closedBy;});
       return;
@@ -246,7 +247,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     changeProgress(target=>{target.isClosed=true;target.closedDate=closedDate;target.closedBy=currentUser.id;});
   };
   const setCompletionDate = (closedDate: string) => {
-    if (!canClose||readOnly) return alert('目前角色未獲授權結案或重新開啟待辦');
+    if (lifecycleReadOnly) return alert('請切換至已授權的單船進度，或確認目前身份可結案此待辦');
     changeProgress(target=>{
       if (closedDate) { target.isClosed=true; target.closedDate=closedDate; target.closedBy ||= currentUser.id; }
       else { target.isClosed=false; delete target.closedDate; delete target.closedBy; }
@@ -256,7 +257,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     if(saving)return;
     if(editingSingleVessel){
       setSaving(true);
-      try{const version=draftEditVersion.current;if(await onSaveVesselProgress(draft,progressScope,expectedUpdatedAtRef.current,expectedRevisionRef.current)&&draftEditVersion.current===version)close();}
+      try{const version=draftEditVersion.current;if(await onSaveVesselProgress(draft,progressScope,expectedUpdatedAtRef.current,expectedRevisionRef.current)&&draftEditVersion.current===version)(closeConfirmedMember?closeConfirmedMember(progressScope):close());}
       finally{setSaving(false);}
       return;
     }
@@ -305,7 +306,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const plannedSchedule=parsedPlannedDuration.ok&&parsedPlannedDuration.value!==undefined
     ?buildPlannedTaskSchedule(draft.plannedStartDate,parsedPlannedDuration.value,'UTC')
     :null;
-  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" disabled={saving} onClick={()=>void remove()}>刪除待辦</button>}{!readOnly&&!creating&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} title={trackingEffect || undefined} disabled={saving} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" disabled={saving} onClick={close}>{readOnly?'關閉':creating?'取消並關閉':'取消'}</button>{!readOnly&&<button className="btn primary" disabled={saving} onClick={save}>{saving?'正在確認雲端…':creating?'保存並關閉':'保存變更'}</button>}</div></div>
+  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" disabled={saving} onClick={()=>void remove()}>刪除待辦</button>}{!readOnly&&!creating&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} title={trackingEffect || undefined} disabled={saving||lifecycleReadOnly} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" disabled={saving} onClick={close}>{readOnly?'關閉':creating?'取消並關閉':'取消'}</button>{!readOnly&&<button className="btn primary" disabled={saving} onClick={save}>{saving?'正在確認雲端…':creating?'保存並關閉':'保存變更'}</button>}</div></div>
     <TrackingLifecycleHint text={trackingEffect}/>
     {readOnly&&readOnlyReason&&<div className="callout info read-only-server-note" role="status"><b>只讀詳情</b><span>{readOnlyReason}；此頁不可修改或保存。</span></div>}
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
@@ -326,7 +327,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     {draft.isInternalControl&&(draft.categories||[]).includes('設備故障')&&<div className="field"><label>設備故障細項<span className="danger-note" aria-hidden="true">＊</span></label><select required value={draft.equipmentSubcategory||''} onChange={event=>{const value=event.target.value;change(target=>{target.equipmentSubcategory=value||undefined;});}}><option value="">請選擇</option>{data.settings.equipmentFailureSubcategories.map(item=><option key={item}>{item}</option>)}</select></div>}
     <CheckboxMultiPicker label="涉及部門" required={creating||draft.isInternalControl} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
     {currentUser.role!=='vessel'&&<MeetingPeoplePicker label="追蹤窗口" users={eligibleOwnerUsers} departments={data.settings.departments} selectedIds={draft.ownerUserIds} onChange={values=>change(target=>{target.ownerUserIds=values;})} disabled={globalReadOnly}/>}</fieldset>
-    {!creating&&<div className="grid cols-3 task-completion-date-row"><div className="field"><label>完成日期</label><input type="date" disabled={readOnly||!canClose} value={selectedProgress.closedDate||''} onChange={event=>setCompletionDate(event.target.value)}/><small>{selectedProgress.isClosed?'已結案日期；與「標記結案」彈出的日期同步':'選擇日期會同步標記為已結案'}</small></div></div>}
+    {!creating&&<div className="grid cols-3 task-completion-date-row"><div className="field"><label>完成日期</label><input type="date" disabled={lifecycleReadOnly} value={selectedProgress.closedDate||''} onChange={event=>setCompletionDate(event.target.value)}/><small>{selectedProgress.isClosed?'已結案日期；與「標記結案」彈出的日期同步':'選擇日期會同步標記為已結案'}</small></div></div>}
     {editingSingleVessel&&<div className="field vessel-progress-status"><label>單船目前狀態／決議｜{selectedVessel?vesselDisplayName(selectedVessel):progressScope}</label><RichTextEditor ariaLabel="單船目前狀態" readOnly={readOnly} value={selectedProgress.status} onChange={value=>changeProgress(target=>{target.status=value;})}/></div>}
     {(!readOnly||Boolean(quickStatus))&&<div className="quick-status-bar"><textarea value={quickStatus} readOnly={readOnly} onChange={event=>{if(!readOnly)changeQuickStatus(event.target.value);}} onKeyDown={event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();addStatus();}}} placeholder={editingSingleVessel?'快速更新此船狀態…':'快速更新總體狀態…'}/><button className="btn primary" disabled={readOnly} onClick={addStatus}>加入狀態紀錄</button></div>}
     <section className="status-history"><h3>{editingSingleVessel?'單船狀態歷程':'總體狀態歷程'}</h3>{selectedProgress.statusLogs.length?selectedProgress.statusLogs.map(log=><article key={log.id}><b>{log.text}</b><small>{formatTaipeiDateTime(log.at)}｜{log.by}</small></article>):<p className="muted">尚無狀態紀錄</p>}</section></div>

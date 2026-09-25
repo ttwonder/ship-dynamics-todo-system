@@ -53,6 +53,7 @@ export function convergeTrackingCaseLifecycle(data:TrackingGraph, previous:Inter
   const before=closureValue(source);
   const action:TrackingLifecycleAction=!saved.isClosed?'reopen':previous.isClosed?'correct-close-date':'close';
   source.isClosed=saved.isClosed;
+  if(source.kind==='engineering'&&action==='close')source.closureOutcome='completed';
   if(saved.isClosed){source.closedDate=saved.closedDate;source.closedBy=saved.closedBy;}
   else {delete source.closedDate;delete source.closedBy;}
   const event=appendTrackingEvent(source,action,before,closureValue(source),actor,at,entry,`${entry}:${saved.id}:${at}`);

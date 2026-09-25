@@ -55,14 +55,14 @@ function DateLocator<T extends { businessDate: string }>({ reports, label, onPag
   </div>;
 }
 
-function RemoteDateLocator({ label, loading, onLocate }: { label:string; loading:boolean; onLocate:(date:string)=>Promise<boolean> }) {
+function RemoteDateLocator({ label, loading, onLocate }: { label:string; loading:boolean; onLocate:(date:string)=>Promise<boolean | null> }) {
   const [date, setDate] = useState('');
   const [notice, setNotice] = useState('');
   const locate = async () => {
     if (!date) { setNotice('請先選擇日期'); return; }
     setNotice('');
     const found = await onLocate(date);
-    setNotice(found ? `已定位 ${date}` : '所選日期沒有保存記錄');
+    if (found !== null) setNotice(found ? `已定位 ${date}` : '所選日期沒有保存記錄');
   };
   return <div className="daily-report-date-locator">
     <input type="date" aria-label={label} disabled={loading} value={date} onChange={event => { setDate(event.target.value); setNotice(''); }}/>
@@ -93,7 +93,7 @@ export function ItineraryDailyHistoryPanel({ pageData, loading, errorText, openi
   openingReportId:string;
   onRefresh:()=>void;
   onPage:(page:number)=>void;
-  onLocate:(date:string)=>Promise<boolean>;
+  onLocate:(date:string)=>Promise<boolean | null>;
   onOpen:(report:ItineraryDailyReportSummary)=>void;
   onShowVessel?:()=>void;
 }) {
@@ -236,12 +236,12 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
     viewGeneration.current += 1; setPreview(null); setOpeningReportId(''); setSingleVessel(single);
   };
 
-  const refresh = useCallback(async (requestedPage: number) => {
+  const refresh = useCallback(async (requestedPage: number, preserveError = false) => {
     const generation = ++requestGeneration.current;
     const isCurrent = capture();
     if (!isCurrent()) return;
     setLoading(true);
-    setErrorText('');
+    if (!preserveError) setErrorText('');
     try {
       const next = await listItineraryDailyReportPage(actorUserId, requestedPage, getSupabaseConfig());
       if (isCurrent() && requestGeneration.current === generation) setPageData(next);
@@ -262,29 +262,30 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
     return () => { requestGeneration.current += 1; };
   }, [refresh, refreshToken]);
 
-  const locate = async (businessDate: string): Promise<boolean> => {
+  const locate = async (businessDate: string): Promise<boolean | null> => {
     const generation = ++requestGeneration.current;
     const isCurrent = capture();
-    if (!isCurrent()) return false;
+    if (!isCurrent()) return null;
     setLoading(true);
     setErrorText('');
     try {
       const config = getSupabaseConfig();
       const location = await locateItineraryDailyReport(businessDate, actorUserId, config);
-      if (!isCurrent() || requestGeneration.current !== generation || !location.found || !location.page) return false;
+      if (!isCurrent() || requestGeneration.current !== generation) return null;
+      if (!location.found || !location.page) return false;
       const next = await listItineraryDailyReportPage(actorUserId, location.page, config);
-      if (!isCurrent() || requestGeneration.current !== generation) return false;
+      if (!isCurrent() || requestGeneration.current !== generation) return null;
       if (next.setToken !== location.setToken
         || !next.items.some(report => report.businessDate === businessDate)) {
         setPageData(next);
         setErrorText('定位期間每日 Itinerary 記錄已變更，請再定位一次。');
-        return false;
+        return null;
       }
       setPageData(next);
       return true;
     } catch (error) {
       if (isCurrent() && requestGeneration.current === generation) setErrorText(itineraryDailyReportErrorMessage(error));
-      return false;
+      return null;
     } finally {
       if (isCurrent() && requestGeneration.current === generation) setLoading(false);
     }
@@ -303,7 +304,7 @@ export default function ReportDailyHistories({ actorUserId, morningReports, onOp
     } catch (error) {
       if (!isCurrent()) return;
       setErrorText(itineraryDailyReportErrorMessage(error));
-      void refresh(pageData.page);
+      void refresh(pageData.page, true);
     } finally {
       if (isCurrent()) setOpeningReportId('');
     }

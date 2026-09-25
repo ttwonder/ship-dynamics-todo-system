@@ -643,7 +643,7 @@ function resolveSources(sourceRows: ImportedRowSource[], overrides: Record<strin
 export function resolveParsedItinerarySheet(sheet: ParsedItinerarySheet, overrides: Record<string, string>): ParsedItinerarySheet {
   const resolved = resolveSources(sheet.sourceRows, overrides);
   if (resolved.rows[0]) resolved.rows[0].previousPortName = sheet.rows[0]?.previousPortName || '';
-  return { ...sheet, rows: resolved.rows, issues: resolved.issues, timeZoneNeeds: resolved.needs };
+  return { ...sheet, rows: resolved.rows, issues: [...sheet.issues.filter(issue => issue.code === 'invalid-template'), ...resolved.issues], timeZoneNeeds: resolved.needs };
 }
 
 export async function parseItineraryWorkbook(input: ArrayBuffer): Promise<ParsedItineraryWorkbook> {

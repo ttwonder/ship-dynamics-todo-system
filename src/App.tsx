@@ -2623,7 +2623,7 @@ export default function App() {
     return member.select(scope);
   };
   const openTask = async (task: TaskItem, vesselId = '', returnVesselId = ''):Promise<TaskOpenResult> => {
-    if(!(getSupabaseConfig()&&originalAuthority.current?.source==='records-v1'&&usesPerVesselProgress(task))&&!await loadRecordActionScope(isMorningRecordScope(recordReadScope.current)?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:task.id}]}):{targets:[{collection:'tasks',id:task.id}]}))return 'failed';
+    if(!(getSupabaseConfig()&&originalAuthority.current?.source==='records-v1'&&usesPerVesselProgress(task)&&taskLockIsAuthorized(task))&&!await loadRecordActionScope(isMorningRecordScope(recordReadScope.current)?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:task.id}]}):{targets:[{collection:'tasks',id:task.id}]}))return 'failed';
     const requestGeneration=taskOpenRequests.current.begin({vesselId:returnVesselId,batchManaged:false});
     const requestIsCurrent=()=>taskOpenRequests.current.isCurrent(requestGeneration);
     const visibleTask=roleVisibleTasks.some(item=>item.id===task.id)?liveData.current.tasks.find(item=>item.id===task.id):undefined;
@@ -4538,7 +4538,7 @@ export default function App() {
     const latest=liveData.current,actor=latest.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);
     if(!actor)return;
     const canViewAll=actor.role==='owner'||actor.role==='admin'||hasPermission(latest.settings.rolePermissions,actor,'viewAllVessels');
-    const allowed=new Set(latest.vessels.filter(vessel=>vessel.isActive&&vesselMatchesUser(vessel,actor,canViewAll)).map(vessel=>vessel.id));
+    const allowed=new Set(latest.vessels.filter(vessel=>vesselMatchesUser(vessel,actor,canViewAll)).map(vessel=>vessel.id));
     if(!canViewAll&&(!report.vesselIds.length||!report.vesselIds.every(id=>allowed.has(id))))return alert('此筆早會歷史目前沒有可檢視的快照。');
     setAgendaSelection(report.vesselIds.filter(id=>allowed.has(id)));
     setReportPreviewLiveItinerarySnapshot(null);
@@ -4750,9 +4750,9 @@ export default function App() {
     setFilters({ ...emptyFilters, priorities: mode === 'high' ? ['急','高'] : [], overdueOnly: mode === 'overdue' });
     navigateToTab('total');
   };
-  const closeTaskEditor = async (requestGeneration=taskEditorRequestGeneration) => {
+  const closeTaskEditor = async (requestGeneration=taskEditorRequestGeneration, confirmedScope?:string) => {
     if(!taskOpenRequests.current.isCurrent(requestGeneration))return;
-    const member=memberEditor.current;if(member){if(!await member.close())return;if(memberEditor.current===member)memberEditor.current=null;}
+    const member=memberEditor.current;if(member){if(!await member.close(confirmedScope))return;if(memberEditor.current===member)memberEditor.current=null;}
     const closingLock=activeEditLockRef.current;
     const closesCurrentTaskLock=Boolean(closingLock&&(closingLock.sectionKey===`task:${editingTaskId}`||isTaskCreationLockKey(closingLock.sectionKey)));
     const closingLeaseOwnerId=closingLock?.leaseOwnerId||quarantinedCreationDraft?.leaseOwnerId;
@@ -5298,7 +5298,7 @@ export default function App() {
     </main>
     {currentUser.role!=='vessel'&&canEditBusinessContent&&(vesselEditorLeaseAuthorized||Boolean(vesselLeaseIncidentForEditor))&&editingVesselId&&activeVessels.some(vessel=>vessel.id===editingVesselId) && <VesselEditModal vessel={editingOperationalVessel} data={roleVisibleData} currentUser={currentUser} leaseMode={vesselLeaseMode} leaseMessage={vesselLeaseIncidentForEditor?.message||''} close={()=>void closeVesselEditor(activeEditLockRef.current)} onSave={saveVesselEditorDraft} addTask={id=>{void addTaskForVessel(id,true).then(opened=>{if(opened)setEditingVesselId('');});}} editTask={id=>{const vesselId=editingVesselId;const task=data.tasks.find(item=>item.id===id);if(!task)return alert('找不到對應待辦');setEditingVesselId('');void (async()=>{const result=await openTask(task,vesselId,vesselId);if(result==='failed')void openVesselEditor(vesselId);})();}} />}
     {currentUser.role!=='vessel'&&canEditBusinessContent&&batchManagedOpen && <BatchManagedVesselModal vessels={effectiveBatchSessionVessels} lockedVesselIds={batchLockedVesselIds} readOnly={batchManagedWriteSuspended} saving={batchManagedClosing} save={saveBatchManagedDrafts} cancel={()=>void cancelBatchManagedDrafts(renderedBatchManagedAuthorization)} close={()=>void closeBatchManaged(renderedBatchManagedAuthorization)} discard={()=>void discardBatchManagedChanges(renderedBatchManagedAuthorization)} onAddTask={id=>{void addTaskForVessel(id,false,true,renderedBatchTaskReturnContext);}} />}
-    {editingTask&&taskEditorLeaseAuthorized && <TaskEditModal task={editingTask} creating={creatingVisibleTask} data={taskEditorData} visibleVessels={taskEditorVisibleVessels} currentUser={taskEditorUser} canClose={!taskEditorReadOnly&&editingTaskCanMutate&&canCloseTasks&&currentUser.role!=='vessel'} canDelete={!taskEditorReadOnly&&editingTaskCanMutate&&canDeleteTasks} canCancelInternalControl={Boolean(!taskEditorReadOnly&&editingTaskCanMutate&&editingTask&&editingTaskScopeVessels.length===taskVesselIds(editingTask).length&&editingTaskScopeVessels.every(vessel=>canCancelInternalControl(currentUser,vessel)))} canEditOverall={Boolean((memberEditor.current||!taskEditorReadOnly)&&editingTaskCanMutate&&canEditOverallTask)} onProgressScopeChange={memberEditor.current?changeTaskMemberScope:undefined} memberConfirmation={memberEditor.current?.confirmation} memberQuickStatus={memberEditor.current?.quickStatus} memberDraftChanged={captureTaskMemberDraft} initialProgressVesselId={taskProgressVesselId} readOnly={taskEditorReadOnly} readOnlyReason={taskReadOnlyReason} close={()=>void closeTaskEditor(taskEditorRequestGeneration)} onDraftChange={captureCreationDraft} onSave={saveTaskWithListFeedback} onSaveVesselProgress={saveTaskVesselProgress} onDelete={()=>deleteTask(editingTask)} />}
+    {editingTask&&taskEditorLeaseAuthorized && <TaskEditModal task={editingTask} creating={creatingVisibleTask} data={taskEditorData} visibleVessels={taskEditorVisibleVessels} currentUser={taskEditorUser} canClose={!taskEditorReadOnly&&editingTaskCanMutate&&canCloseTasks&&currentUser.role!=='vessel'} canDelete={!taskEditorReadOnly&&editingTaskCanMutate&&canDeleteTasks} canCancelInternalControl={Boolean(!taskEditorReadOnly&&editingTaskCanMutate&&editingTask&&editingTaskScopeVessels.length===taskVesselIds(editingTask).length&&editingTaskScopeVessels.every(vessel=>canCancelInternalControl(currentUser,vessel)))} canEditOverall={Boolean((memberEditor.current||!taskEditorReadOnly)&&editingTaskCanMutate&&canEditOverallTask)} onProgressScopeChange={memberEditor.current?changeTaskMemberScope:undefined} memberConfirmation={memberEditor.current?.confirmation} memberQuickStatus={memberEditor.current?.quickStatus} memberDraftChanged={captureTaskMemberDraft} initialProgressVesselId={taskProgressVesselId} readOnly={taskEditorReadOnly} readOnlyReason={taskReadOnlyReason} close={()=>void closeTaskEditor(taskEditorRequestGeneration)} closeConfirmedMember={scope=>void closeTaskEditor(taskEditorRequestGeneration,scope)} onDraftChange={captureCreationDraft} onSave={saveTaskWithListFeedback} onSaveVesselProgress={saveTaskVesselProgress} onDelete={()=>deleteTask(editingTask)} />}
     {currentUser.role!=='vessel'&&canExportReports&&reportPreviewOpen && <ReportPreviewModal data={reportPreviewData} visibleVessels={reportVessels} user={currentUser} selected={agendaSelection} reportDate={reportPreviewHistory?.businessDate} reportSnapshot={reportPreviewSnapshot} close={closeReportPreview} onPrint={printReport} />}
     {passwordModalOpen && <PersonalPasswordModal currentUser={currentUser} close={()=>setPasswordModalOpen(false)} commit={commit} />}
     {browserRecoveryOpen&&<BrowserRecoveryModal advanced={browserRecoveryAdvanced} phase={browserRecoveryPhase} message={browserRecoveryMessage} onClose={closeBrowserRecovery} onToggleAdvanced={()=>setBrowserRecoveryAdvanced(value=>!value)} onSafeRepair={()=>void runSafeBrowserRepair()} onFullReset={()=>void runFullBrowserReset()} />}
@@ -5362,7 +5362,8 @@ function ReportCenter({ data, visibleVessels, user, selected, setSelected, canSa
   const active=visibleVessels;
   const allowedIds=new Set(active.map(v=>v.id));
   const canViewAllReports=user.role==='owner'||user.role==='admin'||hasPermission(data.settings.rolePermissions,user,'viewAllVessels');
-  const reportHistory=dailyMorningReports(data.agendaReports).filter(report=>canViewAllReports||(report.vesselIds.length>0&&report.vesselIds.every(id=>allowedIds.has(id))));
+  const historyAllowedIds=new Set(data.vessels.filter(vessel=>vesselMatchesUser(vessel,user,canViewAllReports)).map(vessel=>vessel.id));
+  const reportHistory=dailyMorningReports(data.agendaReports).filter(report=>canViewAllReports||(report.vesselIds.length>0&&report.vesselIds.every(id=>historyAllowedIds.has(id))));
   const selectedScopeIds=selected.filter(id=>allowedIds.has(id));
   const reportTasks=morningDiscussionTasks(data.tasks,data.meetings).filter(t=>taskVesselIds(t).some(id=>selectedScopeIds.includes(id))&&!taskIsClosedForScope(t,selectedScopeIds));
   const ordinaryReportTasks=reportTasks.filter(appearsInSingleVesselTasks);

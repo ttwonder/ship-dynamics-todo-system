@@ -12,6 +12,7 @@ export async function run(){
  const stats={ok:true,currentRevision:7,currentStateBytes:100,revisionHistoryCount:2,revisionHistoryBytes:200,revisions:[{revision:7,current:true,logicalBytes:100},{revision:2,current:false,logicalBytes:100}],collections:[],items:[]};
  window.fetch=async(url,init)=>{
   const name=new URL(url).pathname.split('/').pop(),body=JSON.parse(init.body);calls.push({name,body});
+  if(name==='read_ship_dynamics_browser_authority_v1')return new Response(JSON.stringify({workspace:body.p_workspace_key,managed:false,source:null,epoch:0,pauseState:'unmanaged',admitted:true}),{status:200,headers:{'Content-Type':'application/json'}});
   const reject=fail;
   const value=name.includes('stats')?{...stats,currentRevision:empty?9:7,revisions:empty?[]:stats.revisions}: {ok:true,operationId:body.p_operation_id,deletedRevisions:body.p_delete_revisions,deletedCount:1,deletedBytes:100,remainingRevisionCount:1,currentRevision:7};
   if(hold&&name.includes(hold))await new Promise(resolve=>queue.push({resolve,name,body}));
@@ -28,7 +29,7 @@ export async function run(){
  try{
   for(const change of ['mode','key','actor']){
    const next=change==='mode'?{...cfg,storageMode:'records-v1'}:change==='key'?{...cfg,supabaseAnonKey:'rotated'}:cfg,actor=change==='actor'?'other-owner':'owner';
-   reset();hold='stats';render();await until(()=>queue.length===1,'old stats held');empty=true;hold='';render(next,actor);await until(()=>calls.length===2,'context must refresh stats');queue.shift().resolve();await tick();await tick();assert(!host.innerText.includes('r7'),'late '+change+' stats published');cases.push('stats '+change+' late reply fenced');
+   reset();hold='stats';render();await until(()=>queue.length===1,'old stats held');empty=true;hold='';render(next,actor);await until(()=>calls.filter(c=>c.name.includes('stats')).length===2,'context must refresh stats');queue.shift().resolve();await tick();await tick();assert(!host.innerText.includes('r7'),'late '+change+' stats published');cases.push('stats '+change+' late reply fenced');
    for(const recovery of [false,true])for(const lateError of [false,true]){
     reset();const old=recovery?envelope(cfg):null;if(old)api.writePendingRevisionPrune(old,cfg);
     render();await enter();if(!recovery){flushSync(()=>host.querySelector('input[type=checkbox]').click());await tick();}

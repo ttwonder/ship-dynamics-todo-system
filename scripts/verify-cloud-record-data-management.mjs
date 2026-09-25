@@ -198,6 +198,8 @@ try {
   globalThis.fetch=async(input,init)=>{
     const url=new URL(typeof input==='string'?input:input.url||String(input));assert.equal(url.origin,'http://127.0.0.1:1');
     const name=url.pathname.split('/').at(-1);calls.push(name);const args=JSON.parse(init.body);
+    // This legacy fixture predates publication; only authority discovery is a controlled unmanaged response. Business reads/writes below remain real SQL.
+    if(name==='read_ship_dynamics_browser_authority_v1')return new Response(JSON.stringify({workspace:args.p_workspace_key,managed:false,source:null,epoch:0,pauseState:'unmanaged',admitted:true}),{status:200,headers:{'content-type':'application/json'}});
     if(missing)return new Response(JSON.stringify({code:'PGRST202',message:'local missing RPC'}),{status:404});
     let result;
     if(['get_ship_dynamics_record_storage_stats_v1','get_ship_dynamics_storage_stats'].includes(name))result=await query(`select ${name}($1,$2) as result`,[args.p_workspace_key,args.p_actor_user_id]);
@@ -212,7 +214,7 @@ try {
     await check('SupabaseJS records vs legacy stats choose distinct SQL authority; missing record RPC never falls back',async()=>{
       assert.equal((await adapter.getShipDynamicsStorageStats(actor,config)).currentRevision,7);assert.equal((await adapter.getShipDynamicsStorageStats(actor,legacy)).currentRevision,1);
       missing=true;try{await assert.rejects(adapter.getShipDynamicsStorageStats(actor,config),e=>e.code==='DATA_MANAGEMENT_SQL_NOT_DEPLOYED');}finally{missing=false;}
-      assert.deepEqual(calls.slice(-3),['get_ship_dynamics_record_storage_stats_v1','get_ship_dynamics_storage_stats','get_ship_dynamics_record_storage_stats_v1']);
+      assert.deepEqual(calls.filter(name=>name!=='read_ship_dynamics_browser_authority_v1').slice(-3),['get_ship_dynamics_record_storage_stats_v1','get_ship_dynamics_storage_stats','get_ship_dynamics_record_storage_stats_v1']);
     });
     await check('old legacy pending namespace survives; record namespace isolated; wrong-authority envelope rejected before RPC',async()=>{
       const req={operationId:crypto.randomUUID(),actorUserId:actor,expectedRevisions:all(),deleteRevisions:[2]};

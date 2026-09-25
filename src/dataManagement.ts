@@ -3,6 +3,7 @@ import {
   getSupabaseConfig,
   type ResolvedSupabaseConfig,
 } from './cloud';
+import { authorityConfig, readBrowserAuthority, sameAuthority, type BrowserAuthority } from './cloudSourceAuthority';
 
 export type DataCollectionKey =
   | 'settings'
@@ -41,6 +42,7 @@ export interface StorageItemRow {
 
 export interface ShipDynamicsStorageStats {
   ok: true;
+  sourceAuthority?: BrowserAuthority;
   generatedAt: string;
   databaseTotalBytes: number;
   appDatabasePhysicalBytes: number;
@@ -77,6 +79,7 @@ export interface RevisionPruneResult {
 
 export interface PendingRevisionPrune extends RevisionPruneRequest {
   version: 1;
+  sourceAuthority?: BrowserAuthority;
   configIdentity: string;
   workspaceKey: string;
   createdAt: string;
@@ -208,12 +211,17 @@ export async function getShipDynamicsStorageStats(
   actorUserId: string,
   config?: ResolvedSupabaseConfig | null,
 ): Promise<ShipDynamicsStorageStats> {
-  const resolved = currentConfig(config);
+  const raw = currentConfig(config);
+  const binding = await readBrowserAuthority(raw);
+  if (!binding.admitted) throw new DataManagementRpcError('SOURCE_NOT_ADMITTED', '目前資料來源尚未允許新請求。', true);
+  const resolved = authorityConfig(raw, binding);
   const response = await runRpc(resolved.storageMode === 'records-v1' ? 'get_ship_dynamics_record_storage_stats_v1' : 'get_ship_dynamics_storage_stats', {
     p_workspace_key: resolved.workspaceKey,
     p_actor_user_id: actorUserId,
   }, resolved);
 
+  const latest = await readBrowserAuthority(raw);
+  if (!latest.admitted || !sameAuthority(binding, latest)) throw new DataManagementRpcError('SOURCE_CHANGED', '資料來源已變更，請重新刷新統計。', true);
   const revisions = asArray(response.revisions).map(value => {
     const row = asObject(value);
     return {
@@ -248,6 +256,7 @@ export async function getShipDynamicsStorageStats(
 
   return {
     ok: true,
+    sourceAuthority: binding,
     generatedAt: asText(response.generatedAt),
     databaseTotalBytes: asNonNegativeNumber(response.databaseTotalBytes),
     appDatabasePhysicalBytes: asNonNegativeNumber(response.appDatabasePhysicalBytes),
@@ -275,15 +284,24 @@ export async function pruneShipDynamicsRevisionHistory(
     || ('workspaceKey' in request && request.workspaceKey !== resolved.workspaceKey)) {
     throw new DataManagementRpcError('IDEMPOTENCY_MISMATCH', 'Pending prune belongs to another storage authority', true);
   }
+  // Old unbound envelopes keep their exact route; never rediscover on replay.
+  const binding = (request as PendingRevisionPrune).sourceAuthority;
+  if ('sourceAuthority' in request && (!binding || binding.workspace !== resolved.workspaceKey
+    || !['legacy', 'records-v1'].includes(binding.source) || typeof binding.managed !== 'boolean' || binding.admitted !== true
+    || (binding.managed ? !Number.isSafeInteger(binding.epoch) || binding.epoch < 1 || binding.pauseState !== 'resumed'
+      : binding.epoch !== 0 || binding.source !== (resolved.storageMode ?? 'legacy') || !['unmanaged', 'resumed'].includes(binding.pauseState)))) {
+    throw new DataManagementRpcError('INVALID_PRUNE_ENVELOPE', 'Invalid captured prune authority.', false);
+  }
+  const route = binding ? authorityConfig(resolved, binding) : resolved;
   let response: Record<string, unknown>;
   try {
-    response = await runRpc(resolved.storageMode === 'records-v1' ? 'prune_ship_dynamics_record_revision_history_v1' : 'prune_ship_dynamics_revision_history', {
+    response = await runRpc(route.storageMode === 'records-v1' ? 'prune_ship_dynamics_record_revision_history_v1' : 'prune_ship_dynamics_revision_history', {
       p_workspace_key: resolved.workspaceKey,
       p_actor_user_id: request.actorUserId,
       p_operation_id: request.operationId,
       p_expected_revisions: integerSet(request.expectedRevisions),
       p_delete_revisions: integerSet(request.deleteRevisions),
-    }, resolved);
+    }, route);
   } catch (error) {
     if (error instanceof DataManagementRpcError && error.code === '57014') {
       throw new DataManagementRpcError('PRUNE_BATCH_TIMEOUT', error.message, false, error.details);
@@ -305,9 +323,22 @@ function pendingKey(config: ResolvedSupabaseConfig, actorUserId: string) {
   return `${PENDING_PREFIX}${encodeURIComponent(dataManagementConfigIdentity(config))}:${encodeURIComponent(actorUserId)}`;
 }
 
+export async function preparePendingRevisionPrune(
+  request: RevisionPruneRequest,
+  config: ResolvedSupabaseConfig,
+  expectedAuthority?: BrowserAuthority,
+): Promise<PendingRevisionPrune> {
+  const raw = currentConfig(config), binding = await readBrowserAuthority(raw);
+  if (!binding.admitted || (expectedAuthority && !sameAuthority(expectedAuthority, binding))) {
+    throw new DataManagementRpcError('SOURCE_CHANGED', '資料來源已變更，請重新刷新統計。', true);
+  }
+  return createPendingRevisionPrune(request, raw, binding);
+}
+
 export function createPendingRevisionPrune(
   request: RevisionPruneRequest,
   config: ResolvedSupabaseConfig,
+  sourceAuthority?: BrowserAuthority,
 ): PendingRevisionPrune {
   return {
     version: 1,
@@ -318,6 +349,7 @@ export function createPendingRevisionPrune(
     actorUserId: request.actorUserId,
     expectedRevisions: integerSet(request.expectedRevisions),
     deleteRevisions: integerSet(request.deleteRevisions),
+    ...(sourceAuthority ? { sourceAuthority } : {}),
   };
 }
 
@@ -339,6 +371,7 @@ export function readPendingRevisionPrune(
       actorUserId: asText(parsed.actorUserId),
       expectedRevisions: integerSet(parsed.expectedRevisions),
       deleteRevisions: integerSet(parsed.deleteRevisions),
+      ...('sourceAuthority' in parsed ? { sourceAuthority: parsed.sourceAuthority as BrowserAuthority } : {}),
     };
     if (parsed.version !== 1
       || pending.configIdentity !== dataManagementConfigIdentity(config)

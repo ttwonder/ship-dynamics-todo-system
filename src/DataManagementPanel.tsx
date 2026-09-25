@@ -3,7 +3,7 @@ import type { UserAccount } from './types';
 import { getSupabaseConfig } from './cloud';
 import {
   clearPendingRevisionPrune,
-  createPendingRevisionPrune,
+  preparePendingRevisionPrune,
   dataManagementErrorMessage,
   dataManagementConfigIdentity,
   DataManagementRpcError,
@@ -179,12 +179,13 @@ export default function DataManagementPanel({ currentUser }: Props) {
       for (let index = 0; index < chosen.length; index += MAX_REVISION_PRUNE_BATCH) {
         if (!isCurrent()) return;
         const batch = chosen.slice(index, index + MAX_REVISION_PRUNE_BATCH);
-        const envelope = createPendingRevisionPrune({
+        const envelope = await preparePendingRevisionPrune({
           operationId: crypto.randomUUID(),
           actorUserId: currentUser.id,
           expectedRevisions,
           deleteRevisions: batch,
-        }, config);
+        }, config, stats.sourceAuthority);
+        if (!isCurrent()) return;
         try {
           writePendingRevisionPrune(envelope, config);
         } catch {
@@ -220,6 +221,8 @@ export default function DataManagementPanel({ currentUser }: Props) {
       await refresh();
       if (!isCurrent()) return;
       setNotice(`歷史版本已刪除：${completed} 份，邏輯量 ${formatDataBytes(deletedBytes)}。目前正式資料未變更。`);
+    } catch (error) {
+      if (isCurrent()) setErrorText(dataManagementErrorMessage(error));
     } finally {
       if (isCurrent()) {
         setActing(false);

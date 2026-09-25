@@ -530,6 +530,7 @@ export function reconcileInternalControlAfterTaskSave(
   cancelled.status = '取消內部管控，結束與要事的雙向同步';
   cancelled.statusLogs = [{ id: uid('ic-log'), at, by: actor.name, byUserId: actor.id, text: cancelled.status }, ...cancelled.statusLogs];
   assertValidInternalControlCase(cancelled);
+  convergeTrackingCaseLifecycle(draft,item,cancelled,actor,at,'task');
   delete saved.internalControlCaseId;
   delete item.linkedTaskId;
   Object.assign(item, cancelled);
