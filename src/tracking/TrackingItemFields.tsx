@@ -29,9 +29,11 @@ export function TrackingItemFields({ row, prefix, creating, onChange }: {
       </select>{!creating && <small>已保存項目限原材料／工程大類。</small>}</label>
       {field('description')}{field('expectedDate')}{field(row.kind === 'supply' ? 'actualDeliveryDate' : 'completionDate')}
     </div>
-    <div className="tracking-input-line" aria-label={prefix + '第三行'}>
-      <label className="tracking-urgency-option"><input type="checkbox" aria-label={prefix + '普通'} checked={row.urgency === 'normal'} onChange={() => onChange({ urgency: 'normal' })}/>普通</label>
-      <label className="tracking-urgency-option"><input type="checkbox" aria-label={prefix + '緊急'} checked={row.urgency === 'urgent'} onChange={() => onChange({ urgency: 'urgent' })}/>緊急</label>
+    <div className="tracking-input-line tracking-input-line-three" aria-label={prefix + '第三行'}>
+      <div className="tracking-urgency" role="group" aria-label={prefix + '緊急程度'}>
+        <label className="tracking-urgency-option"><input type="checkbox" aria-label={prefix + '普通'} checked={row.urgency === 'normal'} onChange={() => onChange({ urgency: 'normal' })}/>普通</label>
+        <label className="tracking-urgency-option"><input type="checkbox" aria-label={prefix + '緊急'} checked={row.urgency === 'urgent'} onChange={() => onChange({ urgency: 'urgent' })}/>緊急</label>
+      </div>
       {field('supplementalNotes')}{field('progress')}
     </div>
   </div>;

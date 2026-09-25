@@ -36,14 +36,17 @@
 @media(max-width:700px){.tracking-search-actions{flex-wrap:wrap}.tracking-search{flex:1 1 100%;min-width:0}.tracking-search-actions>.tracking-toolbar{flex-basis:100%}.tracking-filter-grid{grid-template-columns:minmax(0,1fr)}.tracking-options{column-gap:6px}}
 .tracking-request-fields{display:flex;flex-direction:column;gap:8px}
 .tracking-input-line{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;min-width:0;align-items:start}
-.tracking-input-line>label.tracking-urgency-option{flex-direction:row;align-items:center;align-self:stretch;gap:5px}.tracking-input-line>label.tracking-urgency-option>input{width:auto}
+/* Eight half-columns keep urgency aligned with one field above. */
+.tracking-input-line-three{grid-template-columns:repeat(8,minmax(0,1fr))}
+.tracking-input-line-three>.tracking-urgency{grid-column:span 2}.tracking-input-line-three>label{grid-column:span 3}
 .tracking-input-line>label{display:flex;flex-direction:column;min-width:0;gap:3px}
 .tracking-input-line>label>input,.tracking-input-line>label>textarea,.tracking-input-line>label>select{width:100%;box-sizing:border-box}
 .tracking-input-line textarea{min-height:34px;resize:vertical}
-.tracking-input-line .tracking-urgency{display:flex;gap:18px;align-items:center;align-self:stretch;min-width:0}
+.tracking-input-line .tracking-urgency{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;align-self:stretch;min-width:0}
 .tracking-input-line .tracking-urgency label{display:flex;flex-direction:row;align-items:center;gap:5px}
+.tracking-input-line .tracking-urgency input{width:auto;flex:none}
 .tracking-input-line small{font-size:11px}
-@media(max-width:700px){.tracking-input-line,.tracking-input-line-three{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:700px){.tracking-input-line,.tracking-input-line-three{grid-template-columns:minmax(0,1fr)}.tracking-input-line-three>.tracking-urgency,.tracking-input-line-three>label{grid-column:auto}}
 .tracking-value-filter{position:relative;min-width:0;border:1px solid var(--line);border-radius:4px;background:var(--tracking-paper)}
 .tracking-page .tracking-value-filter>summary{height:24px;padding:3px 5px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tracking-value-options{position:absolute;left:0;right:0;top:100%;z-index:12;max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:4px;padding:5px;background:var(--tracking-paper);box-shadow:0 3px 8px #0002}

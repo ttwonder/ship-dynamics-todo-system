@@ -17,7 +17,7 @@ export async function trackingFieldChecks(c){
   assert.equal(await evaluate("Object.keys(localStorage).filter(k=>k.startsWith('[\"tracking-unsent-v1\"')).length"),0);assert.deepEqual(await qa.read(),before,'discard does not write business data');
  });
  const types=['repair','drydock','semiannual-materials','temporary-materials','spares'];const refs=types.map((_,i)=>'FIELD-UI-'+i);
- await check('three-equal-width-lines-five-types-mixed-batch-create',async()=>{
+ await check('one-cell-urgency-equal-notes-progress-five-types-mixed-batch-create',async()=>{
   const before=await qa.read();await click('＋ 新增／批量新增');
   await check('compact-create-header-desktop-mobile-and-fixed-vessel',async()=>{
    const header=()=>evaluate("(()=>{const n=document.querySelector('[aria-label=新增跟蹤說明]');if(!n)return null;return {text:n.textContent,controls:n.querySelectorAll('input,select,textarea').length,vessel:n.querySelector('strong').textContent,selected:document.querySelector('.tracking-heading select').selectedOptions[0].textContent,children:[...n.children].map(x=>{const r=x.getBoundingClientRect();return {top:r.top,left:r.left,right:r.right,width:r.width};}),viewport:innerWidth,scroll:document.documentElement.scrollWidth};})()");
@@ -25,14 +25,39 @@ export async function trackingFieldChecks(c){
    await screen('header-compact-desktop');await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await evaluate("document.querySelector('[aria-label=新增跟蹤說明]').scrollIntoView({block:'start'})");
    const mobile=await header();assert.equal(mobile.vessel,desktop.vessel);assert.ok(mobile.scroll<=mobile.viewport+1);assert.ok(mobile.children.every(n=>n.left>=0&&n.right<=mobile.viewport+1&&n.width>0));await screen('header-compact-mobile');fs.writeFileSync(path.join(output,'header-compact-geometry.json'),JSON.stringify({desktop,mobile},null,2));await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});assert.deepEqual(await qa.read(),before,'header presentation does not write business data');
   });
-  const geometry=await evaluate("[...document.querySelectorAll('.tracking-input-line')].map(line=>[...line.children].map(n=>({width:n.getBoundingClientRect().width,y:n.getBoundingClientRect().y})))");
-  fs.writeFileSync(path.join(output,'field-form-geometry.json'),JSON.stringify(geometry,null,2));assert.deepEqual(geometry.map(line=>line.length),[4,4,4]);for(const line of geometry){assert.ok(Math.max(...line.map(n=>n.width))-Math.min(...line.map(n=>n.width))<2);assert.ok(Math.max(...line.map(n=>n.y))-Math.min(...line.map(n=>n.y))<2);}
+  const measureLines=()=>evaluate("[...document.querySelectorAll('.tracking-input-line')].map(line=>[...line.children].map(n=>{const r=n.getBoundingClientRect();return {width:r.width,y:r.y,left:r.left,right:r.right,bottom:r.bottom};}))");
+  const geometry=await measureLines();
+  fs.writeFileSync(path.join(output,'field-form-geometry.json'),JSON.stringify(geometry,null,2));await screen('third-row-desktop');
+  assert.deepEqual(geometry.map(line=>line.length),[4,4,3],'ordinary and urgent share one cell; notes and progress occupy the remaining two cells');
+  for(const line of geometry.slice(0,2))assert.ok(Math.max(...line.map(n=>n.width))-Math.min(...line.map(n=>n.width))<1,'first two rows keep four equal fields');
+  for(const line of geometry)assert.ok(Math.max(...line.map(n=>n.y))-Math.min(...line.map(n=>n.y))<1,'each desktop row stays aligned');
+  const [urgency,notes,progress]=geometry[2];
+  assert.ok(Math.abs(urgency.width-geometry[0][0].width)<1,'urgency group occupies exactly one original column');
+  assert.ok(Math.abs(notes.width-progress.width)<1&&notes.width>urgency.width,'notes and progress equally share the other three columns');
+  assert.ok(Math.abs(progress.right-geometry[0][3].right)<1&&notes.left>urgency.right&&progress.left>notes.right,'third row fills the same width without overlap');
+  const urgencyState=()=>evaluate("(()=>{const line=document.querySelector('[aria-label=\"第 1 筆 第三行\"]');const inputs=[...line.querySelectorAll('input')];return inputs.map(n=>({label:n.getAttribute('aria-label'),type:n.type,checked:n.checked,sharedCell:n.closest('label').parentElement===line.firstElementChild}));})()");
+  const initialUrgency=await urgencyState();assert.deepEqual(initialUrgency.map(n=>[n.label,n.type,n.checked,n.sharedCell]),[['第 1 筆 普通','checkbox',true,true],['第 1 筆 緊急','checkbox',false,true]]);
+  const notesText='補充說明：長文保持完整，核對備件與工程所需安排。'.repeat(6),progressText='最新進度：已聯絡廠商確認，等待下一次回覆。'.repeat(6);
+  await fill('[aria-label="第 1 筆 補充說明"]',notesText);await fill('[aria-label="第 1 筆 最新進度"]',progressText);
+  for(const [label,expected] of [['緊急',[false,true]],['普通',[true,false]],['緊急',[false,true]]]){await nodeClick(`document.querySelector('[aria-label="第 1 筆 ${label}"]')`);assert.deepEqual((await urgencyState()).map(n=>n.checked),expected,'existing exclusive checkbox behavior retained');}
+  await screen('third-row-desktop-filled');
+  await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await evaluate("document.querySelector('[aria-label=\"第 1 筆 第三行\"]').scrollIntoView({block:'center'})");
+  const mobileGeometry=await measureLines(),mobileThird=mobileGeometry[2];
+  assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'));assert.ok(mobileThird.every(n=>n.width>0&&n.left>=0&&n.right<=391));
+  assert.ok(Math.max(...mobileThird.map(n=>n.width))-Math.min(...mobileThird.map(n=>n.width))<1,'mobile keeps full-width stacked fields');
+  assert.ok(mobileThird[1].y>=mobileThird[0].bottom&&mobileThird[2].y>=mobileThird[1].bottom,'mobile group and text fields do not overlap');
+  const mobileOptions=await evaluate("[...document.querySelector('[aria-label=\"第 1 筆 第三行\"]').querySelectorAll('input[type=checkbox]')].map(n=>{const r=n.closest('label').getBoundingClientRect();return {top:r.top,left:r.left,right:r.right};})");
+  assert.ok(Math.abs(mobileOptions[0].top-mobileOptions[1].top)<1&&mobileOptions[0].right<mobileOptions[1].left,'mobile urgency choices stay together on one line');
+  assert.equal(await evaluate("document.querySelector('[aria-label=\"第 1 筆 補充說明\"]').value"),notesText);assert.equal(await evaluate("document.querySelector('[aria-label=\"第 1 筆 最新進度\"]').value"),progressText);
+  fs.writeFileSync(path.join(output,'third-row-mobile-geometry.json'),JSON.stringify({lines:mobileGeometry,options:mobileOptions},null,2));await screen('third-row-mobile-filled');
+  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});assert.deepEqual(await qa.read(),before,'layout/input probes do not save before explicit submission');
   assert.deepEqual(await evaluate("[...document.querySelector('[aria-label=\"第 1 筆 類型\"]').options].map(n=>n.text)"),['維修工程','塢修工程','半年物料','臨時物料','備件']);
   for(let i=0;i<types.length;i++){
    if(i)await click('＋ 新增一列');await fill(`[aria-label="第 ${i+1} 筆 申請單號(材料或工程)"]`,refs[i]);await fill(`[aria-label="第 ${i+1} 筆 內容摘要/工程內容"]`,'中性欄位測試 '+i);await select(`document.querySelector('[aria-label="第 ${i+1} 筆 類型"]')`,types[i]);await date(`第 ${i+1} 筆 申請/開單日期`,'2026-09-25');
   }
   await screen('fields-create-desktop');await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'));await screen('fields-create-mobile');await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
   await save(5);await finish();const saved=await qa.read();assert.equal(saved.revision,before.revision+1);for(let i=0;i<types.length;i++){const row=saved.payload.trackingItems.find(r=>r.referenceNo===refs[i]);assert.equal(row.requestType,types[i]);assert.equal(row.kind,i<2?'engineering':'supply');assert.equal(row.isClosed,false);}
+  const firstSaved=saved.payload.trackingItems.find(r=>r.referenceNo===refs[0]);assert.equal(firstSaved.urgency,'urgent');assert.equal(firstSaved.supplementalNotes,notesText);assert.equal(firstSaved.progress,progressText);
  });
  await check('dropdown-filter-settings-selection-and-global-search',async()=>{
   await toggle('全部欄位篩選');assert.equal(await evaluate("document.querySelectorAll('.tracking-filter-grid input:not([type=checkbox]),.tracking-filter-grid textarea').length"),0);

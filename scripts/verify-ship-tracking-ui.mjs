@@ -13,8 +13,10 @@ try {
  const props={data,vessels:[vessel],user:data.users[0],workspace:'qa',identity:'qa',canCreate:true,canEdit:true,canClose:true,canExport:true,callbacks};
  const ship=renderToStaticMarkup(React.createElement(TrackingPage,{...props,audience:'ship'}));
  assert.ok(!ship.includes('要事'),'ship-side rendered controls/help must omit office-only workflow');
- assert.ok(ship.includes('測試輪 QA SHIP'));assert.ok(ship.includes('導入 Excel'));assert.ok(ship.includes('批量更新進度'));
- const shore=renderToStaticMarkup(React.createElement(TrackingPage,props));assert.ok(shore.includes('要事'),'shore explanations remain unchanged');
+ assert.ok(ship.includes('測試輪 QA SHIP'));assert.ok(ship.includes('導入 Excel'));
+ // Ship entry starts on statistics; the mounted --fields gate opens the list and tests its batch actions.
+ assert.match(ship,/role="tab" aria-selected="true"[^>]*>統計資訊<\/button>/,'ship default remains the approved statistics view');
+ const shore=renderToStaticMarkup(React.createElement(TrackingPage,props));assert.ok(shore.includes('要事'),'shore explanations remain unchanged');assert.ok(shore.includes('批量更新進度'),'shore still starts on its original list with batch actions');
  for(const action of ['create','edit','progress','delivery','close','reopen','correct-close-date']) {
   const draft=makeTrackingDraft(action,[{...newTrackingItem('v1','supply'),referenceNo:'QA-001'}],data);
   const html=renderToStaticMarkup(React.createElement(TrackingBusinessModal,{draft,audience:'ship',busy:false,pending:false,message:'',affected:['QA-001'],vesselName:'測試輪 QA SHIP',onChange:()=>{},onSave:()=>{},onReconcile:()=>{},onClose:()=>{}}));
