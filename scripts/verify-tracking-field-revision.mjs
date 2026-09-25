@@ -59,6 +59,24 @@ try {
   const supply={...engineering,...typeChange(engineering,true,'spares')};assert.equal(supply.kind,'supply');assert.equal(supply.actualDeliveryDate,'2026-09-25');assert.equal(supply.completionDate,undefined);assert.equal(supply.deliveryStatus,'delivered');
   assert.equal(typeChange(partial,false,'repair'),undefined,'stored rows remain kind-immutable');
   cases.push('new-row-cross-kind-date-conversion-and-existing-row-kind-guard');
+  for(const audience of ['shore','ship']){
+    const first={...newTrackingItem(vessel.id,'supply'),referenceNo:'REQ-LATEST-FIRST',applicationDate:'2026-09-14',requestType:'semiannual-materials',expectedDate:'2026-10-21',description:'Do not copy body',purchaseNos:'FIRST-ONLY',originalItemNo:'01',urgency:'urgent',progress:'Do not copy progress',supplementalNotes:'Do not copy notes',actualDeliveryDate:'2026-09-20',deliveryStatus:'delivered',source:{fileName:'legacy.xlsx',sheetName:'legacy',row:1,originalValues:{A1:'old'}},linkedCaseId:'not-a-new-link',statusLogs:[{id:'old-log',at:'',by:'QA',text:'old history'}]};
+    const last={...newTrackingItem(vessel.id,'engineering'),referenceNo:'DO-NOT-COPY-LAST',applicationDate:'2026-01-01',requestType:'drydock',expectedDate:'2026-02-01'};
+    const draft=makeTrackingDraft('create',[first,last],data),original=structuredClone(draft);let changed;
+    const modal=(overrides={})=>TrackingBusinessModal({draft,audience,busy:false,pending:false,message:'',affected:[],vesselName:'QA',onChange:value=>{changed=value;},onSave:()=>{},onReconcile:()=>{},onClose:()=>{},...overrides});
+    const nodes=node=>Array.isArray(node)?node.flatMap(nodes):React.isValidElement(node)?[node,...nodes(node.props.children)]:[];
+    const findButton=tree=>nodes(tree).find(node=>node.type==='button'&&node.props.children==='同申請單號新增一筆');
+    const button=findButton(modal());assert.ok(button,`${audience}: same-application shortcut must be reachable`);assert.equal(button.props.type,'button');assert.equal(Boolean(button.props.disabled),false);
+    const buttons=nodes(modal()).filter(node=>node.type==='button');assert.equal(buttons.findIndex(node=>node.props.children==='同申請單號新增一筆'),buttons.findIndex(node=>node.props.children==='＋ 新增一列')+1,'shortcut belongs immediately beside existing add');
+    button.props.onClick();assert.equal(changed.rows.length,3);assert.equal(changed.dirty,true);assert.deepEqual(draft,original);assert.deepEqual(changed.rows.slice(0,2),original.rows);
+    const added=changed.rows[2],expected={...newTrackingItem(first.vesselId,first.kind),id:added.id,referenceNo:first.referenceNo,applicationDate:first.applicationDate,requestType:first.requestType,expectedDate:first.expectedDate};assert.deepEqual(added,expected,'only the four named values plus fixed vessel/kind, all remaining fields are fresh');assert.notEqual(added.id,first.id);assert.notEqual(added.id,last.id);assert.deepEqual(commandForTrackingDraft(changed).items,changed.rows);
+    for(const overrides of [{pending:true},{busy:true},{readOnly:true},{draft:{...draft,rows:[]}},{draft:{...draft,rows:Array.from({length:100},()=>first)}}])assert.equal(findButton(modal(overrides)).props.disabled,true,'cannot grow frozen, empty or full batch');
+    for(const [kind,requestType] of [['supply','semiannual-materials'],['supply','temporary-materials'],['supply','spares'],['engineering','repair'],['engineering','drydock']]){
+      const row={...newTrackingItem(vessel.id,kind),referenceNo:'',requestType,applicationDate:'',expectedDate:''};const single={...draft,rows:[row]};findButton(modal({draft:single})).props.onClick();assert.deepEqual(changed.rows[1],{...newTrackingItem(row.vesselId,kind),id:changed.rows[1].id,referenceNo:'',requestType,applicationDate:'',expectedDate:''},'all types and intentional blanks stay literal');
+    }
+    assert.equal(findButton(modal({draft:{...draft,action:'edit'}})),undefined,'not a duplicate-existing-record action');
+    cases.push(`${audience}-same-application-first-row-only-new-identity-and-guards`);
+  }
   const completion=makeTrackingDraft('completion',[newTrackingItem(vessel.id,'engineering')],data);completion.date='2026-09-25';
   const command=commandForTrackingDraft(completion);assert.equal(command.type,'edit');assert.deepEqual(command.items[0].changes,{completionDate:'2026-09-25'});
   cases.push('completion-uses-edit-not-lifecycle-or-supply-delivery');

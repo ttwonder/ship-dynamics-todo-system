@@ -92,6 +92,9 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, au
     </fieldset>
     {readOnly&&<p role="status">編輯鎖已失效或尚未取得；原輸入已唯讀保留，不能新增修改或保存。請重新取得編輯權並核對最新資料。</p>}
     {message && <p role="status">{message}</p>}{(pending||readOnly) && <button type="button" className="btn" disabled={busy} onClick={onReconcile}>{pending?'核對最新資料／解除已拒絕提交':'重新取得編輯權／核對最新資料'}</button>}
-    <div className="modal-actions">{draft.action === 'create' && <button type="button" className="btn ghost" disabled={pending || draft.rows.length >= 100} onClick={() => change({ rows: [...draft.rows, newTrackingItem(draft.rows[0].vesselId, draft.rows[0].kind)] })}>＋ 新增一列</button>}<button type="button" className="btn ghost" onClick={onClose}>取消</button><button className="btn primary" disabled={busy||readOnly&&!pending}>{busy ? '等待雲端確認…' : pending ? '確認結果／重試相同提交' : `確認保存 ${draft.rows.length} 項`}</button></div>
+    <div className="modal-actions">{draft.action === 'create' && <><button type="button" className="btn ghost" disabled={pending || draft.rows.length >= 100} onClick={() => change({ rows: [...draft.rows, newTrackingItem(draft.rows[0].vesselId, draft.rows[0].kind)] })}>＋ 新增一列</button><button type="button" className="btn ghost" disabled={busy || pending || readOnly || !draft.rows.length || draft.rows.length >= 100} title="沿用第一筆目前的申請單號、申請/開單日期、類型及期望完成日期/DL；其餘欄位按新項目重新填寫。" onClick={() => {
+      const first = draft.rows[0];
+      change({ rows: [...draft.rows, { ...newTrackingItem(first.vesselId, first.kind), referenceNo: first.referenceNo, applicationDate: first.applicationDate, requestType: first.requestType, expectedDate: first.expectedDate }] });
+    }}>同申請單號新增一筆</button></>}<button type="button" className="btn ghost" onClick={onClose}>取消</button><button className="btn primary" disabled={busy||readOnly&&!pending}>{busy ? '等待雲端確認…' : pending ? '確認結果／重試相同提交' : `確認保存 ${draft.rows.length} 項`}</button></div>
   </form></div>;
 }
