@@ -22,19 +22,19 @@ try{
  await qa.db.exec(migration);
  await check('reviewed-LF-definitions-match-with-zero-writes',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'EXACT_MATCH');assert.deepEqual(r.failures,[]);assert.equal((await run(readback)).status,'PASS');return r;});
  await qa.db.exec(migration.replace(/\r?\n/g,'\r\n'));
- await check('Windows-CRLF-reproduces-original-FAIL-and-is-distinguished',async()=>{const original=await run(readback);assert.equal(original.status,'FAIL');assert.deepEqual(original.failures,['exact-installed-definitions']);const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'CRLF_ONLY_DIFFERENCE');assert.ok(Number(r.carriage_returns)>0);return r;});
+ await check('reviewed-Windows-CRLF-passes-readback-with-diagnostic-provenance',async()=>{const verified=await run(readback);assert.equal(verified.status,'PASS',JSON.stringify(verified));assert.equal(Number(verified.checks),8);assert.deepEqual(verified.failures,[]);const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'CRLF_ONLY_DIFFERENCE');assert.ok(Number(r.carriage_returns)>0);return r;});
  await qa.db.exec(migration);
  const signature='ship_dynamics_tracking_private.pick_v1(jsonb,text[])';
  const definition=(await qa.db.query('select pg_get_functiondef($1::regprocedure) definition',[signature])).rows[0].definition;
  const altered=definition.replace("'{}'::jsonb","'{\"qa_marker\":true}'::jsonb");assert.notEqual(altered,definition);
  await qa.db.exec(altered);
- await check('real-body-difference-is-not-accepted-as-formatting',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'DEFINITION_DIFFERENCE');return r;});
+ await check('real-body-difference-is-not-accepted-as-formatting',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'DEFINITION_DIFFERENCE');const checked=await run(readback);assert.equal(checked.status,'FAIL');assert.deepEqual(checked.failures,['exact-installed-definitions']);return r;});
  await qa.db.exec(definition);
  await qa.db.exec(`alter function ${signature} cost 101`);
- await check('metadata-difference-is-not-accepted-as-formatting',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'DEFINITION_DIFFERENCE');return r;});
+ await check('metadata-difference-is-not-accepted-as-formatting',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'DEFINITION_DIFFERENCE');const checked=await run(readback);assert.equal(checked.status,'FAIL');assert.deepEqual(checked.failures,['exact-installed-definitions']);return r;});
  await qa.db.exec(definition);
  await qa.db.exec('grant usage on schema ship_dynamics_tracking_private to anon');
- await check('ACL-failure-remains-separate-even-with-exact-definitions',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'PREREQUISITE_OR_ACL_DIFF');assert.ok(r.failures.includes('private-schema-inaccessible'));return r;});
+ await check('ACL-failure-remains-separate-even-with-exact-definitions',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'PREREQUISITE_OR_ACL_DIFF');assert.ok(r.failures.includes('private-schema-inaccessible'));const checked=await run(readback);assert.equal(checked.status,'FAIL');assert.ok(checked.failures.includes('private-schema-inaccessible'));return r;});
  evidence.status='PASS';
 }catch(error){evidence.status='FAIL';evidence.error=String(error.stack||error);throw error;}
 finally{if(qa)await qa.close();if(native)await native.close();fs.writeFileSync(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2));console.log('Evidence',path.join(output,'evidence.json'));}

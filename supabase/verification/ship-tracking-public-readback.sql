@@ -10,7 +10,8 @@ with public_rpc as (
  where n.nspname='ship_dynamics_tracking_private'
 ), definitions as (
  select n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')' identity,
-        pg_get_functiondef(p.oid) definition
+        -- Preserve all definition content/settings except Windows CRLF pairs.
+        replace(pg_get_functiondef(p.oid),chr(13)||chr(10),chr(10)) definition
  from pg_proc p join pg_namespace n on n.oid=p.pronamespace
  where p.oid in (select oid from public_rpc union all select oid from private_functions)
 ), checks as (

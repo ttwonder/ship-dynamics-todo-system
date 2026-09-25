@@ -14,10 +14,14 @@ try {
  await qa.db.exec(fs.readFileSync('supabase/migrations/20260925020000_edit_lock_holder.sql','utf8'));
  const originalPublicCatalog=async()=>(await qa.db.query("select md5(string_agg(oid::text||pg_get_functiondef(oid)||coalesce(proacl::text,''),E'\\n' order by oid)) r from pg_proc where pronamespace='public'::regnamespace and prokind='f' and proname<>'ship_dynamics_tracking_public_v1'")).rows[0].r;
  const baselineCatalog=await originalPublicCatalog(),baselineBusiness=await qa.read();
- const file='supabase/migrations/20260925080000_ship_tracking_public.sql';if(fs.existsSync(file))await qa.db.exec(fs.readFileSync(file,'utf8'));
+ const file='supabase/migrations/20260925080000_ship_tracking_public.sql';
+ const migrationText=fs.readFileSync(file,'utf8');
+ const installation=process.argv.includes('--crlf-install')?migrationText.replace(/\r?\n/g,'\r\n'):migrationText;
+ evidence.installationLineEndings=process.argv.includes('--crlf-install')?'CRLF':'SOURCE';
+ await qa.db.exec(installation);
  await check('additive-idempotent-install-preserves-existing-RPCs-ACL-and-business-data',async()=>{
   assert.equal(await originalPublicCatalog(),baselineCatalog);assert.deepEqual(await qa.read(),baselineBusiness);
-  await qa.db.exec(fs.readFileSync(file,'utf8'));assert.equal(await originalPublicCatalog(),baselineCatalog);assert.deepEqual(await qa.read(),baselineBusiness);
+  await qa.db.exec(installation);assert.equal(await originalPublicCatalog(),baselineCatalog);assert.deepEqual(await qa.read(),baselineBusiness);
  });
  await check('independent-catalog-readback-matches-installed-function-bytes',async()=>{
   const sql=fs.readFileSync('supabase/verification/ship-tracking-public-readback.sql','utf8');

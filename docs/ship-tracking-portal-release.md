@@ -24,6 +24,14 @@ Hermes Preview 會一次提供前兩步完整唯讀 SQL，從本機 commit blob 
 
 若錯誤、逾時、讀回 FAIL 或專案不符，停在該步並保留結果，不重試、不重跑以前的 08～12，不刷新／清除歷史事故頁或草稿。這次不需停用正式資料來源，也不提供預設的隔離試用網站。
 
+## Windows 換行造成的核驗誤報
+
+- Windows 手動複製可能把函式本文 LF 轉成 CRLF；舊版原始文字指紋會因此只報 `exact-installed-definitions`，不能直接當成安裝失敗或 RLS 選錯。
+- `supabase/verification/ship-tracking-definition-diagnostic.sql` 是獨立唯讀診斷，保留原始核驗結果並比對 CRLF 正規化指紋、函式數量及權限；不執行安裝、不輸出函式本文或業務資料。
+- 現行 readback 只將 CRLF 換行對統一為 LF；原核驗項目與期望指紋不變。真正函式本文、設定或權限差異仍 FAIL；不放寬一般空白、字元或存取權限。
+- 若既有正式診斷完整回傳 `CRLF_ONLY_DIFFERENCE`，全數函式指紋與已驗證 CRLF 安裝一致、其餘檢查通過，且正式唯讀接口正常，可據這份證據完成安裝核對，不必重跑安裝或僅為換取新版 PASS 再要求使用者執行 SQL。原始 `FAIL` 與後續診斷均須保留；不可宣稱新版 SQL 已在正式環境執行。
+- 回歸：`node scripts/verify-ship-tracking-diagnostic.mjs`（LF／CRLF、缺少物件、實際本文／設定／權限異常）；`node scripts/verify-ship-tracking-native.mjs --crlf-install`（CRLF 安裝後的完整原生流程）。兩者皆沿用本機 QA 環境，不向正式環境試寫。
+
 ## 已完成的本機驗證
 
 所有可寫測試使用 **真實 UI＋合成資料＋本機原生 PostgreSQL**，未操作正式業務資料。
