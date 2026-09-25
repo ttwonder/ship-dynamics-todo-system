@@ -9,7 +9,7 @@ import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
 const output=fs.mkdtempSync(path.join(process.env.QA_EVIDENCE_ROOT||os.tmpdir(),'tracking-ui-'));
 const profile=path.join(output,'chrome-profile');
 const b1=process.env.QA_RELATED_DRAFT_B1==='1';
-let native,qa,browser,ws,failure=null,sessionId,releaseHeldReceipt,expectDeleteRejection=false;
+let native,qa,browser,ws,failure=null,sessionId,releaseHeldReceipt,expectDeleteRejection=false,expectStatisticsReadFailure=false;
 const pending=new Map(),evidence={label:'真實 UI＋測試資料；原生 PostgreSQL，非 hosted Supabase',scenarios:[],errors:[],blockedExternal:[],metrics:[],dialogs:[]};
 let id=0;
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -90,7 +90,7 @@ try{
    if(rejected)evidence.expectedDeleteRejection=message.params.message;
    // Disposal of the isolated failure page only; NOT a product save/close claim.
    const disposeFailurePage=message.params.type==='beforeunload'&&evidence.rejectedDelete?.draftRetained===true;
-   const expected=(message.params.type==='prompt'&&message.params.message==='請選擇完成日期（YYYY-MM-DD）')||(message.params.type==='confirm'&&/^確認保存本次結案／重開變更/.test(message.params.message))||(message.params.type==='confirm'&&/^確定將此內控案件改為未結案/.test(message.params.message))||(message.params.type==='alert'&&/^(tracking-stale-source|跟蹤保存結果尚未確認|此項目正在由 QA other editor)/.test(message.params.message))||(message.params.type==='confirm'&&/^重新核對/.test(message.params.message))||(message.params.type==='confirm'&&/^只同步以下/.test(message.params.message))||disposeFailurePage||rejected||abnormal||(message.params.type==='confirm'&&/^(確定撤回同步要事|確定刪除此內控案件|確定刪除待辦|同步最新會保留本機修改)/.test(message.params.message))||(message.params.type==='alert'&&/^(同步要事已撤回；|請務必在FLOW系統中申報异常|請務必在FLOW系統中申報異常)/.test(message.params.message));
+   const expected=(expectStatisticsReadFailure&&message.params.type==='alert'&&message.params.message==='Synthetic record ACK loss after actual SQL commit')||(message.params.type==='prompt'&&message.params.message==='請選擇完成日期（YYYY-MM-DD）')||(message.params.type==='confirm'&&/^確認保存本次結案／重開變更/.test(message.params.message))||(message.params.type==='confirm'&&/^確定將此內控案件改為未結案/.test(message.params.message))||(message.params.type==='alert'&&/^(tracking-stale-source|跟蹤保存結果尚未確認|此項目正在由 QA other editor)/.test(message.params.message))||(message.params.type==='confirm'&&/^重新核對/.test(message.params.message))||(message.params.type==='confirm'&&/^只同步以下/.test(message.params.message))||disposeFailurePage||rejected||abnormal||(message.params.type==='confirm'&&/^(確定撤回同步要事|確定刪除此內控案件|確定刪除待辦|同步最新會保留本機修改)/.test(message.params.message))||(message.params.type==='alert'&&/^(同步要事已撤回；|請務必在FLOW系統中申報异常|請務必在FLOW系統中申報異常)/.test(message.params.message));
    if(!expected)evidence.errors.push('Unexpected QA dialog: '+message.params.message);
    void call('Page.handleJavaScriptDialog',{accept:expected&&!abnormal,...(message.params.type==='prompt'?{promptText:'2026-09-26'}:{})},message.sessionId).catch(error=>evidence.errors.push(error.message));
   }
@@ -125,11 +125,14 @@ try{
    await screen('tracking-native-App-dark-theme-consistency');
    await call('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:'light'}]});
  });
+ await check('shore-initial-list-default-and-statistics-last',async()=>{
+  const tabs=await evaluate("[...document.querySelectorAll('.tracking-tabs [role=tab]')].map(n=>({label:n.textContent.trim(),active:n.getAttribute('aria-selected')}))");assert.equal(tabs.length,6);assert.ok(tabs[0].label.startsWith('未送船清單'));assert.equal(tabs[0].active,'true');assert.equal(tabs[5].label,'統計資訊');assert.equal(tabs[5].active,'false');
+ });
  await check('new-source-real-App-native-ACK-and-reload',async()=>{
    await until(()=>evaluate("Boolean([...document.querySelectorAll('.tracking-heading button')].find(n=>n.innerText==='＋ 新增／批量新增'&&!n.disabled))"),'tracking read ready');
    const before=await qa.read();
    await click('＋ 新增／批量新增');
-  await until(()=>evaluate(`Boolean(document.querySelector('[aria-label="第 1 筆 類型"]'))`),'explicit create type');assert.equal(await evaluate("document.querySelector('[aria-label=本次固定船舶]').value"),'QA VESSEL 1');assert.equal(await evaluate("document.querySelector('[aria-label=本次固定船舶]').readOnly"),true);
+  await until(()=>evaluate(`Boolean(document.querySelector('[aria-label="第 1 筆 類型"]'))`),'explicit create type');assert.equal(await evaluate("document.querySelector('[aria-label=新增跟蹤說明] strong').textContent"),'船舶：QA VESSEL 1');assert.equal(await evaluate("document.querySelectorAll('[aria-label=新增跟蹤說明] input,[aria-label=新增跟蹤說明] select').length"),0);
   await select("document.querySelector('[aria-label=\"第 1 筆 類型\"]')",'repair');assert.ok(await evaluate("Boolean(document.querySelector('[aria-label=\"第 1 筆 實際送達/完工日期\"]'))"));await select("document.querySelector('[aria-label=\"第 1 筆 類型\"]')",'spares');
    await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','UI-001');
    await fill('[aria-label="第 1 筆 內容摘要/工程內容"]','真實UI測試來源');
@@ -147,7 +150,9 @@ try{
  const rowAction=async(reference,label)=>{await until(()=>evaluate(`Boolean([...(${trackingRow(reference)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()===${JSON.stringify(label)}&&!n.disabled))`),'ready source '+reference);await nodeClick(`[...(${trackingRow(reference)}).querySelectorAll('button')].find(n=>n.innerText.trim()===${JSON.stringify(label)})`);await until(()=>evaluate("Boolean(document.querySelector('[role=dialog]'))"),'tracking '+label+' dialog');};
  const dateInput=async(selector,value)=>{await until(()=>evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`),"date field ready");await evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n||n.disabled)throw new Error('date input unavailable');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(selector)}).value`),value);};
  const trackingTab=async(label)=>{await nodeClick(`[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith(${JSON.stringify(label)}))`);};
- if(process.argv.includes('--fields')){
+ if(process.argv.includes('--statistics')){
+   await (await import('./tracking-statistics-browser-checks.mjs')).statisticsChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output,audience:'shore',expectReadFailure:value=>{expectStatisticsReadFailure=value;}});
+ }else if(process.argv.includes('--fields')){
    await (await import('./tracking-field-browser-checks.mjs')).trackingFieldChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output});
  }else if(process.argv.includes('--layout-only')){
    await (await import('./tracking-layout-browser-checks.mjs')).layoutChecks({qa,call,evaluate,click,nodeClick,fill,until,text,screen,check,rowAction,finishEditor,output});

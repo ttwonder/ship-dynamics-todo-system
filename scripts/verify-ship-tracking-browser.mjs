@@ -97,12 +97,20 @@ try{
   assert.ok((await text()).includes('測試輪 QA VESSEL 1'));assert.ok(!(await text()).includes('QA OWNER'));
   await screen('ship-tracking-desktop');
  });
+ await check('ship-initial-statistics-first-active-and-explicit-list-entry',async()=>{
+  const tabs=await evaluate("[...document.querySelectorAll('.tracking-tabs [role=tab]')].map(n=>({label:n.textContent.trim(),active:n.getAttribute('aria-selected')}))");
+  assert.equal(tabs.length,6);assert.equal(tabs[0].label,'統計資訊');assert.equal(tabs[0].active,'true');assert.ok(tabs[1].label.startsWith('未送船清單'));assert.ok(tabs.slice(1).every(t=>t.active==='false'));
+  await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("Boolean(document.querySelector('.tracking-table'))"),'explicit original list entry');
+ });
  await check('original-shared-form-creates-cloud-record-with-exact-ACK',async()=>{
   await click('＋ 新增／批量新增');await until(async()=>await evaluate("Boolean(document.querySelector('.tracking-modal'))"),'create dialog');
   await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','BROWSER-001');await fill('[aria-label="第 1 筆 內容摘要/工程內容"]','真實船端輸入測試');await fill('[aria-label="第 1 筆 最新進度"]','第一筆進度');
   await click('確認保存 1 項');await finish();
   const record=(await qa.read()).payload.trackingItems.find(x=>x.referenceNo==='BROWSER-001');assert.equal(record.description,'真實船端輸入測試');assert.equal(record.statusLogs[0].text,'第一筆進度');
  });
+ if(process.argv.includes('--statistics')){
+  await (await import('./tracking-statistics-browser-checks.mjs')).statisticsChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output,audience:'ship'});
+ }else{
  if(process.argv.includes('--fields'))await (await import('./tracking-field-browser-checks.mjs')).trackingFieldChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output});
  await check('ship-sync-form-reporter-and-no-office-control',async()=>{
   await nodeClick("(()=>{const row=[...document.querySelectorAll('.tracking-table tbody tr')].find(n=>n.querySelector('.tracking-reference')?.innerText.includes('BROWSER-001'));return [...row.querySelectorAll('button')].find(n=>n.innerText==='同步到內控');})()");await until(async()=>await evaluate("Boolean(document.querySelector('#ship-internal-reporter'))"),'ship reporter form');
@@ -117,12 +125,15 @@ try{
   await click('確認保存 1 項');await until(async()=>(await text()).includes('尚未保存；輸入及精確提交已保留'),'unknown outcome retained');assert.ok(committed);const revision=(await qa.read()).revision;
   const storedBefore=await evaluate("Object.fromEntries(Object.entries(localStorage).filter(([k])=>k.startsWith('[\"tracking-unsent-v1\"')))"),key=Object.keys(storedBefore)[0];assert.ok(key);const originalDraft=JSON.parse(storedBefore[key]);assert.ok(originalDraft.pending);
   await evaluate('window.__qaPriorDocument=true');allowRefresh=true;await call('Page.reload',{ignoreCache:true});await until(async()=>await evaluate("!window.__qaPriorDocument&&Boolean(document.querySelector('.tracking-page'))")&&!(await text()).includes('讀取此船最新資料'),'reload unknown page');allowRefresh=false;
+  await until(()=>evaluate("Boolean(document.querySelector('[aria-label=統計摘要]'))||Boolean([...document.querySelectorAll('.tracking-statistics [role=status]')].find(n=>!n.innerText.includes('正在讀取')))"),'initial statistics read settles before pending assertion');
+  assert.equal(await evaluate("document.querySelectorAll('[aria-label=統計摘要],.tracking-stat-exports').length"),0,'fresh-entry statistics cannot bypass restored unknown submission');
   await until(()=>evaluate("Boolean(document.querySelector('.tracking-modal'))||[...document.querySelectorAll('.tracking-heading button')].some(n=>n.innerText==='＋ 新增／批量新增'&&!n.disabled)"),'restored vessel read ready');
   if(!await evaluate("Boolean(document.querySelector('.tracking-modal'))"))await click('＋ 新增／批量新增');
   if(await evaluate("Boolean(document.querySelector('[aria-label=\"第 1 筆 申請單號(材料或工程)\"]'))"))await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','MUST-NOT-REPLACE-PENDING');
   const retained=await evaluate(`JSON.parse(localStorage.getItem(${JSON.stringify(key)}))`);assert.deepEqual(retained.pending,originalDraft.pending,'new action must not replace the old unknown submission');assert.deepEqual(retained.draft.rows,originalDraft.draft.rows);
   qa.setRecordFault(null);if(!await evaluate("Boolean(document.querySelector('.tracking-modal'))"))await click('恢復本船未送出草稿');await click('確認結果／重試相同提交');await finish();
   const after=await qa.read();assert.equal(after.revision,revision);assert.equal(after.payload.trackingItems.find(x=>x.referenceNo==='BROWSER-001').statusLogs.filter(x=>x.text==='網路中斷仍保留的進度').length,1);assert.ok(original.p_payload.operationId);
+  await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("Boolean(document.querySelector('.tracking-table'))"),'explicit list after pending recovery');
  });
  await check('rejected-create-reacquires-creation-lease-with-original-input',async()=>{
   await click('＋ 新增／批量新增');await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','BROWSER-REJECTED');await fill('[aria-label="第 1 筆 內容摘要/工程內容"]','拒絕後保留原文');
@@ -147,7 +158,8 @@ try{
  await check('mobile-dense-shared-table-no-document-overflow',async()=>{
   await wait(150);assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'));const header=await evaluate("(()=>{const h=document.querySelector('.ship-portal-header'),c=h.firstElementChild;return {height:h.getBoundingClientRect().height,direction:getComputedStyle(h).flexDirection,childBasis:getComputedStyle(c).flexBasis};})()");evidence.mobileHeader=header;assert.ok(header.height<160,'Compact mobile header: '+JSON.stringify(header));await screen('ship-tracking-mobile');
  });
+ }
  assert.deepEqual(evidence.errors,[]);assert.deepEqual(evidence.blockedExternal,[]);
  evidence.metrics=qa.metrics;console.log(JSON.stringify({status:'PASS',output,scenarios:evidence.scenarios.length}));
 }catch(error){failure=error;evidence.failure=error.stack;console.error(error.stack);if(ws&&sessionId){try{evidence.body=await text();await screen('failure');}catch{}}}
-finally{try{if(ws){await call('Browser.close',{},null).catch(()=>{});ws.close();}if(browser){await wait(300);if(browser.exitCode===null)spawnSync('taskkill',['/PID',String(browser.pid),'/T','/F'],{stdio:'ignore'});}await qa?.close();await native?.close();}catch(error){failure??=error;evidence.cleanupError=error.stack;}evidence.status=failure?'FAIL':'PASS';fs.writeFileSync(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify({status:evidence.status,output}));if(failure)process.exitCode=1;}
+finally{try{if(ws){await call('Browser.close',{},null).catch(()=>{});ws.close();}if(browser){await wait(300);if(browser.exitCode===null)spawnSync('taskkill',['/PID',String(browser.pid),'/T','/F'],{stdio:'ignore'});}await qa?.close();await native?.close();if(qa)await assert.rejects(()=>fetch(qa.origin+'/__qa/health'));if(browser)await until(()=>browser.exitCode!==null||browser.signalCode!==null,'owned Chrome stopped',5000);evidence.cleanup={httpStopped:true,chromeStopped:true,ownedChromePid:browser?.pid};}catch(error){failure??=error;evidence.cleanupError=error.stack;}evidence.status=failure?'FAIL':'PASS';fs.writeFileSync(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify({status:evidence.status,output}));if(failure)process.exitCode=1;}

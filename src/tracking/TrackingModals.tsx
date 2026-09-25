@@ -63,8 +63,10 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, au
   const formFields = ['create', 'edit'].includes(draft.action);
   return <div className="modal-backdrop"><form className={`modal tracking-modal${draft.action === 'progress' ? ' tracking-progress-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
     <div className="modal-head"><h2 id="tracking-modal-title">{titles[draft.action]}</h2><button type="button" className="btn ghost" onClick={onClose}>關閉</button></div>
-    <p>{trackingHelp(audience)[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
-    <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>
+    {draft.action === 'create' ? <div className="tracking-create-context" role="group" aria-label="新增跟蹤說明"><strong>船舶：{vesselName}</strong><span>{trackingHelp(audience).create}</span></div> : <>
+      <p>{trackingHelp(audience)[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
+      <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>
+    </>}
     <fieldset disabled={readOnly} style={{border:0,padding:0,margin:0,minWidth:0}}>
 
     {!formFields && <ul className="tracking-affected" aria-label="實際影響範圍">{affected.map(label => <li key={label}>{label}</li>)}</ul>}

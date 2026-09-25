@@ -18,6 +18,11 @@ try {
   const props={data,vessels:[vessel],user:data.users[0],workspace:'qa-field-revision',identity:'qa',canCreate:true,canEdit:true,canClose:true,canExport:true,callbacks};
   for(const audience of ['shore','ship']) {
     const html=renderToStaticMarkup(React.createElement(TrackingPage,{...props,audience}));
+    if(audience==='ship') {
+      assert.match(html,/role="tab" aria-selected="true"[^>]*>統計資訊<\/button>/,'ship entry now starts with the approved statistics view');
+      assert.ok(html.includes('aria-label="跟蹤統計資訊"'));assert.ok(!html.includes('aria-label="搜尋跟蹤"'),'list is reached explicitly in mounted --fields tests');
+      cases.push('ship-initial-statistics-not-old-list');continue;
+    }
     const filterPanel=html.slice(html.indexOf('<details class="tracking-all-filters">'),html.indexOf('<details class="tracking-preferences">'));
     assert.ok(filterPanel,`${audience}: shared field filters render`);
     assert.doesNotMatch(filterPanel,/<textarea\b|<input\b(?![^>]*type="checkbox")/,`${audience}: field filters must contain dropdown criteria only, not text/date input boxes`);
@@ -43,6 +48,20 @@ try {
     assert.ok(!html.includes('新增跟蹤類型'),'per-row request type replaces coarse batch kind selector');
     for(const label of ['備貨完成日期','供應商','預計供料日期','實際全部送達日期','安排廠家','原備註'])assert.ok(!html.includes(label),`${kind}: no retired ${label} form`);
     cases.push(`${kind}-canonical-fields-and-create-form`);
+  }
+  for(const audience of ['shore','ship']) {
+    const draft=makeTrackingDraft('create',[newTrackingItem(vessel.id,'supply')],data);
+    const modalProps={draft,audience,busy:false,pending:false,message:'',affected:[],vesselName:'測試輪 QA SHIP',onChange:()=>{},onSave:()=>{},onReconcile:()=>{},onClose:()=>{}};
+    const html=renderToStaticMarkup(React.createElement(TrackingBusinessModal,modalProps));
+    assert.ok(!html.includes('本次精確選取'),`${audience}: create header must remove the redundant batch-count paragraph`);
+    assert.match(html,/role="group" aria-label="新增跟蹤說明"/);
+    const help=audience==='ship'?'只新增跟蹤來源，不會自動建立內控。保存後等待雲端確認。':'只新增追蹤來源，不會自動建立內控或要事。保存後等待雲端確認。';
+    assert.ok(html.includes('船舶：測試輪 QA SHIP')&&html.includes(help));
+    assert.doesNotMatch(html,/<input[^>]*aria-label="本次固定船舶"/,'fixed create vessel is text, not a large input');
+    assert.ok(html.includes('確認保存 1 項'),'exact save count remains on the actual action');
+    const edit=renderToStaticMarkup(React.createElement(TrackingBusinessModal,{...modalProps,draft:{...draft,action:'edit'}}));
+    assert.ok(edit.includes('本次精確選取')&&edit.includes('aria-label="本次固定船舶"'),'other actions retain their scope explanation');
+    cases.push(`${audience}-create-header-fixed-vessel-compact-copy-and-preserved-actions`);
   }
   const {TrackingItemFields}=await vite.ssrLoadModule('/src/tracking/TrackingItemFields.tsx');
   const typeChange=(row,creating,value)=>{
