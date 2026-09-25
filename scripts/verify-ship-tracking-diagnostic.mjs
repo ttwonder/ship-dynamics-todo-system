@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
+import {createNativeRecordQa} from './record-storage-native-qa.mjs';
+import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
+import {installTrackingBrowserMigrations} from './tracking-browser-fixture.mjs';
+const root=process.env.QA_EVIDENCE_ROOT;assert.ok(root&&path.isAbsolute(root));
+const output=fs.mkdtempSync(path.join(root,'ship-tracking-diagnostic-'));
+const files=['supabase/verification/ship-tracking-definition-diagnostic.sql','supabase/verification/ship-tracking-public-readback.sql','supabase/migrations/20260925080000_ship_tracking_public.sql'];
+const evidence={label:'Native PostgreSQL + synthetic data; NOT production',productionContacted:false,cases:[],inputs:Object.fromEntries(files.map(f=>[f,createHash('sha256').update(fs.readFileSync(f)).digest('hex')]))};
+const [diagnostic,readback,migration]=files.map(f=>fs.readFileSync(f,'utf8'));
+let native,qa;
+const run=async(sql)=>{const result=await native.adapter.exec(sql);const row=(Array.isArray(result)?result:[result]).flatMap(r=>r.rows||[]).find(r=>r.status);assert.ok(row);return row;};
+const check=async(name,fn)=>{const result=await fn();evidence.cases.push({name,status:'PASS',result});console.log('PASS',name,JSON.stringify(result));};
+const snapshot=async()=>({data:await qa.read(),catalog:(await native.adapter.query("select md5(string_agg(n.nspname||p.oid::text||pg_get_functiondef(p.oid)||coalesce(p.proacl::text,''),chr(10) order by n.nspname,p.oid)) hash from pg_proc p join pg_namespace n on n.oid=p.pronamespace where p.prokind='f' and n.nspname in ('public','ship_dynamics_tracking_private')")).rows[0].hash});
+const unchangedDiagnostic=async()=>{const before=await snapshot();const row=await run(diagnostic);assert.deepEqual(await snapshot(),before);assert.equal(row.status,'DIAGNOSTIC_ONLY');return row;};
+try{
+ native=await createNativeRecordQa(output,evidence);
+ await check('absent-schema-and-browser-roles-returns-diagnostic-not-error',async()=>{const r=await run(diagnostic);assert.equal(r.diagnosis,'PREREQUISITE_OR_ACL_DIFF');assert.equal(Number(r.definition_count),0);return r;});
+ qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,tracking:true,taskMember:true,databaseFactory:async()=>native.adapter});
+ await installTrackingBrowserMigrations(qa.db);
+ await qa.db.exec(fs.readFileSync('supabase/migrations/20260925020000_edit_lock_holder.sql','utf8'));
+ await qa.db.exec(migration);
+ await check('reviewed-LF-definitions-match-with-zero-writes',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'EXACT_MATCH');assert.deepEqual(r.failures,[]);assert.equal((await run(readback)).status,'PASS');return r;});
+ await qa.db.exec(migration.replace(/\r?\n/g,'\r\n'));
+ await check('Windows-CRLF-reproduces-original-FAIL-and-is-distinguished',async()=>{const original=await run(readback);assert.equal(original.status,'FAIL');assert.deepEqual(original.failures,['exact-installed-definitions']);const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'CRLF_ONLY_DIFFERENCE');assert.ok(Number(r.carriage_returns)>0);return r;});
+ await qa.db.exec(migration);
+ const signature='ship_dynamics_tracking_private.pick_v1(jsonb,text[])';
+ const definition=(await qa.db.query('select pg_get_functiondef($1::regprocedure) definition',[signature])).rows[0].definition;
+ const altered=definition.replace("'{}'::jsonb","'{\"qa_marker\":true}'::jsonb");assert.notEqual(altered,definition);
+ await qa.db.exec(altered);
+ await check('real-body-difference-is-not-accepted-as-formatting',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'DEFINITION_DIFFERENCE');return r;});
+ await qa.db.exec(definition);
+ await qa.db.exec(`alter function ${signature} cost 101`);
+ await check('metadata-difference-is-not-accepted-as-formatting',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'DEFINITION_DIFFERENCE');return r;});
+ await qa.db.exec(definition);
+ await qa.db.exec('grant usage on schema ship_dynamics_tracking_private to anon');
+ await check('ACL-failure-remains-separate-even-with-exact-definitions',async()=>{const r=await unchangedDiagnostic();assert.equal(r.diagnosis,'PREREQUISITE_OR_ACL_DIFF');assert.ok(r.failures.includes('private-schema-inaccessible'));return r;});
+ evidence.status='PASS';
+}catch(error){evidence.status='FAIL';evidence.error=String(error.stack||error);throw error;}
+finally{if(qa)await qa.close();if(native)await native.close();fs.writeFileSync(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2));console.log('Evidence',path.join(output,'evidence.json'));}
