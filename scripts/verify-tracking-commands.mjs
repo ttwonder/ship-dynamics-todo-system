@@ -37,7 +37,7 @@ try {
  assert.ok([state.trackingItems[0],state.internalControlCases[0],state.tasks[0]].every(x=>!x.isClosed&&!x.closedDate));
  assert.equal(state.trackingItems[0].deliveryStatus,'partially-delivered');assert.equal(state.trackingItems[0].events.filter(e=>e.action==='close').length,1);
  state=runTrackingCommand(state,{type:'lifecycle',action:'close',date:'2026-09-26',outcome:'cancelled',targets:[{entry:'tracking',id:'e1',expectedUpdatedAt:at}]},ctx());
- assert.equal(trackingBucket(state.trackingItems[1]),'engineering-cancelled');assert.equal(state.trackingItems[2].isClosed,false);
+ assert.equal(trackingBucket(state.trackingItems[1]),'engineering-completed','cancellation does not erase recorded completion');assert.equal(state.trackingItems[2].isClosed,false);
  const operator={...actor,id:'qa-progress',role:'operator',managedVesselIds:[source.vesselId]};state.users.push(operator);
  state.settings.rolePermissions.operator.editBusinessContent=true;state.settings.rolePermissions.operator.closeTasks=false;
  const opctx={...ctx(),actorId:operator.id};

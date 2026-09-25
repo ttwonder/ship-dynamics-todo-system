@@ -66,8 +66,9 @@ const leases=async()=> (await qa.db.query("select section_key,locked_by from shi
 
 try{
  native=await createNativeRecordQa(output,evidence,{httpTransactions:true});
- qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,tracking:true,databaseFactory:async()=>native.adapter});
+ qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,tracking:true,taskMember:true,databaseFactory:async()=>native.adapter});
  await (await import('./tracking-browser-fixture.mjs')).installTrackingBrowserMigrations(native.adapter);
+ await (await import('./tracking-browser-fixture.mjs')).installTrackingFieldRevision(qa.db);
 
  assert.equal((await fetch(`${qa.origin}/__qa/health`)).status,200);
  const chrome='C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));
@@ -128,10 +129,10 @@ try{
    await until(()=>evaluate("Boolean([...document.querySelectorAll('.tracking-heading button')].find(n=>n.innerText==='＋ 新增／批量新增'&&!n.disabled))"),'tracking read ready');
    const before=await qa.read();
    await click('＋ 新增／批量新增');
-  await until(()=>evaluate('Boolean(document.querySelector("[aria-label=新增跟蹤類型]"))'),'explicit create type');assert.equal(await evaluate("document.querySelector('[aria-label=本次固定船舶]').value"),'QA VESSEL 1');assert.equal(await evaluate("document.querySelector('[aria-label=本次固定船舶]').readOnly"),true);
-  await select("document.querySelector('[aria-label=新增跟蹤類型]')",'engineering');assert.ok(await evaluate("Boolean(document.querySelector('[aria-label=\"第 1 筆 回簽日期\"]'))"));await select("document.querySelector('[aria-label=新增跟蹤類型]')",'supply');
-   await fill('[aria-label="第 1 筆 項目編號"]','UI-001');
-   await fill('[aria-label="第 1 筆 內容摘要／工程內容"]','真實UI測試來源');
+  await until(()=>evaluate(`Boolean(document.querySelector('[aria-label="第 1 筆 類型"]'))`),'explicit create type');assert.equal(await evaluate("document.querySelector('[aria-label=本次固定船舶]').value"),'QA VESSEL 1');assert.equal(await evaluate("document.querySelector('[aria-label=本次固定船舶]').readOnly"),true);
+  await select("document.querySelector('[aria-label=\"第 1 筆 類型\"]')",'repair');assert.ok(await evaluate("Boolean(document.querySelector('[aria-label=\"第 1 筆 實際送達/完工日期\"]'))"));await select("document.querySelector('[aria-label=\"第 1 筆 類型\"]')",'spares');
+   await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','UI-001');
+   await fill('[aria-label="第 1 筆 內容摘要/工程內容"]','真實UI測試來源');
    await click('確認保存 1 項');await finishEditor();
    const saved=await qa.read(),created=saved.payload.trackingItems.find(r=>r.referenceNo==='UI-001');
    assert.ok(created);assert.equal(created.vesselId,'qa-v1');assert.equal(created.expectedDate,'');assert.equal(created.supplementalNotes,'');
@@ -146,7 +147,9 @@ try{
  const rowAction=async(reference,label)=>{await until(()=>evaluate(`Boolean([...(${trackingRow(reference)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()===${JSON.stringify(label)}&&!n.disabled))`),'ready source '+reference);await nodeClick(`[...(${trackingRow(reference)}).querySelectorAll('button')].find(n=>n.innerText.trim()===${JSON.stringify(label)})`);await until(()=>evaluate("Boolean(document.querySelector('[role=dialog]'))"),'tracking '+label+' dialog');};
  const dateInput=async(selector,value)=>{await until(()=>evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`),"date field ready");await evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n||n.disabled)throw new Error('date input unavailable');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(selector)}).value`),value);};
  const trackingTab=async(label)=>{await nodeClick(`[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith(${JSON.stringify(label)}))`);};
- if(process.argv.includes('--layout-only')){
+ if(process.argv.includes('--fields')){
+   await (await import('./tracking-field-browser-checks.mjs')).trackingFieldChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output});
+ }else if(process.argv.includes('--layout-only')){
    await (await import('./tracking-layout-browser-checks.mjs')).layoutChecks({qa,call,evaluate,click,nodeClick,fill,until,text,screen,check,rowAction,finishEditor,output});
  }else{
  await check('source-sync-reuses-original-form-one-case-no-default-task',async()=>{
@@ -164,7 +167,7 @@ try{
    assert.ok((await text()).includes('已在這邊輸入項目，不要再在內控重複輸入！'));await screen('tracking-sync-confirmed');
  });
  await check('delivery-independent-linked-close-correct-reopen-and-case-entry',async()=>{
-   await rowAction('UI-001','送船／更正');await dateInput('[aria-label="實際全部送達日期"]','2026-09-25');await click('確認保存 1 項');await finishEditor();
+   await rowAction('UI-001','送達／更正');await dateInput('[aria-label="實際送達/完工日期"]','2026-09-25');await click('確認保存 1 項');await finishEditor();
    let saved=await qa.read(),source=saved.payload.trackingItems.find(r=>r.referenceNo==='UI-001');assert.equal(source.deliveryStatus,'delivered');assert.equal(source.isClosed,false);assert.equal(saved.payload.internalControlCases.find(c=>c.id===source.linkedCaseId).isClosed,false);
    await trackingTab('已送船清單');await rowAction('UI-001','結案');assert.ok((await text()).includes(source.linkedCaseId));await dateInput('[aria-label="結案日期"]','2026-09-26');await click('確認保存 1 項');await finishEditor();
    saved=await qa.read();source=saved.payload.trackingItems.find(r=>r.referenceNo==='UI-001');assert.equal(source.closedDate,'2026-09-26');assert.equal(saved.payload.internalControlCases.find(c=>c.id===source.linkedCaseId).closedDate,'2026-09-26');

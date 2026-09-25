@@ -4,7 +4,7 @@ const output=fs.mkdtempSync(path.join(process.env.QA_EVIDENCE_ROOT||os.tmpdir(),
 const check=async(name,run)=>{await run();evidence.cases.push(name);console.log('PASS',name);};
 try{
  native=await createNativeRecordQa(output,evidence,{httpTransactions:true});qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,shipTracking:true,tracking:true,taskMember:true,databaseFactory:async()=>native.adapter});
- await installTrackingBrowserMigrations(qa.db);for(const file of ['20260925020000_edit_lock_holder.sql','20260925080000_ship_tracking_public.sql'])await qa.db.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
+ await installTrackingBrowserMigrations(qa.db);for(const file of ['20260925020000_edit_lock_holder.sql','20260925080000_ship_tracking_public.sql','20260925160000_tracking_field_revision.sql'])await qa.db.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
  const {ShipTrackingRepository}=await qa.loadModule('/src/tracking/shipTracking.ts');const config=JSON.parse((await(await fetch(qa.origin+'/supabase-config.js')).text()).match(/=(\{.*\});/)[1]);
  const values=new Map(),storage={getItem:key=>values.get(key)??null,setItem:(key,v)=>values.set(key,v),removeItem:key=>values.delete(key)};
  const repo=new ShipTrackingRepository(config,{storage,isCurrent:()=>true});

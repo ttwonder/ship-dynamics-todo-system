@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {createNativeRecordQa} from './record-storage-native-qa.mjs';
 import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
-import {installTrackingBrowserMigrations} from './tracking-browser-fixture.mjs';
+import {installTrackingBrowserMigrations,installTrackingFieldRevision} from './tracking-browser-fixture.mjs';
 import {multiuserChecks} from './tracking-multiuser-browser-checks.mjs';
 import {editEntryChecks} from './edit-entry-browser-checks.mjs';
 const editEntry=process.argv.includes('--edit-entry'),shipTracking=process.argv.includes('--ship-tracking');
@@ -74,7 +74,7 @@ try{
  qa=await createRecordStorageLocalQa({browserAuthority:true,internalControl:true,scopedRead:true,shipInternalControl:true,shipTracking,tracking:true,taskMember:true,performanceTrace:true,databaseFactory:async()=>native.adapter,preparePerformanceFixture:initial=>{for(const key of ['tasks','internalControlCases','taskDismissals','notifications','auditLogs'])initial[key]=[];}});
  await installTrackingBrowserMigrations(native.adapter);
  await native.adapter.exec(fs.readFileSync('supabase/migrations/20260925020000_edit_lock_holder.sql','utf8'));
- if(shipTracking)await native.adapter.exec(fs.readFileSync('supabase/migrations/20260925080000_ship_tracking_public.sql','utf8'));
+ await installTrackingFieldRevision(native.adapter);
  assert.equal((await (await fetch(qa.origin+'/__qa/health')).json()).kind,'REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES');
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let port,socket;await until(()=>{try{[port,socket]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(port)&&socket?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'Chrome readiness');

@@ -5,6 +5,7 @@ import { trackingRowSnapshot } from './trackingFilters';
 import { trackingTextChunks, trackingReportFileName, type TrackingReport } from './trackingReport';
 import type { TrackingKind } from './trackingTypes';
 import { formatTaipeiDateTime } from '../taipeiTime';
+import { TRACKING_REQUEST_TYPES } from './trackingRequestTypes';
 
 function formatSheet(sheet:ExcelJS.Worksheet,widths:number[],header:number,paperSize=9){
  widths.forEach((w,i)=>{sheet.getColumn(i+1).width=w;});
@@ -51,14 +52,14 @@ export async function buildTrackingWorkbook(report:TrackingReport,template=false
  columns.forEach((c,i)=>{const col=sheet.getColumn(i+1);col.numFmt=c.type==='date'?['createdAt','updatedAt'].includes(c.key)?'yyyy-mm-dd hh:mm:ss':'yyyy-mm-dd':'@';if(c.key==='vesselId'||(c.key==='id'&&!report.columns.some(x=>x.key==='id')))col.hidden=true;});
  sheet.autoFilter={from:{row:4,column:1},to:{row:Math.max(5,sheet.rowCount),column:columns.length}};
  report.rows.forEach((r,i)=>{if(r.item.urgency==='urgent'){const n=columns.findIndex(c=>c.key==='referenceNo');if(n>=0)sheet.getCell(i+5,n+1).font={name:'Microsoft JhengHei',size:11,bold:true,color:{argb:'FFC00000'}};}});
- if(template){for(let r=5;r<=14;r++){for(const k of ['normal','urgent']){const i=columns.findIndex(c=>c.key===k);if(i>=0)sheet.getCell(r,i+1).dataValidation={type:'list',allowBlank:true,formulae:['"是,否"']};}}}
+ if(template){for(let r=5;r<=14;r++){for(const k of ['normal','urgent','requestType']){const i=columns.findIndex(c=>c.key===k);if(i>=0)sheet.getCell(r,i+1).dataValidation={type:'list',allowBlank:true,showErrorMessage:true,error:'請選擇下拉清單中的內容',formulae:[k==='requestType'?'"'+TRACKING_REQUEST_TYPES.filter(t=>t.kind===report.kind).map(t=>t.label).join(',')+'"':'"是,否"']};}}}
  // Wide data stays editable/filterable. This explicit, unabridged companion is
  // the legible print layout: every chosen field, no hidden omission or tiny type.
  const print=book.addWorksheet('列印明細');
  print.mergeCells('A1:D1');print.getCell('A1').value=`${report.vesselName}｜${report.title}`;
  print.mergeCells('A2:D2');print.getCell('A2').value=`${report.summary}｜${report.rows.length} 項｜${formatTaipeiDateTime(report.generatedAt)}（台北）`;
  print.mergeCells('A3:D3');print.getCell('A3').value='完整欄位逐項列印；長文字標「續」，不省略。資料輸入／匯入請使用第一張工作表。';
- print.addRow(['序號','項目編號','欄位','內容']);
+ print.addRow(['序號','申請單號(材料或工程)','欄位','內容']);
  const printable=template?[{id:'',item:{referenceNo:''},values:{} as Record<string,string>}]:report.rows;
  printable.forEach((row,index)=>report.columns.forEach(col=>trackingTextChunks(row.values[col.key]||'').forEach((text,part)=>print.addRow([String(index+1),row.item.referenceNo,col.label+(part?`（續 ${part+1}）`:''),text]))));
  formatSheet(print,[7,25,25,94],4);
@@ -67,7 +68,7 @@ export async function buildTrackingWorkbook(report:TrackingReport,template=false
  const buffer=await book.xlsx.writeBuffer();return Uint8Array.from(new Uint8Array(buffer)).buffer;
 }
 export async function buildTrackingTemplate(kind:TrackingKind,vesselName:string,vesselId:string){
- const report:TrackingReport={...trackingRowSnapshot([],trackingColumnsFor(kind)),kind,vesselName,vesselId,title:kind==='supply'?'配件物料空白模板':'工程空白模板',generatedAt:new Date().toISOString(),summary:'空白模板｜船上回報／公司追蹤欄位完整保留｜普通緊急互斥，日期須明確',selection:'all'};
+ const report:TrackingReport={...trackingRowSnapshot([],trackingColumnsFor(kind).filter(c=>c.editable||['normal','urgent'].includes(c.key))),kind,vesselName,vesselId,title:kind==='supply'?'配件物料空白模板':'工程空白模板',generatedAt:new Date().toISOString(),summary:'空白模板｜請填寫指定申請欄位｜類型與普通／緊急用下拉選擇，日期須明確',selection:'all'};
  return buildTrackingWorkbook(report,true);
 }
 export function downloadTrackingBytes(bytes:ArrayBuffer,name:string,isCurrent:()=>boolean):boolean{

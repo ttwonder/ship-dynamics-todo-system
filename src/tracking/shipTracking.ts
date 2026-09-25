@@ -3,7 +3,7 @@ import type { ShipInternalControlCatalog, ShipInternalControlVessel } from '../s
 import type { InternalControlCase } from '../types';
 import type { TrackingItem } from './trackingTypes';
 import type { TrackingSubmission } from './trackingUiTypes';
-import { TRACKING_EDIT_FIELDS, validateTrackingItem } from './trackingWorkflow';
+import { TRACKING_CREATE_FIELDS, validateTrackingItem } from './trackingWorkflow';
 
 const protocol = 'ship-tracking-public-v1';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,7 +43,7 @@ export function shipTrackingCommand(submission: TrackingSubmission, vesselId: st
   if (command.type === 'sync-edit') throw new Error('原案件已建立；請關閉已完成的提交，從跟蹤清單繼續操作。');
   if (command.type === 'create') {
     for (const item of command.items) { if (item.vesselId !== vesselId) throw new Error('所選船舶不符；未送出。'); validateTrackingItem(item); }
-    return { type: 'create', items: command.items.map(item => pick(item, [...TRACKING_EDIT_FIELDS, 'id', 'kind', 'vesselId', 'progress', 'deliveryStatus', 'actualDeliveryDate', 'source'])), ...('importClosures' in command && command.importClosures.length ? { importClosures: structuredClone(command.importClosures) } : {}) };
+    return { type: 'create', items: command.items.map(item => pick(item, TRACKING_CREATE_FIELDS)), ...('importClosures' in command && command.importClosures.length ? { importClosures: structuredClone(command.importClosures) } : {}) };
   }
   if (command.type === 'sync') {
     const reporter = submission.reporterNameAndRole?.trim();

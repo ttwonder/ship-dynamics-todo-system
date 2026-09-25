@@ -30,6 +30,7 @@ try {
   evidence.installedDefinitionFingerprint=fingerprint;console.log('Installed definition fingerprint',fingerprint);
   const results=await qa.db.exec(sql),row=results.flatMap(r=>r.rows||[]).find(r=>r.status);assert.ok(row);assert.equal(row.status,'PASS',JSON.stringify(row));assert.equal(Number(row.checks),8);assert.deepEqual(row.failures,[]);
  });
+ await qa.db.exec(fs.readFileSync('supabase/migrations/20260925160000_tracking_field_revision.sql','utf8'));
  const rpc=async(action,vessel=null,payload={},actor='11111111-1111-4111-8111-111111111111',holder='22222222-2222-4222-8222-222222222222')=>qa.db.transaction(async tx=>{
   await tx.exec('set local role anon');return (await tx.query('select public.ship_dynamics_tracking_public_v1($1,$2,$3::uuid,$4::uuid,$5,$6::jsonb) result',['isolated-record-ui-qa',vessel,actor,holder,action,JSON.stringify(payload)])).rows[0].result;
  });

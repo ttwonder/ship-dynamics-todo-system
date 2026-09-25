@@ -7,3 +7,7 @@ export async function installTrackingBrowserMigrations(db){
  await installShipInternalControlFixture(db,'isolated-record-ui-qa');
  await db.exec(fs.readFileSync('supabase/migrations/20260924160000_tracking_records.sql','utf8'));
 }
+
+export async function installTrackingFieldRevision(db) {
+  for(const name of ['20260925020000_edit_lock_holder.sql','20260925080000_ship_tracking_public.sql','20260925160000_tracking_field_revision.sql']) await db.exec(fs.readFileSync('supabase/migrations/'+name,'utf8'));
+}

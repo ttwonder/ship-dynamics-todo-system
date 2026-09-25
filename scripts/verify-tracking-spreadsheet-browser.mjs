@@ -66,8 +66,8 @@ const leases=async()=> (await qa.db.query("select section_key,locked_by from shi
 
 try{
  native=await createNativeRecordQa(output,evidence,{httpTransactions:true});
- qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,tracking:true,databaseFactory:async()=>native.adapter});
- await (await import('./tracking-browser-fixture.mjs')).installTrackingBrowserMigrations(native.adapter);
+ qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,tracking:true,taskMember:true,databaseFactory:async()=>native.adapter});
+ await (await import('./tracking-browser-fixture.mjs')).installTrackingBrowserMigrations(native.adapter);await (await import('./tracking-browser-fixture.mjs')).installTrackingFieldRevision(qa.db);
 
  assert.equal((await fetch(`${qa.origin}/__qa/health`)).status,200);
  const chrome='C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));

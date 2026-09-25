@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import {createServer} from 'vite';
+const vite=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',logLevel:'silent'});
+const cases=[];
+try {
+ const {createInitialData}=await vite.ssrLoadModule('/src/data/seed.ts');
+ const {runTrackingCommand,prefillTrackingCase}=await vite.ssrLoadModule('/src/tracking/trackingWorkflow.ts');
+ const {TRACKING_REQUEST_TYPES}=await vite.ssrLoadModule('/src/tracking/trackingRequestTypes.ts');
+ const {trackingInTab}=await vite.ssrLoadModule('/src/tracking/trackingFilters.ts');
+ let data=createInitialData();data.trackingItems=[];data.tasks=[];data.internalControlCases=[];
+ const actor=data.users.find(u=>u.role==='owner')||data.users[0];actor.role='owner';actor.isActive=true;
+ const vessel=data.vessels.find(v=>v.isActive);assert.ok(vessel);
+ const context=n=>({actorId:actor.id,at:`2026-09-25T08:00:${String(n).padStart(2,'0')}.000Z`,operationId:'field-revision-'+n});
+ const inputs=TRACKING_REQUEST_TYPES.map((option,i)=>({id:'field-source-'+i,kind:option.kind,requestType:option.value,vesselId:vessel.id,referenceNo:'FIELD-'+i,purchaseNos:'00000'+i,originalItemNo:String(i),description:'欄位測試 '+option.label,applicationDate:'2026-09-25',urgency:'normal',expectedDate:'2026-10-01',progress:'初始進度',supplementalNotes:'補充',deliveryStatus:'not-delivered',isClosed:false,createdBy:'',updatedBy:'',createdAt:'',updatedAt:'',statusLogs:[]}));
+ data=runTrackingCommand(data,{type:'create',items:inputs},context(1));
+ for(const row of data.trackingItems){assert.equal(trackingInTab(row,row.kind==='supply'?'supply-all':'engineering-open'),true);}
+ assert.throws(()=>runTrackingCommand(data,{type:'create',items:[{...inputs[0],id:'bad-kind',kind:'supply'}]},context(2)),/tracking-request-type-kind/,'explicit request type cannot contradict source kind');
+ assert.throws(()=>runTrackingCommand(data,{type:'create',items:[{...inputs[0],id:'bad-enum',requestType:'arbitrary'}]},context(2)),/tracking-request-type/,'unknown request type rejected');
+ const legacy={...inputs[0],id:'legacy'};delete legacy.requestType;
+ assert.equal(runTrackingCommand(data,{type:'create',items:[legacy]},context(2)).trackingItems.at(-1).requestType,undefined,'legacy pending create is not defaulted into a guessed request type');
+ cases.push('five-request-types-kind-validation-and-legacy-absence');
+ const blankSource=data.trackingItems.find(row=>row.kind==='supply');
+ const blankEdited=runTrackingCommand(data,{type:'edit',items:[{id:blankSource.id,expectedUpdatedAt:blankSource.updatedAt,changes:{actualDeliveryDate:''}}]},context(2)).trackingItems.find(row=>row.id===blankSource.id);
+ assert.equal(blankEdited.actualDeliveryDate,undefined,'unchanged blank actual date preserves legacy absence and avoids unaudited raw mutations');
+ const source=data.trackingItems.find(row=>row.kind==='supply');
+ const {item}=prefillTrackingCase(data,source,'field-case');
+ data=runTrackingCommand(data,{type:'sync',items:[{id:source.id,expectedUpdatedAt:source.updatedAt,item}]},context(3));
+ const linkedBefore=structuredClone(data.internalControlCases.find(row=>row.id===item.id));
+ const selected=data.trackingItems.find(row=>row.id===source.id);
+ const unselected=data.trackingItems.filter(row=>row.id!==source.id);
+ data=runTrackingCommand(data,{type:'edit',items:[{id:source.id,expectedUpdatedAt:selected.updatedAt,changes:{requestType:'temporary-materials',purchaseNos:'000099',description:'來源修正，不覆寫內控',progress:'整合更新進度',actualDeliveryDate:'2026-09-26'}}]},context(4));
+ const saved=data.trackingItems.find(row=>row.id===source.id),linked=data.internalControlCases.find(row=>row.id===item.id);
+ assert.equal(saved.requestType,'temporary-materials');assert.equal(saved.deliveryStatus,'delivered');assert.equal(saved.actualDeliveryDate,'2026-09-26');assert.equal(saved.isClosed,false);
+ assert.equal(saved.statusLogs[0].text,'整合更新進度');assert.equal(linked.status,'整合更新進度');assert.equal(linked.description,linkedBefore.description);assert.equal(linked.expectedDate,linkedBefore.expectedDate);assert.equal(linked.isClosed,false);
+ assert.deepEqual(data.trackingItems.filter(row=>row.id!==source.id),unselected,'unselected sources untouched');
+ assert.equal(saved.events.at(-1).action,'delivery');
+ cases.push('batch-edit-source-progress-delivery-and-linked-field-ownership');
+ const engineers=data.trackingItems.filter(row=>row.kind==='engineering');
+ data=runTrackingCommand(data,{type:'edit',items:engineers.map(row=>({id:row.id,expectedUpdatedAt:row.updatedAt,changes:{completionDate:'2026-09-27'}}))},context(5));
+ for(const original of engineers){const row=data.trackingItems.find(s=>s.id===original.id);assert.equal(row.isClosed,false);assert.equal(trackingInTab(row,'engineering-closed'),true);assert.equal(trackingInTab(row,'engineering-open'),false);}
+ const completed=data.trackingItems.find(row=>row.id===engineers[0].id);
+ data=runTrackingCommand(data,{type:'lifecycle',action:'close',date:'2026-09-28',targets:[{id:completed.id,expectedUpdatedAt:completed.updatedAt,entry:'tracking'}]},context(6));
+ let closed=data.trackingItems.find(row=>row.id===completed.id);assert.equal(closed.completionDate,'2026-09-27');
+ data=runTrackingCommand(data,{type:'lifecycle',action:'reopen',targets:[{id:closed.id,expectedUpdatedAt:closed.updatedAt,entry:'tracking'}]},context(7));
+ assert.equal(data.trackingItems.find(row=>row.id===closed.id).completionDate,'2026-09-27');
+ assert.equal(trackingInTab({...completed,completionDate:'',isClosed:true,closureOutcome:'completed',closedDate:'2026-09-28'},'engineering-open'),true,'closure label/date cannot invent actual completion');
+ const {TRACKING_COLUMNS}=await vite.ssrLoadModule('/src/tracking/trackingColumns.ts');assert.equal(TRACKING_COLUMNS.find(c=>c.key==='closureOutcome').value({...completed,isClosed:true,closureOutcome:'cancelled'}),'取消結案','closure label must not contradict an actual completion date');
+ cases.push('engineering-batch-completion-independent-of-closure-and-reopen');
+ console.log(JSON.stringify({gate:'tracking-field-workflow',label:'真實domain＋測試資料，非正式環境',status:'PASS',caseCount:cases.length,cases}));
+} finally {await vite.close();}

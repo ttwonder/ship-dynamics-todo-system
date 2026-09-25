@@ -1,5 +1,6 @@
 import type { AppData, InternalControlCase, PermissionKey, UserAccount } from '../types';
 import type { TrackingItem, TrackingDeliveryStatus } from './trackingTypes';
+import { TRACKING_REQUEST_TYPES, trackingRequestKind, trackingRequestTypeLabel } from './trackingRequestTypes';
 import { createInternalControlCases, type InternalControlTaskProjection } from '../internalControlData';
 import { isValidInternalControlDate } from '../internalControlWorkflow';
 import { hasPermission, canAccessAllVessels } from '../permissions';
@@ -7,7 +8,10 @@ import { appendTrackingEvent, closureValue, resolveTrackingGroup, sourceForCase,
 
 export interface TrackingContext {actorId:string;at:string;operationId:string}
 export interface TrackingVersion {id:string;expectedUpdatedAt:string}
-export const TRACKING_EDIT_FIELDS=['referenceNo','description','applicationDate','originalItemNo','subitemNo','urgency','urgentSubtypes','purchaseNos','materialCategory','preparationDate','supplier','estimatedSupplyDatePlace','countersignDate','contractor','constructionPort','completionDate','originalRemarks','supplementalNotes','expectedDate'] as const;
+export const TRACKING_LEGACY_EDIT_FIELDS=['referenceNo','description','applicationDate','originalItemNo','subitemNo','urgency','urgentSubtypes','purchaseNos','materialCategory','preparationDate','supplier','estimatedSupplyDatePlace','countersignDate','contractor','constructionPort','completionDate','originalRemarks','supplementalNotes','expectedDate'] as const;
+export const TRACKING_EDIT_FIELDS=[...TRACKING_LEGACY_EDIT_FIELDS,'requestType','actualDeliveryDate','progress'] as const;
+// Freeze legacy create serialization order: old pending payload/signatures must survive upgrades.
+export const TRACKING_CREATE_FIELDS=[...TRACKING_LEGACY_EDIT_FIELDS,'id','kind','vesselId','progress','deliveryStatus','actualDeliveryDate','source','requestType'] as const;
 export type TrackingEdit = Partial<Pick<TrackingItem,typeof TRACKING_EDIT_FIELDS[number]>>;
 export type TrackingCommand =
  | {type:'create';items:TrackingItem[]}
@@ -30,19 +34,19 @@ export function validateTrackingItem(item:TrackingItem):void {
  for(const field of ['applicationDate','expectedDate','preparationDate','countersignDate','completionDate','actualDeliveryDate'] as const){
   const value=item[field];if((field==='applicationDate'||value)&&!isValidInternalControlDate(value))fail(`tracking-invalid-date:${field}`);
  }
+ if(item.requestType!==undefined){if(!TRACKING_REQUEST_TYPES.some(option=>option.value===item.requestType))fail('tracking-request-type');if(trackingRequestKind(item.requestType)!==item.kind)fail('tracking-request-type-kind');}
  if(!['normal','urgent'].includes(item.urgency)||!['not-delivered','partially-delivered','delivered'].includes(item.deliveryStatus))fail('tracking-invalid-enum');
  if(item.deliveryStatus==='delivered'&&!item.actualDeliveryDate)fail('tracking-delivery-date-required');
  if(item.isClosed)validateTrackingClosureDate(item,item.closedDate || '');
 }
 export function trackingBucket(item:TrackingItem) {
- if(item.kind==='engineering')return !item.isClosed?'engineering-open':item.closureOutcome==='cancelled'?'engineering-cancelled':'engineering-completed';
+ if(item.kind==='engineering')return isValidInternalControlDate(item.completionDate)?'engineering-completed':item.isClosed&&item.closureOutcome==='cancelled'?'engineering-cancelled':'engineering-open';
  return item.deliveryStatus==='delivered'?'delivered':item.isClosed?'supply-closed':'undelivered';
 }
 export function prefillTrackingCase(data:AppData,source:TrackingItem,id:string):{item:InternalControlCase;missingDepartments:string[]} {
  const requested=source.kind==='supply'?['資材組','督導']:['船工處','督導'];
- const description=source.kind==='supply'
-  ? [source.referenceNo,source.purchaseNos,source.materialCategory,source.description,source.supplementalNotes]
-  : [source.referenceNo,source.subitemNo,source.description,source.originalRemarks,source.supplementalNotes];
+ const actualDate=source.kind==='supply'?source.actualDeliveryDate:source.completionDate;
+ const description=[`申請單號(材料或工程)：${source.referenceNo}`,source.purchaseNos&&`請購案號：${source.purchaseNos}`,source.originalItemNo&&`原項次：${source.originalItemNo}`,source.requestType&&`類型：${trackingRequestTypeLabel(source.requestType)}`,source.description,actualDate&&`實際送達/完工日期：${actualDate}`,source.supplementalNotes];
  return {missingDepartments:requested.filter(d=>!data.settings.departments.includes(d)),item:{
   id,vesselId:source.vesselId,trackingItemId:source.id,reportDate:source.applicationDate,expectedDate:source.expectedDate,
   reportSource:'日常',description:description.filter(Boolean).join('\n'),priority:source.urgency==='urgent'?'急':'低',category:'其他',isAware:false,
@@ -103,20 +107,36 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
   for(const input of command.items){
    const {source,item,task}=find(input.id,input.expectedUpdatedAt);
    authorize(next,user,source.vesselId,command.type==='sync'?'createTasks':'editBusinessContent');
-   if(command.type==='edit'){
-    if(source.isClosed)fail('tracking-closed-edit');
-    const changes=(input as Extract<TrackingCommand,{type:'edit'}>['items'][number]).changes;
-    if(!changes||Object.keys(changes).some(k=>!(TRACKING_EDIT_FIELDS as readonly string[]).includes(k)))fail('tracking-edit-field-forbidden');
-    Object.assign(source,structuredClone(changes));validateTrackingItem(source);
-   } else if(command.type==='progress'){
+   const updateProgress=(value:string)=>{
+    const text=value.trim();
+    if(text===source.progress)return;
     if(source.isClosed||item?.isClosed||task?.isClosed)fail('tracking-closed-progress');
-    const text=(input as Extract<TrackingCommand,{type:'progress'}>['items'][number]).text.trim();
     if(!text)fail('tracking-empty-progress');
-    if(text===source.progress)continue;
     const log={id:`${operationId}:${source.id}:progress`,at,by:user.name,byUserId:user.id,text};
     source.progress=text;source.statusLogs=[log,...source.statusLogs];
     if(item){item.status=text;item.statusLogs=[structuredClone(log),...item.statusLogs];item.updatedAt=at;item.updatedBy=user.id;}
     if(task){task.status=text;task.statusLogs=structuredClone(item!.statusLogs);task.updatedAt=at;task.updatedBy=user.id;}
+   };
+   if(command.type==='edit'){
+    if(source.isClosed)fail('tracking-closed-edit');
+    const changes=(input as Extract<TrackingCommand,{type:'edit'}>['items'][number]).changes;
+    if(!changes||Object.keys(changes).some(k=>!(TRACKING_EDIT_FIELDS as readonly string[]).includes(k)))fail('tracking-edit-field-forbidden');
+    const beforeDelivery={deliveryStatus:source.deliveryStatus,actualDeliveryDate:source.actualDeliveryDate || ''};
+    const beforeCompletion=source.completionDate || '';
+    Object.assign(source,structuredClone(Object.fromEntries(Object.entries(changes).filter(([key,value])=>key!=='progress'&&value!==undefined&&(key!=='actualDeliveryDate'||(value||'')!==beforeDelivery.actualDeliveryDate)))));
+    if(changes.progress!==undefined)updateProgress(changes.progress);
+    if(source.kind==='supply'&&(source.actualDeliveryDate || '')!==beforeDelivery.actualDeliveryDate){
+     source.deliveryStatus=source.actualDeliveryDate?'delivered':'not-delivered';
+     appendTrackingEvent(source,'delivery',beforeDelivery,{deliveryStatus:source.deliveryStatus,actualDeliveryDate:source.actualDeliveryDate || ''},user,at,'tracking',operationId);
+    }
+    if(source.kind==='engineering'&&(source.completionDate || '')!==beforeCompletion)appendTrackingEvent(source,'completion',{completionDate:beforeCompletion},{completionDate:source.completionDate || ''},user,at,'tracking',operationId);
+    validateTrackingItem(source);
+   } else if(command.type==='progress'){
+    const text=(input as Extract<TrackingCommand,{type:'progress'}>['items'][number]).text.trim();
+    if(source.isClosed||item?.isClosed||task?.isClosed)fail('tracking-closed-progress');
+    if(!text)fail('tracking-empty-progress');
+    if(text===source.progress)continue;
+    updateProgress(text);
    } else if(command.type==='delivery'){
     const delivery=input as Extract<TrackingCommand,{type:'delivery'}>['items'][number];
     if(source.kind!=='supply')fail('tracking-not-supply');

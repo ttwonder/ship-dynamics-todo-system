@@ -15,16 +15,16 @@ export async function nativeChecks({qa,call,evaluate,click,nodeClick,fill,until,
  await check('native-batch-create-cancel-empty-selection-and-changed-progress-only',async()=>{
    await trackingTab('未送船清單');const before=await qa.read();await click('＋ 新增／批量新增');await click('取消');assert.deepEqual(await qa.read(),before);
    assert.equal(await evaluate("[...document.querySelectorAll('button')].find(n=>n.innerText==='批量更新進度').disabled"),true);
-   await click('＋ 新增／批量新增');await fill('[aria-label="第 1 筆 項目編號"]','UI-002');await fill('[aria-label="第 1 筆 內容摘要／工程內容"]','第二來源');await click('＋ 新增一列');await fill('[aria-label="第 2 筆 項目編號"]','UI-003');await fill('[aria-label="第 2 筆 內容摘要／工程內容"]','第三來源');await click('確認保存 2 項');await finishEditor();
+   await click('＋ 新增／批量新增');await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','UI-002');await fill('[aria-label="第 1 筆 內容摘要/工程內容"]','第二來源');await click('＋ 新增一列');await fill('[aria-label="第 2 筆 申請單號(材料或工程)"]','UI-003');await fill('[aria-label="第 2 筆 內容摘要/工程內容"]','第三來源');await click('確認保存 2 項');await finishEditor();
    let saved=await qa.read();assert.equal(saved.payload.trackingItems.length,before.payload.trackingItems.length+2);assert.equal(saved.revision,before.revision+1);
    await click('選取全部符合條件 2 項');await click('批量更新進度');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=\"UI-003 最新進度\"]'))"),'batch progress');await fill('[aria-label="UI-003 最新進度"]','只變更第三項');await click('確認保存 2 項');await finishEditor();
    assert.equal((await readSource('UI-002')).statusLogs.length,0);assert.equal((await readSource('UI-003')).statusLogs.length,1);assert.equal((await readSource('UI-003')).progress,'只變更第三項');
  });
  await check('native-partial-delivery-remains-open-and-correction-history',async()=>{
-   await rowAction('UI-002','送船／更正');await select("document.querySelector('[aria-label=送船狀態]')",'partially-delivered');await click('確認保存 1 項');await finishEditor();
+   await rowAction('UI-002','送達／更正');await select("document.querySelector('[aria-label=送船狀態]')",'partially-delivered');await click('確認保存 1 項');await finishEditor();
    assert.equal((await readSource('UI-002')).deliveryStatus,'partially-delivered');assert.ok((await text()).includes('UI-002'));
-   await rowAction('UI-002','送船／更正');await dateInput('[aria-label="實際全部送達日期"]','2026-09-25');await click('確認保存 1 項');await finishEditor();await trackingTab('已送船清單');
-   await rowAction('UI-002','送船／更正');await select("document.querySelector('[aria-label=送船狀態]')",'not-delivered');await click('確認保存 1 項');await finishEditor();
+   await rowAction('UI-002','送達／更正');await dateInput('[aria-label="實際送達/完工日期"]','2026-09-25');await click('確認保存 1 項');await finishEditor();await trackingTab('已送船清單');
+   await rowAction('UI-002','送達／更正');await select("document.querySelector('[aria-label=送船狀態]')",'not-delivered');await click('確認保存 1 項');await finishEditor();
    const source=await readSource('UI-002');assert.equal(source.isClosed,false);assert.equal(source.actualDeliveryDate,undefined);assert.equal(source.events.filter(e=>e.action==='delivery').length,3);
  });
  await check('native-held-ACK-same-editor-latest-typing-and-second-save',async()=>{
@@ -59,13 +59,13 @@ export async function nativeChecks({qa,call,evaluate,click,nodeClick,fill,until,
    await until(async()=>(await text()).includes('已核對最新版本'),'explicit stale reconciliation finished');assert.equal(await evaluate("document.querySelector('[aria-label=\"UI-002 最新進度\"]').value"),'本機第二項');await fill('[aria-label="UI-002 最新進度"]','核對後的新輸入');await click('確認保存 2 項');await finishEditor();assert.equal((await readSource('UI-002')).progress,'核對後的新輸入');assert.equal((await readSource('UI-003')).progress,'本機第三項');
  });
  await check('native-engineering-subitems-cancelled-not-completed-date-independence',async()=>{
-   await trackingTab('未完成工程單');await click('＋ 新增／批量新增');await fill('[aria-label="第 1 筆 項目編號"]','ENG-001');await fill('[aria-label="第 1 筆 工程分項"]','1');await fill('[aria-label="第 1 筆 內容摘要／工程內容"]','修復分項');await fill('[aria-label="第 1 筆 原備註"]','不可被進度覆寫');await dateInput('[aria-label="第 1 筆 完工日期"]','2026-09-25');await click('＋ 新增一列');await fill('[aria-label="第 2 筆 項目編號"]','ENG-001');await fill('[aria-label="第 2 筆 工程分項"]','2');await fill('[aria-label="第 2 筆 內容摘要／工程內容"]','另一獨立分項');await click('確認保存 2 項');await finishEditor();
-   const before=await qa.read(),target=before.payload.trackingItems.find(r=>r.referenceNo==='ENG-001'&&r.subitemNo==='1');
-   await nodeClick(`[...document.querySelector('[data-tracking-id="${target.id}"]').querySelectorAll('button')].find(n=>n.innerText==='結案')`);await dateInput('[aria-label="結案日期"]','2026-09-26');await select("document.querySelector('[aria-label=工程結案結果]')",'cancelled');await click('確認保存 1 項');await finishEditor();
-   const saved=await qa.read();assert.equal(saved.payload.trackingItems.find(r=>r.id===target.id).completionDate,'2026-09-25');assert.equal(saved.payload.trackingItems.find(r=>r.referenceNo==='ENG-001'&&r.subitemNo==='2').isClosed,false);await trackingTab('已完成工程單');assert.ok((await text()).includes('取消（非完工）'));assert.ok((await text()).includes('完工 0 項'));await screen('tracking-native-engineering-cancelled');
+   await trackingTab('未完成工程單');await click('＋ 新增／批量新增');await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','ENG-001');await fill('[aria-label="第 1 筆 原項次"]','1');await fill('[aria-label="第 1 筆 內容摘要/工程內容"]','修復分項');await fill('[aria-label="第 1 筆 補充說明"]','不可被進度覆寫');await dateInput('[aria-label="第 1 筆 實際送達/完工日期"]','2026-09-25');await click('＋ 新增一列');await fill('[aria-label="第 2 筆 申請單號(材料或工程)"]','ENG-001');await fill('[aria-label="第 2 筆 原項次"]','2');await fill('[aria-label="第 2 筆 內容摘要/工程內容"]','另一獨立分項');await click('確認保存 2 項');await finishEditor();
+   const before=await qa.read(),target=before.payload.trackingItems.find(r=>r.referenceNo==='ENG-001'&&r.originalItemNo==='1');
+   await trackingTab('已完成工程單');await nodeClick(`[...document.querySelector('[data-tracking-id="${target.id}"]').querySelectorAll('button')].find(n=>n.innerText==='結案')`);await dateInput('[aria-label="結案日期"]','2026-09-26');await select("document.querySelector('[aria-label=工程結案結果]')",'cancelled');await click('確認保存 1 項');await finishEditor();
+   const saved=await qa.read();assert.equal(saved.payload.trackingItems.find(r=>r.id===target.id).completionDate,'2026-09-25');assert.equal(saved.payload.trackingItems.find(r=>r.referenceNo==='ENG-001'&&r.originalItemNo==='2').isClosed,false);await trackingTab('已完成工程單');assert.ok((await text()).includes('取消結案'));assert.ok(await evaluate(`Boolean(document.querySelector('[data-tracking-id="${target.id}"]'))`));await screen('tracking-native-engineering-cancelled');
  });
  await check('native-sync-held-ACK-new-typing-updates-existing-case-not-duplicate',async()=>{
-   await trackingTab('未送船清單');await click('＋ 新增／批量新增');await fill('[aria-label="第 1 筆 項目編號"]','SYNC-HELD');await fill('[aria-label="第 1 筆 內容摘要／工程內容"]','來源內容不變');await click('確認保存 1 項');await finishEditor();await rowAction('SYNC-HELD','同步到內控');
+   await trackingTab('未送船清單');await click('＋ 新增／批量新增');await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','SYNC-HELD');await fill('[aria-label="第 1 筆 內容摘要/工程內容"]','來源內容不變');await click('確認保存 1 項');await finishEditor();await rowAction('SYNC-HELD','同步到內控');
    let held=false,release;const barrier=new Promise(resolve=>{release=resolve;});qa.setRecordFault({after:async({name})=>{if(name==='apply_ship_dynamics_record_patch_v1'){held=true;await barrier;}}});
    try{
      await click('保存 1 筆案件');await until(()=>held,'sync SQL committed ACK held');await fillNode(field('事項內容 *','textarea'),'等待ACK時修正內控描述');release();await until(async()=>(await text()).includes('等待期間的新輸入仍保留'),'sync newer input kept');qa.setRecordFault(null);

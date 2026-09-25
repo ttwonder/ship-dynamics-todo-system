@@ -1,9 +1,10 @@
 import type ExcelJS from 'exceljs';
 import type { TrackingItem, TrackingKind } from './trackingTypes';
 import { isValidInternalControlDate } from '../internalControlWorkflow';
-import { validateTrackingItem } from './trackingWorkflow';
+import { TRACKING_LEGACY_EDIT_FIELDS, validateTrackingItem } from './trackingWorkflow';
 import { uid } from '../runtimeUtils';
 import { trackingColumnsFor } from './trackingColumns';
+import { parseTrackingRequestType } from './trackingRequestTypes';
 
 export const TRACKING_XLSX_VERSION = 'ship-tracking/1';
 export interface ImportIssue { code: string; message: string }
@@ -72,7 +73,7 @@ export async function parseTrackingWorkbook(input: ArrayBuffer | Uint8Array, fil
       if (k !== 'supply' && k !== 'engineering') throw new Error('模板資料類型不明。');
       kind=k; header=keyRow+1; start=header+1; format=TRACKING_XLSX_VERSION;
       sheet.getRow(keyRow).eachCell({includeEmpty:true},(cell,c)=>{keys[c-1]=cell.text.replace(/^tracking:/,'');});
-      const known=new Set([...trackingColumnsFor(kind).map(c=>c.key),'vesselId']);
+      const known=new Set([...trackingColumnsFor(kind).map(c=>c.key),...TRACKING_LEGACY_EDIT_FIELDS,'vesselId']);
       if(keys.some(k=>!known.has(k)) || new Set(keys).size!==keys.length) throw new Error('模板欄位映射不明或重複，請使用新空白模板。');
     } else {
       for (let r=1; r<=Math.min(20,sheet.rowCount); r++) {
@@ -103,7 +104,9 @@ export async function parseTrackingWorkbook(input: ArrayBuffer | Uint8Array, fil
           const date=parseTrackingDate(cell.value,book.properties.date1904);
           if(date===null){issue(`date:${key}`,`${trackingColumnsFor(kind).find(c=>c.key===key)?.label || key} 原值「${value}」無法唯一判定；請改為明確日期或明確留空`);(item as unknown as Record<string,unknown>)[key]='';}
           else (item as unknown as Record<string,unknown>)[key]=date;
-        } else if(trackingColumnsFor(kind).some(c=>c.key===key&&(c.editable||key==='progress'))) (item as unknown as Record<string,unknown>)[key]=key==='urgentSubtypes'?value.split('、').filter(Boolean):value;
+        } else if(key==='requestType') {
+          if(value.trim()) { item.requestType=parseTrackingRequestType(value.trim()) || value as TrackingItem['requestType']; }
+        } else if((TRACKING_LEGACY_EDIT_FIELDS as readonly string[]).includes(key)||trackingColumnsFor(kind).some(c=>c.key===key&&(c.editable||key==='progress'))) (item as unknown as Record<string,unknown>)[key]=key==='urgentSubtypes'?value.split('、').filter(Boolean):value;
         if(cell.type===6 || (typeof cell.value==='object'&&cell.value&&('formula' in cell.value||'sharedFormula' in cell.value)))issue(`formula:${key}`,'原檔含公式；保留公式原文，不執行、不採用快取結果。請核對此列。');
       }
       if(format==='F28'||format===TRACKING_XLSX_VERSION) {
@@ -120,6 +123,7 @@ export async function parseTrackingWorkbook(input: ArrayBuffer | Uint8Array, fil
       if(kind==='supply'&&/(收到|已到|交船|送船|到貨|received|delivered)/i.test(item.progress)) issue('delivery-confirm','說明提及收到／交船；不得推定整單已送船。請明確核對送船狀態及全部送達日期。');
       if(kind==='engineering'&&/(取消|撤銷|自修|未完成|未完工)/.test((fields.completionDate||'')+' '+item.originalRemarks)) issue('completion-confirm','包含取消／撤銷／自修／未完成描述；保留原備註。請核對完工事實及獨立結案選項。');
       if(fields.deliveryStatus){const status=({'未送船':'not-delivered','部分送船':'partially-delivered','已送船':'delivered'} as Record<string,TrackingItem['deliveryStatus']>)[fields.deliveryStatus];if(status)item.deliveryStatus=status;else issue('delivery-confirm','送船狀態不明，預設未送船，請明確核對。');}
+      if(kind==='supply'&&!fields.deliveryStatus&&item.actualDeliveryDate)item.deliveryStatus='delivered';
       if(fields.isClosed==='已結案'||fields.isClosed==='true') {item.isClosed=true;item.closureOutcome=fields.closureOutcome?.includes('取消')?'cancelled':'completed';issue('closure-confirm','此列明示已結案，必須核對結案日期／結果；不由完工日期推定。');}
       if(fields.vesselId&&fields.vesselId!==vesselId)issue('vessel-confirm','原匯出船舶 ID 與本次選船不同；請確認，不自動切換船舶。');
       item.source={fileName,sheetName:sheet.name,row:r,originalValues:{...values,'_fileSha256':fileHash,...(fields.id?{'_exportedId':fields.id}:{})}};

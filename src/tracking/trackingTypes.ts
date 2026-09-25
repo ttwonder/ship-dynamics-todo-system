@@ -1,4 +1,5 @@
 import type { StatusLog } from '../types';
+import type { TrackingRequestType } from './trackingRequestTypes';
 
 export type TrackingKind = 'supply' | 'engineering';
 export type TrackingDeliveryStatus = 'not-delivered' | 'partially-delivered' | 'delivered';
@@ -8,7 +9,7 @@ export interface TrackingEvent {
   at: string;
   byUserId: string;
   entry: 'tracking' | 'internal-control' | 'task';
-  action: 'close' | 'reopen' | 'correct-close-date' | 'delivery' | 'link' | 'invalidate-link';
+  action: 'close' | 'reopen' | 'correct-close-date' | 'delivery' | 'completion' | 'link' | 'invalidate-link';
   before: Record<string, unknown>;
   after: Record<string, unknown>;
 }
@@ -22,6 +23,7 @@ export interface TrackingSource {
 export interface TrackingItem {
   id: string;
   kind: TrackingKind;
+  requestType?: TrackingRequestType;
   vesselId: string;
   referenceNo: string;
   description: string;

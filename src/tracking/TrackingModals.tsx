@@ -4,7 +4,7 @@ import { formatTaipeiDateTime } from '../taipeiTime';
 import { prepareInternalControlEditForSave, newInternalControlBatchRow, type InternalControlBatchDraft } from '../InternalControlModals';
 import { prefillTrackingCase, TRACKING_EDIT_FIELDS } from './trackingWorkflow';
 import type { TrackingItem, TrackingKind, TrackingDeliveryStatus } from './trackingTypes';
-import { trackingColumnsFor } from './trackingColumns';
+import { TrackingItemFields } from './TrackingItemFields';
 import { resolveTrackingGroup } from './trackingLifecycle';
 import { TRACKING_HELP, trackingHelp, type TrackingAudience } from './trackingUiTypes';
 import type { InternalControlTaskProjection } from '../internalControlData';
@@ -17,7 +17,7 @@ export interface TrackingDraft {
   sync?: InternalControlBatchDraft; savedCases?: InternalControlCase[]; warnings: string[]; dirty: boolean;
 }
 export function newTrackingItem(vesselId: string, kind: TrackingKind): TrackingItem {
-  return { id: uid('tracking'), vesselId, kind, referenceNo: '', description: '', applicationDate: todayDate(), urgency: 'normal', expectedDate: '', progress: '', supplementalNotes: '', deliveryStatus: 'not-delivered', isClosed: false, createdBy: '', updatedBy: '', createdAt: '', updatedAt: '', statusLogs: [] };
+  return { id: uid('tracking'), vesselId, kind, requestType: kind === 'supply' ? 'spares' : 'repair', referenceNo: '', description: '', applicationDate: todayDate(), urgency: 'normal', expectedDate: '', progress: '', supplementalNotes: '', deliveryStatus: 'not-delivered', isClosed: false, createdBy: '', updatedBy: '', createdAt: '', updatedAt: '', statusLogs: [] };
 }
 export function makeTrackingDraft(action: TrackingAction, rows: TrackingItem[], data: AppData): TrackingDraft {
   const draft: TrackingDraft = { action, rows: structuredClone(rows), originals: structuredClone(rows), date: '', delivery: 'delivered', outcome: 'completed', warnings: [], dirty: false };
@@ -38,6 +38,7 @@ export function commandForTrackingDraft(draft: TrackingDraft, cases?: InternalCo
       const items = draft.rows.flatMap((row, index) => row.progress.trim() === draft.originals[index].progress ? [] : [{ ...versions[index], text: row.progress }]);
       return items.length ? { type: 'progress', items } : null;
     }
+    case 'completion': return { type: 'edit', items: versions.map(version => ({ ...version, changes: { completionDate: draft.date } })) };
     case 'delivery': return { type: 'delivery', items: versions.map(version => ({ ...version, status: draft.delivery, date: draft.date })) };
     case 'sync': if (!cases || cases.length !== versions.length) throw new Error('同步表單與來源集合不一致');
       if(draft.savedCases)return {type:'sync-edit',items:versions.map((version,index)=>{
@@ -56,7 +57,7 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, au
   draft: TrackingDraft; busy: boolean; pending: boolean; readOnly?: boolean; audience?: TrackingAudience; message: string; affected: string[]; vesselName: string;
   onChange: (draft: TrackingDraft) => void; onSave: () => void; onReconcile: () => void; onClose: () => void;
 }) {
-  const titles: Record<TrackingAction, string> = { create: '新增／批量新增跟蹤', edit: '編輯跟蹤項目', progress: '批量更新最新進度', delivery: '送船確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
+  const titles: Record<TrackingAction, string> = { create: '新增／批量新增跟蹤', edit: '編輯／批量更新跟蹤項目', progress: '批量更新最新進度', completion: '工程完工／更正', delivery: '送達確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
   const change = (patch: Partial<TrackingDraft>) => onChange({ ...draft, ...patch, dirty: true });
   const update = (id: string, patch: Partial<TrackingItem>) => change({ rows: draft.rows.map(row => row.id === id ? { ...row, ...patch } : row) });
   const formFields = ['create', 'edit'].includes(draft.action);
@@ -65,7 +66,7 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, au
     <p>{trackingHelp(audience)[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
     <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>
     <fieldset disabled={readOnly} style={{border:0,padding:0,margin:0,minWidth:0}}>
-    {draft.action === 'create' && <label>新增跟蹤類型<select aria-label="新增跟蹤類型" disabled={pending} value={draft.rows[0].kind} onChange={event=>change({rows:draft.rows.map(row=>({...row,kind:event.target.value as TrackingKind}))})}><option value="supply">配件物料</option><option value="engineering">工程</option></select><small>同一批採同船、同類型；切換類型不更換原草稿 ID。</small></label>}
+
     {!formFields && <ul className="tracking-affected" aria-label="實際影響範圍">{affected.map(label => <li key={label}>{label}</li>)}</ul>}
     {draft.action === 'progress' ? draft.rows.map(row => {
       const original = draft.originals.find(value => value.id === row.id);
@@ -80,14 +81,12 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, au
           {history.length ? <div>{history.map(log => <article key={log.id}><small><time dateTime={log.at}>{formatTaipeiDateTime(log.at)}</time>（UTC+8）｜{log.by}</small><p>{log.text}</p></article>)}</div> : <p>尚無已保存的進度記錄。</p>}
         </details>
       </div>;
-    }) : formFields ? draft.rows.map((row, index) => <fieldset className="tracking-form-row" key={row.id}><legend>第 {index + 1} 筆｜{row.id}</legend><div className="tracking-form-grid">
-      {trackingColumnsFor(row.kind).filter(column => column.editable).map(column => <label key={column.key}>{column.label}{column.required ? ' *' : ''}{column.type === 'date' ? <input type="date" required={column.required} aria-label={`第 ${index + 1} 筆 ${column.label}`} value={column.value(row)} onChange={event => update(row.id, { [column.key]: event.target.value })}/> : <textarea required={column.required} rows={['description', 'supplementalNotes', 'originalRemarks'].includes(column.key) ? 3 : 1} aria-label={`第 ${index + 1} 筆 ${column.label}`} value={column.value(row)} onChange={event => update(row.id, { [column.key]: column.key === 'urgentSubtypes' ? event.target.value.split('、').filter(Boolean) : event.target.value })}/>}</label>)}
-      <div className="tracking-urgency"><label><input type="checkbox" checked={row.urgency === 'normal'} onChange={() => update(row.id, { urgency: 'normal' })}/>普通</label><label><input type="checkbox" checked={row.urgency === 'urgent'} onChange={() => update(row.id, { urgency: 'urgent' })}/>緊急</label></div>
-      {draft.action === 'create' && <label>最新進度<textarea aria-label={`第 ${index + 1} 筆 最新進度`} value={row.progress} onChange={event => update(row.id, { progress: event.target.value })}/></label>}
-    </div>{draft.action === 'create' && draft.rows.length > 1 && <button type="button" className="btn small danger" disabled={pending} onClick={() => change({ rows: draft.rows.filter(value => value.id !== row.id) })}>移除此列</button>}</fieldset>) : <>
+    }) : formFields ? draft.rows.map((row, index) => <fieldset className="tracking-form-row" key={row.id}><legend>第 {index + 1} 筆｜{row.id}</legend>
+      <TrackingItemFields row={row} prefix={`第 ${index + 1} 筆 `} creating={draft.action === 'create'} onChange={patch => update(row.id, patch)}/>
+    {draft.action === 'create' && draft.rows.length > 1 && <button type="button" className="btn small danger" disabled={pending} onClick={() => change({ rows: draft.rows.filter(value => value.id !== row.id) })}>移除此列</button>}</fieldset>) : <>
       {draft.action === 'delivery' && <label>送船狀態<select aria-label="送船狀態" value={draft.delivery} onChange={event => change({ delivery: event.target.value as TrackingDeliveryStatus })}><option value="not-delivered">未送船</option><option value="partially-delivered">部分送船</option><option value="delivered">已送船（全部實際交到船）</option></select></label>}
-      {draft.action !== 'reopen' && (draft.action !== 'delivery' || draft.delivery === 'delivered') && <label>{draft.action === 'delivery' ? '實際全部送達日期' : '結案日期'} *<input aria-label={draft.action === 'delivery' ? '實際全部送達日期' : '結案日期'} type="date" required value={draft.date} onChange={event => change({ date: event.target.value })}/></label>}
-      {draft.action === 'close' && draft.rows.some(row => row.kind === 'engineering') && <label>工程結案結果<select aria-label="工程結案結果" value={draft.outcome} onChange={event => change({ outcome: event.target.value as TrackingDraft['outcome'] })}><option value="completed">完工</option><option value="cancelled">取消（非完工）</option></select></label>}
+      {draft.action !== 'reopen' && (draft.action !== 'delivery' || draft.delivery === 'delivered') && <label>{['delivery','completion'].includes(draft.action) ? '實際送達/完工日期' : '結案日期'} *<input aria-label={['delivery','completion'].includes(draft.action) ? '實際送達/完工日期' : '結案日期'} type="date" required value={draft.date} onChange={event => change({ date: event.target.value })}/></label>}
+      {draft.action === 'close' && draft.rows.some(row => row.kind === 'engineering') && <label>工程結案結果<select aria-label="工程結案結果" value={draft.outcome} onChange={event => change({ outcome: event.target.value as TrackingDraft['outcome'] })}><option value="completed">正常結案（不代填完工日期）</option><option value="cancelled">取消結案</option></select></label>}
       {draft.action === 'correct-close-date' && <ul>{draft.rows.map(row => <li key={row.id}>{row.referenceNo}：{row.closedDate} → {draft.date || '請選擇新日期'}</li>)}</ul>}
     </>}
     </fieldset>

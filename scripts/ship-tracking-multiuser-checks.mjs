@@ -5,7 +5,7 @@ export async function shipTrackingChecks({a,b,page,qa,native,read,source,until,c
  const refresh=async()=>{await ship.click('讀取最新資料');await until(()=>ship.eval("[...document.querySelectorAll('button')].some(n=>n.innerText.trim()==='讀取最新資料'&&!n.disabled)"),'ship refresh completed');};
  const active=async()=> (await native.observer.query('select section_key,locked_by,lease_version from ship_dynamics_edit_locks where workspace_key=$1 and expires_at>clock_timestamp() order by section_key',[qa.workspace])).rows;
  await check('anonymous-ship-create-is-visible-in-original-shore-App',async()=>{
-  await ship.click('＋ 新增／批量新增');await ship.fill('[aria-label="第 1 筆 項目編號"]','SHIP-PEER');await ship.fill('[aria-label="第 1 筆 內容摘要／工程內容"]','船岸同一筆測試');await ship.fill('[aria-label="第 1 筆 最新進度"]','船端初始');await ship.submit();await ship.done();
+  await ship.click('＋ 新增／批量新增');await ship.fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','SHIP-PEER');await ship.fill('[aria-label="第 1 筆 內容摘要/工程內容"]','船岸同一筆測試');await ship.fill('[aria-label="第 1 筆 最新進度"]','船端初始');await ship.submit();await ship.done();
   await a.sync();await a.tracking();await until(()=>a.eval(`Boolean(${a.row('SHIP-PEER')})`),'shore source visible');assert.equal((await source('SHIP-PEER')).progress,'船端初始');
  });
  await check('shore-held-bundle-blocks-ship-and-releases-after-ACK',async()=>{

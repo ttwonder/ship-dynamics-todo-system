@@ -1,4 +1,5 @@
 import type { TrackingItem, TrackingKind } from './trackingTypes';
+import { isValidInternalControlDate } from '../internalControlWorkflow';
 import { TRACKING_COLUMNS, type TrackingColumn } from './trackingColumns';
 export const TRACKING_TABS = [
   { id: 'undelivered', label: '未送船清單', kind: 'supply' },
@@ -16,7 +17,8 @@ export function trackingInTab(row: TrackingItem, tab: TrackingTab): boolean {
   if (tab === 'supply-all') return true;
   if (tab === 'undelivered') return !row.isClosed && row.deliveryStatus !== 'delivered';
   if (tab === 'delivered') return row.deliveryStatus === 'delivered';
-  return tab === 'engineering-open' ? !row.isClosed : row.isClosed;
+  const completed = isValidInternalControlDate(row.completionDate);
+  return tab === 'engineering-open' ? !completed : completed;
 }
 export const filterIsActive = (filter: TrackingFilter) => Boolean(filter.mode || filter.text || filter.from || filter.to || filter.values?.length);
 export function selectTrackingRows(items: readonly TrackingItem[], query: TrackingQuery): TrackingItem[] {

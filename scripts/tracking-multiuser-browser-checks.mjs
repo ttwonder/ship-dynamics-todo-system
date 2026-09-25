@@ -15,7 +15,7 @@ export async function multiuserChecks(c){
  const denySource=async(p,ref)=>{const from=(evidence.dialogs||[]).length;await p.activate(`[...(${p.row(ref)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()==='進度')`);await until(()=>evidence.dialogs.slice(from).some(d=>d.actor===p.actor&&d.type==='alert'&&d.message.includes('QA OWNER')),'peer denied before source editing');assert.equal(await p.eval("!!document.querySelector('.tracking-modal')"),false);};
  await check('M01-distinct-actors-same-vessel-different-items-real-overlap',async()=>{
   await a.click('＋ 新增／批量新增');
-  for(let i=1;i<=4;i++){if(i>1)await a.click('＋ 新增一列');await a.fill(`[aria-label="第 ${i} 筆 項目編號"]`,'MC-00'+i);await a.fill(`[aria-label="第 ${i} 筆 內容摘要／工程內容"]`,'多人驗收獨立來源 '+i);}
+  for(let i=1;i<=4;i++){if(i>1)await a.click('＋ 新增一列');await a.fill(`[aria-label="第 ${i} 筆 申請單號(材料或工程)"]`,'MC-00'+i);await a.fill(`[aria-label="第 ${i} 筆 內容摘要/工程內容"]`,'多人驗收獨立來源 '+i);}
   await a.submit(4);await a.done();await b.sync();await b.tracking();await until(()=>b.eval("document.querySelector('.tracking-table')?.innerText.includes('MC-004')"),'B current source list');
   const before=await read();await a.progress('MC-001','甲保存第一項');await b.progress('MC-002','乙保存第二項');
   const hold=blockNext(mainRpc);

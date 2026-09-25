@@ -57,8 +57,8 @@ export async function layoutChecks(c) {
     await click('選取全部符合條件 1 項');
     assert.ok(await evaluate("document.querySelector('.tracking-page').innerText.includes('已選 1 項')"));
     await click('清除選取');
-    await toggle('全部欄位篩選');await fill('[aria-label="項目編號包含"]','UI-001');
-    assert.ok(await evaluate("document.querySelector('[aria-label=有效篩選]').innerText.includes('項目編號')"));
+    await toggle('全部欄位篩選');await nodeClick("document.querySelector('[aria-label=\"申請單號(材料或工程)篩選內容\"]')");await nodeClick("[...document.querySelectorAll('[aria-label=\"申請單號(材料或工程)多選\"] label')].find(n=>n.textContent==='UI-001').querySelector('input')");
+    assert.ok(await evaluate("document.querySelector('[aria-label=有效篩選]').innerText.includes('申請單號(材料或工程)')"));
     await click('清除條件');await toggle('全部欄位篩選');
     await click('Excel');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=跟蹤匯出]'))"),'moved export');
     await click('建立共用快照');await until(()=>evaluate("Boolean([...document.querySelectorAll('button')].find(n=>n.innerText==='下載 XLSX'))"),'confirmed export capture');

@@ -42,11 +42,11 @@ try {
  await check('genuine-xlsx-export-shared-snapshot',async()=>{
   assert.equal(typeof excel.buildTrackingWorkbook,'function','genuine ExcelJS tracking workbook must exist');
   const {trackingRowSnapshot}=await vite.ssrLoadModule('/src/tracking/trackingFilters.ts');const {trackingColumnsFor}=await vite.ssrLoadModule('/src/tracking/trackingColumns.ts');
-  const source={...item,referenceNo:'000001234567890123456789',originalRemarks:'=SUM(1,2)\n原備註',description:'第一行\n第二行',isClosed:false};
+  const source={...item,referenceNo:'000001234567890123456789',supplementalNotes:'=SUM(1,2)\n補充說明',description:'第一行\n第二行',isClosed:false};
   const snapshot={...trackingRowSnapshot([source],trackingColumnsFor('engineering')),vesselId:source.vesselId,vesselName:'中性船 NEUTRAL VESSEL',kind:'engineering',title:'未完成工程單',generatedAt:'2026-09-24T00:00:00Z',summary:'全部符合目前條件 1 項',selection:'all'};
   const output=await excel.buildTrackingWorkbook(snapshot);const read=new ExcelJS.Workbook();await read.xlsx.load(output);
   assert.equal(read.getWorksheet('_tracking_schema').getCell('B1').text,api.TRACKING_XLSX_VERSION);
-  const parsedExport=await api.parseTrackingWorkbook(output,'neutral-export.xlsx',source.vesselId);const r=parsedExport.sheets[0].rows[0];assert.equal(r.item.referenceNo,source.referenceNo);assert.equal(r.item.originalRemarks,source.originalRemarks);assert.equal(r.item.applicationDate,source.applicationDate);assert.equal(r.exportedId,source.id);assert.ok(api.importDuplicate(r,[r],[source]).blocked);
+  const parsedExport=await api.parseTrackingWorkbook(output,'neutral-export.xlsx',source.vesselId);const r=parsedExport.sheets[0].rows[0];assert.equal(r.item.referenceNo,source.referenceNo);assert.equal(r.item.supplementalNotes,source.supplementalNotes);assert.equal(r.item.applicationDate,source.applicationDate);assert.equal(r.exportedId,source.id);assert.ok(api.importDuplicate(r,[r],[source]).blocked);
   for(const sh of read.worksheets)sh.eachRow(row=>row.eachCell(cell=>assert.notEqual(cell.type,ExcelJS.ValueType.Formula)));
   if(process.env.QA_OUTPUT)fs.writeFileSync(path.join(process.env.QA_OUTPUT,'neutral-full-export.xlsx'),Buffer.from(output));
   for(const kind of ['supply','engineering']){const template=await excel.buildTrackingTemplate(kind,'中性船 NEUTRAL VESSEL',source.vesselId);const p=await api.parseTrackingWorkbook(template,'template.xlsx',source.vesselId);assert.equal(p.sheets[0].rows.length,0);assert.ok(p.sheets[0].mapping.some(m=>m.field==='expectedDate'));if(process.env.QA_OUTPUT)fs.writeFileSync(path.join(process.env.QA_OUTPUT,`template-${kind}.xlsx`),Buffer.from(template));}

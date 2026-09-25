@@ -12,7 +12,7 @@ const actor = { id:'component-a',name:'甲',username:'qa-a',department:'督導',
 initial.users=[actor,{...actor,id:'component-b',name:'乙'}];
 initial.vessels=initial.vessels.slice(0,2).map((v,i)=>({...v,id:`v${i+1}`,name:`測試船${i+1}`,fullName:`QA Vessel ${i+1}`,shortName:'QA',isActive:true,assignedUserIds:[]}));
 initial.tasks=[];initial.internalControlCases=[];
-initial.trackingItems=Array.from({length:65},(_,i)=>({...newTrackingItem('v1','supply'),id:`r${i}`,referenceNo:`REF-${String(65-i).padStart(3,'0')}`,description:'完整長文測試 '.repeat(35),supplier:i%2?'A':'B',createdBy:actor.id,updatedBy:actor.id,createdAt:at,updatedAt:at,progress:'原進度',urgency:i%2?'urgent' as const:'normal' as const}));
+initial.trackingItems=Array.from({length:65},(_,i)=>({...newTrackingItem('v1','supply'),id:`r${i}`,referenceNo:`REF-${String(65-i).padStart(3,'0')}`,description:'完整長文測試 '.repeat(35),purchaseNos:i%2?'A':'B',createdBy:actor.id,updatedBy:actor.id,createdAt:at,updatedAt:at,progress:'原進度',urgency:i%2?'urgent' as const:'normal' as const}));
 let update:()=>void,release:((value:boolean)=>void)|null=null;
 const control:any={ actorId:actor.id,identity:'session-a',canWrite:true,allowed:['v1','v2'],data:initial,submissions:[],mode:'confirm',guard:null,
   change(patch:any){Object.assign(control,patch);update();},

@@ -19,6 +19,15 @@ const safeRead = <T,>(key: string): T | null => { try { return JSON.parse(localS
 function HelpAction({ label, help, disabled, onClick }: { label: string; help: string; disabled?: boolean; onClick: () => void }) {
   return <span className="tracking-help-action"><button className="btn small" title={help} disabled={disabled} onClick={onClick}>{label}</button><details><summary aria-label={`${label}說明`}>ⓘ</summary><span role="tooltip">{help}</span></details><span className="tracking-focus-help">{help}</span></span>;
 }
+function TrackingValueFilter({ label, values, selected, onChange }: { label: string; values: string[]; selected: string[]; onChange: (values: string[]) => void }) {
+  return <details className="tracking-value-filter">
+    <summary aria-label={`${label}篩選內容`}>{selected.length ? `已選 ${selected.length} 項` : '不限內容'}</summary>
+    <div className="tracking-value-options" role="group" aria-label={`${label}多選`}>
+      {selected.length > 0 && <button type="button" className="btn small" onClick={() => onChange([])}>清除此欄選擇</button>}
+      {values.length ? values.map(value => <label key={value} title={value}><input type="checkbox" checked={selected.includes(value)} onChange={event => onChange(event.target.checked ? [...selected, value] : selected.filter(item => item !== value))}/><span>{value}</span></label>) : <small>此清單沒有非空白內容</small>}
+    </div>
+  </details>;
+}
 interface SavedDraft { draft: TrackingDraft; pending: TrackingSubmission | null }
 export default function TrackingPage({ data, vessels, user, workspace, identity, canCreate, canEdit, canClose, canExport = false, audience='shore', callbacks }: {
   data: AppData; vessels: Vessel[]; user: UserAccount; workspace: string; identity: string; canCreate: boolean; canEdit: boolean; canClose: boolean; canExport?: boolean; audience?: TrackingAudience; callbacks: TrackingUiCallbacks;
@@ -116,7 +125,8 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
       picked = eligible;
     }
     if ((action === 'close' && picked.some(row => row!.isClosed)) || (['reopen', 'correct-close-date'].includes(action) && picked.some(row => !row!.isClosed))) { setNotice('請先選取相同結案狀態；不會把結案和日期更正混為一個動作。'); return; }
-    if (['edit', 'progress'].includes(action) && picked.some(row => row!.isClosed)) { setNotice('已結案項目請先重開，未修改任何資料。'); return; }
+    if (['edit', 'progress', 'completion'].includes(action) && picked.some(row => row!.isClosed)) { setNotice('已結案項目請先重開，未修改任何資料。'); return; }
+    if (action==='completion'&&picked.some(row=>row!.kind!=='engineering')) {setNotice('完工只適用工程；未修改任何資料。');return;}
     const value=makeTrackingDraft(action, picked as TrackingItem[], fresh);draftRef.current=value;setDraft(value); setPending(null); setNotice('');
     }finally{openingRef.current=false;if(!draftRef.current&&currentIdentity.current===identity)await callbacks.release();}
   };
@@ -171,9 +181,19 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     } catch(error) { if(owner===currentIdentity.current)setNotice(`核對未完成；原輸入保留：${error instanceof Error?error.message:String(error)}`); }
     finally { busyRef.current=false;setBusy(false); }
   };
-  const resolveNavigation = async (choice: 'keep' | 'save' | 'cancel') => {
-    if (!navigation) return;
+  const resolveNavigation = async (choice: 'keep' | 'save' | 'discard' | 'cancel') => {
+    if (!navigation || busyRef.current || pendingRef.current) return;
     let allow = false;
+    if (choice === 'discard') {
+      const owner=currentIdentity.current, leaving=draftRef.current;
+      busyRef.current=true;setBusy(true);
+      try {
+        if(await callbacks.release()&&owner===currentIdentity.current&&leaving===draftRef.current&&!pendingRef.current&&saveLocalDraft(null,null)) {
+          setDraft(null);draftRef.current=null;setSavedAvailable(false);allow=true;
+          setNotice('已捨棄本船未送出的草稿，未更動雲端資料。');
+        }
+      } finally {busyRef.current=false;setBusy(false);}
+    }
     if (choice === 'keep') { allow = saveLocalDraft(draftRef.current)&&await callbacks.release(); if (allow) { setDraft(null); draftRef.current = null; setSavedAvailable(true); } }
     if (choice === 'save') { if (draftRef.current?.action === 'sync') setNotice('請先在內控原表單按保存，以執行原必填校驗。'); else allow = await submit() && !draftRef.current; }
     const resolve = navigation; setNavigation(null); resolve(allow);
@@ -194,7 +214,8 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   const rowActions = (row: TrackingItem): ReactNode => <>
     {canEdit && !row.isClosed && actionButton('edit', '編輯', [row.id])}
     {canEdit && !row.isClosed && actionButton('progress', '進度', [row.id])}
-    {canEdit && row.kind === 'supply' && actionButton('delivery', '送船／更正', [row.id])}
+    {canEdit && row.kind === 'supply' && actionButton('delivery', '送達／更正', [row.id])}
+    {canEdit && row.kind === 'engineering' && !row.isClosed && actionButton('completion', '完工／更正', [row.id])}
     {canClose && actionButton(row.isClosed ? 'reopen' : 'close', row.isClosed ? '重開此案' : '結案', [row.id])}
     {row.linkState === 'active' && row.linkedCaseId ? <button className="btn small" onClick={() => callbacks.openCase(row.linkedCaseId!)}>查看內控／已同步</button> : canCreate && !row.isClosed && actionButton('sync', '同步到內控', [row.id])}
   </>;
@@ -205,13 +226,13 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     {canExport && <TrackingExports query={{vesselId,tab,filters,search,sort}} preferences={preferences} selected={selected} count={rows.length} vesselName={vesselSelectionDisplayName(vessels.find(v=>v.id===vesselId))} identity={identity} workspace={workspace} callbacks={callbacks} blocked={loading||busy||Boolean(draft)||Boolean(pending)||importOpen||!vessels.some(v=>v.id===vesselId&&v.isActive)}/>}
     </div>
     <div className="tracking-tabs" role="tablist" aria-label="跟蹤分類">{TRACKING_TABS.map(value => <button className={`btn ${value.id === tab ? 'primary' : ''}`} role="tab" aria-selected={value.id === tab} key={value.id} onClick={() => void switchView(() => { setTab(value.id); setFilters({}); setSearch(''); })}>{value.label} <span>{(data.trackingItems || []).filter(row => row.vesselId === vesselId && trackingInTab(row, value.id)).length}</span></button>)}</div>
-    {tab === 'engineering-closed' && <p>完工 {(data.trackingItems || []).filter(row => row.vesselId === vesselId && row.kind === 'engineering' && row.isClosed && row.closureOutcome !== 'cancelled').length} 項；取消明列為「取消（非完工）」，不計完工。</p>}
+    {trackingTabKind(tab) === 'engineering' && <p>是否完成依實際完工日期判定；結案或重開不會自動填入或清除完工日期。</p>}
     <div className="tracking-search-actions">
       <div className="tracking-search"><input aria-label="搜尋跟蹤" placeholder="搜尋編號、內容及全部欄位…" value={search} onChange={event => { clearSelection(); setSearch(event.target.value); }}/><button className="btn small" onClick={() => { updateFilters({}); setSearch(''); }}>清除條件</button></div>
-    <div className="tracking-toolbar" aria-label="跟蹤選取與批量操作"><b>已選 {selected.length} 項</b><button className="btn small" onClick={() => setSelected(rows.map(row => row.id))}>選取全部符合條件 {rows.length} 項</button><button className="btn small" onClick={() => setSelected([])}>清除選取</button>{canEdit && actionButton('progress', '批量更新進度', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'supply' && actionButton('delivery', '批量送船／更正', undefined, !selected.length)}{canClose && actionButton('close', '批量結案', undefined, !selected.length)}{canClose && actionButton('correct-close-date', '修改結案日期', undefined, !selected.length)}{canClose && actionButton('reopen', '重開所選', undefined, !selected.length)}{canCreate && actionButton('sync', '同步所選到內控', undefined, !selected.length)}</div>
+    <div className="tracking-toolbar" aria-label="跟蹤選取與批量操作"><b>已選 {selected.length} 項</b><button className="btn small" onClick={() => setSelected(rows.map(row => row.id))}>選取全部符合條件 {rows.length} 項</button><button className="btn small" onClick={() => setSelected([])}>清除選取</button>{canEdit && actionButton('edit', '批量更新', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'engineering' && actionButton('completion', '批量完工／更正', undefined, !selected.length)}{canEdit && actionButton('progress', '批量更新進度', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'supply' && actionButton('delivery', '批量送達／更正', undefined, !selected.length)}{canClose && actionButton('close', '批量結案', undefined, !selected.length)}{canClose && actionButton('correct-close-date', '修改結案日期', undefined, !selected.length)}{canClose && actionButton('reopen', '重開所選', undefined, !selected.length)}{canCreate && actionButton('sync', '同步所選到內控', undefined, !selected.length)}</div>
     </div>
     <div className="tracking-options">
-      <details className="tracking-all-filters"><summary>全部欄位篩選</summary><div className="tracking-option-panel"><div className="tracking-filter-grid">{columns.map(column => { const filter = filters[column.key] || {}; const set = (patch: TrackingFilter) => updateFilters({ ...filters, [column.key]: { ...filter, ...patch } }); return <fieldset key={column.key}><legend>{column.label}{preferences.hidden.includes(column.key) ? '（隱藏欄）' : ''}</legend><select aria-label={`${column.label}空白條件`} value={filter.mode || ''} onChange={event => set({ mode: event.target.value as TrackingFilter['mode'] })}><option value="">不限</option><option value="blank">空白</option><option value="nonblank">非空白</option></select>{column.type === 'date' ? <><input type="date" aria-label={`${column.label}起`} value={filter.from || ''} onChange={event => set({ from: event.target.value })}/><input type="date" aria-label={`${column.label}迄`} value={filter.to || ''} onChange={event => set({ to: event.target.value })}/></> : <><input aria-label={`${column.label}包含`} placeholder="包含文字" value={filter.text || ''} onChange={event => set({ text: event.target.value })}/>{column.type === 'multi' && <select multiple size={2} aria-label={`${column.label}多選`} value={filter.values || []} onChange={event => set({ values: [...event.target.selectedOptions].map(option => option.value) })}>{[...new Set((data.trackingItems || []).filter(row => row.vesselId === vesselId && trackingInTab(row, tab)).map(column.value))].filter(Boolean).sort().map(value => <option key={value}>{value}</option>)}</select>}</>}</fieldset>; })}</div></div></details>
+      <details className="tracking-all-filters"><summary>全部欄位篩選</summary><div className="tracking-option-panel"><div className="tracking-filter-grid">{columns.map(column => { const filter = filters[column.key] || {}; const set = (patch: TrackingFilter) => updateFilters({ ...filters, [column.key]: { ...filter, ...patch } }); return <fieldset key={column.key}><legend>{column.label}{preferences.hidden.includes(column.key) ? '（隱藏欄）' : ''}</legend><select aria-label={`${column.label}空白條件`} value={filter.mode || ''} onChange={event => set({ mode: event.target.value as TrackingFilter['mode'] })}><option value="">不限</option><option value="blank">空白</option><option value="nonblank">非空白</option></select><TrackingValueFilter label={column.label} values={[...new Set((data.trackingItems || []).filter(row => row.vesselId === vesselId && trackingInTab(row, tab)).map(column.value))].filter(Boolean).sort()} selected={filter.values || []} onChange={values => set({ values })}/></fieldset>; })}</div></div></details>
     <details className="tracking-preferences"><summary>欄位設定</summary><div className="tracking-option-panel"><p>表頭可拖曳欄序，邊界拖曳或方向鍵調欄寬；勾選及編號固定。只保存在本人本機，不影響草稿。</p><button className="btn small" onClick={() => { const value = defaultTrackingPreferences(columns); setPreferences(value); writeTrackingPreferences(prefKey, value); }}>重設欄位配置</button><div>{preferences.order.map((key, index) => { const column = columns.find(c => c.key === key); if (!column) return null; return <span key={key}><label><input type="checkbox" disabled={key === 'referenceNo'} checked={!preferences.hidden.includes(key)} onChange={event => { const value = { ...preferences, hidden: event.target.checked ? preferences.hidden.filter(k => k !== key) : [...preferences.hidden, key] }; setPreferences(value); writeTrackingPreferences(prefKey, value); }}/>{column.label}</label><button className="btn small" aria-label={`將${column.label}前移`} disabled={index < 2 || key === 'referenceNo'} onClick={() => { const order = [...preferences.order]; [order[index - 1], order[index]] = [order[index], order[index - 1]]; const value = { ...preferences, order }; setPreferences(value); writeTrackingPreferences(prefKey, value); }}>←</button></span>; })}</div></div></details>
     </div>
     <div className="tracking-active-filters" aria-label="有效篩選">{Object.entries(filters).filter(([, value]) => filterIsActive(value)).map(([key, value]) => <button className="btn small" key={key} onClick={() => { const next = { ...filters }; delete next[key]; updateFilters(next); }}>{columns.find(c => c.key === key)?.label || key}{preferences.hidden.includes(key) ? '（隱藏欄）' : ''}：{[value.mode === 'blank' ? '空白' : value.mode === 'nonblank' ? '非空白' : '', value.text, value.from && `自 ${value.from}`, value.to && `至 ${value.to}`, value.values?.join('／')].filter(Boolean).join(' ')} ×</button>)}</div>
@@ -224,6 +245,6 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     <TrackingPagination count={rows.length} page={page} onPage={setPage}/>
     {importOpen && <TrackingImportModal key={`${workspace}:${identity}:${vesselId}`} vesselId={vesselId} vesselName={vesselSelectionDisplayName(vessels.find(v=>v.id===vesselId))} workspace={workspace} actorId={user.id} identity={identity} canCreate={canCreate} canClose={canClose} data={data} callbacks={callbacks} onClose={()=>setImportOpen(false)} registerGuard={value=>{importGuard.current=value;}}/>}
     {draft && draft.action === 'sync' && draft.sync ? <div className="tracking-sync-form"><BatchCreateModal data={data} user={user} vessels={vessels.filter(v => v.id === vesselId)} close={() => void closeModal()} shipSubmission={audience==='ship'?{draft:draft.sync,onDraftChange:value=>changeDraft({...draft,sync:value}),busy,pending:Boolean(pending),message:'',catalog:{taskCategories:data.settings.taskCategories,priorities:data.settings.priorities,equipmentFailureSubcategories:data.settings.equipmentFailureSubcategories,departments:data.settings.departments}}:undefined} sourceForm={{ draft: draft.sync, readOnly:!draftWritable(draft), onReconcile:()=>void reconcileRejected(),lockedTaskIds:draft.savedCases?.filter(item=>item.linkedTaskId).map(item=>item.id), onDraftChange: value => changeDraft({ ...draft, sync: value }), busy, pending: Boolean(pending), message: [...draft.warnings, draft.savedCases?'提交版本已建立內控；本次只更正同一批已建立案件，不會重複新增。':'', notice].filter(Boolean).join('\n') }} save={async (cases, projections) => { await submit(cases, projections); return false; }}/></div> : draft && <TrackingBusinessModal audience={audience} readOnly={!draftWritable(draft)} vesselName={vesselSelectionDisplayName(vessels.find(vessel=>vessel.id===vesselId))} draft={draft} busy={busy} pending={Boolean(pending)} message={notice} affected={affected} onChange={changeDraft} onSave={() => void submit()} onReconcile={() => void reconcileRejected()} onClose={() => void closeModal()}/>}
-    {navigation && <div className="modal-backdrop tracking-navigation"><div className="modal" role="dialog" aria-modal="true" aria-label="尚未保存的跟蹤草稿"><h3>尚有實際修改未保存</h3><p>保存須等雲端確認；保留草稿只存於此工作區、本人、本船的瀏覽器。</p><button className="btn primary" onClick={() => void resolveNavigation('save')}>保存後繼續</button><button className="btn" onClick={() => void resolveNavigation('keep')}>保留草稿並繼續</button><button className="btn ghost" onClick={() => void resolveNavigation('cancel')}>取消切換</button></div></div>}
+    {navigation && <div className="modal-backdrop tracking-navigation"><div className="modal" role="dialog" aria-modal="true" aria-label="尚未保存的跟蹤草稿"><h3>尚有實際修改未保存</h3><p>保存須等雲端確認；保留草稿只存於此工作區、本人、本船的瀏覽器。</p><button className="btn primary" onClick={() => void resolveNavigation('save')}>保存後繼續</button><button className="btn" onClick={() => void resolveNavigation('keep')}>保留草稿並繼續</button><button className="btn danger" disabled={busy||Boolean(pending)} onClick={() => void resolveNavigation('discard')}>捨棄草稿並關閉</button><button className="btn ghost" onClick={() => void resolveNavigation('cancel')}>取消切換</button></div></div>}
   </section>;
 }

@@ -1,5 +1,7 @@
 # 船端配件／物料／工程跟蹤分頁
 
+> 後續欄位更新請依 [主站／船端跟蹤欄位修訂](tracking-field-revision-release.md)。下方 SQL 是初次安裝的歷史交接；已安裝者不要重跑舊接口安裝。
+
 ## 本次交付
 
 - 正式獨立入口：`packageorwork-tracking.html`；免登入選擇有效船舶，船名採中文＋英文，無中文則只顯示英文。
