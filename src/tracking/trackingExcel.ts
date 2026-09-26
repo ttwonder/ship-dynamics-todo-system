@@ -9,17 +9,18 @@ import { TRACKING_REQUEST_TYPES } from './trackingRequestTypes';
 
 function formatSheet(sheet:ExcelJS.Worksheet,widths:number[],header:number,paperSize=9){
  widths.forEach((w,i)=>{sheet.getColumn(i+1).width=w;});
- sheet.eachRow(row=>{
+ sheet.eachRow({includeEmpty:true},row=>{
   let lines=1;
-  row.eachCell({includeEmpty:true},(cell,c)=>{
+  for(let c=1;c<=widths.length;c++){
+   const cell=row.getCell(c);
    cell.font={name:'Microsoft JhengHei',size:11,bold:row.number<=header,color:{argb:'FF111111'}};
    cell.alignment={vertical:'top',wrapText:true};
-   if(row.number>=header)cell.border={bottom:{style:'hair',color:{argb:'FF777777'}}};
+   if(row.number>=header)cell.border={top:{style:'thin',color:{argb:'FF798492'}},bottom:{style:'thin',color:{argb:'FF798492'}},left:{style:'thin',color:{argb:'FF798492'}},right:{style:'thin',color:{argb:'FF798492'}}};
    if(row.number===header)cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE5EDF5'}};
    const units=cell.text.split('\n').map(t=>Array.from(t).reduce((n,ch)=>n+(/[^\x00-\x7f]/.test(ch)?2:1),0));
    lines=Math.max(lines,units.reduce((n,v)=>n+Math.max(1,Math.ceil(v/Math.max(3,(widths[c-1]||15)-2))),0));
-  });
-  row.height=row.number<header?row.number===1?28:32:Math.min(409,lines*16+8);
+  }
+  if(row.hasValues)row.height=row.number<header?row.number===1?28:32:Math.min(409,lines*16+8);
  });
  delete sheet.properties.outlineProperties;
  sheet.views=[{state:'frozen',ySplit:header,showGridLines:false}];

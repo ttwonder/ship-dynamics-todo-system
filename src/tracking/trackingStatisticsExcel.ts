@@ -13,7 +13,7 @@ export async function buildStatisticsWorkbook(report: StatisticsReport): Promise
   };
   const format=(sheet:ExcelJS.Worksheet,widths:number[])=>{
     widths.forEach((w,i)=>sheet.getColumn(i+1).width=w);
-    sheet.eachRow(row=>{row.eachCell(cell=>{cell.font={name:'Microsoft JhengHei',size:11,bold:row.number<=4};cell.alignment={wrapText:true,vertical:'top'};cell.numFmt='@';cell.border={bottom:{style:'hair',color:{argb:'FF888888'}}};});if(row.number<=4)row.height=row.number===2?48:row.number===3?76:row.number===1?26:32;});
+    sheet.eachRow(row=>{for(let c=1;c<=widths.length;c++){const cell=row.getCell(c);cell.font={name:'Microsoft JhengHei',size:11,bold:row.number<=4};cell.alignment={wrapText:true,vertical:'top'};cell.numFmt='@';cell.border=row.number>=4?{top:{style:'thin',color:{argb:'FF798492'}},bottom:{style:'thin',color:{argb:'FF798492'}},left:{style:'thin',color:{argb:'FF798492'}},right:{style:'thin',color:{argb:'FF798492'}}}:{bottom:{style:'hair',color:{argb:'FF888888'}}};}if(row.number<=4)row.height=row.number===2?48:row.number===3?76:row.number===1?26:32;});
     sheet.views=[{state:'frozen',ySplit:4}];sheet.pageSetup={orientation:'landscape',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'1:4',margins:{left:.3,right:.3,top:.4,bottom:.4,header:.15,footer:.15}};delete sheet.pageSetup.scale;
     sheet.headerFooter={oddFooter:'&R第 &P 頁／共 &N 頁'};
   };
