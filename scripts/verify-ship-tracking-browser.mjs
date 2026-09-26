@@ -108,7 +108,9 @@ try{
   await click('確認保存 1 項');await finish();
   const record=(await qa.read()).payload.trackingItems.find(x=>x.referenceNo==='BROWSER-001');assert.equal(record.description,'真實船端輸入測試');assert.equal(record.statusLogs[0].text,'第一筆進度');
  });
- if(process.argv.includes('--statistics')){
+ if(process.argv.includes('--template-dates')){
+  await (await import('./tracking-template-date-browser-checks.mjs')).templateDateChecks({qa,call,click,nodeClick,until,text,screen,check,output,audience:'ship'});
+ }else if(process.argv.includes('--statistics')){
   await (await import('./tracking-statistics-browser-checks.mjs')).statisticsChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output,audience:'ship'});
  }else{
  if(process.argv.includes('--fields'))await (await import('./tracking-field-browser-checks.mjs')).trackingFieldChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output});

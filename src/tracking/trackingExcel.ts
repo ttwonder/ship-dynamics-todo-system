@@ -4,7 +4,7 @@ import { TRACKING_XLSX_VERSION } from './trackingImport';
 import { trackingRowSnapshot } from './trackingFilters';
 import { trackingTextChunks, trackingReportFileName, type TrackingReport } from './trackingReport';
 import type { TrackingKind } from './trackingTypes';
-import { formatTaipeiDateTime } from '../taipeiTime';
+import { formatTaipeiDateTime, taipeiDateKey } from '../taipeiTime';
 import { TRACKING_REQUEST_TYPES } from './trackingRequestTypes';
 
 function formatSheet(sheet:ExcelJS.Worksheet,widths:number[],header:number,paperSize=9){
@@ -53,7 +53,24 @@ export async function buildTrackingWorkbook(report:TrackingReport,template=false
  columns.forEach((c,i)=>{const col=sheet.getColumn(i+1);col.numFmt=c.type==='date'?['createdAt','updatedAt'].includes(c.key)?'yyyy-mm-dd hh:mm:ss':'yyyy-mm-dd':'@';if(c.key==='vesselId'||(c.key==='id'&&!report.columns.some(x=>x.key==='id')))col.hidden=true;});
  sheet.autoFilter={from:{row:4,column:1},to:{row:Math.max(5,sheet.rowCount),column:columns.length}};
  report.rows.forEach((r,i)=>{if(r.item.urgency==='urgent'){const n=columns.findIndex(c=>c.key==='referenceNo');if(n>=0)sheet.getCell(i+5,n+1).font={name:'Microsoft JhengHei',size:11,bold:true,color:{argb:'FFC00000'}};}});
- if(template){for(let r=5;r<=14;r++){for(const k of ['normal','urgent','requestType']){const i=columns.findIndex(c=>c.key===k);if(i>=0)sheet.getCell(r,i+1).dataValidation={type:'list',allowBlank:true,showErrorMessage:true,error:'請選擇下拉清單中的內容',formulae:[k==='requestType'?'"'+TRACKING_REQUEST_TYPES.filter(t=>t.kind===report.kind).map(t=>t.label).join(',')+'"':'"是,否"']};}}}
+ if(template){
+  const year=Number(taipeiDateKey(report.generatedAt).slice(0,4));
+  const dates=book.addWorksheet('_tracking_dates');dates.state='veryHidden';dates.getColumn(1).numFmt='@';
+  // Real ISO calendar dates, not locale-dependent serials or macro/calendar controls.
+  for(const day=new Date(Date.UTC(year-5,0,1)),end=Date.UTC(year+11,0,1);day.getTime()<end;day.setUTCDate(day.getUTCDate()+1))dates.addRow([day.toISOString().slice(0,10)]);
+  const name='TrackingTemplateDates';book.definedNames.add(`'_tracking_dates'!$A$1:$A$${dates.rowCount}`,name);
+  const dateRule:ExcelJS.DataValidation={type:'list',allowBlank:true,showErrorMessage:true,errorStyle:'stop',errorTitle:'請選擇有效日期',error:'請使用本欄下拉清單中的日期（yyyy-mm-dd），不要輸入文字或多個日期。',showInputMessage:true,promptTitle:'日期下拉選擇',prompt:`請按右側箭頭選擇日期（${year-5}–${year+10}）；非必填日期可留空。`,formulae:[name]};
+  // ExcelJS supports range validations at runtime but omits this API from its typings.
+  // Cover appended input rows up to the existing import preview limit without adding blank printed pages.
+  const validations=(sheet as ExcelJS.Worksheet & {dataValidations:{add(address:string,rule:ExcelJS.DataValidation):void}}).dataValidations;
+  columns.forEach((c,i)=>{if(c.type==='date'){
+   const col=sheet.getColumn(i+1);col.numFmt='@';
+   // Column styles skip existing empty cells; retain text formatting in the bordered blank rows too.
+   for(let r=5;r<=14;r++)sheet.getCell(r,i+1).numFmt='@';
+   validations.add(`${col.letter}5:${col.letter}10000`,dateRule);
+  }});
+  for(let r=5;r<=14;r++){for(const k of ['normal','urgent','requestType']){const i=columns.findIndex(c=>c.key===k);if(i>=0)sheet.getCell(r,i+1).dataValidation={type:'list',allowBlank:true,showErrorMessage:true,error:'請選擇下拉清單中的內容',formulae:[k==='requestType'?'"'+TRACKING_REQUEST_TYPES.filter(t=>t.kind===report.kind).map(t=>t.label).join(',')+'"':'"是,否"']};}}
+ }
  // Wide data stays editable/filterable. This explicit, unabridged companion is
  // the legible print layout: every chosen field, no hidden omission or tiny type.
  const print=book.addWorksheet('列印明細');
@@ -69,7 +86,7 @@ export async function buildTrackingWorkbook(report:TrackingReport,template=false
  const buffer=await book.xlsx.writeBuffer();return Uint8Array.from(new Uint8Array(buffer)).buffer;
 }
 export async function buildTrackingTemplate(kind:TrackingKind,vesselName:string,vesselId:string){
- const report:TrackingReport={...trackingRowSnapshot([],trackingColumnsFor(kind).filter(c=>c.editable||['normal','urgent'].includes(c.key))),kind,vesselName,vesselId,title:kind==='supply'?'配件物料空白模板':'工程空白模板',generatedAt:new Date().toISOString(),summary:'空白模板｜請填寫指定申請欄位｜類型與普通／緊急用下拉選擇，日期須明確',selection:'all'};
+ const report:TrackingReport={...trackingRowSnapshot([],trackingColumnsFor(kind).filter(c=>c.editable||['normal','urgent'].includes(c.key))),kind,vesselName,vesselId,title:kind==='supply'?'配件物料空白模板':'工程空白模板',generatedAt:new Date().toISOString(),summary:'空白模板｜日期、類型與普通／緊急請用下拉選擇｜日期格式 yyyy-mm-dd',selection:'all'};
  return buildTrackingWorkbook(report,true);
 }
 export function downloadTrackingBytes(bytes:ArrayBuffer,name:string,isCurrent:()=>boolean):boolean{
