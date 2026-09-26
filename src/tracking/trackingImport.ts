@@ -54,7 +54,7 @@ function blankItem(vesselId: string, kind: TrackingKind): TrackingItem {
   return { id: uid('tracking'), vesselId, kind, referenceNo:'', description:'', applicationDate:'', urgency:'normal', expectedDate:'', progress:'', supplementalNotes:'', deliveryStatus:'not-delivered', isClosed:false, createdBy:'',updatedBy:'',createdAt:'',updatedAt:'',statusLogs:[] };
 }
 export async function parseTrackingWorkbook(input: ArrayBuffer | Uint8Array, fileName: string, vesselId: string): Promise<TrackingImport> {
-  if (input.byteLength > 20 * 1024 * 1024) throw new Error('檔案超過 20 MB，請先分成較小的 XLSX。');
+  if (input.byteLength > 20 * 1024 * 1024) throw new Error('檔案超過 20 MB，請先分成較小的 XLSX／XLSM。');
   const runtime = await import('exceljs');
   const book = new (runtime.Workbook || runtime.default.Workbook)();
   await book.xlsx.load(input as ExcelJS.Buffer);

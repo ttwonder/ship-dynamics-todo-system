@@ -1,46 +1,42 @@
 import assert from 'node:assert/strict';
+import JSZip from 'jszip';
+import {createHash} from 'node:crypto';
+import fs from 'node:fs';
 
-// Shared oracle for persisted XLSX bytes and actual shore/ship browser downloads.
-export function assertTemplateDateDropdowns(book, kind, year = Number(new Intl.DateTimeFormat('en', { timeZone: 'Asia/Taipei', year: 'numeric' }).format(new Date()))) {
- const sheet = book.getWorksheet('填寫資料');
- const keys = sheet.getRow(3).values.slice(1).map(value => String(value).replace('tracking:', ''));
- const dateKeys = ['applicationDate', 'expectedDate', kind === 'supply' ? 'actualDeliveryDate' : 'completionDate'];
- for (const key of dateKeys) {
-  const col = keys.indexOf(key) + 1;
-  assert.ok(col > 0, key);
-  for (const row of [...Array.from({ length: 10 }, (_, i) => i + 5), 15, 104, 10000]) {
-   const cell = row <= 14 ? sheet.getCell(row, col) : null;
-   const rule = sheet.dataValidations.find(`${sheet.getColumn(col).letter}${row}`) || {};
-   assert.equal(rule.type, 'list', `${kind} ${key} row ${row} must have a date dropdown`);
-   assert.equal(rule.allowBlank, true);
-   assert.equal(rule.showErrorMessage, true);
-   assert.equal(rule.errorStyle, 'stop');
-   assert.equal(rule.showInputMessage, true);
-   assert.equal(rule.formulae.length, 1);
-   if (cell) {
-    assert.equal(cell.value, null, 'do not prefill a date');
-    assert.equal(cell.numFmt, '@', 'pre-styled blank input cells must also preserve ISO text');
-   }
-   assert.equal(sheet.getColumn(col).numFmt, '@', 'ISO text must not be coerced by the Excel locale');
+// Saved-file contracts only. Native Excel/calendar clicks are a separate gate.
+export function assertTemplateCalendar(book, kind) {
+ const sheet=book.getWorksheet('填寫資料');
+ const keys=sheet.getRow(3).values.slice(1).map(value=>String(value).replace('tracking:',''));
+ const dateKeys=['applicationDate','expectedDate',kind==='supply'?'actualDeliveryDate':'completionDate'];
+ for(const key of dateKeys){
+  const col=keys.indexOf(key)+1;assert.ok(col>0,key);
+  for(const row of [...Array.from({length:10},(_,i)=>i+5),15,104,10000]){
+   const rule=sheet.dataValidations.find(`${sheet.getColumn(col).letter}${row}`)||{};
+   assert.equal(rule.type,'custom','calendar dates must not retain a list picker');
+   assert.equal(rule.allowBlank,true);assert.equal(rule.showErrorMessage,true);assert.equal(rule.errorStyle,'stop');assert.notEqual(rule.showInputMessage,true,'Excel validation balloons must not obscure the calendar');
+   assert.match(rule.prompt,/月曆/);assert.equal(rule.formulae.length,1);assert.match(rule.formulae[0],/ISNUMBER/);
+   if(row<=14){const cell=sheet.getCell(row,col);assert.equal(cell.value,null,'today is selected only in the calendar');assert.equal(cell.numFmt,'yyyy-mm-dd');}
   }
+  assert.equal(sheet.getColumn(col).numFmt,'yyyy-mm-dd');
  }
- const options = book.getWorksheet('_tracking_dates');
- assert.ok(options && options.state !== 'visible', 'date options are hidden implementation data');
- const values = Array.from({ length: options.rowCount }, (_, i) => options.getCell(i + 1, 1).value);
- const start = `${year - 5}-01-01`, end = `${year + 10}-12-31`;
- assert.equal(values[0], start); assert.equal(values.at(-1), end);
- assert.equal(values.length, (Date.parse(end) - Date.parse(start)) / 86400000 + 1);
- values.forEach((value, i) => {
-  assert.equal(typeof value, 'string'); assert.match(value, /^\d{4}-\d{2}-\d{2}$/);
-  assert.equal(Date.parse(value), Date.parse(start) + i * 86400000, 'continuous valid dates with no duplicates');
- });
- assert.ok(values.some(value => value.endsWith('-02-29')), 'include real leap days');
- const rule = sheet.getCell(5, keys.indexOf('applicationDate') + 1).dataValidation;
- const named = book.definedNames.getRanges(rule.formulae[0].replace(/^=/, '')).ranges;
- assert.deepEqual(named.map(ref => ref.replace(/'/g, '')), [`_tracking_dates!$A$1:$A$${values.length}`]);
- for (const key of dateKeys) assert.deepEqual(sheet.getCell(5, keys.indexOf(key) + 1).dataValidation.formulae, rule.formulae);
- assert.equal(sheet.rowCount, 14, 'keep exactly ten blank input rows');
- assert.equal(sheet.pageSetup.printArea, 'A1:N14', 'dropdown coverage must not expand printing');
- assert.deepEqual(book.worksheets.filter(s => s.state === 'visible').map(s => s.name), ['填寫資料', '列印明細']);
- return { dateKeys, start, end, optionCount: values.length };
+ assert.equal(book.getWorksheet('_tracking_dates'),undefined,'remove the obsolete date-option list');
+ assert.equal(book.definedNames.getRanges('TrackingTemplateDates').ranges.length,0);
+ for(const key of ['normal','urgent','requestType'])assert.equal(sheet.getCell(5,keys.indexOf(key)+1).dataValidation.type,'list');
+ assert.equal(sheet.rowCount,14);assert.equal(sheet.pageSetup.printArea,'A1:N14');
+ assert.deepEqual(book.worksheets.filter(s=>s.state==='visible').map(s=>s.name),['填寫資料','列印明細']);
+ return {dateKeys};
+}
+export async function assertCalendarPackage(bytes){
+ const zip=await JSZip.loadAsync(bytes),read=name=>zip.file(name).async('string');
+ assert.match(await read('[Content_Types].xml'),/application\/vnd\.ms-excel\.sheet\.macroEnabled\.main\+xml/);
+ assert.match(await read('xl/_rels/workbook.xml.rels'),/relationships\/vbaProject/);
+ assert.match(await read('xl/workbook.xml'),/codeName="ThisWorkbook"/);
+ assert.match(await read('xl/workbook.xml'),/filterPrivacy="0"/,'avoid the native VBA/document-inspector save warning');
+ const project=JSON.parse(fs.readFileSync(new URL('../src/tracking/calendar/project.json',import.meta.url),'utf8'));
+ const binary=await zip.file('xl/vbaProject.bin').async('nodebuffer');
+ assert.equal(createHash('sha256').update(binary).digest('hex'),project.sha256);
+ assert.deepEqual(binary,Buffer.from(project.base64,'base64'));
+ for(const [i,name] of project.worksheetCodeNames.entries())assert.ok((await read(`xl/worksheets/sheet${i+1}.xml`)).includes(`codeName="${name}"`));
+ assert.ok(!Object.keys(zip.files).some(name=>name.startsWith('xl/externalLinks/')));
+ return {macroSha256:project.sha256};
 }

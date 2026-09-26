@@ -36,7 +36,7 @@ export default function TrackingExports({query,preferences,selected,vesselName,i
  };
  const template=async(kind:'supply'|'engineering')=>{
   if(busyRef.current||blocked)return;const current=capture();busyRef.current=true;setBusy(true);
-  try{const api=await import('./trackingExcel');const bytes=await api.buildTrackingTemplate(kind,vesselName,query.vesselId);if(current())api.downloadTrackingBytes(bytes,kind==='supply'?'tracking-parts-materials.xlsx':'tracking-engineering.xlsx',current);}catch(e){if(current())setNotice(`模板下載失敗：${String(e)}`);}finally{busyRef.current=false;if(mounted.current)setBusy(false);}
+  try{const api=await import('./trackingExcel');const bytes=await api.buildTrackingTemplate(kind,vesselName,query.vesselId);if(current())api.downloadTrackingBytes(bytes,kind==='supply'?'tracking-parts-materials.xlsm':'tracking-engineering.xlsm',current);}catch(e){if(current())setNotice(`模板下載失敗：${String(e)}`);}finally{busyRef.current=false;if(mounted.current)setBusy(false);}
  };
  return <><div className="tracking-export-actions" aria-label="跟蹤匯出與模板"><button className="btn small" disabled={blocked||busy} onClick={()=>{setOpen(true);setReport(null);}}>Excel</button><button className="btn small" disabled={blocked||busy} onClick={()=>{setOpen(true);setReport(null);}}>PDF</button><button className="btn small" disabled={blocked||busy} onClick={()=>void template('supply')}>配件物料模板</button><button className="btn small" disabled={blocked||busy} onClick={()=>void template('engineering')}>工程模板</button></div>
  {notice&&!open&&<p role="status">{notice}</p>}

@@ -70,7 +70,7 @@ export default function TrackingImportModal({vesselId,vesselName,workspace,actor
  const loadFile=async(file:File|undefined)=>{
   if(!file||busyRef.current||stateRef.current.pending)return;
   if(stateRef.current.parsed?.sheets.some(s=>s.rows.some(r=>!r.saved&&r.selected))&&!confirm('以新檔取代未提交的匯入預覽？原檔不會修改。'))return;
-  const token=++generation.current;busyRef.current=true;setBusy(true);setNotice('正在本機解析 XLSX；不會上傳或自動寫入業務資料。');
+  const token=++generation.current;busyRef.current=true;setBusy(true);setNotice('正在本機解析 Excel（XLSX／XLSM）；不會執行巨集、上傳或自動寫入業務資料。');
   try{const parsed=await parseTrackingWorkbook(await file.arrayBuffer(),file.name,vesselId);if(current()&&token===generation.current){write({...empty(),parsed});setNotice('解析完成；請核對工作表、欄位、異常及船舶，再明確選取保存。');}}
   catch(e){if(current()&&token===generation.current)setNotice(`解析失敗，未寫入：${e instanceof Error?e.message:String(e)}`);}
   finally{if(current()&&token===generation.current){busyRef.current=false;setBusy(false);}}
@@ -78,7 +78,7 @@ export default function TrackingImportModal({vesselId,vesselName,workspace,actor
  return <div className="modal-backdrop"><div className="modal tracking-modal tracking-import" role="dialog" aria-modal="true" aria-label="Excel 導入預覽">
   <div className="modal-head"><h2>Excel 導入預覽（只新增）</h2><button className="btn ghost" onClick={()=>void close()}>{state.batches.length?'關閉導入':'取消導入'}</button></div>
   <p>本次固定船舶：{vesselName}。原檔唯讀；不按名稱／工單覆寫或合併。每批最多 100 項，超過須自行選擇下一批，各批獨立原子保存。</p>
-  <input aria-label="選擇跟蹤 XLSX" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy||Boolean(state.pending)} onChange={e=>void loadFile(e.target.files?.[0])}/>
+  <input aria-label="選擇跟蹤 Excel" type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" disabled={busy||Boolean(state.pending)} onChange={e=>void loadFile(e.target.files?.[0])}/>
   {state.parsed&&<><label>來源工作表<select aria-label="匯入工作表" disabled={busy||Boolean(state.pending)} value={state.sheet} onChange={e=>write({...state,sheet:Number(e.target.value),shipConfirmed:false})}>{state.parsed.sheets.map((s,i)=><option key={s.name} value={i}>{s.name}｜{s.format}</option>)}</select></label>
    <p>來源：{state.parsed.fileName}｜SHA-256 {state.parsed.fileHash}<br/>主表範圍 {sheet?.range}；主表候選 {rows.filter(r=>!r.outside).length} 項（工程以分項計，不以工單去重）；人工加入 {rows.filter(r=>r.outside).length} 項；主表外排除 {sheet?.excluded.length} 列。可匯入 {rows.filter(r=>!r.saved&&!errors(r).length).length} 項；需處理 {rows.filter(r=>!r.saved&&errors(r).length).length} 項；已保存 {rows.filter(r=>r.saved).length} 項。</p>
    <p>船名／檔名線索：{sheet?.clues.join('｜')}；不能據此自動配船。</p>

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
 import ExcelJS from 'exceljs';import {createServer} from 'vite';
-import {assertTemplateDateDropdowns} from './tracking-template-date-assertions.mjs';
+import {assertTemplateCalendar,assertCalendarPackage} from './tracking-template-date-assertions.mjs';
 const vite=await createServer({server:{middlewareMode:true,hmr:false},appType:'custom',logLevel:'silent'});const cases=[];
 const check=async(name,fn)=>{await fn();cases.push(name);console.log('PASS',name);};
 try{
@@ -26,16 +26,16 @@ try{
    const bytes=await buildTrackingTemplate(kind,'測試輪 QA SHIP','qa-v1'),read=new ExcelJS.Workbook();await read.xlsx.load(bytes);const sheet=read.getWorksheet('填寫資料');const keys=sheet.getRow(3).values.slice(1).map(s=>s.replace('tracking:',''));
    assert.deepEqual(keys,['referenceNo','purchaseNos','originalItemNo','applicationDate','requestType','description','expectedDate',kind==='supply'?'actualDeliveryDate':'completionDate','normal','urgent','supplementalNotes','progress','id','vesselId']);
    const col=keys.indexOf('requestType')+1;assert.equal(sheet.getCell(5,col).dataValidation.type,'list');assert.equal(sheet.getCell(5,col).dataValidation.formulae[0],'"'+TRACKING_REQUEST_TYPES.filter(t=>t.kind===kind).map(t=>t.label).join(',')+'"');
-   assert.equal((await parseTrackingWorkbook(bytes,'blank.xlsx','qa-v1')).sheets[0].rows.length,0);
+   assert.equal((await parseTrackingWorkbook(bytes,'blank.xlsm','qa-v1')).sheets[0].rows.length,0);
    assert.ok(compactTrackingColumns(kind).some(c=>c.key==='requestType'));assert.ok(compactTrackingColumns(kind).some(c=>c.key=== (kind==='supply'?'actualDeliveryDate':'completionDate')));
-   if(output)fs.writeFileSync(path.join(output,'template-'+kind+'.xlsx'),Buffer.from(bytes));
+   if(output)fs.writeFileSync(path.join(output,'template-'+kind+'.xlsm'),Buffer.from(bytes));
   }
  });
- await check('all-template-dates-use-stop-dropdowns-with-blank-and-import-compatibility',async()=>{
+ await check('all-template-dates-use-embedded-calendar-with-blank-and-import-compatibility',async()=>{
   for(const kind of ['supply','engineering']){
    const bytes=await buildTrackingTemplate(kind,'測試輪 QA SHIP','qa-v1'),book=new ExcelJS.Workbook();await book.xlsx.load(bytes);
-   assertTemplateDateDropdowns(book,kind);
-   const parsed=await parseTrackingWorkbook(bytes,'date-template.xlsx','qa-v1');
+   assertTemplateCalendar(book,kind);await assertCalendarPackage(bytes);
+   const parsed=await parseTrackingWorkbook(bytes,'date-template.xlsm','qa-v1');
    assert.equal(parsed.sheets.length,1,'hidden date options must never become import candidates');
    assert.equal(parsed.sheets[0].rows.length,0,'blank template remains blank');
   }
@@ -43,16 +43,16 @@ try{
  await check('template-selected-dates-roundtrip-and-paste-bypass-still-requires-import-validation',async()=>{
   for(const kind of ['supply','engineering']){
    const bytes=await buildTrackingTemplate(kind,'測試輪 QA SHIP','qa-v1'),book=new ExcelJS.Workbook();await book.xlsx.load(bytes);
-   const info=assertTemplateDateDropdowns(book,kind),sheet=book.getWorksheet('填寫資料'),keys=sheet.getRow(3).values.slice(1).map(v=>v.replace('tracking:',''));
-   const leap=book.getWorksheet('_tracking_dates').getColumn(1).values.find(v=>typeof v==='string'&&v.endsWith('-02-29'));
-   const values={referenceNo:'DATE-ROUNDTRIP',description:'日期下拉選項',applicationDate:info.start,expectedDate:info.end,[kind==='supply'?'actualDeliveryDate':'completionDate']:leap,normal:'是'};
+   const info=assertTemplateCalendar(book,kind),sheet=book.getWorksheet('填寫資料'),keys=sheet.getRow(3).values.slice(1).map(v=>v.replace('tracking:',''));
+   const leap='2028-02-29';
+   const values={referenceNo:'DATE-ROUNDTRIP',description:'月曆日期格式',applicationDate:'2026-01-02',expectedDate:'2029-12-31',[kind==='supply'?'actualDeliveryDate':'completionDate']:leap,normal:'是'};
    const put=(key,value)=>{sheet.getCell(5,keys.indexOf(key)+1).value=value;};Object.entries(values).forEach(([key,value])=>put(key,value));
    const parse=async()=>{const p=await parseTrackingWorkbook(await book.xlsx.writeBuffer(),'selected-dates.xlsx','qa-v1');assert.equal(p.sheets.length,1);assert.equal(p.sheets[0].rows.length,1);return p.sheets[0].rows[0];};
    let row=await parse();assert.deepEqual(importRowErrors(row),[]);assert.equal(row.item.isClosed,false);
    for(const key of info.dateKeys)assert.equal(row.item[key],values[key]);
    for(const key of info.dateKeys){put(key,'2026-02-30');row=await parse();assert.ok(importRowErrors(row).length>0,`${key}: invalid pasted date must not silently import`);put(key,values[key]);}
-   // A dropdown window is a template convenience, not a new historical-data policy.
-   put('applicationDate',`${Number(info.start.slice(0,4))-1}-01-02`);put('expectedDate','');put(info.dateKeys[2],'');row=await parse();assert.deepEqual(importRowErrors(row),[]);assert.equal(row.item.expectedDate,'');assert.equal(row.item[info.dateKeys[2]],'');
+   // Legacy XLSX/text dates remain legal; no new historical-data policy.
+   put('applicationDate','2000-01-02');put('expectedDate','');put(info.dateKeys[2],'');row=await parse();assert.deepEqual(importRowErrors(row),[]);assert.equal(row.item.expectedDate,'');assert.equal(row.item[info.dateKeys[2]],'');
   }
  });
  await check('legacy-system-columns-still-import-with-original-values-and-no-type-inference',async()=>{
