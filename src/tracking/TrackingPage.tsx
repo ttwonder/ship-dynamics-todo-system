@@ -111,6 +111,12 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   useEffect(() => { const beforeUnload = (event: BeforeUnloadEvent) => { if (draftRef.current?.dirty || pendingRef.current) { event.preventDefault(); event.returnValue = ''; } }; window.addEventListener('beforeunload', beforeUnload); return () => window.removeEventListener('beforeunload', beforeUnload); }, []);
   const switchView = async (action: () => void) => { if (await guard()) { clearSelection(); action(); } };
   const updateFilters = (value: Record<string, TrackingFilter>) => { clearSelection(); setFilters(value); };
+  const urgentOnly = filters.urgent?.values?.length === 1 && filters.urgent.values[0] === '是';
+  const toggleUrgent = () => {
+    const next = { ...filters };
+    if (urgentOnly) delete next.urgent; else next.urgent = { values: ['是'] };
+    updateFilters(next);
+  };
   const start = async (action: TrackingAction, ids = selected) => {
     if (busyRef.current || openingRef.current || loading || !vesselId) return;
     openingRef.current=true;
@@ -237,6 +243,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     {!statisticsView && <>
     <div className="tracking-search-actions">
       <div className="tracking-search"><input aria-label="搜尋跟蹤" placeholder="搜尋編號、內容及全部欄位…" value={search} onChange={event => { clearSelection(); setSearch(event.target.value); }}/><button className="btn small" onClick={() => { updateFilters({}); setSearch(''); }}>清除條件</button></div>
+      <button type="button" className="btn small tracking-urgent-shortcut" aria-pressed={urgentOnly} title="只顯示符合目前其他條件的緊急件；再按一次取消緊急篩選。" onClick={toggleUrgent}>緊急</button>
     <div className="tracking-toolbar" aria-label="跟蹤選取與批量操作"><b>已選 {selected.length} 項</b><button className="btn small" onClick={() => setSelected(rows.map(row => row.id))}>選取全部符合條件 {rows.length} 項</button><button className="btn small" onClick={() => setSelected([])}>清除選取</button>{canEdit && actionButton('edit', '批量更新', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'engineering' && actionButton('completion', '批量完工／更正', undefined, !selected.length)}{canEdit && actionButton('progress', '批量更新進度', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'supply' && actionButton('delivery', '批量送達／更正', undefined, !selected.length)}{canClose && actionButton('close', '批量結案', undefined, !selected.length)}{canClose && actionButton('correct-close-date', '修改結案日期', undefined, !selected.length)}{canClose && actionButton('reopen', '重開所選', undefined, !selected.length)}{canCreate && actionButton('sync', '同步所選到內控', undefined, !selected.length)}</div>
     </div>
     <div className="tracking-options">

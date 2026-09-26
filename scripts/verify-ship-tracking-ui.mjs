@@ -20,6 +20,9 @@ try {
  assert.deepEqual(shipTabs.map(t=>t.label.replace(/\s+0$/,'')),[...expectedLists,'統計資訊'],'ship lists first, statistics last');
  assert.deepEqual(shipTabs.map(t=>t.active),[true,false,false,false,false,false],'ship initially selects undelivered');
  assert.ok(ship.includes('批量更新進度'),'ship default list retains batch actions');
+ const urgentButtons=[...ship.matchAll(/<button\b[^>]*aria-pressed="false"[^>]*>緊急<\/button>/g)];
+ assert.equal(urgentButtons.length,1,'one initially inactive urgent shortcut');
+ assert.ok(ship.indexOf('清除條件</button>')<urgentButtons[0].index&&urgentButtons[0].index<ship.indexOf('aria-label="跟蹤選取與批量操作"'),'urgent shortcut follows Clear and precedes selection toolbar');
  const shore=renderToStaticMarkup(React.createElement(TrackingPage,props)),shoreTabs=tabState(shore);
  assert.deepEqual(shoreTabs.map(t=>t.label.replace(/\s+0$/,'')),['統計資訊',...expectedLists],'shore statistics precedes undelivered');
  assert.deepEqual(shoreTabs.map(t=>t.active),[true,false,false,false,false,false],'shore initially selects statistics');
