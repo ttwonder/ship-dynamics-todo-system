@@ -6,6 +6,7 @@ import { vesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskShipTypeLabel, taskVesselIds, taskVesselLabel } from './taskVesselScope';
 import { appearsInSingleVesselTasks } from './taskAttention';
 import { isEligibleTaskOwner } from './permissions';
+import { newTaskOwnerDefaults, updateNewTaskOwnerSelection } from './newTaskOwnerDefaults';
 import RichTextEditor from './RichTextEditor';
 import RichTextContent from './RichTextContent';
 import MeetingPeoplePicker from './MeetingPeoplePicker';
@@ -164,6 +165,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const [saving,setSaving]=useState(false);
   useEscapeClose(()=>{if(!saving)close();});
   const [draft, setDraft] = useState<TaskItem | null>(() => task ? clone(task) : null);
+  const automaticOwnerIds=useRef<string[]>(creating&&task?newTaskOwnerDefaults(data.vessels.find(vessel=>vessel.id===task.vesselId),data.users,task.departments).filter(id=>task.ownerUserIds.includes(id)):[]);
   const [plannedDurationInput,setPlannedDurationInput]=useState(()=>task?.plannedDurationDays===undefined?'':String(task.plannedDurationDays));
   const draftEditVersion=useRef(0);
   useEffect(()=>{
@@ -293,10 +295,18 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const users=data.users.filter(user=>user.isActive);
   const taskScopeVessels=taskScopeIds.map(vesselId=>data.vessels.find(item=>item.id===vesselId)).filter((vessel): vessel is Vessel=>Boolean(vessel));
   const eligibleOwnerUsers=users.filter(user=>isEligibleTaskOwner(data.settings.rolePermissions,user,taskScopeVessels));
-  const involvedUserIdsForVessel = (vesselId: string) => {
-    const vessel = data.vessels.find(item => item.id === vesselId);
-    const activeUserIds = new Set(users.filter(user => user.role !== 'vessel').map(user => user.id));
-    return vessel ? vessel.assignedUserIds.filter(id => activeUserIds.has(id)) : [];
+  const changeDepartments = (departments: string[]) => {
+    const vessel=data.vessels.find(item=>item.id===draft.vesselId);
+    const selection=creating&&currentUser.role!=='vessel'?updateNewTaskOwnerSelection(
+      draft.ownerUserIds,automaticOwnerIds.current,
+      newTaskOwnerDefaults(vessel,users,draft.departments),newTaskOwnerDefaults(vessel,users,departments),
+    ):null;
+    if(selection)automaticOwnerIds.current=selection.automaticIds;
+    change(target=>{target.departments=departments;if(selection)target.ownerUserIds=selection.selectedIds;});
+  };
+  const changeOwners = (ownerUserIds: string[]) => {
+    automaticOwnerIds.current=automaticOwnerIds.current.filter(id=>ownerUserIds.includes(id));
+    change(target=>{target.ownerUserIds=ownerUserIds;});
   };
   const progressSummary=taskVesselProgressSummary(draft,visibleScopeIds);
   const selectedVessel=data.vessels.find(vessel=>vessel.id===progressScope);
@@ -312,7 +322,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>
     {perVesselMode&&<section className="vessel-progress-scope"><div className="field"><label>進度範圍</label><select aria-label="待辦進度範圍" value={progressScope} onChange={event=>{void changeProgressScope(event.target.value);}}>{visibleScopeIds.map(id=>{const vessel=data.vessels.find(item=>item.id===id);return <option key={id} value={id}>單船進度｜{vessel?vesselDisplayName(vessel):id}</option>})}{canEditOverall&&<option value="overall">總體進度｜全部涉船</option>}</select></div><div className="progress-scope-note"><b>單船 {progressSummary.completed}/{progressSummary.total} 已結案</b><span>{editingSingleVessel?'目前操作只会更新所选船舶，不影响总体及其他船舶。':'目前操作会更新整项会议待办的总体进度。'}</span></div></section>}
     <fieldset disabled={globalReadOnly} className="task-global-fields"><div className="grid cols-3">
-      <div className="field"><label>船舶{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label>{hasMeetingScope?<div className="scope-result-note task-scope-readonly"><b>{taskVesselLabel(draft, visibleVessels)}</b><span>船種：{taskShipTypeLabel(draft, visibleVessels)}｜範圍由臨會／專題同步</span></div>:<select disabled={globalReadOnly||creating} required={creating} aria-required={creating} value={draft.vesselId} onChange={event=>{const value=event.target.value;change(target=>{target.vesselId=value;if(creating)target.ownerUserIds=involvedUserIdsForVessel(value);});}}>{visibleVessels.map(vessel=><option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select>}{creating&&<small>新增期間已鎖定此船，避免其他人同時新增同船要事。</small>}</div>
+      <div className="field"><label>船舶{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label>{hasMeetingScope?<div className="scope-result-note task-scope-readonly"><b>{taskVesselLabel(draft, visibleVessels)}</b><span>船種：{taskShipTypeLabel(draft, visibleVessels)}｜範圍由臨會／專題同步</span></div>:<select disabled={globalReadOnly||creating} required={creating} aria-required={creating} value={draft.vesselId} onChange={event=>{const value=event.target.value;change(target=>{target.vesselId=value;if(creating)target.ownerUserIds=newTaskOwnerDefaults(data.vessels.find(vessel=>vessel.id===value),users,target.departments);});}}>{visibleVessels.map(vessel=><option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select>}{creating&&<small>新增期間已鎖定此船，避免其他人同時新增同船要事。</small>}</div>
       <div className="field"><label>{hasMeetingScope?'會議議題關注程度':'要事關注程度'}{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><select disabled={globalReadOnly||hasMeetingScope} required={creating} aria-required={creating} value={draft.priority} onChange={event=>{const value=event.target.value as TaskPriority;change(target=>{target.priority=value;});}}>{data.settings.priorities.map(priority=><option key={priority}>{priority}</option>)}</select>{hasMeetingScope&&<small>範圍與關注程度由臨會／專題同步</small>}</div>
       <div className="field span-3"><label>事項內容{creating && <span className="danger-note" aria-hidden="true">＊</span>}</label><RichTextEditor ariaLabel="事項內容" required={creating} readOnly={globalReadOnly} value={draft.description} onChange={value=>change(target=>{target.description=value;})}/></div>
       <div className="field span-2"><label>{perVesselMode?'總體狀態／決議':'目前狀態／決議'}</label><RichTextEditor ariaLabel="目前狀態／決議" readOnly={globalReadOnly} value={draft.status} onChange={value=>change(target=>{target.status=value;})}/></div>
@@ -325,8 +335,8 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     </div>
     <CheckboxMultiPicker label={hasMeetingScope?'臨會/專題待辦分類':'要事分類'} required={creating} values={draft.categories || (draft.category ? [draft.category] : [])} choices={taskCategoryChoices.map(category=>({value:category,label:category}))} onChange={values=>change(target=>{target.categories=values;target.category=values[0]||'';})}/>
     {draft.isInternalControl&&(draft.categories||[]).includes('設備故障')&&<div className="field"><label>設備故障細項<span className="danger-note" aria-hidden="true">＊</span></label><select required value={draft.equipmentSubcategory||''} onChange={event=>{const value=event.target.value;change(target=>{target.equipmentSubcategory=value||undefined;});}}><option value="">請選擇</option>{data.settings.equipmentFailureSubcategories.map(item=><option key={item}>{item}</option>)}</select></div>}
-    <CheckboxMultiPicker label="涉及部門" required={creating||draft.isInternalControl} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={values=>change(target=>{target.departments=values;})}/>
-    {currentUser.role!=='vessel'&&<MeetingPeoplePicker label="追蹤窗口" users={eligibleOwnerUsers} departments={data.settings.departments} selectedIds={draft.ownerUserIds} onChange={values=>change(target=>{target.ownerUserIds=values;})} disabled={globalReadOnly}/>}</fieldset>
+    <CheckboxMultiPicker label="涉及部門" required={creating||draft.isInternalControl} values={draft.departments} choices={data.settings.departments.map(department=>({value:department,label:department}))} onChange={changeDepartments}/>
+    {currentUser.role!=='vessel'&&<MeetingPeoplePicker label="追蹤窗口" users={eligibleOwnerUsers} departments={data.settings.departments} selectedIds={draft.ownerUserIds} onChange={changeOwners} disabled={globalReadOnly}/>}</fieldset>
     {!creating&&<div className="grid cols-3 task-completion-date-row"><div className="field"><label>完成日期</label><input type="date" disabled={lifecycleReadOnly} value={selectedProgress.closedDate||''} onChange={event=>setCompletionDate(event.target.value)}/><small>{selectedProgress.isClosed?'已結案日期；與「標記結案」彈出的日期同步':'選擇日期會同步標記為已結案'}</small></div></div>}
     {editingSingleVessel&&<div className="field vessel-progress-status"><label>單船目前狀態／決議｜{selectedVessel?vesselDisplayName(selectedVessel):progressScope}</label><RichTextEditor ariaLabel="單船目前狀態" readOnly={readOnly} value={selectedProgress.status} onChange={value=>changeProgress(target=>{target.status=value;})}/></div>}
     {(!readOnly||Boolean(quickStatus))&&<div className="quick-status-bar"><textarea value={quickStatus} readOnly={readOnly} onChange={event=>{if(!readOnly)changeQuickStatus(event.target.value);}} onKeyDown={event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();addStatus();}}} placeholder={editingSingleVessel?'快速更新此船狀態…':'快速更新總體狀態…'}/><button className="btn primary" disabled={readOnly} onClick={addStatus}>加入狀態紀錄</button></div>}

@@ -6,6 +6,7 @@ import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {createNativeRecordQa} from './record-storage-native-qa.mjs';
 import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
+import {installTrackingBrowserMigrations} from './tracking-browser-fixture.mjs';
 
 // QA-only: original main.tsx -> App, native input, synthetic identities.
 // No setters, write helpers, fabricated responses, external hosts or user profile.
@@ -75,17 +76,15 @@ try {
  native=await createNativeRecordQa(run,receipt,{httpTransactions:true,initTimeoutMs:120000});
  qa=await createRecordStorageLocalQa({browserAuthority:true,internalControl:true,taskMember:true,scopedRead:true,performanceTrace:true,databaseFactory:async()=>native.adapter,preparePerformanceFixture:async initial=>{
    for(const name of ['tasks','internalControlCases','meetings','agendaReports','taskDismissals','notifications','auditLogs'])initial[name]=[];
-   initial.settings.departments=['督導','海務'];
+   initial.settings.departments=['督導','海務','船工'];
    const owner=initial.users.find(u=>u.id==='qa-owner');
-   initial.users=[owner,{...owner,id:'qa-operator',name:'QA OPERATOR',username:'qa-operator',role:'operator',managedVesselIds:['qa-v2']}];
-   initial.vessels.forEach((v,i)=>{delete v.nameEn;v.name=v.fullName=v.shortName=`QA VESSEL ${i+1}`;v.assignedUserIds=i===1?['qa-operator']:[];v.weeklyAttention=i===1?['materials-parts']:[];v.manualAttentionLevel=i===1?'特別關注':'';});
+   initial.users=[owner,...[['qa-operator','QA OPERATOR','督導'],['qa-marine','QA MARINE','海務'],['qa-engineer','QA ENGINEER','船工']].map(([id,name,department])=>({...owner,id,name,username:id,department,role:'operator',managedVesselIds:['qa-v2']})),{...owner,id:'qa-other',name:'QA OTHER MARINE',username:'qa-other',department:'海務',role:'operator',managedVesselIds:[]}];
+   initial.vessels.forEach((v,i)=>{delete v.nameEn;v.name=v.fullName=v.shortName=`QA VESSEL ${i+1}`;v.assignedUserIds=i===1?['qa-operator','qa-marine','qa-engineer']:[];v.weeklyAttention=i===1?['materials-parts']:[];v.manualAttentionLevel=i===1?'特別關注':'';});
    initial.vessels.push({...structuredClone(initial.vessels[0]),id:'qa-inactive',name:'QA INACTIVE',fullName:'QA INACTIVE',shortName:'QA INACTIVE',isActive:false});
  }});
- const {installMorningOracle,schedulerSql}=await import('./record-daily-morning-local-fixture.mjs');
- await installMorningOracle(native.adapter);await native.adapter.exec(fs.readFileSync(schedulerSql,'utf8'));
- for(const file of ['supabase/migrations/20260904161000_appdata_compact_ack_receipts.sql','supabase/migrations/20260817143000_data_management_storage.sql','supabase/migrations/20260818154500_data_management_prune_batch_limit.sql','supabase/normalized-legacy-cutover.sql','supabase/development/20260911_legacy_report_workspace_binding.sql','supabase/development/20260911_business_quiescence.sql','supabase/development/20260911_paused_record_legacy_transfer.sql','supabase/development/20260911_source_authority_publication.sql','supabase/development/20260912_browser_source_authority.sql'])await native.adapter.exec(fs.readFileSync(file,'utf8'));
+ await installTrackingBrowserMigrations(native.adapter);
  receipt.origin=qa.origin;receipt.layer='真實原始 App UI＋測試資料＋本機 PostgreSQL；非正式 Supabase';
- receipt.inputs=Object.fromEntries(['src/App.tsx','src/TaskCreateEntry.tsx','src/taskCreateEntry.css','scripts/verify-total-task-create-browser.mjs'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
+ receipt.inputs=Object.fromEntries(['src/App.tsx','src/EditModals.tsx','src/newTaskOwnerDefaults.ts','src/TaskCreateEntry.tsx','src/taskCreateEntry.css','scripts/verify-total-task-create-browser.mjs'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let socketPath;await until(()=>{try{[chromePort,socketPath]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(chromePort)&&socketPath?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'Chrome handshake');
  receipt.chrome={pid:browser.pid,port:Number(chromePort)};
@@ -109,6 +108,23 @@ try {
    await a.screen('picker-desktop');await a.click('取消');await until(()=>a.eval("!document.querySelector('.task-create-picker').open"),'cancel picker');
    assert.deepEqual(await read(),before);assert.deepEqual(await locks(),beforeLocks);
  });
+ await check('new-owners-department-auto-and-manual-choices',async()=>{
+   const before=await read();await create(a,'qa-v2');
+   const owners=()=>a.eval("[...document.querySelectorAll('.edit-modal .meeting-people-options label')].filter(n=>n.querySelector('input').checked).map(n=>n.querySelector('b').textContent).sort()");
+   const expectOwners=async names=>{await until(async()=>JSON.stringify(await owners())===JSON.stringify([...names].sort()),'exact selected owners '+names.join(','));};
+   const department=async name=>{await a.eval(`(()=>{const n=[...document.querySelectorAll('.edit-modal .checkbox-multi-picker label')].find(n=>n.querySelector('b')?.textContent===${JSON.stringify(name)})?.querySelector('input');if(!n||n.disabled)throw new Error('department checkbox required');n.click();})()`);};
+   const person=async name=>{await a.eval("document.querySelector('.edit-modal .meeting-people-picker').open=true");await a.eval(`(()=>{const n=[...document.querySelectorAll('.edit-modal .meeting-people-options label')].find(n=>n.querySelector('b')?.textContent===${JSON.stringify(name)})?.querySelector('input');if(!n||!n.getClientRects().length||n.disabled)throw new Error('visible owner checkbox required');n.click();})()`);await a.eval("document.querySelector('.edit-modal .meeting-people-picker').open=false");};
+   await expectOwners(['QA OPERATOR']);await department('海務');await expectOwners(['QA OPERATOR','QA MARINE']);
+   await department('船工');await expectOwners(['QA OPERATOR','QA MARINE','QA ENGINEER']);
+   await department('海務');await expectOwners(['QA OPERATOR','QA ENGINEER']);
+   await person('QA OPERATOR');await department('海務');await expectOwners(['QA ENGINEER','QA MARINE']);
+   await person('QA MARINE');await department('督導');await expectOwners(['QA ENGINEER']);
+   await department('海務');await person('QA MARINE');await department('海務');await department('海務');await expectOwners(['QA ENGINEER','QA MARINE']);
+   await department('船工');await expectOwners(['QA MARINE']);
+   for(const width of [1440,390]){await call('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile:false},a.s);await a.eval("document.querySelector('.edit-modal .meeting-people-field').scrollIntoView({block:'center'})");await a.screen('owner-defaults-'+width);}
+   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},a.s);
+   await a.click('取消並關閉');await until(()=>a.eval(`!${taskDialog}`),'cancel owner draft');assert.deepEqual((await read()).payload.tasks,before.payload.tasks);
+ });
  await check('draft-cancel-original-lease-no-task-no-lights',async()=>{
    const before=await read();await create(a,'qa-v1');await content(a,'QA cancelled draft');await a.click('取消並關閉');await until(()=>a.eval(`!${taskDialog}`),'cancel original editor');await until(async()=>(await locks()).length===0,'creation lease released');assert.deepEqual((await read()).payload.tasks,before.payload.tasks);assert.deepEqual((await read()).payload.vessels,before.payload.vessels);
  });
@@ -118,7 +134,7 @@ try {
    const barrier=new Promise(r=>{releaseCommit=r;});
    qa.setRecordFault({after:async({name,body})=>{if(name===patchRpc&&body.p_operations.some(o=>o.collection==='tasks')){reached=true;await barrier;}return false;}});
    await a.click('保存並關閉');await until(()=>reached,'actual SQL commit before held ACK');
-   const during=await read(),created=during.payload.tasks.find(t=>t.description.includes('QA total created'));assert.ok(created);assert.equal(created.vesselId,'qa-v2');assert.equal(created.priority,'急');assert.equal(created.isAbnormal,true);assert.equal(created.sourceType,'morning');assert.deepEqual(created.ownerUserIds,['qa-operator']);
+   const during=await read(),created=during.payload.tasks.find(t=>t.description.includes('QA total created'));assert.ok(created);assert.equal(created.vesselId,'qa-v2');assert.equal(created.priority,'急');assert.equal(created.isAbnormal,true);assert.equal(created.sourceType,'morning');assert.deepEqual(created.ownerUserIds,['qa-operator','qa-marine']);
    assert.deepEqual(during.payload.vessels.find(v=>v.id==='qa-v2').weeklyAttention,['materials-parts','maintenance']);assert.equal(during.payload.vessels.find(v=>v.id==='qa-v2').manualAttentionLevel,'特別關注');assert.deepEqual(during.payload.vessels.find(v=>v.id==='qa-v1'),before.payload.vessels.find(v=>v.id==='qa-v1'));
    assert.equal(await a.eval(`Boolean(${taskDialog})`),true);assert.match(await a.text(),/正在確認雲端/);assert.equal(await a.eval("Boolean(document.querySelector('.save-toast.success'))"),false);
    await a.screen('held-ack');releaseCommit();releaseCommit=null;qa.setRecordFault(null);await until(()=>a.eval(`!${taskDialog}`),'ACK closes editor');await until(async()=>(await a.text()).includes('QA total created'),'saved task appears');

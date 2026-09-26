@@ -33,6 +33,7 @@ import { TaskStatisticsEntry } from './PageStatistics';
 import {TaskCreateEntry} from './TaskCreateEntry';
 import type {OpenTaskCreation} from './TaskCreateEntry';
 import { canAccessAllVessels, hasPermission, isEligibleTaskOwner } from './permissions';
+import { newTaskOwnerDefaults } from './newTaskOwnerDefaults';
 import { selectUserWorkCenterInternalCases, selectUserWorkCenterTasks, taskBelongsToUserWorkCenter } from './workCenterScope';
 import { markOwnNotificationsRead } from './notificationReadReceipts';
 import { clearDismissalsForNewTaskAssignments, dismissWorkCenterItems, workCenterDismissalId } from './taskDismissals';
@@ -2735,7 +2736,7 @@ export default function App() {
     }
     setEditingTaskId('');
     setTaskProgressVesselId('');
-    const assignedOwnerUserIds = liveVessel.assignedUserIds.filter(id => live.users.some(user => user.id === id && user.isActive && user.role !== 'vessel'));
+    const assignedOwnerUserIds = newTaskOwnerDefaults(liveVessel, live.users);
     setTaskEditorRequestGeneration(requestGeneration);
     setTaskEditorAuthorizationEpoch(requestAuthorizationEpoch);
     setCreatingTask({ id, vesselId, priority:'中', isAware:false, isAbnormal:false, isInternalControl:false, sourceType:'morning', category:'', categories:[], description:'', status:'', expectedDate:'', reportDate:todayDate(), departments:[], ownerUserIds: liveUser.role==='vessel' ? [] : assignedOwnerUserIds, isClosed:false, createdBy:liveUser.id, updatedBy:liveUser.id, createdAt:nowIso(), updatedAt:nowIso(), statusLogs:[] });
