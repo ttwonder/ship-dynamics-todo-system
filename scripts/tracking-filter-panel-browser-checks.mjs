@@ -5,6 +5,13 @@ import path from 'node:path';
 // Screenshot-derived controls, original UI + native local SQL; not production data.
 export async function filterPanelChecks({qa,call,evaluate,click,nodeClick,fill,select,until,screen,check,output,audience}) {
  const tab=label=>nodeClick(`[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith(${JSON.stringify(label)}))`);
+ await check(`${audience}-engineering-pages-omit-completion-explanation`,async()=>{
+  for(const label of ['未完成工程單','已完成工程單']){
+   await tab(label);
+   assert.ok(await evaluate("Boolean(document.querySelector('.tracking-table'))"),'engineering list is mounted');
+   assert.equal(await evaluate("[...document.querySelectorAll('.tracking-page > p')].some(n=>n.textContent==='是否完成依實際完工日期判定；結案或重開不會自動填入或清除完工日期。')"),false,'remove the redundant engineering-page hint');
+  }
+ });
  const expectedBase=['申請單號(材料或工程)','請購案號(非必填)','申請/開單日期','類型','期望完成日期/DL','實際送達/完工日期','普通','緊急'];
  const expected=kind=>[...expectedBase,...(kind==='supply'?['送船狀態']:[]),'結案狀態','結案日期','內控同步'];
  const geometry=[];
