@@ -1,0 +1,10 @@
+/* Only the two screen lists. The separate selected-list PDF table is unchanged. */
+.selected-task-list-panel .batch-task-table.task-list-resizable{table-layout:fixed}
+.selected-task-list-panel .batch-task-table.task-list-resizable th,
+.selected-task-list-panel .batch-task-table.task-list-resizable td{width:auto;min-width:0;max-width:none;overflow-wrap:anywhere}
+.selected-task-list-panel .batch-task-table.task-list-resizable th{position:relative;white-space:normal}
+.selected-task-list-panel .batch-task-table.task-list-resizable .task-list-date-column{white-space:nowrap}
+.selected-task-list-panel .batch-task-table.task-list-resizable .task-status-column .badge{max-width:100%;white-space:normal}
+.task-list-column-resize{position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize;touch-action:none;user-select:none;z-index:1;border-right:1px solid var(--line)}
+.task-list-column-resize:hover,.task-list-column-resize:focus-visible{background:var(--purple-soft);border-right:2px solid #8062cb;outline:none}
+@media print{.task-list-column-resize{display:none!important}}

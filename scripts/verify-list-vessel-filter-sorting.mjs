@@ -66,12 +66,15 @@ try {
   assert.ok(appSource.includes('<div className="field"><label>船舶</label><VesselListFilter vessels={visibleVessels}'), '待辦總表與已結案的船舶選擇器必須與關鍵字／日期欄使用相同field標籤基準對齊');
   assert.ok(appSource.includes("onClick={()=>setColumnSort(nextListColumnSort(columnSort,'vessel'))}") && appSource.includes("onClick={()=>setColumnSort(nextListColumnSort(columnSort,'date'))}"), '待辦總表與已結案的船舶／期限標題必須可點擊排序');
   assert.ok(appSource.includes("onClick={()=>setColumnSort(nextListColumnSort(columnSort,'created'))}") && appSource.includes("columnSort==='created-asc'?'ascending':columnSort==='created-desc'?'descending':'none'"), '待辦總表與已結案的發佈日期標題必須可點擊並回報正反排序');
-  const trackingHeader = appSource.indexOf('<th>追蹤窗口</th>');
+  const trackingHeader = appSource.indexOf('<th>追蹤窗口{columns.resizeHandle(\'owners\')}</th>');
   const publishHeader = appSource.indexOf('>發佈日期 <span>');
   const deadlineHeader = appSource.indexOf('>期限 <span>');
   assert.ok(trackingHeader >= 0 && trackingHeader < publishHeader && publishHeader < deadlineHeader, '發佈日期必須位於追蹤窗口與期限之間');
   assert.ok((appSource.match(/className="task-list-date-column"/g) || []).length >= 4 && appSource.includes('taipeiDateKey(t.createdAt)'), '發佈日期與期限必須共用等寬欄位 class，並顯示台北發佈日期');
-  assert.ok(stylesSource.includes('.batch-task-table .task-list-date-column{width:110px;min-width:110px;max-width:110px;white-space:nowrap}'), '發佈日期與期限欄必須共用相同固定寬度');
+  const {taskListColumns}=await server.ssrLoadModule('/src/useTaskListColumns.tsx');
+  const dates=taskListColumns.filter(c=>c.key==='created'||c.key==='deadline');
+  assert.equal(dates.length,2);assert.equal(dates[0].width,dates[1].width);assert.equal(dates[0].min,dates[1].min);
+  assert.ok(dates[0].width<110,'新預設日期欄縮窄，兩欄仍等寬；實際日期不換行由原UI測試驗證');
   assert.ok(stylesSource.includes('.batch-task-table .task-item-column{min-width:300px}'), '待辦總表與已結案的分類／事項欄必須至少保留 300px，避免被其他固定欄位壓窄');
   assert.ok(appSource.includes('topTableScrollRef') && appSource.includes('bottomTableScrollRef') && appSource.includes('tableScrollWidth') && appSource.includes('new ResizeObserver(updateTableScrollWidth)'), '待辦總表與已結案必須量測實際表格寬度，供上方橫向捲動條使用');
   assert.ok(appSource.includes('className="table-scroll-top no-print"') && appSource.includes('aria-label="表格上方橫向捲動"') && appSource.includes("onScroll={()=>syncTableScroll('top')}") && appSource.includes("onScroll={()=>syncTableScroll('bottom')}"), '表格上方與下方捲動區必須雙向同步');
