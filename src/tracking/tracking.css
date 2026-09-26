@@ -18,7 +18,10 @@
 .tracking-option-panel{grid-column:1/-1;min-width:0;padding:6px;border:1px solid var(--line);border-radius:7px;background:var(--tracking-paper)}
 .tracking-all-filters>.tracking-option-panel{grid-row:2}.tracking-preferences>.tracking-option-panel{grid-row:3}
 .tracking-options>details:not([open])>.tracking-option-panel{display:none}
-.tracking-filter-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:start;gap:5px}
+.tracking-filter-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-items:stretch;gap:5px}
+@media(min-width:1800px){.tracking-filter-grid{grid-template-columns:repeat(6,minmax(0,1fr))}}
+@media(min-width:701px) and (max-width:1099px){.tracking-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tracking-page .tracking-filter-urgent,.tracking-page .tracking-filter-urgent :is(legend,select,summary){color:#b42318;font-weight:700}
 .tracking-filter-grid fieldset{display:grid;grid-template-columns:70px minmax(0,1fr);gap:4px;align-content:start;min-width:0;padding:3px 5px 5px;margin:0;border:1px solid var(--line);border-radius:5px}
 .tracking-filter-grid legend{padding:0 3px;font-size:12px;line-height:1.3;overflow-wrap:anywhere}
 .tracking-page .tracking-filter-grid input,.tracking-page .tracking-filter-grid select{width:100%;height:26px;padding:3px 5px;font-size:12px;border-radius:4px}

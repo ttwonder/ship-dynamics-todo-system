@@ -153,7 +153,9 @@ try{
  const rowAction=async(reference,label)=>{await until(()=>evaluate(`Boolean([...(${trackingRow(reference)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()===${JSON.stringify(label)}&&!n.disabled))`),'ready source '+reference);await nodeClick(`[...(${trackingRow(reference)}).querySelectorAll('button')].find(n=>n.innerText.trim()===${JSON.stringify(label)})`);await until(()=>evaluate("Boolean(document.querySelector('[role=dialog]'))"),'tracking '+label+' dialog');};
  const dateInput=async(selector,value)=>{await until(()=>evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`),"date field ready");await evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n||n.disabled)throw new Error('date input unavailable');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(selector)}).value`),value);};
  const trackingTab=async(label)=>{await nodeClick(`[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith(${JSON.stringify(label)}))`);};
- if(process.argv.includes('--template-dates')){
+ if(process.argv.includes('--filters')){
+  await (await import('./tracking-filter-panel-browser-checks.mjs')).filterPanelChecks({qa,call,evaluate,click,nodeClick,fill,select,until,screen,check,output,audience:'shore'});
+ }else if(process.argv.includes('--template-dates')){
   await (await import('./tracking-template-date-browser-checks.mjs')).templateDateChecks({qa,call,click,nodeClick,until,text,screen,check,output,audience:'shore'});
  }else if(process.argv.includes('--statistics')){
    await (await import('./tracking-statistics-browser-checks.mjs')).statisticsChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output,audience:'shore',expectReadFailure:value=>{expectStatisticsReadFailure=value;}});

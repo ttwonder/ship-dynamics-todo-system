@@ -47,3 +47,7 @@ export const TRACKING_COLUMNS: readonly TrackingColumn[] = [
   { key: 'events', label: '更正／結案歷程', type: 'text', width: 360, hidden: true, value: row => (row.events || []).map(event => `${event.at} ${event.byUserId} ${event.action}\n${JSON.stringify(event.before)} → ${JSON.stringify(event.after)}`).join('\n\n') },
 ];
 export const trackingColumnsFor = (kind: TrackingKind) => TRACKING_COLUMNS.filter(column => !column.kinds || column.kinds.includes(kind));
+
+// Filter controls are a curated subset; table, search, export and stored fields stay complete.
+const FILTER_COLUMN_KEYS = new Set(['referenceNo', 'purchaseNos', 'applicationDate', 'requestType', 'expectedDate', 'actualDeliveryDate', 'completionDate', 'normal', 'urgent', 'deliveryStatus', 'isClosed', 'closedDate', 'linkState']);
+export const trackingFilterColumnsFor = (kind: TrackingKind) => trackingColumnsFor(kind).filter(column => FILTER_COLUMN_KEYS.has(column.key));
