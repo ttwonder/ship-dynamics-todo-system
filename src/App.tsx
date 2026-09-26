@@ -316,11 +316,18 @@ export default function App() {
   const recordReadScope=useRef<RecordReadScope>('home');
   const actionScopeGeneration=useRef(0);
   const actionScopeReadInFlight=useRef(0);
+  const backgroundReadController=useRef<AbortController|null>(null);
+  const homeReadCache=useRef<{config:ResolvedSupabaseConfig;binding:BrowserAuthority|null;actor:string;session:number;snapshot:AppData;json:string;at:number}|null>(null);
+  const itemLeaseReadHandoff=useRef<{lock:ActiveEditLock;snapshot:AppData;json:string;scopeKey:string;config:ResolvedSupabaseConfig;authority:BrowserAuthority|null;session:number;at:number}|null>(null);
   const fetchCloudData=async(config?:ResolvedSupabaseConfig|null,signal?:AbortSignal,confirmed?:AppData,scope:RecordReadScope=recordReadScope.current)=>{
     const binding=originalAuthority.current;
+    const actor=liveCurrentUserId.current,session=identitySessionGeneration.current;
     if(config&&!binding)throw new BrowserAuthorityError('browser-authority-unavailable');
     const result=binding&&config?await readBoundCloudData(config,binding,signal,confirmed,scope):await fetchCloudDataRpc(config,signal,confirmed,scope);
     if(originalAuthority.current!==binding)throw new BrowserAuthorityError('browser-authority-stale-read');
+    if(result&&config&&scope==='home'&&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current){
+      homeReadCache.current={config,binding,actor,session,snapshot:result,json:JSON.stringify(result),at:Date.now()};
+    }
     return result;
   };
   const [data, setData] = useState<AppData>(() => normalizeAppData(loadLocal()) || createInitialData());
@@ -1773,6 +1780,10 @@ export default function App() {
 
   const claimEditingLock=async(sectionKey:string,label:string,stillWanted?:()=>boolean,announceBlocked=true,liveAuthorized?:()=>boolean,selectedKeys?:readonly string[]):Promise<EditLockClaimResult>=>{
     if(!currentUser)return 'unavailable';
+    itemLeaseReadHandoff.current=null;
+    backgroundReadController.current?.abort();
+    const claimSession=identitySessionGeneration.current;
+    let postLockRead:{snapshot:AppData;json:string;scopeKey:string;authority:BrowserAuthority|null;at:number}|null=null;
     const previousLock=activeEditLockRef.current;
     if(previousLock?.status==='owned'&&!await ensureCloudDurableBeforeLeaseRelease(previousLock.sectionKey))return 'unavailable';
     if(previousLock&&!(await releaseCurrentEditLock()))return 'unavailable';
@@ -1838,6 +1849,7 @@ export default function App() {
           if(!fresh||!current()||JSON.stringify(keysFor(fresh))!==JSON.stringify(planned)||seeds.some(key=>!itemLeaseExistsInSnapshot(key,fresh)||!itemLeaseIsAuthorizedInSnapshot(key,fresh)))throw new Error('關聯或權限在取得鎖期間已變更；請重新開啟');
           assertRemoteExtendsDurableHistory(cloudIdentity(leaseConfig),null,fresh);
           recordReadScope.current=scope;lastCloudRevision.current=fresh.revision;confirmCloudSnapshot(cloudIdentity(leaseConfig),fresh);liveData.current=fresh;setData(fresh);
+          postLockRead={snapshot:fresh,json:JSON.stringify(fresh),scopeKey:recordScopeKey(scope),authority:originalAuthority.current,at:Date.now()};
           return {ok:true,expiresAt:new Date(Math.min(...bundle.map(value=>Date.parse(value.expiresAt||'')))).toISOString()};
         })().catch(async error=>{if(bundle)await Promise.allSettled(bundle.map(releaseBundleLease));throw error;});
         const configStillCurrent=sameCloudConfig(getSupabaseConfig(),leaseConfig);
@@ -1857,6 +1869,7 @@ export default function App() {
           return 'blocked';
         }
         const ownedLock:ActiveEditLock={...lockState,status:'owned',validatedUntilMs:conservativeLeaseDeadline(lock.expiresAt),...(bundle?{bundle,bundleSeeds:seeds}:{})};
+        if(postLockRead)itemLeaseReadHandoff.current={...postLockRead,lock:ownedLock,config:leaseConfig,session:claimSession};
         activeEditLockRef.current=ownedLock;
         setActiveEditLock(ownedLock);
         clearVesselLeaseIncident(sectionKey);
@@ -2018,6 +2031,28 @@ export default function App() {
     return selectOperationalCases(selectInternalControlCasesVisibleToUser(cases,data.tasks,currentUser,activeVessels.map(vessel=>vessel.id)),data.vessels);
   },[data.internalControlCases,data.tasks,data.vessels,currentUser,activeVessels,activeEditLock,relatedMutationHandoffVersion]);
   const roleVisibleData=useMemo(()=>({...data,tasks:roleVisibleTasks,meetings:roleVisibleMeetings,internalControlCases:roleVisibleInternalControlCases,taskDismissals:currentUser?data.taskDismissals.filter(item=>item.userId===currentUser.id):[]}),[data,roleVisibleTasks,roleVisibleMeetings,roleVisibleInternalControlCases,currentUser?.id]);
+  const scheduleRecordPreload=()=>{
+    const config=getSupabaseConfig(),binding=originalAuthority.current;
+    if(!cloudBootstrapped||!siteUnlocked||!currentUserId||!config||!binding||authorityConfig(config,binding).readMode!=='scoped-v1')return;
+    const actor=liveCurrentUserId.current,session=identitySessionGeneration.current,epoch=liveAuthorizationEpoch.current;
+    const controller=new AbortController();
+    backgroundReadController.current?.abort();backgroundReadController.current=controller;
+    const idle=()=>!controller.signal.aborted&&sameCloudConfig(config,getSupabaseConfig())&&originalAuthority.current===binding
+      &&actor===liveCurrentUserId.current&&session===identitySessionGeneration.current&&epoch===liveAuthorizationEpoch.current
+      &&!activeEditLockRef.current&&!memberEditor.current&&!batchManagedOpenRef.current&&!pendingClaimConfig.current
+      &&!actionScopeReadInFlight.current&&!cloudSaveInFlight.current&&!cloudSyncInFlight.current&&!hasUnsavedWork.current
+      &&pendingCloudData.current.size()===0&&Boolean(confirmedCloudData.current&&appDataContentEqual(liveData.current,confirmedCloudData.current));
+    // Home plus at most one recent visible task and case. No locks, publication,
+    // scope changes or writes; user actions abort this lower-priority work.
+    const task=sortRecordsNewestCreated(roleVisibleTasks.filter(item=>!item.isClosed))[0];
+    const item=sortRecordsNewestCreated(roleVisibleInternalControlCases.filter(row=>!row.isClosed))[0];
+    const scopes:RecordReadScope[]=['home',...(task?[{targets:[{collection:'tasks' as const,id:task.id}]}]:[]),...(item?[{targets:[{collection:'internalControlCases' as const,id:item.id}]}]:[])];
+    const timer=window.setTimeout(async()=>{
+      for(const scope of scopes){if(!idle())break;try{await fetchCloudData(config,controller.signal,undefined,scope);}catch{break;}}
+    },1200);
+    return()=>{window.clearTimeout(timer);controller.abort();if(backgroundReadController.current===controller)backgroundReadController.current=null;};
+  };
+  useEffect(scheduleRecordPreload,[cloudBootstrapped,siteUnlocked,currentUserId,authorizationEpoch,realtimeAuthority,data.revision,activeEditLock?.status,savePhase]);
   const taskLockIsAuthorized = (task: TaskItem) => canAcquireTaskEditLock(task,currentUser,canEditBusinessContent,activeVessels,data.settings.rolePermissions);
   const authorizedEditLockKeys=useMemo(()=>new Set<string>([
     ...(canEditBusinessContent?activeVessels.map(vessel=>`vessel:${vessel.id}`):[]),
@@ -2102,7 +2137,16 @@ export default function App() {
       const scope:RecordReadScope=sectionKey.startsWith('task:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'tasks',id:sectionKey.slice(5)}]}):sectionKey.startsWith('internal-control:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'internalControlCases',id:sectionKey.slice('internal-control:'.length)}]}):sectionKey.startsWith('tracking:')?unionRecordScopes(recordReadScope.current,{targets:[{collection:'trackingItems',id:sectionKey.slice('tracking:'.length)}]}):sectionKey.startsWith('meeting:')?{targets:[{collection:'meetings',id:sectionKey.slice('meeting:'.length)}]}:sectionKey.startsWith('vessel:')||isTaskCreationLockKey(sectionKey)||isInternalControlCreationLockKey(sectionKey)||isMeetingCreationLockKey(sectionKey)?recordReadScope.current:'full';
       const leaseAuthority=originalAuthority.current;
       const coverageChanged=Boolean(leaseAuthority&&authorityConfig(leaseConfig,leaseAuthority).readMode==='scoped-v1'&&recordScopeKey(scope)!==recordScopeKey(recordReadScope.current));
-      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,coverageChanged?config=>fetchCloudData(config,undefined,undefined,scope):vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
+      const handoff=itemLeaseReadHandoff.current;
+      itemLeaseReadHandoff.current=null; // One immediate claim-to-editor continuation only.
+      const reuse=Boolean(!vesselFreshness&&!coverageChanged&&handoff&&handoff.lock===claimedLock&&claimedLock.bundle?.length
+        &&handoff.authority===leaseAuthority&&sameCloudConfig(handoff.config,leaseConfig)
+        &&handoff.session===identitySessionGeneration.current&&claimedLock.ownerUserId===liveCurrentUserId.current
+        &&claimedLock.authorizationEpoch===liveAuthorizationEpoch.current&&claimedLock.validatedUntilMs>Date.now()
+        &&Date.now()-handoff.at<1000&&handoff.scopeKey===recordScopeKey(scope)
+        &&handoff.snapshot===confirmed&&handoff.snapshot===liveData.current&&JSON.stringify(confirmed)===handoff.json
+        &&!hasUnsavedWork.current&&!cloudSaveInFlight.current&&pendingCloudData.current.size()===0);
+      const remote=reuse?handoff!.snapshot:await configIoCoordinator.current.run(token,getSupabaseConfig,coverageChanged?config=>fetchCloudData(config,undefined,undefined,scope):vesselFreshness?(config,signal)=>fetchCloudData(config,signal,confirmed):fetchCloudData);
       if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig())||!claimStillCurrent()||originalAuthority.current!==leaseAuthority)return null;
       if(!remote)throw new Error('雲端工作區尚未建立，不能開啟多人單項編輯');
       assertRemoteExtendsDurableHistory(cloudWorkspaceIdentity(leaseConfig),coverageChanged?null:confirmed,remote);
@@ -2409,8 +2453,9 @@ export default function App() {
   };
   // Compatibility consumers expand only on the user's action, never on bootstrap.
 
-  const loadRecordActionScope=async(scope:RecordReadScope,ownerIsCurrent:()=>boolean=()=>true,forceFresh=false):Promise<boolean>=>{
+  const loadRecordActionScope=async(scope:RecordReadScope,ownerIsCurrent:()=>boolean=()=>true,forceFresh=false,allowPreparedHome=false):Promise<boolean>=>{
     if(!ownerIsCurrent())return false;
+    backgroundReadController.current?.abort();
     actionScopeReadInFlight.current++;
     try{
     if(activeEditLockRef.current?.status==='blocked'&&!activeEditLockRef.current.bundle&&!await releaseCurrentEditLock())return false;
@@ -2425,7 +2470,11 @@ export default function App() {
       if(!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current))await enqueueCloudSave(liveData.current);
       if(!isCurrent()||activeEditLockRef.current||batchManagedOpenRef.current)return false;
       const before=liveData.current,binding=originalAuthority.current;
-      const remote=await configIoCoordinator.current.run(token,getSupabaseConfig,cfg=>fetchCloudData(cfg,undefined,undefined,scope));
+      const prepared=allowPreparedHome&&!forceFresh&&scope==='home'?homeReadCache.current:null;
+      const reuse=Boolean(prepared&&prepared.binding===binding&&sameCloudConfig(prepared.config,config)
+        &&prepared.actor===actor&&prepared.session===session&&Date.now()-prepared.at<15000
+        &&prepared.snapshot.revision>=before.revision&&prepared.json===JSON.stringify(prepared.snapshot));
+      const remote=reuse?prepared!.snapshot:await configIoCoordinator.current.run(token,getSupabaseConfig,cfg=>fetchCloudData(cfg,undefined,undefined,scope));
       if(!isCurrent()||originalAuthority.current!==binding||liveData.current!==before||activeEditLockRef.current||batchManagedOpenRef.current)return false;
       if(!remote)throw new Error('雲端工作區不存在');
       // Coverage changed, not business content. Still enforce the durable floor.
@@ -2433,6 +2482,7 @@ export default function App() {
       recordReadScope.current=scope;
       confirmCloudSnapshot(cloudIdentity(config),remote);
       liveData.current=remote;setData(remote);lastCloudRevision.current=remote.revision;
+      if(reuse)setCloudWakeupRevision(Number.MAX_SAFE_INTEGER);
       return true;
     }catch(error:any){if(isCurrent())alert(error.message||String(error));return false;}
     }finally{actionScopeReadInFlight.current--;}
@@ -2468,7 +2518,7 @@ export default function App() {
     invalidatePendingTaskOpen();
     setSelectedVesselDetailId('');
     const statsOwner=(nextTab==='stats'||nextTab==='reports'||nextTab==='morning'||nextTab==='management')?{generation:actionScopeGeneration.current+1,actor:liveCurrentUserId.current,session:identitySessionGeneration.current}:null;
-    if(!await loadRecordActionScope(nextTab==='morning'?'morning':(['tracking','dashboard','total','closed','work','internalControl','meeting','stats','reports','management'] as Tab[]).includes(nextTab)?'home':'full'))return;
+    if(!await loadRecordActionScope(nextTab==='morning'?'morning':(['tracking','dashboard','total','closed','work','internalControl','meeting','stats','reports','management'] as Tab[]).includes(nextTab)?'home':'full',()=>true,false,true))return;
     if(statsOwner&&(statsOwner.generation!==actionScopeGeneration.current||statsOwner.actor!==liveCurrentUserId.current||statsOwner.session!==identitySessionGeneration.current))return;
     if(nextTab==='meeting'){
       const snapshot=liveData.current,actor=snapshot.users.find(user=>user.id===liveCurrentUserId.current&&user.isActive);

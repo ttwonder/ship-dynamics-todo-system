@@ -24,6 +24,7 @@ function setup(options={}){
  const base={revision:100,users:[actor],tasks:[{id:'task-a'}],internalControlCases:[],meetings:[],body:'base'};
  const state={config,binding,reads:[],alerts:[],mutations:0,acquisitions:0,releases:0,publications:[],queued:0};
  const env={console,currentUser:actor,authorizationEpoch:'epoch-a',tab:'dashboard',listBatchContext:null,
+  activeEditLockRef:ref(null),actionScopeReadInFlight:ref(0),homeReadCache:ref(null),itemLeaseReadHandoff:ref(null),backgroundReadController:ref(null),
   originalAuthority:ref(options.unresolved?null:binding),recordReadScope:ref('home'),liveCurrentUserId:ref(actor.id),liveAuthorizationEpoch:ref('epoch-a'),identitySessionGeneration:ref(1),
   getSupabaseConfig:()=>state.config,sameCloudConfig:(a,b)=>JSON.stringify(a)===JSON.stringify(b),cloudIdentity:()=> 'raw-identity',
   confirmedCloudData:ref(base),liveData:ref(options.dirty?{...base,body:'draft'}:base),appDataContentEqual:(a,b)=>JSON.stringify(a)===JSON.stringify(b),

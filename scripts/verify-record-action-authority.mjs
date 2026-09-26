@@ -37,6 +37,7 @@ function setup(options={}){
  const base={revision:binding?.managed?100:1,body:'confirmed'},remote={...base,body:'expanded'};
  const state={config:{...config},authority:binding,reads:[],authorityReads:0,publications:[],confirmations:[],alerts:[],queueCalls:0};
  const context={console,originalAuthority:{current:binding},recordReadScope:{current:'home'},actionScopeGeneration:{current:0},
+  actionScopeReadInFlight:{current:0},backgroundReadController:{current:null},homeReadCache:{current:null},
   liveCurrentUserId:{current:'fixture-owner'},identitySessionGeneration:{current:1},liveData:{current:base},confirmedCloudData:{current:base},lastCloudRevision:{current:base.revision},
   activeEditLockRef:{current:null},batchManagedOpenRef:{current:false},saveTimer:{current:null},window:{clearTimeout:()=>{}},
   getSupabaseConfig:()=>state.config,sameCloudConfig:(a,b)=>JSON.stringify(a)===JSON.stringify(b),recordScopeKey:scope=>JSON.stringify(scope),

@@ -236,6 +236,9 @@ export async function fetchCloudData(config?: ResolvedSupabaseConfig | null, sig
 
 type ScopeCache={key:string;sequence:number;published:number;snapshot:RecordScopeSnapshot|null};
 const scopeCaches=new Map<string,ScopeCache>();
+// Share only private, validated transport bytes. Every request still receives
+// authoritative membership/order/root and validates its exact requested coverage.
+let sharedScopeSnapshot:{key:string;snapshot:RecordScopeSnapshot}|null=null;
 async function fetchCloudRecordScope(cfg:ResolvedSupabaseConfig,supabase:SupabaseClient,scope:RecordReadScope,signal?:AbortSignal):Promise<AppData|null>{
   if(isMorningRecordScope(scope)){
     // No partial model is published: discover then read one coherent revision.
@@ -256,7 +259,11 @@ async function fetchCloudRecordScope(cfg:ResolvedSupabaseConfig,supabase:Supabas
   const scopeKey=recordScopeKey(scope);
   let cache=scopeCaches.get(scopeKey);
   if(!cache||cache.key!==key){cache={key,sequence:0,published:0,snapshot:null};scopeCaches.set(scopeKey,cache);}
-  const owner=cache,base=owner.snapshot,sequence=++owner.sequence;
+  const owner=cache,sequence=++owner.sequence;
+  const shared=sharedScopeSnapshot?.key===key?sharedScopeSnapshot.snapshot:null;
+  // Retarget the envelope only: never label summary rows as complete. The RPC
+  // compares both version and detail, returning promotions AND demotions.
+  const base=shared&&shared.revision>(owner.snapshot?.revision??-1)?{...shared,scopeKey}:owner.snapshot;
   const args={p_workspace_key:cfg.workspaceKey,p_scope:typeof scope==='string'?scope:'targets',p_targets:typeof scope==='object'?scope.targets:[],p_versions:recordScopeVersions(base)};
   let request=supabase.rpc('read_ship_dynamics_record_scopes_v2',{...args,p_vessel_ids:typeof scope==='object'?scope.trackingVesselIds || []:[]});
   if(signal)request=request.abortSignal(signal);
@@ -274,6 +281,8 @@ async function fetchCloudRecordScope(cfg:ResolvedSupabaseConfig,supabase:Supabas
   if(owner.snapshot&&next&&next.revision<owner.snapshot.revision)throw new Error('record-scope-revision-rollback');
   const normalized=next?normalizedCloudRead(recordScopePayload(next),next.revision):null;
   owner.published=sequence;owner.snapshot=next;
+  if(next&&(!sharedScopeSnapshot||sharedScopeSnapshot.key!==key||next.revision>=sharedScopeSnapshot.snapshot.revision))sharedScopeSnapshot={key,snapshot:next};
+  if(!next&&sharedScopeSnapshot?.key===key)sharedScopeSnapshot=null;
   return normalized;
 }
 

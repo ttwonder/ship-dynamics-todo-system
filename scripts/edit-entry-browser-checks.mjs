@@ -16,7 +16,7 @@ export async function editEntryChecks(c){
  const tryCase=(p,ref)=>attempt(p,`[...(${p.row(ref)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()==='查看內控／已同步')`,'.ic-status-add textarea');
  const clear=async(p)=>{await p.click('取消');await until(()=>p.eval("!document.querySelector('.modal-backdrop')"),'editor close');};
  await check('E01-source-entry-denies-peer-owner-can-save',async()=>{
-  await a.click('＋ 新增／批量新增');await a.fill('[aria-label="第 1 筆 項目編號"]','ENTRY-001');await a.fill('[aria-label="第 1 筆 內容摘要／工程內容"]','編輯進場排他測試');await a.submit();await a.done();await b.sync();
+  await a.click('＋ 新增／批量新增');await a.fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','ENTRY-001');await a.fill('[aria-label="第 1 筆 內容摘要/工程內容"]','編輯進場排他測試');await a.submit();await a.done();await b.sync();
   const before=await read();
   assert.equal((await trySource(a,'ENTRY-001')).editable,true);
   await a.fill('[aria-label="ENTRY-001 最新進度"]','第一位編輯者可以保存');
@@ -52,7 +52,7 @@ export async function editEntryChecks(c){
  });
  await check('E03-batch-union-contention-rollback-and-unrelated',async()=>{
   await a.tracking();await a.click('＋ 新增／批量新增');
-  for(let n=1;n<=2;n++){if(n>1)await a.click('＋ 新增一列');await a.fill(`[aria-label="第 ${n} 筆 項目編號"]`,`ENTRY-00${n+1}`);await a.fill(`[aria-label="第 ${n} 筆 內容摘要／工程內容"]`,`同船獨立項目 ${n}`);}
+  for(let n=1;n<=2;n++){if(n>1)await a.click('＋ 新增一列');await a.fill(`[aria-label="第 ${n} 筆 申請單號(材料或工程)"]`,`ENTRY-00${n+1}`);await a.fill(`[aria-label="第 ${n} 筆 內容摘要/工程內容"]`,`同船獨立項目 ${n}`);}
   await a.submit(2);await a.done();await b.tracking();await b.sync();
   for(const ref of ['ENTRY-001','ENTRY-002'])await a.tap(`(${a.row(ref)}).querySelector('input[type=checkbox]')`);
   await a.click('批量更新進度');await a.fill('[aria-label="ENTRY-001 最新進度"]','整批保護');
@@ -101,13 +101,13 @@ export async function editEntryChecks(c){
  });
  await check('E06-create-retained-input-and-restore-admission',async()=>{
   await a.click('＋ 新增／批量新增');
-  for(let n=1;n<=2;n++){if(n>1)await a.click('＋ 新增一列');await a.fill(`[aria-label="第 ${n} 筆 項目編號"]`,`ENTRY-00${n+3}`);await a.fill(`[aria-label="第 ${n} 筆 內容摘要／工程內容"]`,`新建 ${n}`);}
+  for(let n=1;n<=2;n++){if(n>1)await a.click('＋ 新增一列');await a.fill(`[aria-label="第 ${n} 筆 申請單號(材料或工程)"]`,`ENTRY-00${n+3}`);await a.fill(`[aria-label="第 ${n} 筆 內容摘要/工程內容"]`,`新建 ${n}`);}
   let entered=false,finish;const held=new Promise(r=>finish=r);
   qa.setRecordFault({after:async({name,body})=>{if(name==='apply_ship_dynamics_record_patch_v1'&&body.p_actor_user_id==='qa-owner'){entered=true;await held;}}});
-  try{await a.submit(2);await until(()=>entered,'create committed with ACK held');await a.fill('[aria-label="第 2 筆 內容摘要／工程內容"]','新建後額外輸入');}finally{finish();qa.setRecordFault(null);}
+  try{await a.submit(2);await until(()=>entered,'create committed with ACK held');await a.fill('[aria-label="第 2 筆 內容摘要/工程內容"]','新建後額外輸入');}finally{finish();qa.setRecordFault(null);}
   await until(async()=>(await a.text()).includes('等待期間的新輸入仍保留'),'retained create becomes existing editor');
   const g4=await group('ENTRY-004'),g5=await group('ENTRY-005');assert.deepEqual((await locks()).map(l=>l.section_key),[...g4.keys,...g5.keys].sort());
-  assert.equal(await editable(a,'[aria-label="第 2 筆 內容摘要／工程內容"]'),true);
+  assert.equal(await editable(a,'[aria-label="第 2 筆 內容摘要/工程內容"]'),true);
   await a.submit(2);await a.done();assert.equal((await group('ENTRY-005')).s.description,'新建後額外輸入');
   await a.progress('ENTRY-001','私有草稿稍後恢复');await a.click('取消');await a.click('保留草稿並繼續');await until(()=>a.eval("!document.querySelector('.modal-backdrop')"),'private draft stored and editor closed');
   await b.tracking();await b.sync();await trySource(b,'ENTRY-001');
