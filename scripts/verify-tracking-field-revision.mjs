@@ -18,10 +18,10 @@ try {
   const props={data,vessels:[vessel],user:data.users[0],workspace:'qa-field-revision',identity:'qa',canCreate:true,canEdit:true,canClose:true,canExport:true,callbacks};
   for(const audience of ['shore','ship']) {
     const html=renderToStaticMarkup(React.createElement(TrackingPage,{...props,audience}));
-    if(audience==='ship') {
-      assert.match(html,/role="tab" aria-selected="true"[^>]*>統計資訊<\/button>/,'ship entry now starts with the approved statistics view');
+    if(audience==='shore') {
+      assert.match(html,/role="tab" aria-selected="true"[^>]*>統計資訊<\/button>/,'shore entry starts with the requested statistics view');
       assert.ok(html.includes('aria-label="跟蹤統計資訊"'));assert.ok(!html.includes('aria-label="搜尋跟蹤"'),'list is reached explicitly in mounted --fields tests');
-      cases.push('ship-initial-statistics-not-old-list');continue;
+      cases.push('shore-initial-statistics-not-old-list');continue;
     }
     const filterPanel=html.slice(html.indexOf('<details class="tracking-all-filters">'),html.indexOf('<details class="tracking-preferences">'));
     assert.ok(filterPanel,`${audience}: shared field filters render`);

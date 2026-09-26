@@ -14,9 +14,16 @@ try {
  const ship=renderToStaticMarkup(React.createElement(TrackingPage,{...props,audience:'ship'}));
  assert.ok(!ship.includes('要事'),'ship-side rendered controls/help must omit office-only workflow');
  assert.ok(ship.includes('測試輪 QA SHIP'));assert.ok(ship.includes('導入 Excel'));
- // Ship entry starts on statistics; the mounted --fields gate opens the list and tests its batch actions.
- assert.match(ship,/role="tab" aria-selected="true"[^>]*>統計資訊<\/button>/,'ship default remains the approved statistics view');
- const shore=renderToStaticMarkup(React.createElement(TrackingPage,props));assert.ok(shore.includes('要事'),'shore explanations remain unchanged');assert.ok(shore.includes('批量更新進度'),'shore still starts on its original list with batch actions');
+ const tabState=html=>[...html.matchAll(/role="tab" aria-selected="(true|false)"[^>]*>([\s\S]*?)<\/button>/g)].map(([,active,body])=>({active:active==='true',label:body.replace(/<[^>]*>/g,'').trim()}));
+ const expectedLists=['未送船清單','已送船清單','配件物料總清單','未完成工程單','已完成工程單'];
+ const shipTabs=tabState(ship);
+ assert.deepEqual(shipTabs.map(t=>t.label.replace(/\s+0$/,'')),[...expectedLists,'統計資訊'],'ship lists first, statistics last');
+ assert.deepEqual(shipTabs.map(t=>t.active),[true,false,false,false,false,false],'ship initially selects undelivered');
+ assert.ok(ship.includes('批量更新進度'),'ship default list retains batch actions');
+ const shore=renderToStaticMarkup(React.createElement(TrackingPage,props)),shoreTabs=tabState(shore);
+ assert.deepEqual(shoreTabs.map(t=>t.label.replace(/\s+0$/,'')),['統計資訊',...expectedLists],'shore statistics precedes undelivered');
+ assert.deepEqual(shoreTabs.map(t=>t.active),[true,false,false,false,false,false],'shore initially selects statistics');
+ assert.ok(shore.includes('跟蹤統計資訊'),'shore statistics panel is mounted by default');
  for(const action of ['create','edit','progress','delivery','close','reopen','correct-close-date']) {
   const draft=makeTrackingDraft(action,[{...newTrackingItem('v1','supply'),referenceNo:'QA-001'}],data);
   const html=renderToStaticMarkup(React.createElement(TrackingBusinessModal,{draft,audience:'ship',busy:false,pending:false,message:'',affected:['QA-001'],vesselName:'測試輪 QA SHIP',onChange:()=>{},onSave:()=>{},onReconcile:()=>{},onClose:()=>{}}));

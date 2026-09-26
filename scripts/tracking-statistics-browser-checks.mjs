@@ -15,6 +15,15 @@ export async function statisticsChecks(c) {
  const focus=label=>nodeClick(`[...document.querySelectorAll('[aria-label="統計摘要"] button')].find(n=>n.getAttribute('aria-label').startsWith(${JSON.stringify('摘要 '+label+' ')}))`);
  const ids=()=>evaluate("[...document.querySelectorAll('[data-stat-id]')].map(n=>n.dataset.statId)");
  const ready=()=>until(async()=>await metric('申請數')!==null,'confirmed statistics ready');
+ await check('statistics-confirmed-empty-vessel-is-zero-not-unavailable',async()=>{
+  const baseline=await qa.read();assert.equal((baseline.payload.trackingItems||[]).filter(r=>r.vesselId==='qa-v2').length,0,'empty native fixture precondition');
+  await click('統計資訊');await choose('跟蹤船舶','qa-v2');await ready();assert.equal(await metric('申請數'),0);assert.ok(!await evaluate("document.querySelector('.tracking-page').innerText.includes('未能讀取此船最新跟蹤資料')"),'vessel switch must serialize page load before statistics capture');assert.ok(await evaluate("document.querySelector('.tracking-statistics').innerText.includes('沒有符合目前條件／焦點的項目')"));await screen('statistics-confirmed-empty');
+  if(audience==='ship'){
+   await click('讀取最新資料');await until(()=>evaluate("[...document.querySelectorAll('.ship-portal-header button')].some(n=>n.innerText==='讀取最新資料'&&!n.disabled)"),'manual cloud read completed');
+   try{await ready();assert.equal(await metric('申請數'),0);}catch(error){await screen('statistics-empty-after-refresh-failed');fs.writeFileSync(path.join(output,'snapshot-refresh-failure.json'),JSON.stringify({text:await evaluate("document.querySelector('.tracking-statistics').innerText"),cloudItems:(await qa.read()).payload.trackingItems.filter(r=>r.vesselId==='qa-v2').length},null,2));throw error;}
+  }
+  assert.deepEqual(await qa.read(),baseline);await choose('跟蹤船舶','qa-v1');await ready();await tab('未送船清單');
+ });
  const now='2026-09-25T00:00:00.000Z';
  const row=(id,patch={})=>({id:'stat-'+id,vesselId:'qa-v1',kind:'supply',requestType:'spares',referenceNo:'STAT-'+id,description:'完整統計來源 '+id,applicationDate:'2026-09-15',urgency:'normal',deliveryStatus:'not-delivered',isClosed:false,expectedDate:'2099-01-01',supplementalNotes:'',progress:'',createdBy:'qa-owner',updatedBy:'qa-owner',createdAt:now,updatedAt:now,statusLogs:[],events:[],...patch});
  const fixture=[row('a',{referenceNo:'STAT-SAME',applicationDate:'2026-09-01',urgency:'urgent',deliveryStatus:'delivered',actualDeliveryDate:'2026-09-21',expectedDate:'2026-09-20',description:'LONG-BEGIN '+('完整內容不得遺失，保留每一段。\n'.repeat(100))+' LONG-END',progress:'@NOT-FORMULA',supplementalNotes:'NOTES-END'}),row('b',{referenceNo:'STAT-SAME',applicationDate:'2026-09-30',urgency:'urgent',deliveryStatus:'partially-delivered',expectedDate:'2020-01-01'}),row('c',{urgency:'urgent',isClosed:true,closureOutcome:'cancelled'}),row('d',{requestType:'semiannual-materials',deliveryStatus:'delivered',actualDeliveryDate:'2026-09-20',expectedDate:'2026-09-20'}),row('e',{requestType:'temporary-materials',isClosed:true,closureOutcome:'completed'}),row('f',{kind:'engineering',requestType:'repair',completionDate:'2026-09-20',expectedDate:'2026-09-19'}),row('g',{kind:'engineering',requestType:'drydock',completionDate:''}),row('legacy',{requestType:undefined,expectedDate:''}),row('foreign',{vesselId:'qa-v2',urgency:'urgent'}),row('outside',{applicationDate:'2026-08-31',urgency:'urgent'}),...Array.from({length:34},(_,i)=>row('bulk-'+String(i).padStart(2,'0'),{applicationDate:'2026-01-15',requestType:'temporary-materials'}))];
@@ -22,9 +31,17 @@ export async function statisticsChecks(c) {
  await qa.db.transaction(async tx=>{for(const item of fixture)await tx.query("insert into ship_dynamics_records(workspace_key,collection,entity_id,value,revision) values($1,'trackingItems',$2,$3::jsonb,$4)",[qa.workspace,item.id,JSON.stringify(item),beforeSetup.revision]);await tx.query("update ship_dynamics_record_collections set ids=$2::jsonb where workspace_key=$1 and collection='trackingItems'",[qa.workspace,JSON.stringify([...(beforeSetup.payload.trackingItems||[]).map(r=>r.id),...fixture.map(r=>r.id)])]);});
  const business=await qa.read(),writesBefore=qa.metrics.filter(m=>m.rpc==='apply_ship_dynamics_record_patch_v1'||m.rpc==='ship_dynamics_tracking_public_v1'&&m.action==='submit').length;
  await check('statistics-role-order-full-vessel-not-list-page-or-selection',async()=>{
-  const tabs=await evaluate("[...document.querySelectorAll('.tracking-tabs [role=tab]')].map(n=>n.textContent.trim())");assert.equal(tabs.length,6);assert.equal(tabs[audience==='ship'?0:5],'統計資訊');
+  const tabs=await evaluate("[...document.querySelectorAll('.tracking-tabs [role=tab]')].map(n=>n.textContent.trim())");assert.equal(tabs.length,6);assert.equal(tabs[audience==='ship'?5:0],'統計資訊');
   await fill('[aria-label="搜尋跟蹤"]','NO-MATCH');await click('統計資訊');await ready();assert.equal(await metric('申請數'),business.payload.trackingItems.filter(r=>r.vesselId==='qa-v1').length);assert.ok((await ids()).length>30);assert.ok(!(await ids()).includes('stat-foreign'));
   const reads=qa.metrics.length;await new Promise(r=>setTimeout(r,450));assert.equal(qa.metrics.length,reads,'AppData publication does not create capture effect loop');
+ });
+ if(audience==='ship')await check('statistics-manual-and-automatic-refresh-preserve-current-query-and-focus',async()=>{
+  await choose('統計類型','spares');await choose('統計急件','urgent');await focus('已完成');
+  const before={total:await metric('申請數'),ids:await ids()},readCount=()=>qa.metrics.filter(m=>m.rpc==='ship_dynamics_tracking_public_v1'&&m.action==='read').length;
+  await click('讀取最新資料');await until(()=>evaluate("[...document.querySelectorAll('.ship-portal-header button')].some(n=>n.innerText==='讀取最新資料'&&!n.disabled)"),'manual refresh settled');await ready();assert.deepEqual({total:await metric('申請數'),ids:await ids()},before);
+  const reads=readCount();await until(()=>readCount()>reads,'actual 30-second automatic read',35000);await ready();
+  assert.deepEqual({total:await metric('申請數'),ids:await ids()},before);assert.equal(await evaluate("document.querySelector('[aria-label=統計類型]').value"),'spares');assert.equal(await evaluate("document.querySelector('[aria-label=統計急件]').value"),'urgent');assert.equal(await evaluate("document.querySelector('[role=tab][aria-selected=true]').textContent"),'統計資訊');
+  await new Promise(r=>setTimeout(r,450));assert.ok(readCount()-reads<=2,'one background read plus at most one confirmed recapture, no capture/publication loop');await screen('statistics-after-automatic-refresh');await click('重設統計條件');
  });
  await check('statistics-period-type-urgency-cohort-and-focus-denominator',async()=>{
   await input('統計開始日期','2026-09-01');await input('統計結束日期','2026-09-30');await choose('統計類型','spares');await choose('統計急件','urgent');

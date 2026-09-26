@@ -97,10 +97,10 @@ try{
   assert.ok((await text()).includes('測試輪 QA VESSEL 1'));assert.ok(!(await text()).includes('QA OWNER'));
   await screen('ship-tracking-desktop');
  });
- await check('ship-initial-statistics-first-active-and-explicit-list-entry',async()=>{
+ await check('ship-initial-undelivered-active-and-statistics-last',async()=>{
   const tabs=await evaluate("[...document.querySelectorAll('.tracking-tabs [role=tab]')].map(n=>({label:n.textContent.trim(),active:n.getAttribute('aria-selected')}))");
-  assert.equal(tabs.length,6);assert.equal(tabs[0].label,'統計資訊');assert.equal(tabs[0].active,'true');assert.ok(tabs[1].label.startsWith('未送船清單'));assert.ok(tabs.slice(1).every(t=>t.active==='false'));
-  await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("Boolean(document.querySelector('.tracking-table'))"),'explicit original list entry');
+  assert.equal(tabs.length,6);assert.ok(tabs[0].label.startsWith('未送船清單'));assert.equal(tabs[0].active,'true');assert.equal(tabs[5].label,'統計資訊');assert.ok(tabs[4].label.startsWith('已完成工程單'));assert.ok(tabs.slice(1).every(t=>t.active==='false'));
+  assert.ok(await evaluate("Boolean(document.querySelector('.tracking-table'))"));await screen('ship-default-undelivered-desktop');await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await screen('ship-default-undelivered-mobile');assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'));await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
  });
  await check('original-shared-form-creates-cloud-record-with-exact-ACK',async()=>{
   await click('＋ 新增／批量新增');await until(async()=>await evaluate("Boolean(document.querySelector('.tracking-modal'))"),'create dialog');
@@ -125,7 +125,7 @@ try{
   await click('確認保存 1 項');await until(async()=>(await text()).includes('尚未保存；輸入及精確提交已保留'),'unknown outcome retained');assert.ok(committed);const revision=(await qa.read()).revision;
   const storedBefore=await evaluate("Object.fromEntries(Object.entries(localStorage).filter(([k])=>k.startsWith('[\"tracking-unsent-v1\"')))"),key=Object.keys(storedBefore)[0];assert.ok(key);const originalDraft=JSON.parse(storedBefore[key]);assert.ok(originalDraft.pending);
   await evaluate('window.__qaPriorDocument=true');allowRefresh=true;await call('Page.reload',{ignoreCache:true});await until(async()=>await evaluate("!window.__qaPriorDocument&&Boolean(document.querySelector('.tracking-page'))")&&!(await text()).includes('讀取此船最新資料'),'reload unknown page');allowRefresh=false;
-  await until(()=>evaluate("Boolean(document.querySelector('[aria-label=統計摘要]'))||Boolean([...document.querySelectorAll('.tracking-statistics [role=status]')].find(n=>!n.innerText.includes('正在讀取')))"),'initial statistics read settles before pending assertion');
+  assert.ok(await evaluate("Boolean(document.querySelector('.tracking-table'))"),'fresh ship entry remains the undelivered list');await click('統計資訊');
   assert.equal(await evaluate("document.querySelectorAll('[aria-label=統計摘要],.tracking-stat-exports').length"),0,'fresh-entry statistics cannot bypass restored unknown submission');
   await until(()=>evaluate("Boolean(document.querySelector('.tracking-modal'))||[...document.querySelectorAll('.tracking-heading button')].some(n=>n.innerText==='＋ 新增／批量新增'&&!n.disabled)"),'restored vessel read ready');
   if(!await evaluate("Boolean(document.querySelector('.tracking-modal'))"))await click('＋ 新增／批量新增');

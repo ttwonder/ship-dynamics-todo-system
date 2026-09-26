@@ -36,11 +36,15 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   const selectionKey = JSON.stringify(['tracking-vessel', workspace, user.id]);
   const [vesselId, setVesselId] = useState(() => { const last = safeRead<string>(selectionKey); return vessels.some(v => v.id === last) ? last! : vessels[0]?.id || ''; });
   const [tab, setTab] = useState<TrackingTab>('undelivered');
-  const [statisticsView, setStatisticsView] = useState(audience === 'ship');
+  const [statisticsView, setStatisticsView] = useState(audience === 'shore');
   const [filters, setFilters] = useState<Record<string, TrackingFilter>>({}); const [search, setSearch] = useState('');
   const [sort, setSort] = useState<TrackingQuery['sort']>({ key: 'createdAt', direction: 'desc' });
   const [page, setPage] = useState(1); const [selected, setSelected] = useState<string[]>([]);
-  const [notice, setNotice] = useState(''); const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState('');
+  const vesselReadKey = JSON.stringify([identity, vesselId, vessels.map(v => v.id)]);
+  const [settledReadKey, setSettledReadKey] = useState<string | null>(null);
+  // Block child capture immediately on entry/scope changes, before effects run.
+  const loading = settledReadKey !== vesselReadKey;
   const [draft, setDraft] = useState<TrackingDraft | null>(null); const draftRef = useRef(draft); draftRef.current = draft;
   const [pending, setPending] = useState<TrackingSubmission | null>(null); const pendingRef = useRef(pending); pendingRef.current = pending;
   const [busy, setBusy] = useState(false); const busyRef = useRef(false);
@@ -96,12 +100,12 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   useEffect(() => {
     const valid = vessels.some(v => v.id === vesselId && v.isActive);
     if (!valid) { setVesselId(vessels[0]?.id || ''); setSelected([]); setDraft(null); setPending(null); return; }
-    const generation = ++requestGeneration.current; let active = true; setLoading(true);
+    const generation = ++requestGeneration.current; let active = true; setSettledReadKey(null);
     try { localStorage.setItem(selectionKey, JSON.stringify(vesselId)); } catch { /* Selection is not business data. */ }
     setSavedAvailable(Boolean(safeRead<SavedDraft>(draftKey)));
-    void currentCallbacks.current.load(vesselId).then(result => { if (active && requestGeneration.current === generation) { setLoading(false); if (!result) setNotice('未能讀取此船最新跟蹤資料，請重試；不會顯示成功。'); } });
+    void currentCallbacks.current.load(vesselId).then(result => { if (active && requestGeneration.current === generation) { setSettledReadKey(vesselReadKey); if (!result) setNotice('未能讀取此船最新跟蹤資料，請重試；不會顯示成功。'); } });
     return () => { active = false; };
-  }, [vesselId, identity, vessels.map(v => v.id).join('|')]);
+  }, [vesselReadKey]);
   useEffect(() => { setPage(value => Math.max(1, Math.min(value, Math.ceil(rows.length / 30) || 1))); }, [rows.length]);
   useEffect(() => { const beforeUnload = (event: BeforeUnloadEvent) => { if (draftRef.current?.dirty || pendingRef.current) { event.preventDefault(); event.returnValue = ''; } }; window.addEventListener('beforeunload', beforeUnload); return () => window.removeEventListener('beforeunload', beforeUnload); }, []);
   const switchView = async (action: () => void) => { if (await guard()) { clearSelection(); action(); } };
@@ -228,7 +232,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     <div className="tracking-heading"><h2>配件/物料/工程跟蹤</h2><label>船舶<select aria-label="跟蹤船舶" value={vesselId} onChange={event => { const id = event.target.value; void switchView(() => setVesselId(id)); }}>{vessels.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselSelectionDisplayName(vessel)}</option>)}</select></label>{canCreate && actionButton('create', '＋ 新增／批量新增')}{canCreate && <button className="btn small" disabled={loading||busy||!vesselId} onClick={()=>void guard().then(ok=>{if(ok)setImportOpen(true);})}>導入 Excel</button>}
     {canExport && !statisticsView && <TrackingExports query={{vesselId,tab,filters,search,sort}} preferences={preferences} selected={selected} count={rows.length} vesselName={vesselSelectionDisplayName(vessels.find(v=>v.id===vesselId))} identity={identity} workspace={workspace} callbacks={callbacks} blocked={loading||busy||Boolean(draft)||Boolean(pending)||importOpen||!vessels.some(v=>v.id===vesselId&&v.isActive)}/>}
     </div>
-    <div className="tracking-tabs" role="tablist" aria-label="跟蹤分類">{audience === 'ship' && statisticsTab}{TRACKING_TABS.map(value => <button className={`btn ${!statisticsView && value.id === tab ? 'primary' : ''}`} role="tab" aria-selected={!statisticsView && value.id === tab} key={value.id} onClick={() => void switchView(() => { setStatisticsView(false); setTab(value.id); setFilters({}); setSearch(''); })}>{value.label} <span>{(data.trackingItems || []).filter(row => row.vesselId === vesselId && trackingInTab(row, value.id)).length}</span></button>)}{audience !== 'ship' && statisticsTab}</div>
+    <div className="tracking-tabs" role="tablist" aria-label="跟蹤分類">{audience === 'shore' && statisticsTab}{TRACKING_TABS.map(value => <button className={`btn ${!statisticsView && value.id === tab ? 'primary' : ''}`} role="tab" aria-selected={!statisticsView && value.id === tab} key={value.id} onClick={() => void switchView(() => { setStatisticsView(false); setTab(value.id); setFilters({}); setSearch(''); })}>{value.label} <span>{(data.trackingItems || []).filter(row => row.vesselId === vesselId && trackingInTab(row, value.id)).length}</span></button>)}{audience === 'ship' && statisticsTab}</div>
     {!statisticsView && <>
     {trackingTabKind(tab) === 'engineering' && <p>是否完成依實際完工日期判定；結案或重開不會自動填入或清除完工日期。</p>}
     <div className="tracking-search-actions">

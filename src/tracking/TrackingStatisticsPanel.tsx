@@ -8,7 +8,7 @@ import { statisticsStatus, statisticsDelay } from './trackingStatisticsReport';
 import type { TrackingItem } from './trackingTypes';
 import './trackingStatistics.css';
 
-type Snapshot = { items: TrackingItem[]; isCurrent: () => boolean; at: string; today: string };
+type Snapshot = { items: TrackingItem[]; isCurrent: () => boolean; generation: number; at: string; today: string };
 const neutralFocus: StatisticsFocus = { metric: 'total', category: 'all' };
 export default function TrackingStatistics({ vesselId, vesselName, identity, workspace, callbacks, blocked, canExport }: { vesselId: string; vesselName: string; identity: string; workspace: string; callbacks: TrackingUiCallbacks; blocked: boolean; canExport: boolean }) {
   const initial: TrackingStatisticsQuery = { vesselId, from: '', to: '', type: 'all', urgency: 'all' };
@@ -31,7 +31,7 @@ export default function TrackingStatistics({ vesselId, vesselName, identity, wor
         const source = await live.current.callbacks.captureExport?.(vesselId);
         if (!current()) return;
         if (!source || !source.isCurrent()) { setNotice('未能讀取已確認統計資料。請先完成保存／確認原結果，再重試讀取；目前不顯示零筆統計。'); return; }
-        setSnapshot({ items: structuredClone(source.items), at: new Date().toISOString(), today: todayDate(), isCurrent: () => current() && source.isCurrent() });
+        setSnapshot({ items: structuredClone(source.items), generation: token, at: new Date().toISOString(), today: todayDate(), isCurrent: () => current() && source.isCurrent() });
       } catch { if (current()) setNotice('統計讀取失敗，未建立已確認快照。請重試讀取。'); }
       finally { if (current()) setLoading(false); }
     })();
@@ -39,6 +39,15 @@ export default function TrackingStatistics({ vesselId, vesselName, identity, wor
     // captureExport may publish AppData and replace callbacks. It is deliberately
     // read through a ref, never an effect dependency (no capture/publication loop).
   }, [identity, workspace, vesselId, blocked, canExport, refresh]);
+  useEffect(() => {
+    // A parent read may invalidate the confirmed source without changing scope.
+    // Recapture once when that invalidation is rendered; keep query/focus intact.
+    // Valid snapshots and failed reads do not trigger a capture/publication loop.
+    if (snapshot && snapshot.generation === generation.current && !blocked && canExport && !snapshot.isCurrent()) {
+      setSnapshot(null);
+      setRefresh(value => value + 1);
+    }
+  });
   const scopedQuery = { ...query, vesselId }, error = statisticsQueryError(scopedQuery);
   const ready = snapshot && snapshot.isCurrent() && !blocked;
   const stats = ready && !error ? calculateTrackingStatistics(snapshot.items, scopedQuery, snapshot.today) : null;

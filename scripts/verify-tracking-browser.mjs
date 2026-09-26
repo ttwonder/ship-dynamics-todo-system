@@ -125,8 +125,11 @@ try{
    await screen('tracking-native-App-dark-theme-consistency');
    await call('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:'light'}]});
  });
- await check('shore-initial-list-default-and-statistics-last',async()=>{
-  const tabs=await evaluate("[...document.querySelectorAll('.tracking-tabs [role=tab]')].map(n=>({label:n.textContent.trim(),active:n.getAttribute('aria-selected')}))");assert.equal(tabs.length,6);assert.ok(tabs[0].label.startsWith('未送船清單'));assert.equal(tabs[0].active,'true');assert.equal(tabs[5].label,'統計資訊');assert.equal(tabs[5].active,'false');
+ await check('shore-initial-statistics-first-active-and-explicit-list-entry',async()=>{
+  const tabs=await evaluate("[...document.querySelectorAll('.tracking-tabs [role=tab]')].map(n=>({label:n.textContent.trim(),active:n.getAttribute('aria-selected')}))");assert.equal(tabs.length,6);assert.equal(tabs[0].label,'統計資訊');assert.equal(tabs[0].active,'true');assert.ok(tabs[1].label.startsWith('未送船清單'));assert.ok(tabs.slice(1).every(t=>t.active==='false'));
+  await until(()=>evaluate("Boolean(document.querySelector('[aria-label=統計摘要]'))"),'shore default confirmed statistics');await screen('shore-default-statistics-desktop');assert.ok(!await evaluate("document.querySelector('.tracking-page').innerText.includes('未能讀取此船最新跟蹤資料')"),'default statistics must not race the initial vessel read into a false load failure');
+  await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await screen('shore-default-statistics-mobile');assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'));await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+  await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("Boolean(document.querySelector('.tracking-table'))"),'explicit shore list entry');assert.ok(await evaluate("[...document.querySelectorAll('.tracking-page button[title]')].some(n=>n.title.includes('要事'))"),'office-only hover help remains available on shore');
  });
  await check('new-source-real-App-native-ACK-and-reload',async()=>{
    await until(()=>evaluate("Boolean([...document.querySelectorAll('.tracking-heading button')].find(n=>n.innerText==='＋ 新增／批量新增'&&!n.disabled))"),'tracking read ready');
@@ -143,7 +146,7 @@ try{
    assert.ok(qa.metrics.some(m=>m.rpc==='apply_ship_dynamics_record_patch_v1'&&m.status==='SQL_OK'));
    await screen('tracking-created-desktop');
    const previousDocument=await evaluate('performance.timeOrigin');await call('Page.reload');await until(async()=>await evaluate('performance.timeOrigin')!==previousDocument&&(await text()).includes('QA OWNER'),'new document login',60_000);
-   await click('配件/物料/工程跟蹤');await until(()=>evaluate("document.querySelector('.tracking-table')?.innerText.includes('UI-001')"),'authoritative reload');
+   await click('配件/物料/工程跟蹤');await until(()=>evaluate("Boolean(document.querySelector('.tracking-statistics'))"),'shore default after reload');await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("document.querySelector('.tracking-table')?.innerText.includes('UI-001')"),'authoritative reload');
    assert.deepEqual(await qa.read(),saved);
  });
  const trackingRow=reference=>`[...document.querySelectorAll('.tracking-table tbody tr')].find(n=>n.querySelector('.tracking-reference')?.innerText.includes(${JSON.stringify(reference)}))`;
