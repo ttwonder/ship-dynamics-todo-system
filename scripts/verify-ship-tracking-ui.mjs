@@ -27,6 +27,14 @@ try {
  assert.deepEqual(shoreTabs.map(t=>t.label.replace(/\s+0$/,'')),['統計資訊',...expectedLists],'shore statistics precedes undelivered');
  assert.deepEqual(shoreTabs.map(t=>t.active),[true,false,false,false,false,false],'shore initially selects statistics');
  assert.ok(shore.includes('跟蹤統計資訊'),'shore statistics panel is mounted by default');
+ const shipLinks=[...shore.matchAll(/<a\b([^>]*)>打開船端網頁<\/a>/g)];
+ assert.equal(shipLinks.length,1,'shore has one visible shortcut to the vessel page');
+ assert.match(shipLinks[0][1],/href="https:\/\/ttwonder\.github\.io\/ship-dynamics-todo-system\/packageorwork-tracking"/,'preserve the exact requested destination');
+ assert.match(shipLinks[0][1],/target="_blank"/,'open a new browsing context instead of replacing the current page');
+ assert.match(shipLinks[0][1],/rel="noopener noreferrer"/,'isolate the new tab from the source page');
+ assert.ok(!shipLinks[0][1].includes('role="tab"'),'external navigation is not an in-page tab');
+ assert.ok(shipLinks[0].index>shore.indexOf('已完成工程單'),'shortcut follows the existing list tabs');
+ assert.ok(!ship.includes('打開船端網頁'),'do not add a redundant self-link to the vessel entry');
  for(const action of ['create','edit','progress','delivery','close','reopen','correct-close-date']) {
   const draft=makeTrackingDraft(action,[{...newTrackingItem('v1','supply'),referenceNo:'QA-001'}],data);
   const html=renderToStaticMarkup(React.createElement(TrackingBusinessModal,{draft,audience:'ship',busy:false,pending:false,message:'',affected:['QA-001'],vesselName:'測試輪 QA SHIP',onChange:()=>{},onSave:()=>{},onReconcile:()=>{},onClose:()=>{}}));
