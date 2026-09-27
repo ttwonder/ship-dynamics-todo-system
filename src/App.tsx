@@ -4702,31 +4702,57 @@ export default function App() {
     pendingCloudData.current.rejectAll(new StaleAsyncConfigError());
     if (cloudSaveInFlight.current) await cloudSaveInFlight.current.catch(() => undefined);
     try {
-      let remote = await configIoCoordinator.current.run(syncToken, getSupabaseConfig, fetchCloudData);
-      if(!syncOwnerIsCurrent())throw new StaleAsyncConfigError();
-      const recoveryBase=confirmedCloudData.current;
-      if(remote&&originalAuthority.current&&authorityConfig(syncConfig,originalAuthority.current).readMode==='scoped-v1'&&recoveryBase&&!appDataContentEqual(liveData.current,recoveryBase)){
+      const authorityOwner=originalAuthority.current;
+      let syncBinding=authorityOwner;
+      let recoveryBase=confirmedCloudData.current;
+      let syncReadScope=recordReadScope.current;
+      let expectedRevision=lastCloudRevision.current;
+      let recoveredFloor=-1;
+      let remote:AppData|null;
+      if(!syncBinding){
+        // Retry discovery only through this explicit recovery action. Keep the
+        // candidate private until the complete bound read and ownership fences pass.
+        const candidate=await configIoCoordinator.current.run(syncToken,getSupabaseConfig,async config=>{
+          const binding=await readBrowserAuthority(config);
+          if(!syncOwnerIsCurrent()||!configIoCoordinator.current.isCurrent(syncToken,getSupabaseConfig()))throw new StaleAsyncConfigError();
+          const historyIdentity=authorityFloorIdentity(syncIdentity,binding);
+          const base=parseConfirmedCloudBase(localStorage.getItem(CLOUD_CONFIRMED_BASE_KEY),historyIdentity);
+          const floor=Math.max(durableCloudRevisionFloors.current.get(historyIdentity)??-1,base?.revision??-1);
+          const trusted=trustedMatchingCloudIdentity(cachedCloudIdentity,syncIdentity);
+          const scope=authorityConfig(config,binding).readMode==='scoped-v1'&&trusted&&base&&(!appDataContentEqual(liveData.current,base)||(base.trackingItems?.length||0)>0)?recordRecoveryReadScope(base,liveData.current):recordReadScope.current;
+          const snapshot=await readBoundCloudData(config,binding,undefined,undefined,scope);
+          return {binding,base,floor,scope,snapshot};
+        });
+        if(!syncOwnerIsCurrent()||originalAuthority.current!==authorityOwner||!configIoCoordinator.current.isCurrent(syncToken,getSupabaseConfig()))throw new StaleAsyncConfigError();
+        syncBinding=candidate.binding;recoveryBase=candidate.base;syncReadScope=candidate.scope;
+        recoveredFloor=candidate.floor;remote=candidate.snapshot;expectedRevision=remote?.revision??-1;
+      }else remote=await configIoCoordinator.current.run(syncToken,getSupabaseConfig,fetchCloudData);
+      if(!syncOwnerIsCurrent()||originalAuthority.current!==authorityOwner)throw new StaleAsyncConfigError();
+      if(remote&&syncBinding&&authorityConfig(syncConfig,syncBinding).readMode==='scoped-v1'&&recoveryBase&&!appDataContentEqual(liveData.current,recoveryBase)){
         // Changed home previews can slide old history out of their bounded window.
         // Hydrate those targets before the unchanged append-only B/L/R guard.
-        const scope=unionRecordScopes(recordReadScope.current,recordRecoveryReadScope(recoveryBase,remote));
-        if(JSON.stringify(scope)!==JSON.stringify(recordReadScope.current)){
-          recordReadScope.current=scope;
-          remote=await configIoCoordinator.current.run(syncToken,getSupabaseConfig,fetchCloudData);
+        const scope=unionRecordScopes(syncReadScope,recordRecoveryReadScope(recoveryBase,remote));
+        if(JSON.stringify(scope)!==JSON.stringify(syncReadScope)){
+          syncReadScope=scope;
+          const binding=syncBinding;
+          remote=await configIoCoordinator.current.run(syncToken,getSupabaseConfig,config=>readBoundCloudData(config,binding,undefined,undefined,scope));
         }
       }
       if (!configIoCoordinator.current.isCurrent(syncToken, getSupabaseConfig())) throw new StaleAsyncConfigError();
-      if(!syncOwnerIsCurrent())throw new StaleAsyncConfigError();
+      if(!syncOwnerIsCurrent()||originalAuthority.current!==authorityOwner)throw new StaleAsyncConfigError();
       const localSnapshot=liveData.current;
-      const expectedRevision=lastCloudRevision.current;
-      const baseSnapshot=confirmedCloudData.current;
-      const hasLocalChanges=baseSnapshot?!appDataContentEqual(localSnapshot,baseSnapshot):localSnapshot.revision>expectedRevision;
-      const durableRevisionFloor=durableCloudRevisionFloors.current.get(authorityFloorIdentity(syncIdentity,originalAuthority.current))??-1;
+      const cleanCoverageTransition=Boolean(syncBinding&&authorityConfig(syncConfig,syncBinding).readMode==='scoped-v1'&&trustedMatchingCloudIdentity(cachedCloudIdentity,syncIdentity)&&remote&&cleanRecordHomeCacheMatches(localSnapshot,recoveryBase,remote));
+      const baseSnapshot=cleanCoverageTransition?remote:recoveryBase;
+      const hasLocalChanges=recoveryBase?!appDataContentEqual(localSnapshot,recoveryBase):!remote||!appDataContentEqual(localSnapshot,remote);
+      const durableRevisionFloor=Math.max(recoveredFloor,durableCloudRevisionFloors.current.get(authorityFloorIdentity(syncIdentity,syncBinding))??-1);
       const workspaceChanged=Boolean(previousCloudIdentity&&previousCloudIdentity!==syncIdentity);
       if(workspaceChanged||hasUnboundLocalCache)throw new CloudRebaseConflictError([workspaceChanged?'雲端工作區已變更，不能把舊工作區的本機資料自動合併、覆蓋或初始化到新工作區':'本機快取來源未綁定，即使目標工作區空白也不能自動綁定、初始化或覆蓋']);
       if (remote) {
         if(remote.revision<durableRevisionFloor)throw new CloudRebaseConflictError([`雲端revision ${remote.revision}低於已確認的durable floor ${durableRevisionFloor}，疑似rollback`]);
-        assertRemoteExtendsDurableHistory(syncIdentity,baseSnapshot,remote);
-        const prepared=prepareCloudSyncSnapshot(baseSnapshot,localSnapshot,remote,expectedRevision,nowIso(),currentUser.id);
+        assertRemoteExtendsDurableHistory(syncIdentity,baseSnapshot,remote,syncBinding);
+        const prepared=prepareCloudSyncSnapshot(baseSnapshot,cleanCoverageTransition?remote:localSnapshot,remote,expectedRevision,nowIso(),currentUser.id);
+        originalAuthority.current=syncBinding;
+        recordReadScope.current=syncReadScope;
         activeCloudIdentity.current = syncIdentity;
         lastCloudRevision.current = remote.revision;
         confirmCloudSnapshot(syncIdentity,remote);
@@ -5321,6 +5347,7 @@ export default function App() {
   };
 
   const visibleSavePhase=hasManagementPrivateDraft()&&savePhase==='saved'?'dirty':savePhase;
+  const cloudSourceUnconfirmed=Boolean(getSupabaseConfig()&&!originalAuthority.current);
   const visibleSaveToast=hasManagementPrivateDraft()&&saveToast?.kind==='success'?null:saveToast;
   const visibleSaveStatus=hasManagementPrivateDraft()&&savePhase==='saved'?'修改仍保留在目前頁面，請不要關閉。':visibleCloudStatus;
   return <div className="app">
@@ -5336,7 +5363,7 @@ export default function App() {
     <main className="container">
       <div className={`cloud-strip save-status-strip no-print ${visibleSavePhase}`} aria-live="polite"><span className="save-phase"><b>{savePhaseLabel[visibleSavePhase]}</b><small>{visibleSaveStatus}</small></span><span className="spacer"/>{tab==='dashboard'&&!selectedVesselDetailId&&<button className={`btn small browser-recovery-entry ${staleBrowserRecoveryOffered?'red':'ghost'}`} onClick={()=>openBrowserRecovery()} title={staleBrowserRecoveryOffered?'開啟瀏覽器修復與完整本機重設':'修復此瀏覽器的顯示或載入問題'}>修復此瀏覽器</button>}<button className={`btn small ${cloudWriteBlocked&&visibleSavePhase==='error'?'primary guidance-active':'ghost'}`} onClick={syncLatest} disabled={isSaveBusy}>同步最新（安全合併）</button><button className={`btn small ${visibleSavePhase==='error'?'red':visibleSavePhase==='dirty'?'primary':'green'} ${!cloudWriteBlocked&&visibleSavePhase==='error'?'guidance-active':''}`} onClick={saveChanges} disabled={isSaveBusy}>{saveButtonLabel}</button></div>
       {itineraryOperationalProblem&&<aside className="collaboration-banner stale no-print" role="status"><b>Itinerary 營運資訊同步異常</b><span>{itineraryOperationalProblem.error||'目前保留最後確認版本；正式早會及報告會停止，直到能重新確認雲端正式 Itinerary。'}</span></aside>}
-      {(visibleSavePhase!=='saved'||pendingTaskCreations.length>0)&&<aside className={`unsaved-work-guidance no-print ${cloudWriteBlocked?'conflict':'pending'}`} role="alert"><b>{pendingTaskCreations.length>0?`有 ${pendingTaskCreations.length} 筆新增要事正在等待雲端保存`:cloudWriteBlocked?'這些修改還沒有保存到雲端':'關閉前請先完成上傳保存'}</b>{pendingTaskCreations.length>0?<span>草稿已保存在這個瀏覽器，系統會在其他人完成船舶更新後自動重讀最新雲端資料並重試。請保持本頁開啟。</span>:cloudWriteBlocked?<ol><li>先點擊「同步最新（安全合併）」</li><li>同步完成後，再點擊「重新保存」</li></ol>:<span>{hasManagementPrivateDraft()?`${tab==='tracking'?'跟蹤':'管理'}表單尚有未提交的修改，請回到各表單按保存；上方保存不會提交這些欄位。`:'請先點擊上方的保存按鈕，並等待雲端確認。'}</span>}<strong>直到畫面顯示「已保存到雲端」，看到「已保存到雲端」後再關閉網頁、瀏覽器或電腦；否則尚未上傳的修改可能遺失。</strong>{pendingTaskCreations.some(intent=>intent.state==='attention')&&<small>其中有草稿因身份、權限或資料識別異常而暫停自動保存；請勿關閉頁面，並先確認頁首提示。</small>}</aside>}
+      {(visibleSavePhase!=='saved'||pendingTaskCreations.length>0)&&<aside className={`unsaved-work-guidance no-print ${cloudWriteBlocked?'conflict':'pending'}`} role="alert"><b>{pendingTaskCreations.length>0?`有 ${pendingTaskCreations.length} 筆新增要事正在等待雲端保存`:cloudSourceUnconfirmed?'尚未確認雲端資料，暫停保存':cloudWriteBlocked?'這些修改還沒有保存到雲端':'關閉前請先完成上傳保存'}</b>{pendingTaskCreations.length>0?<span>草稿已保存在這個瀏覽器，系統會在其他人完成船舶更新後自動重讀最新雲端資料並重試。請保持本頁開啟。</span>:cloudSourceUnconfirmed?<span>請點擊「同步最新（安全合併）」重新確認資料來源；系統核對完成前，本機內容會保留，也不會覆蓋雲端。</span>:cloudWriteBlocked?<ol><li>先點擊「同步最新（安全合併）」</li><li>同步完成後，再點擊「重新保存」</li></ol>:<span>{hasManagementPrivateDraft()?`${tab==='tracking'?'跟蹤':'管理'}表單尚有未提交的修改，請回到各表單按保存；上方保存不會提交這些欄位。`:'請先點擊上方的保存按鈕，並等待雲端確認。'}</span>}<strong>{cloudSourceUnconfirmed?'目前尚未判定是否有未保存修改；請先不要清除瀏覽器資料或反覆保存。':'直到畫面顯示「已保存到雲端」，看到「已保存到雲端」後再關閉網頁、瀏覽器或電腦；否則尚未上傳的修改可能遺失。'}</strong>{pendingTaskCreations.some(intent=>intent.state==='attention')&&<small>其中有草稿因身份、權限或資料識別異常而暫停自動保存；請勿關閉頁面，並先確認頁首提示。</small>}</aside>}
       {currentUser.role!=='vessel'&&activeEditLock&&authorizedEditLockKeys.has(activeEditLock.sectionKey)&&activeEditLock.authorizationEpoch===authorizationEpoch&&activeEditLock.ownerUserId===currentUser.id && <div className={`collaboration-banner no-print ${activeEditLock.status}`}><b>多人協作安全</b><span>{activeEditLock.status==='owned' ? `你正在編輯：${activeEditLock.label}；系統已建立短時鎖定，保存仍會做 revision 衝突檢查。` : activeEditLock.status==='blocked' ? `此項目正在由 ${activeEditLock.lockedByName || '其他使用者'} 編輯，已阻止打開以避免覆蓋對方內容。` : preservedCreationDraft ? '新增要事協作鎖已失效；草稿仍以唯讀方式保留，請複製內容後關閉並重新取得協作鎖。' : activeEditLock.bundle ? `無法確認 ${activeEditLock.label} 的完整編輯權；草稿已唯讀保留，核對最新資料並重新取得編輯權後才可繼續。` : `無法確認 ${activeEditLock.label} 的編輯鎖；編輯器已關閉，請重試釋放。`}</span>{activeEditLock.status!=='owned'&&<button className="btn small ghost" onClick={resolveEditLockNotice}>{activeEditLock.status==='blocked'?'知道了':preservedCreationDraft?'關閉唯讀草稿':'重試釋放並關閉'}</button>}</div>}
       <div className="print-only app-print-header"><h2>{printTitle || data.settings.systemTitle}</h2><p>列印時間：{formatTaipeiDateTime(new Date())}｜列印人：{currentUser.name}</p></div>
       {canAccessTab(currentUser,tab) && <>{tab==='dashboard' && selectedVesselDetail && <VesselDetailPage vessel={selectedVesselDetail} data={roleVisibleData} currentUser={currentUser} itineraryFeedRecord={itineraryOperationalFeed.records[selectedVesselDetail.id]} onBack={closeVesselDetail} onOpenInternalControl={()=>{if(!canAccessTab(currentUser,'internalControl'))return;navigateToTab('internalControl');}} onEditVessel={()=>{if(!canEditBusinessContent)return alert('目前角色未獲授權修改船舶動態');void openVesselEditor(selectedVesselDetail.id);}} onAddTask={()=>addTaskForVessel(selectedVesselDetail.id)} onEditTask={id=>{const task=roleVisibleTasks.find(item=>item.id===id);if(task)openTask(task,selectedVesselDetail.id);}} canEditVessel={canEditBusinessContent} canCreateTasks={canCreateTasks} canEditTasks={canEditBusinessContent&&currentUser.role!=='vessel'} canViewInternalControl={canAccessTab(currentUser,'internalControl')} />}

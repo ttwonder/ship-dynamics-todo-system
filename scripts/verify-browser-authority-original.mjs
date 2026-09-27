@@ -1,4 +1,4 @@
-const {primary}=await import(process.env.QA_SOURCE_ROUNDTRIP==='1'?'./source-roundtrip-original-scenario.mjs':'./browser-authority-original-scenario.mjs');
+const {primary}=await import(process.env.QA_BOOT_RECOVERY==='1'?'./browser-authority-boot-recovery-scenario.mjs':process.env.QA_SOURCE_ROUNDTRIP==='1'?'./source-roundtrip-original-scenario.mjs':'./browser-authority-original-scenario.mjs');
 import {isDeepStrictEqual} from 'node:util';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -20,6 +20,10 @@ const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const receipt={kind:'original-App-authority-handoff-diagnostic',inputHead:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),mode:process.env.QA_BROWSER_AUTHORITY_MODE||'direct',status:'RUNNING',cases:[],network:[],errors:[],blockedExternal:[],commands:[{command:'node scripts/verify-browser-authority-original.mjs',exit:null}],productionContacted:false};
 receipt.inputs=Object.fromEntries(['src/TemporaryMeetings.tsx','src/internalControlData.ts','src/internalControlWorkflow.ts','src/cloudAuthorization.ts','scripts/vessel-manager-handover-native.mjs','src/vesselManagerHandover.ts','src/normalize.ts','src/types.ts','src/workCenterScope.ts','supabase/development/20260911_vessel_manager_handover.sql','scripts/management-private-draft-native.mjs','scripts/verify-management-ack-browser.mjs','scripts/global-save-feedback-native.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs','scripts/management-scoped-save-oracle.mjs','scripts/management-ack-native-forms.mjs','src/managementDraft.ts','scripts/record-internal-control-local-fixture.mjs','src/main.tsx','src/App.tsx','src/Management.tsx','src/DataManagementPanel.tsx','src/dataAnalysisVesselAttention.ts','src/taskVesselProgress.ts','src/taskVesselScope.ts','src/taskCategories.ts','src/taskAttention.ts','src/vesselAttention.ts','src/meetingVesselAttention.ts','src/taipeiTime.ts','src/cloud.ts','src/cloudRecordScopes.ts','supabase/development/20260908_appdata_record_scoped_read.sql'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
 const save=()=>fs.writeFileSync(path.join(run,'receipt.json'),JSON.stringify(receipt,null,2));
+if(process.env.QA_BOOT_RECOVERY==='1'){
+ receipt.kind='original-App-boot-failure-recovery';receipt.mode='boot-recovery';
+ for(const p of ['scripts/verify-browser-authority-original.mjs','scripts/browser-authority-boot-recovery-scenario.mjs','src/cloudSourceAuthority.ts','src/cloudRecovery.ts'])receipt.inputs[p]=hash(fs.readFileSync(p,'utf8'));
+}
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const until=async(fn,label,timeout=25000)=>{const end=Date.now()+timeout;while(Date.now()<end){const v=await fn();if(v)return v;await wait(30);}throw new Error('QA timeout: '+label);};
 const field="[...document.querySelectorAll('[role=dialog] .field')].find(n=>n.querySelector('label')?.innerText==='近期／後續動態')?.querySelector('textarea')";
@@ -90,7 +94,7 @@ async function freshReadback(name,expected){
 
 try{
  native=await createNativeRecordQa(run,receipt,{httpTransactions:true});
- qa=await createRecordStorageLocalQa({browserAuthority:true,internalControl:true,taskMember:true,scopedRead:true,performanceTrace:true,legacySnapshot:process.env.QA_MGACK_MODE==='handover-legacy',handoverMigrationFixture:process.env.QA_HANDOVER_UPGRADE==='1'?async(db,phase)=>(await import('./vessel-manager-handover-native.mjs')).rehearseHandoverMigration({db,phase,receipt}):null,preparePerformanceFixture:async initial=>{
+ qa=await createRecordStorageLocalQa({browserAuthority:true,internalControl:true,taskMember:true,scopedRead:true,tracking:process.env.QA_BOOT_RECOVERY==='1',performanceTrace:true,legacySnapshot:process.env.QA_MGACK_MODE==='handover-legacy',handoverMigrationFixture:process.env.QA_HANDOVER_UPGRADE==='1'?async(db,phase)=>(await import('./vessel-manager-handover-native.mjs')).rehearseHandoverMigration({db,phase,receipt}):null,preparePerformanceFixture:async initial=>{
   const at=initial.updatedAt,now=new Date(at),previous=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()-1,15,12)).toISOString();
   initial.users.find(u=>u.id==='qa-operator').department='機務';
   for(const [id,name,role] of [['qa-admin','QA ADMIN','admin'],['qa-spare','QA SPARE','operator']])initial.users.push({...structuredClone(initial.users[0]),id,name,username:id,role,managedVesselIds:[]});
@@ -115,6 +119,11 @@ try{
   if((process.env.QA_MGACK_MODE||'').startsWith('lifecycle'))(await import('./vessel-lifecycle-native.mjs')).prepareVesselLifecycle(initial);
  },databaseFactory:async()=>native.adapter});
  const {installMorningOracle,schedulerSql}=await import('./record-daily-morning-local-fixture.mjs');await installMorningOracle(native.adapter);await native.observer.query(fs.readFileSync(schedulerSql,'utf8'));receipt.schedulerPrerequisite={installer:'scripts/record-daily-morning-local-fixture.mjs#installMorningOracle',schedulerSql};receipt.extraMigrationsInstalled=[];for(const f of ["supabase/migrations/20260904161000_appdata_compact_ack_receipts.sql", "supabase/migrations/20260817143000_data_management_storage.sql", "supabase/migrations/20260818154500_data_management_prune_batch_limit.sql", "supabase/normalized-legacy-cutover.sql", "supabase/development/20260911_legacy_report_workspace_binding.sql", "supabase/development/20260911_business_quiescence.sql", "supabase/development/20260911_paused_record_legacy_transfer.sql", "supabase/development/20260911_source_authority_publication.sql", ...(process.env.QA_AUTHORITY_BASELINE==='1'?[]:["supabase/development/20260912_browser_source_authority.sql"]), ...(process.env.QA_SOURCE_ROUNDTRIP==='1'?['supabase/development/20260914_source_authority_roundtrip.sql']:[])]){await native.observer.query(fs.readFileSync(f,'utf8'));receipt.extraMigrationsInstalled.push({file:f,sha256:createHash('sha256').update(fs.readFileSync(f)).digest('hex')});save();}
+ if(process.env.QA_BOOT_RECOVERY==='1'){
+  const file='supabase/migrations/20260924160000_tracking_records.sql';
+  await native.adapter.exec(fs.readFileSync(file,'utf8'));
+  receipt.extraMigrationsInstalled.push({file,sha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex')});
+ }
  if(process.env.QA_AUTHORITY_BASELINE!=='1')await (await import('./browser-authority-controls.mjs')).verifyBrowserAuthorityControls({native,qa,receipt,save});
  receipt.origin=qa.origin;assert.equal((await (await fetch(qa.origin+'/__qa/health')).json()).kind,'REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES');
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});

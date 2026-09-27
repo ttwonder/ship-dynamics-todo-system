@@ -46,7 +46,7 @@ try{
    getSupabaseConfig:()=>state.config,cloudIdentity:recovery.cloudWorkspaceIdentity,
    sameCloudConfig:(a,b)=>recovery.cloudConfigIdentity(a)===recovery.cloudConfigIdentity(b),
    cachedCloudIdentityFor:()=>store.get('owner'),durableRevisionFloorRegistryIsValid:()=>recovery.parseDurableRevisionFloors(store.get('floors')).valid,
-   durableCloudRevisionFloors:{current:floors},confirmedCloudData:{current:null},originalAuthority:{current:null},activeCloudIdentity:{current:''},lastCloudRevision:{current:-1},hasUnsavedWork:{current:false},recordReadScope:{current:'home'},
+   durableCloudRevisionFloors:{current:floors},confirmedCloudData:{current:null},originalAuthority:{current:null},activeCloudIdentity:{current:''},lastCloudRevision:{current:-1},hasUnsavedWork:{current:false},recordReadScope:{current:'home'},homeReadCache:{current:null},
    recordRecoveryReadScope:()=> 'full',cleanRecordHomeCacheMatches:()=>false,
    setCloudInitializationAllowed:()=>{},setCloudWriteBlocked:v=>{state.blocked=v;},setSavePhase:v=>{state.phase=v;},setCloudStatus:v=>{state.status=v;},
    setCloudBootstrapped:v=>{state.bootstrapped=v;settled.resolve();},setData:v=>state.publications.push(v),savedStatus:()=> 'confirmed',rememberCloudIdentity:()=>{},
@@ -104,6 +104,52 @@ try{
  const collections=Object.fromEntries(CLOUD_BLOCK_COLLECTIONS.map(key=>[key,{ids:full[key].map(row=>row.id),rows:full[key].map(row=>({id:row.id,version:full.revision,detail:true,value:row}))}]));
  const complete=scopes.consumeRecordScopes({protocol:'ship-dynamics-record-scopes-v1',workspace_key:rawConfig.workspaceKey,scope:'full',status:'scopes',revision:full.revision,root,collections},rawConfig.workspaceKey,'full',null);
  assert.ok(isDeepStrictEqual(scopes.recordScopePayload(complete),JSON.parse(JSON.stringify(full))),'full read must retain every JSON field (undefined is not transported)');assert.equal(scopes.recordScopePayload(complete).tasks[0].statusLogs.length,4);pass('BOOT-R06-full-protocol-retains-complete-history');
+ // A transient boot failure must not make the explicit sync control a dead end.
+ let recoveredTransport=false;
+ x=await setup({authority:async()=>{if(!recoveredTransport)throw new Error('one transient discovery failure');return binding;}});await x.finish();untouched(x);
+ const failedReadCount=x.state.reads.length;recoveredTransport=true;await x.context.syncLatest();
+ assert.ok(x.state.reads.length>failedReadCount,'explicit sync must rediscover a previously unavailable authority');
+ assert.equal(x.state.blocked,false);assert.equal(x.state.phase,'saved');assert.equal(x.state.submissions.length,0,'a clean recovered cache must not emit a business save');assert.equal(x.state.fallbackReads,0);assert.ok(appDataContentEqual(x.state.publications.at(-1),base));pass('BOOT-REC01-clean-discovery-failure-explicit-recovery');
+ // A failed bound read is independently recoverable, including scoped home/detail coverage.
+ for(const [label,settings] of [
+  ['legacy',{}],['records-clean-full-cache',{binding:records,config:rawConfig,local:full,confirmedBase:full,remote:home}],
+ ]){
+  let healthy=false;
+  x=await setup({...settings,business:async()=>{if(!healthy)throw new Error('transient bound read failure');return settings.remote??base;}});await x.finish();untouched(x);
+  healthy=true;await x.context.syncLatest();
+  assert.equal(x.state.blocked,false);assert.equal(x.state.phase,'saved');assert.equal(x.state.submissions.length,0);assert.equal(x.state.fallbackReads,0);
+  assert.ok(appDataContentEqual(x.state.publications.at(-1),settings.remote??base));pass('BOOT-REC02-'+label);
+ }
+ recoveredTransport=false;
+ x=await setup({local:dirty,authority:async()=>{if(!recoveredTransport)throw new Error('transient');return binding;}});await x.finish();untouched(x);
+ recoveredTransport=true;await x.context.syncLatest();
+ assert.equal(x.state.submissions.length,1);assert.equal(x.state.submissions[0].vessels[0].fullName,dirty.vessels[0].fullName);assert.equal(x.state.blocked,false);pass('BOOT-REC03-dirty-cache-rebases-with-restored-base');
+ for(const [label,prepare,options] of [
+  ['unbound',v=>v.store.delete('owner'),{}],['wrong-workspace',v=>v.store.set('owner','another-workspace'),{}],
+  ['old-source-base',()=>{},{local:dirty,oldSource:true}],['missing-base',v=>v.store.delete('base'),{local:dirty}],
+  ['remote-missing',()=>{},{business:async()=>null}],['rollback-base-floor',()=>{},{local:higherBase,confirmedBase:higherBase,remote:rolledBack,floor:10}],
+ ]){
+  recoveredTransport=false;
+  x=await setup({...options,authority:async()=>{if(!recoveredTransport)throw new Error('transient');return binding;}});await x.finish();prepare(x);
+  const before=new Map(x.store);recoveredTransport=true;await x.context.syncLatest();
+  assert.equal(x.state.blocked,true);assert.equal(x.state.submissions.length,0);assert.equal(x.state.publications.length,0);assert.equal(x.context.originalAuthority.current,null);assert.deepEqual(x.store,before);pass('BOOT-REC04-'+label+'-preserved');
+ }
+ for(const change of ['config','actor','session','authorization','authority-owner']){
+  recoveredTransport=false;wait=deferred();
+  x=await setup({authority:async()=>{if(!recoveredTransport)throw new Error('transient');return wait.promise;}});await x.finish();
+  recoveredTransport=true;const pending=x.context.syncLatest();await new Promise(resolve=>setImmediate(resolve));
+  if(change==='config')x.state.config={...config,workspaceKey:'successor-workspace'};
+  if(change==='actor')x.context.liveCurrentUserId.current='successor-actor';
+  if(change==='session')x.context.identitySessionGeneration.current++;
+  if(change==='authorization')x.context.liveAuthorizationEpoch.current='successor-authorization';
+  if(change==='authority-owner')x.context.originalAuthority.current=records;
+  wait.resolve(binding);await pending;untouched(x);assert.equal(x.state.submissions.length,0);pass('BOOT-REC05-'+change+'-race-fenced');
+ }
+ for(const code of ['browser-authority-changed','browser-authority-invalid-response']){
+  recoveredTransport=false;
+  x=await setup({authority:async()=>{if(!recoveredTransport)throw new Error('transient');return binding;},business:async()=>{throw new authority.BrowserAuthorityError(code);}});await x.finish();
+  recoveredTransport=true;await x.context.syncLatest();untouched(x);assert.equal(x.context.originalAuthority.current,null);assert.equal(x.state.submissions.length,0);assert.equal(x.state.blocked,true);pass('BOOT-REC06-'+code+'-blocked');
+ }
  assert.equal(new Set(ids).size,ids.length);
  console.log(JSON.stringify({status:'PASS',layer:'current-App-effect-controlled-reads',caseIds:ids,caseCount:ids.length,appSourceSha256:createHash('sha256').update(text).digest('hex'),nativeOrHostedClaim:false}));
 }finally{await server.close();}
