@@ -15,7 +15,7 @@ function project(snapshot: ShipTrackingSnapshot, actorKey: string): { data: AppD
   const data: AppData = {
     revision: snapshot.revision, updatedAt: snapshot.updatedAt,
     settings: { ...seed.settings, sitePasswordHash: '', ...(snapshot.catalog || {}) },
-    users: [user], vessels: snapshot.vessels.map(v => ({ ...seed.vessels[0], ...v, isActive: true, assignedUserIds: [], delegateManagers: [] })),
+    users: [user], vessels: snapshot.vessels.map(v => ({ ...seed.vessels[0], shipType: '', fleetCategory: '', ...v, isActive: true, assignedUserIds: [], delegateManagers: [] })),
     trackingItems: snapshot.trackingItems, internalControlCases: snapshot.cases,
     tasks: [], meetings: [], agendaReports: [], taskDismissals: [], auditLogs: [], notifications: [],
   };
@@ -59,6 +59,12 @@ export default function ShipTrackingPortal() {
   }, [backend]);
   const callbacks: TrackingUiCallbacks = {
     onPrivateDraftChange: (_token, value) => { dirty.current = value; },
+    captureStatistics: async (scope, query) => {
+      if (!backend || changing.current || dirty.current) return null;
+      const token = generation.current, vessel = selected.current;
+      const source = await backend.captureStatistics(scope, query);
+      return { ...source, isCurrent: () => source.isCurrent() && live.current && token === generation.current && selected.current === vessel && !changing.current && !dirty.current };
+    },
     load: id => load(id),
     claim: async (id, ids, creation=false) => {
       if (!backend) return null;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 export async function componentChecks({qa,call,evaluate,click,nodeClick,fill,until,text,screen,check}){
  await call('Page.navigate',{url:qa.origin+'/scripts/fixtures/tracking-ui.html'});
- const listReady=async()=>{await until(()=>evaluate("Boolean(window.__trackingQA&&document.querySelector('.tracking-page'))"),'component fixture');await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("Boolean(document.querySelector('.tracking-table'))"),'explicit component list');};
+ const listReady=async()=>{await until(()=>evaluate("Boolean(window.__trackingQA&&document.querySelector('.tracking-page')&&document.querySelector('[data-qa-identity]')?.dataset.qaIdentity===window.__trackingQA.identity)"),'component fixture');await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("Boolean(document.querySelector('.tracking-table'))"),'explicit component list');};
  await listReady();
  const rowIds=()=>evaluate("[...document.querySelectorAll('.tracking-table tbody tr[data-tracking-id]')].map(n=>n.dataset.trackingId)");
  const selectPage=()=>nodeClick("document.querySelector('[aria-label=選取本頁]')");

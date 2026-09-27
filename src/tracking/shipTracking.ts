@@ -2,6 +2,8 @@ import { getSupabaseClient, getSupabaseConfig, type ResolvedSupabaseConfig } fro
 import type { ShipInternalControlCatalog, ShipInternalControlVessel } from '../shipInternalControl';
 import type { InternalControlCase } from '../types';
 import type { TrackingItem } from './trackingTypes';
+import type { TrackingStatisticsQuery } from './trackingStatistics';
+import { parseStatisticsSnapshot, type StatisticsVesselScope, type StatisticsCapture } from './trackingStatisticsScope';
 import type { TrackingSubmission } from './trackingUiTypes';
 import { TRACKING_CREATE_FIELDS, validateTrackingItem } from './trackingWorkflow';
 
@@ -116,6 +118,20 @@ export class ShipTrackingRepository {
     return raw as unknown as ShipTrackingSnapshot;
   }
   async load(vesselId: string | null) { return this.snapshot(await this.rpc('read', vesselId), vesselId); }
+  async captureStatistics(scope: StatisticsVesselScope, query: TrackingStatisticsQuery): Promise<StatisticsCapture> {
+    if (!this.current()) throw new Error('雲端設定已變更，請重新開啟統計。');
+    const token = this.serial, controller = new AbortController(), timer = setTimeout(() => controller.abort(), 25000);
+    try {
+      const { data, error } = await this.client.rpc('read_ship_dynamics_tracking_statistics_public_v1', {
+        p_workspace_key: this.config.workspaceKey, p_scope: scope,
+        p_query: { from: query.from, to: query.to, type: query.type, urgency: query.urgency },
+      }).abortSignal(controller.signal);
+      if (!this.current() || token !== this.serial) throw new Error('統計讀取期間操作或雲端設定已變更，請重讀統計。');
+      if (error) throw new Error(['PGRST202', '42883'].includes(error.code || '') ? '多船統計接口尚未啟用，請通知岸端完成統計 SQL 更新；原單船業務清單仍可使用。' : '統計讀取失敗，未以零筆或部分資料代替；請重讀統計。');
+      return { ...parseStatisticsSnapshot(data, this.config.workspaceKey, scope), isCurrent: () => this.current() && token === this.serial };
+    } finally { clearTimeout(timer); }
+  }
+
   isWritable(ids: readonly string[]) { return this.current() && Boolean(this.bundle && performance.now() < this.bundle.deadline && ids.every(id => this.bundle!.ids.includes(id))); }
   private acceptLease(raw: unknown, expected: Bundle, started: number) {
     if (!object(raw) || raw.ok !== true) throw new ShipTrackingError('', object(raw) && typeof raw.code === 'string' ? raw.code : 'lease-unconfirmed');

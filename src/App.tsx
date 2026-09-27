@@ -10,6 +10,9 @@ import TrackingPage from './tracking/TrackingPage';
 import { runTrackingUiCommand } from './tracking/trackingUiCommands';
 import { trackingReceiptKey, type TrackingRecordAttempt } from './tracking/trackingSaveRecovery';
 import type { TrackingSubmission } from './tracking/trackingUiTypes';
+import { calculateTrackingStatistics, type TrackingStatisticsQuery } from './tracking/trackingStatistics';
+import { trackingStatisticsSummary } from './tracking/trackingStatisticsReport';
+import { resolveStatisticsVessels, statisticsVesselCatalog, type StatisticsVesselScope } from './tracking/trackingStatisticsScope';
 import { isMorningRecordScope, buildRecordScopePatch, cleanRecordHomeCacheMatches, recordRecoveryReadScope, unionRecordScopes, recordScopeKey, type RecordReadScope } from './cloudRecordScopes';
 import { CloudBlockPatchConfirmedRefreshError, CloudBlockPatchOutcomeUnknownError, runCloudBlockPatchWithReceipt } from './cloudBlockReceipt';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
@@ -2952,6 +2955,27 @@ export default function App() {
     if(!fresh||!current())return null;
     return {items:structuredClone((fresh.trackingItems||[]).filter(row=>row.vesselId===vesselId)),isCurrent:current};
   };
+  const captureTrackingStatistics=async(selection:StatisticsVesselScope,query:TrackingStatisticsQuery)=>{
+    const owner=trackingIdentity();
+    const catalog=()=>{
+      const snapshot=liveData.current,actor=snapshot.users.find(u=>u.id===liveCurrentUserId.current&&u.isActive);
+      return statisticsVesselCatalog(snapshot.vessels.filter(v=>Boolean(actor&&actor.role!=='vessel'&&canAccessAllVessels(snapshot.settings.rolePermissions,actor,[v]))));
+    };
+    const vessels=catalog(),vesselIds=resolveStatisticsVessels(vessels,selection),catalogKey=JSON.stringify(vessels);
+    const current=()=>{
+      const snapshot=liveData.current,actor=snapshot.users.find(u=>u.id===liveCurrentUserId.current&&u.isActive);
+      return Boolean(owner===trackingIdentity()&&actor&&actor.role!=='vessel'&&hasPermission(snapshot.settings.rolePermissions,actor,'exportReports')
+        &&confirmedCloudData.current&&!hasUnsavedWork.current&&!cloudSaveInFlight.current&&!pendingCloudData.current.size()
+        &&!(trackingAttempt.current?.applied&&!trackingAttempt.current.confirmed)&&appDataContentEqual(snapshot,confirmedCloudData.current)&&JSON.stringify(catalog())===catalogKey);
+    };
+    // Selection is a read scope, not authority. Validate the whole authorized cohort
+    // before a scope loader can save anything; never publish a partial fleet result.
+    if(!current()||(selection.kind==='vessel'&&vesselIds.length!==1))return null;
+    const scope=unionRecordScopes(recordReadScope.current,{targets:[],trackingVesselIds:vesselIds});
+    if(!await loadRecordActionScope(scope,current,true)||!current())return null;
+    const fresh=freshPageData(),today=todayDate();
+    return {stats:trackingStatisticsSummary(calculateTrackingStatistics(fresh.trackingItems||[],{...query,vesselIds},today)),vessels,vesselIds,today,at:new Date().toISOString(),isCurrent:current};
+  };
   const claimTrackingEditor=async(vesselId:string,ids:string[]):Promise<AppData|null>=>{
     if(!ids.length||ids.length>100||new Set(ids).size!==ids.length)return null;
     const owner=trackingIdentity();
@@ -5338,7 +5362,7 @@ export default function App() {
       />}
       {tab==='closed' && <ListPanel title="已結案清單" tasks={closedTasks} statsTasks={closedStatsTasks} data={roleVisibleData} visibleVessels={activeVessels} filters={closedFilters} setFilters={setClosedFilters} fleetTags={fleetTags} userMap={userMap} exportedBy={currentUser.name} columnPreferenceKey={JSON.stringify([cloudWorkspaceIdentity(listBatchConfig),currentUser.id,'closed'])} onEdit={openTask} onPrint={() => print('已結案清單')} batchContext={listBatchContext} onBatchComplete={batchCompleteTasks} onBatchDelete={batchDeleteTasks} canEdit={canEditBusinessContent} canPrint={canExportReports} canComplete={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} />}
       {(tab==='internalControl'||tab==='work') && canAccessTab(currentUser,'internalControl') && <InternalControlPage key={tab} editorOnly={tab==='work'} loadCase={loadInternalControlScope} data={roleVisibleData} user={currentUser} vessels={activeVessels} canCreate={canCreateTasks&&currentUser.role!=='vessel'} canEdit={canEditBusinessContent&&currentUser.role!=='vessel'} canClose={canCloseTasks&&currentUser.role!=='vessel'} canDelete={canDeleteTasks} canExport={canExportReports} authorizationEpoch={authorizationEpoch} requestedCaseId={requestedInternalControlCaseId} onRequestedCaseHandled={()=>setRequestedInternalControlCaseId('')} onCreate={createInternalCases} onUpdate={saveInternalCase} onWithdrawTaskSync={withdrawInternalCaseTaskSync} onDelete={removeInternalCase} onBatchClose={(caseIds,closedDate)=>batchCompleteTasks([],caseIds,closedDate)} onBatchDelete={caseIds=>batchDeleteTasks([],caseIds)} onOpenTask={taskId=>{const task=data.tasks.find(item=>item.id===taskId);if(task)void openTask(task);else alert('關聯要事不存在');}} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
-      {tab==='tracking'&&currentUser.role!=='vessel'&&<TrackingPage key={`${currentUser.id}:${identitySessionGeneration.current}:${cloudWorkspaceIdentity(getSupabaseConfig())}`} data={roleVisibleData} vessels={activeVessels} user={currentUser} workspace={cloudWorkspaceIdentity(getSupabaseConfig())} identity={trackingIdentity()} canCreate={canCreateTasks} canEdit={canEditBusinessContent} canClose={canCloseTasks} canExport={canExportReports} callbacks={{onPrivateDraftChange:onManagementPrivateDraftChange,captureExport:captureTrackingExport,load:loadTrackingScope,claim:claimTrackingEditor,isWritable:trackingEditorIsWritable,submit:submitTracking,release:releaseTracking,discardRejected:discardTrackingRejected,registerNavigationGuard:guard=>{trackingNavigationGuard.current=guard;},openCase:caseId=>{setRequestedInternalControlCaseId(caseId);void navigateToTab('internalControl');}}}/>}
+      {tab==='tracking'&&currentUser.role!=='vessel'&&<TrackingPage key={`${currentUser.id}:${identitySessionGeneration.current}:${cloudWorkspaceIdentity(getSupabaseConfig())}`} data={roleVisibleData} vessels={activeVessels} user={currentUser} workspace={cloudWorkspaceIdentity(getSupabaseConfig())} identity={trackingIdentity()} canCreate={canCreateTasks} canEdit={canEditBusinessContent} canClose={canCloseTasks} canExport={canExportReports} callbacks={{onPrivateDraftChange:onManagementPrivateDraftChange,captureExport:captureTrackingExport,captureStatistics:captureTrackingStatistics,load:loadTrackingScope,claim:claimTrackingEditor,isWritable:trackingEditorIsWritable,submit:submitTracking,release:releaseTracking,discardRejected:discardTrackingRejected,registerNavigationGuard:guard=>{trackingNavigationGuard.current=guard;},openCase:caseId=>{setRequestedInternalControlCaseId(caseId);void navigateToTab('internalControl');}}}/>}
       {tab==='stats' && <DataAnalysisView data={roleVisibleData} vessels={canViewAllVessels?reportVessels:activeVessels} />}
       {tab==='meeting' && <TemporaryMeetingsPage loadMeetings={loadMeetingScope} authorizationEpoch={authorizationEpoch} data={roleVisibleData} visibleVessels={activeVessels} currentUser={currentUser} canExportReports={canExportReports} canCloseTasks={canCloseTasks&&currentUser.role!=='vessel'} onOpenDecisionTask={openMeetingTaskFromMeetingPage} onTransitionDecisionTask={transitionMeetingTaskFromMeetingPage} setData={setData} commit={commit} claimItemLease={claimExclusiveItemLease} requireItemLease={requireMutationLease} releaseItemLease={releaseExclusiveItemLease} runDurableRelatedMutation={runDurableRelatedMutation} activeItemLeaseKey={activeEditLock?.status==='owned'?activeEditLock.sectionKey:''} />}
 

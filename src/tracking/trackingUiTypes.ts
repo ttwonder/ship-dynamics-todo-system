@@ -2,8 +2,11 @@ import type { AppData } from '../types';
 import type { TrackingContext } from './trackingWorkflow';
 import type { TrackingUiCommand } from './trackingUiCommands';
 import type { TrackingItem } from './trackingTypes';
+import type { TrackingStatisticsQuery } from './trackingStatistics';
+import type { StatisticsCapture, StatisticsVesselScope } from './trackingStatisticsScope';
 export interface TrackingSubmission { command: TrackingUiCommand; context: TrackingContext; identity: string; reporterNameAndRole?: string }
 export interface TrackingUiCallbacks {
+  captureStatistics?: (scope: StatisticsVesselScope, query: TrackingStatisticsQuery) => Promise<StatisticsCapture | null>;
   onPrivateDraftChange?: (token: object, dirty: boolean) => void;
   captureExport?: (vesselId: string) => Promise<{ items: TrackingItem[]; isCurrent: () => boolean } | null>;
   load: (vesselId: string, ids?: string[]) => Promise<AppData | null>;

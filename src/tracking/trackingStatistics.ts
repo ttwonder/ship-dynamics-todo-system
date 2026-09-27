@@ -4,7 +4,7 @@ import { TRACKING_REQUEST_TYPES, type TrackingRequestType } from './trackingRequ
 
 export type StatisticsCategory = TrackingRequestType | 'unclassified';
 export type StatisticsType = StatisticsCategory | 'all' | 'materials' | 'engineering';
-export interface TrackingStatisticsQuery { vesselId: string; from: string; to: string; type: StatisticsType; urgency: 'all' | 'normal' | 'urgent' }
+export interface TrackingStatisticsQuery { vesselId: string; vesselIds?: readonly string[]; from: string; to: string; type: StatisticsType; urgency: 'all' | 'normal' | 'urgent' }
 export const STATISTICS_CATEGORIES = ['semiannual-materials', 'temporary-materials', 'spares', 'repair', 'drydock', 'unclassified'].map(value => ({ value: value as StatisticsCategory, label: TRACKING_REQUEST_TYPES.find(t => t.value === value)?.label || '舊資料未分類' }));
 export const STATISTICS_TYPES = [{ value: 'all', label: '全部類型' }, { value: 'materials', label: '物料（半年／臨時）' }, { value: 'engineering', label: '工程（維修／塢修）' }, ...STATISTICS_CATEGORIES];
 export function statisticsQueryError(query: TrackingStatisticsQuery): string {
@@ -38,7 +38,8 @@ function summarize(rows: StatisticsRow[]) {
 export function calculateTrackingStatistics(items: readonly TrackingItem[], query: TrackingStatisticsQuery, today: string) {
   const error = statisticsQueryError(query); if (error) throw new Error(error);
   if (!validDate(today)) throw new Error('統計基準日期無效。');
-  const rows = [...new Map(items.filter(item => item.vesselId === query.vesselId).map(item => [item.id, item])).values()]
+  const vesselIds = new Set(query.vesselIds ?? [query.vesselId]);
+  const rows = [...new Map(items.filter(item => vesselIds.has(item.vesselId)).map(item => [item.id, item])).values()]
     .map(item => trackingStatisticsFacts(item, today)).filter(row => {
       const item = row.item;
       if ((query.from || query.to) && (!validDate(item.applicationDate) || query.from && item.applicationDate < query.from || query.to && item.applicationDate > query.to)) return false;

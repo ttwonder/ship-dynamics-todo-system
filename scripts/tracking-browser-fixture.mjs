@@ -8,6 +8,7 @@ export async function installTrackingBrowserMigrations(db){
  await db.exec(fs.readFileSync('supabase/migrations/20260924160000_tracking_records.sql','utf8'));
 }
 
-export async function installTrackingFieldRevision(db) {
+export async function installTrackingFieldRevision(db, { fleetStatistics = true } = {}) {
   for(const name of ['20260925020000_edit_lock_holder.sql','20260925080000_ship_tracking_public.sql','20260925160000_tracking_field_revision.sql']) await db.exec(fs.readFileSync('supabase/migrations/'+name,'utf8'));
+  if(fleetStatistics) await db.exec(fs.readFileSync('supabase/migrations/20260927130000_tracking_fleet_statistics.sql','utf8'));
 }

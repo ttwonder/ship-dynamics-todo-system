@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import {trackingBatchLabels} from './tracking-batch-browser-actions.mjs';
 export async function shipTrackingChecks({a,b,page,qa,native,read,source,until,check,evidence}){
  const ship=await page('anonymous-ship','tracking');assert.notEqual(ship.context,a.context);
- const action=(p,ref,label)=>p.activate(`[...(${p.row(ref)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()===${JSON.stringify(label)})`);
+ // These are denied-entry probes: dispatch the toolbar action, then let each
+ // caller assert its actual denial, not an editor that must never open.
+ const action=async(p,ref,label)=>{await p.click('清除選取');await p.tap(`(${p.row(ref)}).querySelector('.tracking-check input')`);await p.click(trackingBatchLabels[label]);};
  const refresh=async()=>{await ship.click('讀取最新資料');await until(()=>ship.eval("[...document.querySelectorAll('button')].some(n=>n.innerText.trim()==='讀取最新資料'&&!n.disabled)"),'ship refresh completed');};
  const active=async()=> (await native.observer.query('select section_key,locked_by,lease_version from ship_dynamics_edit_locks where workspace_key=$1 and expires_at>clock_timestamp() order by section_key',[qa.workspace])).rows;
  await check('anonymous-ship-create-is-visible-in-original-shore-App',async()=>{
