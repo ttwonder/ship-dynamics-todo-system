@@ -18,12 +18,28 @@ try {
   const {newTrackingItem}=await vite.ssrLoadModule('/src/tracking/TrackingModals.tsx');
   for(const kind of ['supply','engineering']){
     const columns=trackingColumnsFor(kind),prefs=defaultTrackingPreferences(columns);
+    assert.deepEqual(prefs.order.slice(0,2),['referenceNo','requestType'],'default type column immediately follows application number');
     assert.deepEqual(prefs.hidden,columns.filter(c=>c.hidden).map(c=>c.key));
     const key=trackingPreferenceKey('workspace','actor',kind);
     const personal={...prefs,widths:{referenceNo:234,normal:52,originalItemNo:64},hidden:[...prefs.hidden,'purchaseNos']};
     writeTrackingPreferences(key,personal);
     assert.deepEqual(readTrackingPreferences(key,columns),personal,'compact widths and existing personal settings survive reload');
     assert.deepEqual(readTrackingPreferences(trackingPreferenceKey('workspace','other',kind),columns),prefs);
+    const legacyBase={order:['referenceNo','description',...columns.map(c=>c.key).filter(k=>!['referenceNo','description','requestType'].includes(k))],hidden:[...prefs.hidden,'purchaseNos'],widths:{referenceNo:234,description:410,requestType:126}};
+    for(const [name,order] of [['missing',legacyBase.order],['appended',[...legacyBase.order,'requestType']],['old-default',columns.map(c=>c.key)]]){
+      store.set(key,JSON.stringify({...legacyBase,order}));
+      const repaired=readTrackingPreferences(key,columns);
+      assert.deepEqual(repaired.order.slice(0,2),['referenceNo','requestType'],`${name} legacy type placement repaired`);
+      assert.deepEqual(repaired.order.filter(k=>k!=='requestType'),order.filter(k=>k!=='requestType'),'other column order retained');
+      assert.deepEqual(repaired.hidden,legacyBase.hidden);assert.deepEqual(repaired.widths,legacyBase.widths);
+      writeTrackingPreferences(key,repaired);assert.deepEqual(readTrackingPreferences(key,columns),repaired,'repair remains stable after save/reload');
+      cases.push(`${kind}-type-order-upgrade-${name}`);
+    }
+    const customLegacy={...legacyBase,order:['referenceNo','description','requestType',...legacyBase.order.slice(2)]};
+    store.set(key,JSON.stringify(customLegacy));
+    assert.deepEqual(readTrackingPreferences(key,columns).order,customLegacy.order,'non-default legacy custom type position retained');
+    const newCustom={...prefs,order:[...prefs.order.filter(k=>k!=='requestType'),'requestType']};
+    writeTrackingPreferences(key,newCustom);assert.deepEqual(readTrackingPreferences(key,columns),newCustom,'user can deliberately move type again after upgrade');
     const row={...newTrackingItem('v1',kind),id:'r1',referenceNo:'QA-001',urgency:'urgent',linkState:'active',linkedCaseId:'case-1'};
     const html=renderToStaticMarkup(React.createElement(TrackingTable,{rows:[row],columns,preferences:prefs,onPreferences:()=>{},sort:{key:'createdAt',direction:'desc'},onSort:()=>{},selected:[],onSelected:()=>{},onOpenCase:()=>{}}));
     assert.ok(!html.includes('tracking-actions'),'operation column removed, not merely hidden');

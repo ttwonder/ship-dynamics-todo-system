@@ -46,6 +46,7 @@ export async function compactChecks(c){
     await call('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile:false});
     await until(async()=>{const g=await measure();return g.top.width===g.body.width&&g.top.scroll===g.body.scroll;},'bar geometry settles');
     const g=await measure();geometry.push({label,width,...g});assert.ok(g.document<=width+1,'document does not overflow');
+    assert.deepEqual(g.headers.slice(0,2).map(h=>h.label),['申請單號(材料或工程)','類型'],'type follows application number on every tab and viewport');
     assert.ok(g.body.scroll>g.body.width);for(const h of g.headers)if(expected[h.label])assert.ok(Math.abs(h.width-expected[h.label])<2,`${h.label} actual width ${h.width}`);
     assert.ok(!await evaluate("Boolean(document.querySelector('.tracking-actions'))"));for(const d of g.dates){assert.equal(d.wrap,'nowrap');assert.ok(d.scroll<=d.width+1,'date fully visible');}
     await evaluate("document.querySelector('.tracking-table-scroll-top').scrollLeft=0");await until(synced,'reset scroll');
@@ -82,6 +83,21 @@ export async function compactChecks(c){
   const after=await measure();assert.ok(after.headers[0].width>=before.width+85);assert.deepEqual(await evaluate("[...document.querySelectorAll('.tracking-check input:checked')].map(n=>n.getAttribute('aria-label'))"),before.selected);assert.equal(await evaluate("document.querySelector('th[aria-sort=ascending],th[aria-sort=descending]')?.textContent"),before.sort);
   await tab('未送船清單');await tab('配件物料總清單');assert.equal((await measure()).headers[0].width,after.headers[0].width,'personal width retained');
   await nodeClick("document.querySelector('.tracking-preferences>summary')");await click('重設欄位配置');assert.equal((await measure()).headers[0].width,120);await nodeClick("document.querySelector('.tracking-preferences>summary')");
+ });
+ await check(`${audience}-legacy-tail-type-repair-preserves-personal-layout`,async()=>{
+  const before=await qa.read(),metricStart=qa.metrics.length;
+  const saved=await evaluate(`(()=>{const key=Object.keys(localStorage).find(k=>{try{const p=JSON.parse(k);return p[0]==='tracking-columns'&&p[3]==='supply-all';}catch{return false;}});if(!key)throw Error('saved layout missing');const value=JSON.parse(localStorage.getItem(key));delete value.requestTypeOrderVersion;value.order=[...value.order.filter(k=>k!=='requestType'),'requestType'];value.widths={referenceNo:198,requestType:107};value.hidden=[...new Set([...value.hidden,'purchaseNos'])];localStorage.setItem(key,JSON.stringify(value));return {key,value};})()`);
+  await tab('未送船清單');await tab('配件物料總清單');
+  await until(async()=>{const g=await measure();return g.headers[0].width===198&&g.headers[1].label==='類型'&&g.headers[1].width===107;},'legacy layout repaired without width reset');
+  const g=await measure();assert.ok(!g.headers.some(h=>h.label==='請購案號(非必填)'),'hidden column stays hidden');
+  geometry.push({label:'legacy-type-repaired',width:1440,...g});
+  await evaluate("document.querySelector('.tracking-table-scroll-top').scrollLeft=0");await until(synced,'legacy repair scroll reset');
+  await screen('type-order-legacy-desktop');
+  await call('Emulation.setDeviceMetricsOverride',{width:390,height:1000,deviceScaleFactor:1,mobile:false});
+  const mobile=await measure();assert.deepEqual(mobile.headers.slice(0,2).map(h=>h.label),['申請單號(材料或工程)','類型']);assert.ok(mobile.document<=391);await screen('type-order-legacy-mobile');
+  assert.deepEqual(await qa.read(),before,'layout repair never modifies business records');
+  assert.deepEqual(qa.metrics.slice(metricStart).filter(m=>/acquire|claim|renew|apply|save/.test(m.rpc)||['claim','submit','renew'].includes(m.action)),[],'layout repair never acquires edit rights or submits');
+  assert.deepEqual(await evaluate(`JSON.parse(localStorage.getItem(${JSON.stringify(saved.key)}))`),saved.value,'reading preferences does not rewrite stored settings');
  });
  fs.writeFileSync(path.join(output,'compact-geometry.json'),JSON.stringify(geometry,null,2));
 }
