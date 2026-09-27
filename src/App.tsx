@@ -5,8 +5,9 @@ import fpmcLogo from './assets/fpmc-logo.png';
 import { createInitialData } from './data/seed';
 import type { AgendaReport, AppData, FilterState, InternalControlCase, MorningReportSnapshot, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, sanitizeAppDataForStorage, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
-import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlockPatchV2UnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, applyCloudBlockPatchV2, claimEditLock, cloudStoragePayloadFor, fetchCloudData as fetchCloudDataRpc, getCloudBlockPatchReceipt, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
-import TrackingPage from './tracking/TrackingPage';
+import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlockPatchV2UnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, applyCloudBlockPatchV2, claimEditLock, cloudStoragePayloadFor, cloudRecordReadScopeFor, fetchCloudData as fetchCloudDataRpc, getCloudBlockPatchReceipt, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
+import { deferredView } from './deferredView';
+const TrackingPage=deferredView(()=>import('./tracking/TrackingPage'));
 import { runTrackingUiCommand } from './tracking/trackingUiCommands';
 import { trackingReceiptKey, type TrackingRecordAttempt } from './tracking/trackingSaveRecovery';
 import type { TrackingSubmission } from './tracking/trackingUiTypes';
@@ -19,10 +20,10 @@ import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot
 import { mergeConfirmedCloudSnapshot } from './cloudConfirmedMerge';
 // Storage-mode fencing lives in cloudConfigIdentity; UI markup is unchanged.
 import { mayOfferFirstRunInitialization, mayPersistLocalSnapshot, trustedMatchingCloudIdentity } from './cloudBootstrapSafety';
-import ManagementView from './Management';
+const ManagementView=deferredView(()=>import('./Management'));
 import { confirmManagementDraftDiscard } from './managementDraft';
-import MorningWorkspaceView from './MorningWorkspace';
-import TemporaryMeetingsPage from './TemporaryMeetings';
+const MorningWorkspaceView=deferredView(()=>import('./MorningWorkspace'));
+const TemporaryMeetingsPage=deferredView(()=>import('./TemporaryMeetings'));
 import { TaskEditModal, VesselEditModal } from './EditModals';
 import { TaskMemberEditor } from './taskMemberEditor';
 import { normalizeAppData } from './normalize';
@@ -31,7 +32,7 @@ import { scrollToDashboardVesselCard } from './dashboardVesselReturn';
 import BatchManagedVesselModal from './BatchManagedVesselModal';
 import VesselDetailPage from './VesselDetailPage';
 import WorkCenter from './WorkCenter';
-import DataAnalysisView from './DataAnalysis';
+const DataAnalysisView=deferredView(()=>import('./DataAnalysis'));
 import { TaskStatisticsEntry } from './PageStatistics';
 import {TaskCreateEntry} from './TaskCreateEntry';
 import type {OpenTaskCreation} from './TaskCreateEntry';
@@ -41,7 +42,7 @@ import { useTaskListColumns } from './useTaskListColumns';
 import { selectUserWorkCenterInternalCases, selectUserWorkCenterTasks, taskBelongsToUserWorkCenter } from './workCenterScope';
 import { markOwnNotificationsRead } from './notificationReadReceipts';
 import { clearDismissalsForNewTaskAssignments, dismissWorkCenterItems, workCenterDismissalId } from './taskDismissals';
-import InternalControlPage from './InternalControlPage';
+const InternalControlPage=deferredView(()=>import('./InternalControlPage'));
 import { closeLinkedInternalControlCaseAfterTaskDelete, createInternalControlCases, deleteInternalControlCase, reconcileInternalControlAfterTaskSave, syncLinkedInternalControlCasesFromTasks, updateInternalControlCase, withdrawInternalControlTaskSync, type InternalControlTaskProjection } from './internalControlData';
 import { buildTaskNotificationsForVessels, buildTaskScopeChangeNotifications, canAccessTab, canAcquireTaskEditLock, canCancelInternalControl, canDeleteTask, canUseVessel, internalControlTransitionRequested, selectInternalControlCasesVisibleToUser, selectTasksVisibleToUser, taskSourceLabel, trustedClosureDate, validateInternalControlTransition } from './taskWorkflow';
 import { repairPendingCompanyLevelNotificationOverflow } from './notificationCompaction';
@@ -82,7 +83,7 @@ import { runDurableCreationHandoff, waitForDurableCreationHandoff, type DurableC
 import { createDurableRelatedMutationHandoff, relatedMutationFailureMessage, relatedMutationLeaseMatches, type DurableRelatedMutationHandoff } from './durableRelatedMutation';
 import { consumeCurrentTaskEditorSession } from './taskEditorSession';
 import { isTaskCreationLockKey, taskCreationLockKey, taskCreationLockMatchesVessel } from './taskCreationLock';
-import { bootstrapFailureHasUnsavedWork, cloudConfigIdentity, cloudWorkspaceIdentity, creationTaskCommitMatches, normalizeStoredCloudWorkspaceIdentity, parseConfirmedCloudBase, parseDurableRevisionFloors, serializeConfirmedCloudBase, serializeDurableRevisionFloors, trustedPersistedBaseForRemote, updateDurableRevisionFloor, withStableCreationAttemptProvenance } from './cloudRecovery';
+import { bootstrapFailureHasUnsavedWork, cloudConfigIdentity, cloudWorkspaceIdentity, creationTaskCommitMatches, normalizeStoredCloudWorkspaceIdentity, parseConfirmedCloudBase, parseConfirmedCloudReadScope, parseDurableRevisionFloors, serializeConfirmedCloudBase, serializeDurableRevisionFloors, trustedPersistedBaseForRemote, updateDurableRevisionFloor, withStableCreationAttemptProvenance } from './cloudRecovery';
 import { CLOUD_SAVE_QUEUE_SECTION_KEY, CLOUD_SAVE_QUEUE_TTL_SECONDS, CloudSaveQueueCancelledError, CloudSaveQueueRpcTimeoutError, CloudSaveQueueTimeoutError, createCloudSaveIntentQueue, createCloudSaveTurnHeartbeat, drainCloudSaveQueueUntilStable, hasUnconfirmedVisibleChanges, runCloudSaveQueueRpc, waitForCloudSaveTurn } from './cloudSaveQueue';
 import { internalControlCreationLockKey, internalControlEditLockKey, isInternalControlCreationLockKey, isMeetingCreationLockKey, meetingCreationLockKey, meetingEditLockKey } from './exclusiveItemEditLock';
 import { resolveItemEditSession } from './itemEditSession';
@@ -635,7 +636,7 @@ export default function App() {
       durableCloudRevisionFloors.current=updateDurableRevisionFloor(durableCloudRevisionFloors.current,identity,snapshot.revision);
       try{localStorage.setItem(CLOUD_REVISION_FLOORS_KEY,serializeDurableRevisionFloors(durableCloudRevisionFloors.current));}catch{/* in-memory floor remains authoritative for this session */}
     }
-    if(identity){try{localStorage.setItem(CLOUD_CONFIRMED_BASE_KEY,serializeConfirmedCloudBase(identity,snapshot));}catch{/* cloud acknowledgement remains authoritative; reload recovery will fail closed */}}
+    if(identity){try{localStorage.setItem(CLOUD_CONFIRMED_BASE_KEY,serializeConfirmedCloudBase(identity,snapshot,cloudRecordReadScopeFor(snapshot)));}catch{/* cloud acknowledgement remains authoritative; reload recovery will fail closed */}}
   };
   const releaseBatchEditLockSnapshot=async(locks:TrackedLeaseToken[],announce=true)=>batchLockCoordinator.current.run(async()=>{
     const released=await releaseTrackedLeases(batchLeaseReleaseState.current,locks,(lock,config)=>runCloudSaveQueueRpc('釋放批量船舶協作鎖',signal=>releaseEditLock(lock.sectionKey,lock.leaseOwnerId,config,signal),8_000));
@@ -1187,8 +1188,20 @@ export default function App() {
       const floor=Math.max(durableCloudRevisionFloors.current.get(historyIdentity)??-1,base?.revision??-1);
       // Discover source before interpreting persisted history; dirty old global
       // intent may expand coverage, but never changes the connection or source.
-      const readScope=authorityConfig(config,binding).readMode==='scoped-v1'&&trustedLocalIdentity&&base&&(!appDataContentEqual(data,base)||(base.trackingItems?.length || 0)>0)?recordRecoveryReadScope(base,data):recordReadScope.current;
-      const remote=await readBoundCloudData(config,binding,undefined,undefined,readScope);
+      const inferredReadScope=authorityConfig(config,binding).readMode==='scoped-v1'&&trustedLocalIdentity&&base&&(!appDataContentEqual(data,base)||(base.trackingItems?.length || 0)>0)?recordRecoveryReadScope(base,data):recordReadScope.current;
+      const savedReadScope=base&&trustedLocalIdentity?parseConfirmedCloudReadScope(localStorage.getItem(CLOUD_CONFIRMED_BASE_KEY),historyIdentity):null;
+      let readScope=authorityConfig(config,binding).readMode==='scoped-v1'&&savedReadScope?(appDataContentEqual(data,base!)?savedReadScope:unionRecordScopes(savedReadScope,inferredReadScope)):inferredReadScope;
+      let remote=await readBoundCloudData(config,binding,undefined,undefined,readScope);
+      // Older confirmed envelopes did not retain coverage. A normalized linked
+      // history cannot always be collapsed back to the SQL home summary. Adopt
+      // an expanded read only when it proves the entire unchanged old baseline.
+      if(!savedReadScope&&authorityConfig(config,binding).readMode==='scoped-v1'&&trustedLocalIdentity&&base&&remote&&remote.revision===base.revision&&appDataContentEqual(data,base)&&!appDataContentEqual(base,remote)&&!cleanRecordHomeCacheMatches(data,base,remote)){
+        const retainedScope=recordRecoveryReadScope(base,data);
+        if(recordScopeKey(retainedScope)!==recordScopeKey(readScope)){
+          const retained=await readBoundCloudData(config,binding,undefined,undefined,retainedScope);
+          if(retained&&retained.revision===remote.revision&&appDataContentEqual(base,retained)){remote=retained;readScope=retainedScope;}
+        }
+      }
       return {remote,binding,base,floor,readScope};
     }).then(({remote,binding,base,floor,readScope}) => {
       if(cancelled||!configIoCoordinator.current.isCurrent(bootstrapToken,getSupabaseConfig()))return;
@@ -4719,8 +4732,17 @@ export default function App() {
           const base=parseConfirmedCloudBase(localStorage.getItem(CLOUD_CONFIRMED_BASE_KEY),historyIdentity);
           const floor=Math.max(durableCloudRevisionFloors.current.get(historyIdentity)??-1,base?.revision??-1);
           const trusted=trustedMatchingCloudIdentity(cachedCloudIdentity,syncIdentity);
-          const scope=authorityConfig(config,binding).readMode==='scoped-v1'&&trusted&&base&&(!appDataContentEqual(liveData.current,base)||(base.trackingItems?.length||0)>0)?recordRecoveryReadScope(base,liveData.current):recordReadScope.current;
-          const snapshot=await readBoundCloudData(config,binding,undefined,undefined,scope);
+          const inferredScope=authorityConfig(config,binding).readMode==='scoped-v1'&&trusted&&base&&(!appDataContentEqual(liveData.current,base)||(base.trackingItems?.length||0)>0)?recordRecoveryReadScope(base,liveData.current):recordReadScope.current;
+          const savedReadScope=base&&trusted?parseConfirmedCloudReadScope(localStorage.getItem(CLOUD_CONFIRMED_BASE_KEY),historyIdentity):null;
+          let scope=authorityConfig(config,binding).readMode==='scoped-v1'&&savedReadScope?(appDataContentEqual(liveData.current,base!)?savedReadScope:unionRecordScopes(savedReadScope,inferredScope)):inferredScope;
+          let snapshot=await readBoundCloudData(config,binding,undefined,undefined,scope);
+          if(!savedReadScope&&authorityConfig(config,binding).readMode==='scoped-v1'&&trusted&&base&&snapshot&&snapshot.revision===base.revision&&appDataContentEqual(liveData.current,base)&&!appDataContentEqual(base,snapshot)&&!cleanRecordHomeCacheMatches(liveData.current,base,snapshot)){
+            const retainedScope=recordRecoveryReadScope(base,liveData.current);
+            if(recordScopeKey(retainedScope)!==recordScopeKey(scope)){
+              const retained=await readBoundCloudData(config,binding,undefined,undefined,retainedScope);
+              if(retained&&retained.revision===snapshot.revision&&appDataContentEqual(base,retained)){snapshot=retained;scope=retainedScope;}
+            }
+          }
           return {binding,base,floor,scope,snapshot};
         });
         if(!syncOwnerIsCurrent()||originalAuthority.current!==authorityOwner||!configIoCoordinator.current.isCurrent(syncToken,getSupabaseConfig()))throw new StaleAsyncConfigError();

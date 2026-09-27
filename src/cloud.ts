@@ -52,6 +52,11 @@ export class CloudBlockPatchRejectedError extends Error{
 }
 
 const rawPayloadByNormalized=new WeakMap<AppData,AppData>();
+const recordReadScopeByNormalized=new WeakMap<AppData,{scope:RecordReadScope;json:string}>();
+export function cloudRecordReadScopeFor(data:AppData):RecordReadScope|undefined{
+  const confirmed=recordReadScopeByNormalized.get(data);
+  return confirmed&&confirmed.json===JSON.stringify(data)?structuredClone(confirmed.scope):undefined;
+}
 const jsonClone=<T>(value:T):T=>JSON.parse(JSON.stringify(value)) as T;
 
 export function cloudStoragePayloadFor(data:AppData):AppData{
@@ -127,7 +132,7 @@ let deltaReadCache: CloudDeltaReadCache | null = null;
 // Bind the full normalized JSON to the private raw snapshot and cache generation.
 const freshnessBases = new WeakMap<AppData, { cache: CloudDeltaReadCache; snapshot: CloudDeltaSnapshot; json: string }>();
 
-const normalizedCloudRead = (payload: Record<string, unknown>, revision: number): AppData => {
+const normalizedCloudRead = (payload: Record<string, unknown>, revision: number, scope?:RecordReadScope): AppData => {
   // Normalize a detached copy; neither the UI nor compatibility normalization may
   // mutate the exact server snapshot/token used by the next delta request.
   const rawPayload = jsonClone(payload) as unknown as AppData;
@@ -136,6 +141,7 @@ const normalizedCloudRead = (payload: Record<string, unknown>, revision: number)
   normalized.revision = revision;
   rawPayload.revision = revision;
   rawPayloadByNormalized.set(normalized, rawPayload);
+  if(scope!==undefined)recordReadScopeByNormalized.set(normalized,{scope:structuredClone(scope),json:JSON.stringify(normalized)});
   return normalized;
 };
 
@@ -277,9 +283,9 @@ async function fetchCloudRecordScope(cfg:ResolvedSupabaseConfig,supabase:Supabas
   if(error)throw error;
   const next=consumeRecordScopes(data,cfg.workspaceKey,scope,base);
   if(scopeCaches.get(scopeKey)!==owner)throw new Error('stale-record-scope-config');
-  if(sequence<owner.published)return owner.snapshot?normalizedCloudRead(recordScopePayload(owner.snapshot),owner.snapshot.revision):null;
+  if(sequence<owner.published)return owner.snapshot?normalizedCloudRead(recordScopePayload(owner.snapshot),owner.snapshot.revision,scope):null;
   if(owner.snapshot&&next&&next.revision<owner.snapshot.revision)throw new Error('record-scope-revision-rollback');
-  const normalized=next?normalizedCloudRead(recordScopePayload(next),next.revision):null;
+  const normalized=next?normalizedCloudRead(recordScopePayload(next),next.revision,scope):null;
   owner.published=sequence;owner.snapshot=next;
   if(next&&(!sharedScopeSnapshot||sharedScopeSnapshot.key!==key||next.revision>=sharedScopeSnapshot.snapshot.revision))sharedScopeSnapshot={key,snapshot:next};
   if(!next&&sharedScopeSnapshot?.key===key)sharedScopeSnapshot=null;

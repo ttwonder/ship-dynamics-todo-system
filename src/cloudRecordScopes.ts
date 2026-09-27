@@ -46,7 +46,7 @@ export function recordRecoveryReadScope(base:AppData,local:AppData):RecordReadSc
     if(!value||typeof value!=='object')return false;
     if(Array.isArray(value))return value.some(hasDetail);
     const row=value as Record<string,unknown>;
-    return Object.prototype.hasOwnProperty.call(row,'snapshot')||(Array.isArray(row.statusLogs)&&row.statusLogs.length>2)||Object.values(row).some(hasDetail);
+    return (Object.prototype.hasOwnProperty.call(row,'snapshot')&&row.snapshot!==undefined)||(Array.isArray(row.statusLogs)&&row.statusLogs.length>2)||Object.values(row).some(hasDetail);
   };
   for(const collection of ['tasks','internalControlCases','meetings','agendaReports','trackingItems'] as const){
     const before=new Map<string,unknown>((base[collection] || []).map((row):[string,unknown]=>[row.id,row]));

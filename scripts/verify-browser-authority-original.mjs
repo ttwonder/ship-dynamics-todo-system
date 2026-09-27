@@ -125,6 +125,11 @@ try{
   receipt.extraMigrationsInstalled.push({file,sha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex')});
  }
  if(process.env.QA_AUTHORITY_BASELINE!=='1')await (await import('./browser-authority-controls.mjs')).verifyBrowserAuthorityControls({native,qa,receipt,save});
+ if(process.env.QA_UI_DIST){
+  assert.equal(process.env.QA_BOOT_RECOVERY,'1','Built UI is limited to the boot-recovery scenario');
+  qa.startupFixture=(await import('./startup-chunk-browser-fixture.mjs')).installStartupBuildFixture(qa,receipt,process.env.QA_UI_BASELINE||process.env.QA_UI_DIST);
+  for(const p of ['scripts/startup-chunk-browser-fixture.mjs','src/deferredView.tsx'])receipt.inputs[p]=hash(fs.readFileSync(p,'utf8'));
+ }
  receipt.origin=qa.origin;assert.equal((await (await fetch(qa.origin+'/__qa/health')).json()).kind,'REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES');
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let socketPath;await until(()=>{try{[chromePort,socketPath]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(chromePort)&&socketPath?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'Chrome handshake');

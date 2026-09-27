@@ -2,8 +2,9 @@ import type { AppData, TaskItem } from './types';
 import type { ResolvedSupabaseConfig } from './cloud';
 import { normalizeAppData } from './normalize';
 import { sanitizeAppDataForStorage } from './utils';
+import type { RecordReadScope } from './cloudRecordScopes';
 
-export type StoredConfirmedCloudBase={identity:string;data:AppData};
+export type StoredConfirmedCloudBase={identity:string;data:AppData;recordReadScope?:RecordReadScope};
 export type StoredDurableRevisionFloors={version:1;floors:[string,number][]};
 export type ParsedDurableRevisionFloors={valid:boolean;floors:Map<string,number>};
 
@@ -52,8 +53,8 @@ export function normalizeStoredCloudWorkspaceIdentity(storedIdentity:string|null
   return legacyUrl===config.supabaseUrl&&legacyTable===config.tableName&&legacyWorkspace===config.workspaceKey?workspace:stored;
 }
 
-export function serializeConfirmedCloudBase(identity:string,data:AppData):string{
-  return JSON.stringify({identity,data:sanitizeAppDataForStorage(data)} satisfies StoredConfirmedCloudBase);
+export function serializeConfirmedCloudBase(identity:string,data:AppData,recordReadScope?:RecordReadScope):string{
+  return JSON.stringify({identity,data:sanitizeAppDataForStorage(data),...(recordReadScope===undefined?{}:{recordReadScope})} satisfies StoredConfirmedCloudBase);
 }
 
 export function parseConfirmedCloudBase(raw:string|null,identity:string):AppData|null{
@@ -62,6 +63,24 @@ export function parseConfirmedCloudBase(raw:string|null,identity:string):AppData
     const envelope=JSON.parse(raw) as Partial<StoredConfirmedCloudBase>;
     if(envelope.identity!==identity)return null;
     return normalizeAppData(envelope.data)||null;
+  }catch{return null;}
+}
+
+/** A read-coverage hint, bound to the same source/epoch as its confirmed base.
+ * It grants no write authority and never reconstructs a pending operation. */
+export function parseConfirmedCloudReadScope(raw:string|null,identity:string):RecordReadScope|null{
+  if(!raw||!identity)return null;
+  try{
+    const stored=JSON.parse(raw);
+    if(stored?.identity!==identity)return null;
+    const scope=stored.recordReadScope;
+    if(scope==='home'||scope==='full'||scope==='morning')return scope;
+    if(!scope||typeof scope!=='object'||Array.isArray(scope)||!Array.isArray(scope.targets))return null;
+    if(Object.keys(scope).some(key=>!['targets','morning','trackingVesselIds'].includes(key)))return null;
+    if('morning' in scope&&scope.morning!==true)return null;
+    if(scope.targets.some((t:unknown)=>!t||typeof t!=='object'||Array.isArray(t)||Object.keys(t).some(k=>k!=='collection'&&k!=='id')||!['tasks','internalControlCases','meetings','agendaReports','trackingItems'].includes((t as {collection:string}).collection)||typeof (t as {id:unknown}).id!=='string'||!(t as {id:string}).id))return null;
+    if('trackingVesselIds' in scope&&(!Array.isArray(scope.trackingVesselIds)||scope.trackingVesselIds.some((id:unknown)=>typeof id!=='string'||!id)))return null;
+    return scope as RecordReadScope;
   }catch{return null;}
 }
 

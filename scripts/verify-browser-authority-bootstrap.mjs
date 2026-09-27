@@ -38,7 +38,7 @@ try{
   const selectedIdentity=recovery.cloudWorkspaceIdentity(selectedConfig),selectedHistory=authority.authorityFloorIdentity(selectedIdentity,selectedBinding);
   const settled=deferred(),local=structuredClone(options.local??base),remote=structuredClone(options.remote??base);
   const floors=new Map([[selectedIdentity,900],[selectedHistory,options.floor??10]]);
-  const store=new Map([['cache',JSON.stringify(local)],['owner',selectedIdentity],['base',recovery.serializeConfirmedCloudBase(options.oldSource?selectedIdentity:selectedHistory,options.confirmedBase??base)],['floors',recovery.serializeDurableRevisionFloors(floors)]]),initial=new Map(store);
+  const store=new Map([['cache',JSON.stringify(local)],['owner',selectedIdentity],['base',JSON.stringify({...JSON.parse(recovery.serializeConfirmedCloudBase(options.oldSource?selectedIdentity:selectedHistory,options.confirmedBase??base)),...(options.persistedReadScope?{recordReadScope:options.persistedReadScope}:{})})],['floors',recovery.serializeDurableRevisionFloors(floors)]]),initial=new Map(store);
   const state={config:{...selectedConfig},reads:[],businessReads:[],writes:[],publications:[],submissions:[],fallbackReads:0,phase:null,blocked:null,bootstrapped:false,status:''};
   const context={console,Math,...recovery,...authority,appDataContentEqual,trustedMatchingCloudIdentity,data:local,
    STORAGE_KEY:'cache',CLOUD_CONFIRMED_BASE_KEY:'base',CLOUD_REVISION_FLOORS_KEY:'floors',CLOUD_CACHE_IDENTITY_KEY:'owner',
@@ -47,7 +47,7 @@ try{
    sameCloudConfig:(a,b)=>recovery.cloudConfigIdentity(a)===recovery.cloudConfigIdentity(b),
    cachedCloudIdentityFor:()=>store.get('owner'),durableRevisionFloorRegistryIsValid:()=>recovery.parseDurableRevisionFloors(store.get('floors')).valid,
    durableCloudRevisionFloors:{current:floors},confirmedCloudData:{current:null},originalAuthority:{current:null},activeCloudIdentity:{current:''},lastCloudRevision:{current:-1},hasUnsavedWork:{current:false},recordReadScope:{current:'home'},homeReadCache:{current:null},
-   recordRecoveryReadScope:()=> 'full',cleanRecordHomeCacheMatches:()=>false,
+   recordRecoveryReadScope:()=> 'full',cleanRecordHomeCacheMatches:()=>false,cloudRecordReadScopeFor:()=>options.persistedReadScope,
    setCloudInitializationAllowed:()=>{},setCloudWriteBlocked:v=>{state.blocked=v;},setSavePhase:v=>{state.phase=v;},setCloudStatus:v=>{state.status=v;},
    setCloudBootstrapped:v=>{state.bootstrapped=v;settled.resolve();},setData:v=>state.publications.push(v),savedStatus:()=> 'confirmed',rememberCloudIdentity:()=>{},
    readBrowserAuthority:async()=>{state.reads.push('authority');if(options.authority) return options.authority();return selectedBinding;},
@@ -150,6 +150,35 @@ try{
   x=await setup({authority:async()=>{if(!recoveredTransport)throw new Error('transient');return binding;},business:async()=>{throw new authority.BrowserAuthorityError(code);}});await x.finish();
   recoveredTransport=true;await x.context.syncLatest();untouched(x);assert.equal(x.context.originalAuthority.current,null);assert.equal(x.state.submissions.length,0);assert.equal(x.state.blocked,true);pass('BOOT-REC06-'+code+'-blocked');
  }
+ for(const scope of ['full',{targets:[{collection:'tasks',id:'qa-detail'}],trackingVesselIds:['qa-v1']}]){
+  x=await setup({binding:records,persistedReadScope:scope});await x.finish();
+  assert.deepEqual(x.state.businessReads[0].scope,scope,'reload must read the exact confirmed coverage, not guess a home summary');
+  assert.equal(x.state.blocked,false);pass('BOOT-SCOPE01-'+(typeof scope==='string'?scope:'targets'));
+ }
+ recoveredTransport=false;
+ const savedScope={targets:[{collection:'tasks',id:'qa-detail'}]};
+ x=await setup({binding:records,persistedReadScope:savedScope,authority:async()=>{if(!recoveredTransport)throw new Error('transient');return records;}});await x.finish();
+ recoveredTransport=true;await x.context.syncLatest();assert.deepEqual(x.state.businessReads[0].scope,savedScope);assert.equal(x.state.blocked,false);pass('BOOT-SCOPE02-explicit-recovery-retains-coverage');
+ const scopeEnvelope=recovery.serializeConfirmedCloudBase(historyIdentity,base,savedScope);
+ assert.deepEqual(recovery.parseConfirmedCloudReadScope(scopeEnvelope,historyIdentity),savedScope);
+ assert.equal(recovery.parseConfirmedCloudReadScope(scopeEnvelope,identity),null);
+ assert.equal(recovery.parseConfirmedCloudReadScope(recovery.serializeConfirmedCloudBase(historyIdentity,base),historyIdentity),null);
+ for(const invalid of [null,[],{targets:'all'},{targets:[{collection:'users',id:'qa-owner'}]},{targets:[],morning:false},{targets:[],trackingVesselIds:[null]},{targets:[],unknown:true}])assert.equal(recovery.parseConfirmedCloudReadScope(JSON.stringify({identity:historyIdentity,recordReadScope:invalid}),historyIdentity),null);
+ pass('BOOT-SCOPE03-read-hint-validation-and-source-binding');
+ const nonCollapsibleHome=structuredClone(full);nonCollapsibleHome.tasks[0].statusLogs=full.tasks[0].statusLogs.slice(0,3);
+ const rewrittenFull=structuredClone(full);rewrittenFull.tasks[0].description+=' same-revision rewrite';
+ for(const mode of ['bootstrap','recovery'])for(const rewritten of [false,true]){
+  let ready=mode==='bootstrap';
+  x=await setup({binding:records,config:rawConfig,local:full,confirmedBase:full,authority:async()=>{if(!ready)throw new Error('transient');return records;},business:scope=>scope==='home'?nonCollapsibleHome:rewritten?rewrittenFull:full});await x.finish();
+  if(!ready){ready=true;await x.context.syncLatest();}
+  assert.equal(x.state.businessReads.length,2,'legacy read coverage has one bounded recovery read');
+  assert.equal(x.state.blocked,rewritten);assert.equal(x.state.submissions.length,0);
+  if(rewritten)untouched(x);else assert.ok(appDataContentEqual(x.state.publications.at(-1),full));
+  pass('BOOT-SCOPE04-legacy-'+mode+'-'+(rewritten?'rewritten-rejected':'exact-confirmed'));
+ }
+ const summarizedReports=structuredClone(base);summarizedReports.agendaReports=[{...base.agendaReports[0],id:'summary-only',snapshot:undefined,__recordSnapshotAvailable:true}];
+ assert.ok(!scopes.recordRecoveryReadScope(summarizedReports,summarizedReports).targets?.some(t=>t.collection==='agendaReports'),'an undefined normalized snapshot must not promote a report summary');
+ pass('BOOT-SCOPE05-undefined-snapshot-is-not-loaded-detail');
  assert.equal(new Set(ids).size,ids.length);
  console.log(JSON.stringify({status:'PASS',layer:'current-App-effect-controlled-reads',caseIds:ids,caseCount:ids.length,appSourceSha256:createHash('sha256').update(text).digest('hex'),nativeOrHostedClaim:false}));
 }finally{await server.close();}

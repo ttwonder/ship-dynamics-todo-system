@@ -30,7 +30,7 @@ try{
   return response;
  };
  const cfg={supabaseUrl:qa.origin,supabaseAnonKey:'isolated-qa-not-a-service-key',workspaceKey:qa.workspace,tableName:'ship_dynamics_app_state',storageMode:'records-v1',readMode:'scoped-v1'};
- const {fetchCloudData,cloudStoragePayloadFor}=await qa.loadModule('/src/cloud.ts');
+ const {fetchCloudData,cloudStoragePayloadFor,cloudRecordReadScopeFor}=await qa.loadModule('/src/cloud.ts');
  const {consumeRecordScopes,recordScopePayload,assertRecordScopePatch}=await qa.loadModule('/src/cloudRecordScopes.ts');
  const baseline=await qa.read();
  const home=await fetchCloudData(cfg,undefined,undefined,'home');
@@ -38,9 +38,14 @@ try{
  assert.ok(cold.rows>5);assert.equal(cold.versionRows,0);
  receipt.cases.push({id:'home-cold',status:'PASS'});
  // Returned view objects must never mutate the transport's verified cache.
+ assert.equal(cloudRecordReadScopeFor(home),'home');
  home.vessels[0].name='UNSAVED CALLER MUTATION';
+ assert.equal(cloudRecordReadScopeFor(home),undefined,'mutated model cannot export confirmed coverage');
  const scope={targets:[{collection:'tasks',id:'qa-unrelated-task'}]};
  const target=await fetchCloudData(cfg,undefined,undefined,scope);
+ assert.deepEqual(cloudRecordReadScopeFor(target),scope);
+ const detachedScope=cloudRecordReadScopeFor(target);detachedScope.targets.push({collection:'tasks',id:'not-confirmed'});
+ assert.deepEqual(cloudRecordReadScopeFor(target),scope,'callers cannot mutate confirmed coverage');
  const request=receipt.requests.filter(r=>r.rpc===readRpc).at(-1);
  assert.equal(request.versionRows,cold.rows,'new target must reuse all verified home versions instead of an empty scope cache');
  assert.ok(request.rows>0&&request.rows<cold.rows,'only changed detail coverage is transferred');
