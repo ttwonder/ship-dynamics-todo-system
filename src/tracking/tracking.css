@@ -17,6 +17,8 @@
 .tracking-options>details,.tracking-options>details::details-content{display:contents}
 .tracking-options>details>summary{grid-row:1;white-space:nowrap}
 .tracking-all-filters>summary{grid-column:1}.tracking-preferences>summary{grid-column:2}
+.tracking-options>.tracking-notice{grid-column:3;grid-row:1;align-self:center;min-width:0;margin:0;padding:4px 8px}
+@media(max-width:700px){.tracking-options>.tracking-notice{grid-column:1/-1;grid-row:2}.tracking-options:has(>.tracking-notice)>.tracking-all-filters>.tracking-option-panel{grid-row:3}.tracking-options:has(>.tracking-notice)>.tracking-preferences>.tracking-option-panel{grid-row:4}}
 .tracking-option-panel{grid-column:1/-1;min-width:0;padding:6px;border:1px solid var(--line);border-radius:7px;background:var(--tracking-paper)}
 .tracking-all-filters>.tracking-option-panel{grid-row:2}.tracking-preferences>.tracking-option-panel{grid-row:3}
 .tracking-options>details:not([open])>.tracking-option-panel{display:none}

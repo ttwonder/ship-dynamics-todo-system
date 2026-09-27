@@ -34,6 +34,42 @@ export async function compactChecks(c){
   assert.deepEqual(qa.metrics.slice(metricStart).filter(m=>/acquire|claim|renew|apply|save/.test(m.rpc)||['claim','submit','renew'].includes(m.action)),[]);
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
  });
+ await check(`${audience}-notice-shares-options-row-and-wraps-without-hiding-panels`,async()=>{
+  const before=await qa.read(),metricStart=qa.metrics.length;
+  const message='船舶、標籤或條件已切換；已清除原選取。';
+  await choose([audience==='ship'?'BROWSER-001':'UI-001']);
+  await until(()=>evaluate("document.querySelector('.tracking-toolbar>b').innerText==='已選 1 項'"),'notice selection precondition');
+  await click('緊急');
+  await until(()=>evaluate(`document.querySelector('.tracking-page .tracking-notice')?.textContent===${JSON.stringify(message)}`),'original selection-cleared notice');
+  assert.equal(await evaluate("document.querySelector('.tracking-toolbar>b').innerText"),'已選 0 項');
+  await click('緊急');
+  const layout=()=>evaluate(`(()=>{const box=n=>{const r=n.getBoundingClientRect();return{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:n.clientWidth,scroll:n.scrollWidth}};const notice=document.querySelector('.tracking-page .tracking-notice');return{viewport:innerWidth,document:document.documentElement.scrollWidth,notice:{...box(notice),text:notice.textContent,role:notice.getAttribute('role')},noticeCount:document.querySelectorAll('.tracking-page .tracking-notice').length,summaries:[...document.querySelectorAll('.tracking-options>details>summary')].map(box),panels:[...document.querySelectorAll('.tracking-options>details[open]>.tracking-option-panel')].map(box)};})()`);
+  for(const width of [1440,390]){
+   await call('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile:false});
+   await evaluate("document.querySelector('.tracking-options').scrollIntoView({block:'center'})");
+   const g=await layout();fs.writeFileSync(path.join(output,`notice-layout-${width}.json`),JSON.stringify(g,null,2));await screen(`notice-inline-${width}`);
+   assert.equal(g.noticeCount,1,'the original live status must not be duplicated');assert.equal(g.notice.role,'status');assert.equal(g.notice.text,message);
+   assert.ok(g.document<=width+1&&g.notice.scroll<=g.notice.width+1,'full notice wraps without page overflow');
+   assert.equal(g.summaries.length,2);
+   if(width>700){
+    for(const summary of g.summaries)assert.ok(g.notice.top<summary.bottom&&g.notice.bottom>summary.top,'desktop notice shares the filters/settings row');
+    assert.ok(g.notice.left>=g.summaries[1].right,'notice stays to the right of both controls');
+   }else assert.ok(g.notice.top>=Math.max(...g.summaries.map(r=>r.bottom)),'mobile notice wraps below the controls');
+   for(const selector of ['.tracking-all-filters','.tracking-preferences'])await nodeClick(`document.querySelector('${selector}>summary')`);
+   const opened=await layout();assert.equal(opened.panels.length,2);
+   assert.ok(opened.panels[0].top>=Math.max(opened.notice.bottom,...opened.summaries.map(r=>r.bottom)),'filter panel does not overlap notice');
+   assert.ok(opened.panels[1].top>=opened.panels[0].bottom,'settings follow the filter panel');
+   assert.ok(opened.panels.every(r=>r.scroll<=r.width+1),'expanded panels stay readable');await screen(`notice-panels-open-${width}`);
+   for(const selector of ['.tracking-preferences','.tracking-all-filters'])await nodeClick(`document.querySelector('${selector}>summary')`);
+  }
+  await click('統計資訊');await until(()=>evaluate("Boolean(document.querySelector('.tracking-statistics'))"),'statistics retains status without list controls');
+  assert.equal(await evaluate("document.querySelectorAll('.tracking-page>.tracking-notice').length"),1,'statistics fallback status remains visible');
+  assert.equal(await evaluate("document.querySelector('.tracking-page>.tracking-notice').textContent"),message);
+  await tab('未送船清單');
+  assert.deepEqual(await qa.read(),before,'moving and displaying notices must not change business data');
+  assert.deepEqual(qa.metrics.slice(metricStart).filter(m=>/acquire|claim|renew|apply|save/.test(m.rpc)||['claim','submit','renew'].includes(m.action)),[],'view-only actions never obtain edit rights or submit');
+  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+ });
  await check(`${audience}-compact-fixture-and-toolbar-real-saves`,async()=>{
   await click('＋ 新增／批量新增');
   for(let i=1;i<=4;i++){
