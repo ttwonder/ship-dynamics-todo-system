@@ -16,8 +16,16 @@ try {
   assert.equal(TRACKING_COLUMNS.find(c=>c.key==='closureOutcome').width,155);
   const {TrackingTable}=await vite.ssrLoadModule('/src/tracking/TrackingTable.tsx');
   const {newTrackingItem}=await vite.ssrLoadModule('/src/tracking/TrackingModals.tsx');
+  const {default:TrackingExports}=await vite.ssrLoadModule('/src/tracking/TrackingExports.tsx');
   for(const kind of ['supply','engineering']){
     const columns=trackingColumnsFor(kind),prefs=defaultTrackingPreferences(columns);
+    for(const blocked of [false,true]){
+      const markup=renderToStaticMarkup(React.createElement(TrackingExports,{query:{vesselId:'v1',tab:kind==='supply'?'supply-all':'engineering-open',filters:{},sort:{key:'createdAt',direction:'desc'}},preferences:prefs,selected:[],vesselName:'測試輪 QA SHIP',identity:'qa',workspace:'qa',callbacks:{},blocked,count:0}));
+      const buttons=[...markup.matchAll(/<button\b([^>]*)>([^<]*)<\/button>/g)];
+      assert.deepEqual(buttons.map(m=>m[2]),['導出excel','導出pdf','配件物料模板','工程模板'],'export entry labels follow the requested wording; templates are unchanged');
+      assert.ok(buttons.every(m=>m[1].includes('disabled=""')===blocked),'renamed export entries retain the existing blocked state');
+    }
+    cases.push(`${kind}-explicit-export-entry-labels-and-blocked-state`);
     assert.deepEqual(prefs.order.slice(0,2),['referenceNo','requestType'],'default type column immediately follows application number');
     assert.deepEqual(prefs.hidden,columns.filter(c=>c.hidden).map(c=>c.key));
     const key=trackingPreferenceKey('workspace','actor',kind);

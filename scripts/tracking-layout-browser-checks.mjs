@@ -31,7 +31,7 @@ export async function layoutChecks(c) {
   await rowAction('UI-001','進度');
   geometry.mobileProgress=await evaluate(`(()=>{const n=document.querySelector('[aria-label="UI-001 最新進度"]');return{input:n.getBoundingClientRect().width,document:document.documentElement.scrollWidth,viewport:innerWidth};})()`);
   await screen('tracking-layout-progress-mobile');await click('取消');await finishEditor();
-  await click('Excel');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=跟蹤匯出]'))"),'mobile moved export');
+  await click('導出excel');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=跟蹤匯出]'))"),'mobile moved export');
   geometry.mobileExport=await evaluate(`(()=>{const modal=document.querySelector('[aria-label=跟蹤匯出]');return{viewport:innerWidth,document:document.documentElement.scrollWidth,controls:[...modal.querySelectorAll('select')].map(n=>({label:n.getAttribute('aria-label'),width:n.getBoundingClientRect().width,computedWidth:getComputedStyle(n).width,right:n.getBoundingClientRect().right}))};})()`);
   await screen('tracking-layout-export-mobile');await click('關閉匯出');
   fs.writeFileSync(path.join(output,'layout-geometry.json'),JSON.stringify(geometry,null,2));
@@ -60,7 +60,7 @@ export async function layoutChecks(c) {
     await toggle('全部欄位篩選');await nodeClick("document.querySelector('[aria-label=\"申請單號(材料或工程)篩選內容\"]')");await nodeClick("[...document.querySelectorAll('[aria-label=\"申請單號(材料或工程)多選\"] label')].find(n=>n.textContent==='UI-001').querySelector('input')");
     assert.ok(await evaluate("document.querySelector('[aria-label=有效篩選]').innerText.includes('申請單號(材料或工程)')"));
     await click('清除條件');await toggle('全部欄位篩選');
-    await click('Excel');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=跟蹤匯出]'))"),'moved export');
+    await click('導出excel');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=跟蹤匯出]'))"),'moved export');
     await click('建立共用快照');await until(()=>evaluate("Boolean([...document.querySelectorAll('button')].find(n=>n.innerText==='下載 XLSX'))"),'confirmed export capture');
     await click('關閉匯出');
     const updates=['零件訂購已確認','供應商已完成備貨，等待安排交船'];

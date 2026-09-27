@@ -16,6 +16,24 @@ export async function compactChecks(c){
  const save=async n=>{await click(`確認保存 ${n} 項`);await finish();};
  const expected={'申請單號(材料或工程)':120,'請購案號(非必填)':120,'原項次':64,'申請/開單日期':112,'類型':88,'內容摘要/工程內容':300,'期望完成日期/DL':112,'實際送達/完工日期':112,'普通':52,'緊急':52,'補充說明':160,'最新進度':170,'送船狀態':88,'結案狀態':80,'結案日期':112,'內控同步':96};
  const geometry=[];
+ await check(`${audience}-explicit-export-labels-desktop-mobile-and-unchanged-entry`,async()=>{
+  const before=await qa.read(),metricStart=qa.metrics.length;
+  for(const width of [1440,390]){
+   await call('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile:false});
+   await until(()=>evaluate("document.querySelectorAll('.tracking-export-actions button:not(:disabled)').length===4"),'export entries ready');
+   assert.deepEqual(await evaluate("[...document.querySelectorAll('.tracking-export-actions button')].map(n=>n.innerText)"),['導出excel','導出pdf','配件物料模板','工程模板']);
+   assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'),'longer labels must not cause page overflow');
+   await screen(`export-entry-labels-${width}`);
+   for(const label of ['導出excel','導出pdf']){
+    await click(label);await until(()=>evaluate("Boolean(document.querySelector('[aria-label=跟蹤匯出]'))"),'same export dialog');
+    assert.ok(await evaluate("Boolean([...document.querySelectorAll('button')].find(n=>n.innerText==='建立共用快照'))"),'original confirmed-snapshot workflow retained');
+    await click('關閉匯出');await until(()=>evaluate("!document.querySelector('[aria-label=跟蹤匯出]')"),'export dialog closed');
+   }
+  }
+  assert.deepEqual(await qa.read(),before,'renamed entries never mutate business data');
+  assert.deepEqual(qa.metrics.slice(metricStart).filter(m=>/acquire|claim|renew|apply|save/.test(m.rpc)||['claim','submit','renew'].includes(m.action)),[]);
+  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+ });
  await check(`${audience}-compact-fixture-and-toolbar-real-saves`,async()=>{
   await click('＋ 新增／批量新增');
   for(let i=1;i<=4;i++){
