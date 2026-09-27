@@ -93,6 +93,6 @@ export async function importRecoveryChecks(c) {
     assert.equal(after.payload.internalControlCases.length,beforeClose.payload.internalControlCases.length);
     await click('關閉導入');await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(b=>b.innerText.startsWith('已完成工程單'))");
     await until(()=>evaluate(`Boolean(document.querySelector('[data-tracking-id="${row.id}"]'))`),'closed import bucket');
-    assert.ok((await text()).includes('取消（非完工）'));await screen('import-explicit-cancelled-closure');
+    assert.ok(await evaluate(`document.querySelector('[data-tracking-id="${row.id}"]').textContent.includes('取消結案')`));await screen('import-explicit-cancelled-closure');
   });
 }

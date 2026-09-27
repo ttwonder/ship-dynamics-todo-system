@@ -73,7 +73,8 @@ export async function parseTrackingWorkbook(input: ArrayBuffer | Uint8Array, fil
       if (k !== 'supply' && k !== 'engineering') throw new Error('模板資料類型不明。');
       kind=k; header=keyRow+1; start=header+1; format=TRACKING_XLSX_VERSION;
       sheet.getRow(keyRow).eachCell({includeEmpty:true},(cell,c)=>{keys[c-1]=cell.text.replace(/^tracking:/,'');});
-      const known=new Set([...trackingColumnsFor(kind).map(c=>c.key),...TRACKING_LEGACY_EDIT_FIELDS,'vesselId']);
+      // Export-only ordinal is accepted for round trips but is never assigned to an item.
+      const known=new Set([...trackingColumnsFor(kind).map(c=>c.key),...TRACKING_LEGACY_EDIT_FIELDS,'vesselId','exportOrdinal']);
       if(keys.some(k=>!known.has(k)) || new Set(keys).size!==keys.length) throw new Error('模板欄位映射不明或重複，請使用新空白模板。');
     } else {
       for (let r=1; r<=Math.min(20,sheet.rowCount); r++) {

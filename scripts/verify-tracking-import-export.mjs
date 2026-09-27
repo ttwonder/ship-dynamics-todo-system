@@ -53,6 +53,37 @@ try {
   if(process.env.QA_OUTPUT)fs.writeFileSync(path.join(process.env.QA_OUTPUT,'neutral-full-export.xlsx'),Buffer.from(output));
   for(const kind of ['supply','engineering']){const template=await excel.buildTrackingTemplate(kind,'中性船 NEUTRAL VESSEL',source.vesselId);const t=new ExcelJS.Workbook();await t.xlsx.load(template);assert.equal(t.worksheets[0].rowCount,14,'all ten blank input rows remain');assertTableBorders(t);const p=await api.parseTrackingWorkbook(template,'template.xlsx',source.vesselId);assert.equal(p.sheets[0].rows.length,0);assert.ok(p.sheets[0].mapping.some(m=>m.field==='expectedDate'));if(process.env.QA_OUTPUT)fs.writeFileSync(path.join(process.env.QA_OUTPUT,`template-${kind}.xlsx`),Buffer.from(template));}
  });
+ await check('export-item-numbers-are-contiguous-and-never-replace-original-items',async()=>{
+  const {makeTrackingReport,compactTrackingColumns}=await vite.ssrLoadModule('/src/tracking/trackingReport.ts');
+  const {trackingColumnsFor}=await vite.ssrLoadModule('/src/tracking/trackingColumns.ts');
+  const {selectTrackingRows}=await vite.ssrLoadModule('/src/tracking/trackingFilters.ts');
+  for(const kind of ['supply','engineering']){
+   const sources=Array.from({length:12},(_,i)=>({...item,kind,id:`${kind}-${i}`,referenceNo:i<2?'SAME-REF':`REF-${String(i).padStart(2,'0')}`,originalItemNo:String(88-i*3),description:'完整內容 '+i+(i===0?'長內容'.repeat(600):''),isClosed:false,source:undefined}));
+   const before=structuredClone(sources);
+   const sorted=selectTrackingRows(sources,{vesselId:item.vesselId,tab:kind==='supply'?'supply-all':'engineering-open',filters:{},search:'REF',sort:{key:'referenceNo',direction:'desc'}});
+   for(const [scope,rows] of [['all',sorted],['selected',sorted.filter(r=>[`${kind}-0`,`${kind}-7`].includes(r.id))],['empty',[]]]){
+    const columns=scope==='selected'?compactTrackingColumns(kind):trackingColumnsFor(kind);
+    const report=makeTrackingReport(rows,columns,{vesselId:item.vesselId,vesselName:'編號測試輪 QA',kind,title:'序號測試',generatedAt:'2026-09-27T00:00:00Z',summary:`${rows.length} 項`,selection:scope==='selected'?'selected':'all'});
+    const bytes=await excel.buildTrackingWorkbook(report);const wb=new ExcelJS.Workbook();await wb.xlsx.load(bytes);assertTableBorders(wb);
+    const dataSheet=wb.getWorksheet('跟蹤資料'),detail=wb.getWorksheet('列印明細'),expected=rows.map((_,i)=>i+1);
+    assert.equal(dataSheet.getCell('A4').text,'序號','export-only ordinal is visible before the unchanged source columns');
+    assert.equal(dataSheet.getCell('A3').text,'tracking:exportOrdinal');
+    assert.deepEqual(Array.from({length:dataSheet.rowCount-4},(_,i)=>dataSheet.getCell(i+5,1).value),expected,'data sheet numbers actual exported items, not page rows or original items');
+    const nonblank=[];for(let r=5;r<=detail.rowCount;r++){const value=detail.getCell(r,1).value;if(value!==null&&value!=='')nonblank.push(Number(value));}
+    assert.deepEqual(nonblank,expected,'detailed/continuation rows must not repeat the item number');
+    const reimport=await api.parseTrackingWorkbook(bytes,'numbered-export.xlsx',item.vesselId);
+    assert.deepEqual(reimport.sheets[0].rows.map(r=>r.exportedId),rows.map(r=>r.id));
+    assert.deepEqual(reimport.sheets[0].rows.map(r=>r.item.referenceNo),rows.map(r=>r.referenceNo));
+    assert.ok(reimport.sheets[0].rows.every(r=>!Object.hasOwn(r.item,'exportOrdinal')),'display number is not a business field');
+    if(columns.some(c=>c.key==='originalItemNo'))assert.deepEqual(reimport.sheets[0].rows.map(r=>r.item.originalItemNo),rows.map(r=>r.originalItemNo));
+    assert.ok(dataSheet.getCell('A2').text.includes(`${rows.length} 項`));assert.ok(detail.getCell('A2').text.includes(`${rows.length} 項`));
+    if(process.env.QA_OUTPUT)fs.writeFileSync(path.join(process.env.QA_OUTPUT,`numbering-${kind}-${scope}.xlsx`),Buffer.from(bytes));
+   }
+   assert.deepEqual(sources,before,'exports do not renumber source records');
+   const template=new ExcelJS.Workbook();await template.xlsx.load(await excel.buildTrackingWorkbook(makeTrackingReport([],trackingColumnsFor(kind),{vesselId:item.vesselId,vesselName:'QA',kind,title:'模板',generatedAt:'2026-09-27T00:00:00Z',summary:'空白模板',selection:'all'}),true));
+   assert.ok(!template.getWorksheet('填寫資料').getRow(3).values.includes('tracking:exportOrdinal'),'blank input templates retain their existing coordinates');
+  }
+ });
  await check('ambiguous-dates-invalid-selection-and-explicit-duplicate-confirmation',()=>{
   for(const value of [20260901,'2026/9/1',new Date('2026-09-01T00:00:00Z')])assert.equal(api.parseTrackingDate(value),'2026-09-01');
   for(const value of ['20260931','20260901/20260903','取消',60])assert.equal(api.parseTrackingDate(value),null);

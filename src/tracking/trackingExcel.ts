@@ -32,6 +32,8 @@ function formatSheet(sheet:ExcelJS.Worksheet,widths:number[],header:number,paper
 export async function buildTrackingWorkbook(report:TrackingReport,template=false):Promise<ArrayBuffer>{
  const runtime=await import('exceljs');const book=new(runtime.Workbook||runtime.default.Workbook)();book.creator='Ship Dynamics';
  const columns=[...report.columns];
+ // Report-only numbering never replaces the original item number or template fields.
+ if(!template)columns.unshift({key:'exportOrdinal',label:'序號',type:'text',width:49});
  // The immutable exported identity travels even when the personal ID column is hidden.
  if(!columns.some(c=>c.key==='id'))columns.push({key:'id',label:'系統 ID（僅辨識，不覆寫）',type:'text',width:230});
  columns.push({key:'vesselId',label:'來源船舶 ID（僅辨識）',type:'text',width:180});
@@ -39,8 +41,9 @@ export async function buildTrackingWorkbook(report:TrackingReport,template=false
  sheet.mergeCells(1,1,1,columns.length);sheet.getCell('A1').value=`${report.vesselName}｜${report.title}`;
  sheet.mergeCells(2,1,2,columns.length);sheet.getCell('A2').value=`${report.summary}\n匯出時間（台北）${formatTaipeiDateTime(report.generatedAt)}｜${report.rows.length} 項｜欄位超寬請列印「列印明細」，不必縮小資料字型。`;
  sheet.addRow(columns.map(c=>'tracking:'+c.key));sheet.addRow(columns.map(c=>c.label));
- for(const row of report.rows){
+ for(const [index,row] of report.rows.entries()){
   const values=columns.map(c=>{
+   if(c.key==='exportOrdinal')return index+1;
    const text=c.key==='id'?row.id:c.key==='vesselId'?report.vesselId:row.values[c.key]||'';
    if(text.length>32767)throw new Error(`項目 ${row.item.referenceNo} 的「${c.label}」超過 Excel 單格 32767 字元；未匯出截斷檔，請改用完整 PDF。`);
    if(c.type==='date'&&/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(text)){const d=new Date(text.length===10?text+'T00:00:00Z':text);if(Number.isFinite(d.getTime()))return d;}
@@ -48,9 +51,9 @@ export async function buildTrackingWorkbook(report:TrackingReport,template=false
   });sheet.addRow(values);
  }
  if(template)for(let i=0;i<10;i++)sheet.addRow(columns.map(()=>null));
- formatSheet(sheet,columns.map(c=>c.type==='date'?14:Math.min(45,Math.max(12,c.width/7))),4,8);
+ formatSheet(sheet,columns.map(c=>c.key==='exportOrdinal'?7:c.type==='date'?14:Math.min(45,Math.max(12,c.width/7))),4,8);
  sheet.getRow(3).hidden=true;
- columns.forEach((c,i)=>{const col=sheet.getColumn(i+1);col.numFmt=c.type==='date'?['createdAt','updatedAt'].includes(c.key)?'yyyy-mm-dd hh:mm:ss':'yyyy-mm-dd':'@';if(c.key==='vesselId'||(c.key==='id'&&!report.columns.some(x=>x.key==='id')))col.hidden=true;});
+ columns.forEach((c,i)=>{const col=sheet.getColumn(i+1);col.numFmt=c.key==='exportOrdinal'?'0':c.type==='date'?['createdAt','updatedAt'].includes(c.key)?'yyyy-mm-dd hh:mm:ss':'yyyy-mm-dd':'@';if(c.key==='vesselId'||(c.key==='id'&&!report.columns.some(x=>x.key==='id')))col.hidden=true;});
  sheet.autoFilter={from:{row:4,column:1},to:{row:Math.max(5,sheet.rowCount),column:columns.length}};
  report.rows.forEach((r,i)=>{if(r.item.urgency==='urgent'){const n=columns.findIndex(c=>c.key==='referenceNo');if(n>=0)sheet.getCell(i+5,n+1).font={name:'Microsoft JhengHei',size:11,bold:true,color:{argb:'FFC00000'}};}});
  if(template){
@@ -73,7 +76,7 @@ export async function buildTrackingWorkbook(report:TrackingReport,template=false
  print.mergeCells('A3:D3');print.getCell('A3').value='完整欄位逐項列印；長文字標「續」，不省略。資料輸入／匯入請使用第一張工作表。';
  print.addRow(['序號','申請單號(材料或工程)','欄位','內容']);
  const printable=template?[{id:'',item:{referenceNo:''},values:{} as Record<string,string>}]:report.rows;
- printable.forEach((row,index)=>report.columns.forEach(col=>trackingTextChunks(row.values[col.key]||'').forEach((text,part)=>print.addRow([String(index+1),row.item.referenceNo,col.label+(part?`（續 ${part+1}）`:''),text]))));
+ printable.forEach((row,index)=>report.columns.forEach((col,columnIndex)=>trackingTextChunks(row.values[col.key]||'').forEach((text,part)=>print.addRow([template?String(index+1):columnIndex===0&&part===0?index+1:null,row.item.referenceNo,col.label+(part?`（續 ${part+1}）`:''),text]))));
  formatSheet(print,[7,25,25,94],4);
  print.getColumn(1).numFmt='@';print.getColumn(2).numFmt='@';print.getColumn(4).numFmt='@';
  const schema=book.addWorksheet('_tracking_schema');schema.addRows([['version',TRACKING_XLSX_VERSION],['kind',report.kind],['vesselName',report.vesselName],['vesselId',report.vesselId],['mapping','資料表 tracking: 技術列的欄位鍵；與個人欄序分離'],['policy','只新增；ID／歷程／人員不作寫入授權；重複 ID 必須排除'],['print','請列印「列印明細」；資料表完整保留所有選定欄位'],['dates','純日期 yyyy-mm-dd；完工、交船、結案與 DL 互不推導']]);schema.state='hidden';

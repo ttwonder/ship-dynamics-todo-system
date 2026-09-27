@@ -11,14 +11,15 @@ export async function exportChecks(c){
   const actionDir=path.join(downloads,alias);fs.mkdirSync(actionDir);
   await call('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:actionDir},null);
   await click(label);let file;
-  await until(()=>{file=fs.readdirSync(actionDir).find(n=>n.endsWith('.xlsx'));return Boolean(file);},'actual download '+label,45000);
-  const from=path.join(actionDir,file),target=path.join(output,alias+'.xlsx');fs.copyFileSync(from,target);
-  const wb=new ExcelJS.Workbook();await wb.xlsx.readFile(target);downloaded.push({file:target,downloadName:file});return {file:target,wb};
+  await until(()=>{file=fs.readdirSync(actionDir).find(n=>/\.xls[xm]$/i.test(n));return Boolean(file);},'actual download '+label,45000);
+  const from=path.join(actionDir,file),target=path.join(output,alias+path.extname(file));fs.copyFileSync(from,target);
+  const wb=new ExcelJS.Workbook();await wb.xlsx.readFile(target);const data=wb.getWorksheet('跟蹤資料');if(data){const expected=Array.from({length:data.rowCount-4},(_,i)=>i+1);assert.equal(data.getCell('A4').text,'序號');assert.deepEqual(expected.map((_,i)=>data.getCell(i+5,1).value),expected);const print=wb.getWorksheet('列印明細');assert.deepEqual(Array.from({length:print.rowCount-4},(_,i)=>print.getCell(i+5,1).value).filter(v=>v!==null&&v!==''),expected);}downloaded.push({file:target,downloadName:file});return {file:target,wb};
  };
  const snapshot=async()=>{await click('建立共用快照');await until(async()=>(await text()).includes('共用快照已固定'),'authoritative shared snapshot',45000);};
  const readRows=wb=>{const s=wb.worksheets[0],keys=s.getRow(3).values.slice(1).map(v=>String(v).replace('tracking:',''));return {keys,rows:Array.from({length:Math.max(0,s.rowCount-4)},(_,i)=>Object.fromEntries(keys.map((k,c)=>[k,s.getCell(i+5,c+1).value])))};};
- const pdf=async(name,paper='A4')=>{
+ const pdf=async(name,paper='A4',count)=>{
   await click('PDF 預覽');await until(()=>evaluate("Boolean(document.querySelector('.tracking-report-paper'))"),'mounted PDF paper');if(paper==='A3')await select("document.querySelector('[aria-label=\"PDF 紙張\"]')",'A3');
+  assert.equal(await evaluate("document.querySelector('.tracking-report-paper thead tr:last-child th').textContent"),'序號');assert.deepEqual(await evaluate("[...document.querySelectorAll('.tracking-report-paper tbody tr')].map(n=>n.firstElementChild.textContent).filter(Boolean).map(Number)"),Array.from({length:count},(_,i)=>i+1),'PDF numbers every item once across detail/continuation rows');
   await evaluate("window.__qaRealPrint=window.print;window.__qaPrintCalled=false;window.print=()=>{window.__qaPrintCalled=true;}");await click('導出／列印 PDF');await until(()=>evaluate('window.__qaPrintCalled'),'real print entry');assert.equal(await evaluate("document.body.classList.contains('printing-tracking-report')"),true);
   await screen(name+'-preview');const rendered=await call('Page.printToPDF',{preferCSSPageSize:true,printBackground:false,displayHeaderFooter:false});const file=path.join(output,name+'.pdf');fs.writeFileSync(file,Buffer.from(rendered.data,'base64'));
   await evaluate("window.dispatchEvent(new Event('afterprint'));window.print=window.__qaRealPrint;delete window.__qaRealPrint");assert.equal(await evaluate("document.body.classList.contains('printing-tracking-report')"),false);assert.equal(await evaluate("document.querySelectorAll('style[data-tracking-print]').length"),0);await click('關閉 PDF 預覽');return file;
@@ -30,15 +31,15 @@ export async function exportChecks(c){
   // Use the exact accessible column move control; unrelated preferences stay intact.
   await nodeClick("document.querySelector('[aria-label=將補充說明前移]')");
   const labels=await evaluate("[...document.querySelectorAll('.tracking-sort')].map(n=>n.innerText.replace(/[↑↓↕]/g,'').trim())");
-  await click('導出excel');await snapshot();const d=await download('下載 XLSX','browser-filtered-visible');const r=readRows(d.wb);assert.equal(r.rows.length,101);assert.equal(r.rows[0].referenceNo,'BATCH-001');assert.equal(r.rows.at(-1).referenceNo,'BATCH-101');assert.ok(!r.keys.includes('originalItemNo'));assert.deepEqual(d.wb.worksheets[0].getRow(4).values.slice(1,1+labels.length),labels);assert.ok(r.keys.includes('supplementalNotes'));assert.ok(!r.keys.includes('originalRemarks'));await click('關閉匯出');
+  await click('導出excel');await snapshot();const d=await download('下載 XLSX','browser-filtered-visible');const r=readRows(d.wb);assert.equal(r.rows.length,101);assert.equal(r.rows[0].referenceNo,'BATCH-001');assert.equal(r.rows.at(-1).referenceNo,'BATCH-101');assert.ok(!r.keys.includes('originalItemNo'));assert.deepEqual(d.wb.worksheets[0].getRow(4).values.slice(1,2+labels.length),['序號',...labels]);assert.ok(r.keys.includes('supplementalNotes'));assert.ok(!r.keys.includes('originalRemarks'));await click('關閉匯出');
  });
  await check('selected-only-full-columns-shared-native-browser-pdf',async()=>{
   for(const index of [0,1])await nodeClick(`document.querySelectorAll('.tracking-table tbody .tracking-check input')[${index}]`);
   await click('導出pdf');await select("document.querySelector('[aria-label=匯出資料範圍]')",'selected');await select("document.querySelector('[aria-label=匯出欄位]')",'full');await snapshot();const d=await download('下載 XLSX','browser-selected-full');fullExport=d.file;const r=readRows(d.wb);assert.equal(r.rows.length,2);assert.deepEqual(r.rows.map(r=>r.referenceNo),['BATCH-001','BATCH-002']);assert.ok(r.keys.includes('originalItemNo'));assert.ok(r.keys.includes('source'));assert.ok(r.rows[0].description.endsWith('LONG-END'));
-  await pdf('browser-selected-full-A4');await pdf('browser-selected-full-A3','A3');await click('關閉匯出');assert.deepEqual(await qa.read(),before,'exports are read-only');
+  await pdf('browser-selected-full-A4','A4',2);await pdf('browser-selected-full-A3','A3',2);await click('關閉匯出');assert.deepEqual(await qa.read(),before,'exports are read-only');
  });
  await check('all-filtered-compact-pdf-real-pagination',async()=>{
-  await click('導出pdf');await select("document.querySelector('[aria-label=匯出資料範圍]')",'all');await select("document.querySelector('[aria-label=匯出欄位]')",'compact');await snapshot();const d=await download('下載 XLSX','browser-filtered-compact');assert.equal(readRows(d.wb).rows.length,101);await pdf('browser-filtered-compact-A4');await click('關閉匯出');
+  await click('導出pdf');await select("document.querySelector('[aria-label=匯出資料範圍]')",'all');await select("document.querySelector('[aria-label=匯出欄位]')",'compact');await snapshot();const d=await download('下載 XLSX','browser-filtered-compact');assert.equal(readRows(d.wb).rows.length,101);await pdf('browser-filtered-compact-A4','A4',101);await click('關閉匯出');
  });
  await check('native-template-downloads-two-kinds',async()=>{for(const [label,kind] of [['配件物料模板','supply'],['工程模板','engineering']]){const d=await download(label,'browser-template-'+kind);assert.equal(d.wb.getWorksheet('_tracking_schema').getCell('B2').text,kind);assert.ok(readRows(d.wb).keys.includes('expectedDate'));assert.ok(!readRows(d.wb).keys.includes('closedDate'));assert.ok(readRows(d.wb).keys.includes('requestType'));}});
  await check('same-ID-export-reimport-no-silent-duplicate',async()=>{
