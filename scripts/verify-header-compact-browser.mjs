@@ -26,10 +26,10 @@ const constants=app.match(/const SYSTEM_TITLE = .*;/)[0]+'\n'+app.match(/const S
 const entry=`import React,{useState}from'react';import{createRoot}from'react-dom/client';import{canAccessTab}from'/src/taskWorkflow.ts';import{roleLabel}from'/src/utils.ts';import fpmcLogo from'/src/assets/fpmc-logo.png';import'/src/styles.css';
 ${constants}
 window.__qaCalls=[];
-function QA(){const[tab,setTab]=useState('total'),[role,setRole]=useState('owner');window.__qaRole=setRole;const currentUser={id:'qa-header',name:'測試使用者',role},myWorkTaskCount=125,canExportReports=role!=='vessel',canEnterManagement=role==='owner',requireManage=()=>role==='owner',navigateToTab=k=>{window.__qaCalls.push(k);setTab(k)},setPasswordModalOpen=()=>window.__qaCalls.push('password'),leaveCurrentIdentity=()=>window.__qaCalls.push('leave');return <div className="app">${header}<p className="qa-label">原App頁首JSX＋測試身份｜不連正式環境</p></div>}
+function QA(){const[tab,setTab]=useState('total'),[role,setRole]=useState('owner'),[name,setName]=useState('測試使用者');window.__qaRole=setRole;window.__qaName=setName;const currentUser={id:'qa-header',name,role},myWorkTaskCount=125,canExportReports=role!=='vessel',canEnterManagement=role==='owner',requireManage=()=>role==='owner',navigateToTab=k=>{window.__qaCalls.push(k);setTab(k)},setPasswordModalOpen=()=>window.__qaCalls.push('password'),leaveCurrentIdentity=()=>window.__qaCalls.push('leave');return <div className="app">${header}<p className="qa-label">原App頁首JSX＋測試身份｜不連正式環境</p></div>}
 createRoot(document.getElementById('root')).render(<QA/>);`;
 const settle=()=>evaluate('document.fonts.ready.then(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))');
-const geometry=()=>evaluate(`(()=>{const nav=document.querySelector('.topbar-primary-nav'),n=nav.getBoundingClientRect();const box=selector=>{const el=document.querySelector(selector),r=el.getBoundingClientRect(),t=document.createRange();t.selectNodeContents(el);return {left:r.left,right:r.right,width:r.width,textWidth:t.getBoundingClientRect().width,height:r.height,font:getComputedStyle(el).fontSize}};return {viewport:innerWidth,zoom:visualViewport.scale,document:document.documentElement.scrollWidth,nav:{left:n.left,right:n.right,width:nav.clientWidth,scroll:nav.scrollWidth},title:box('.brand b'),subtitle:box('.brand small'),brand:box('.brand'),identity:box('.user-chip'),buttons:[...nav.children].map(e=>({text:e.textContent,left:e.getBoundingClientRect().left,right:e.getBoundingClientRect().right,top:e.getBoundingClientRect().top,width:e.getBoundingClientRect().width,font:getComputedStyle(e).fontSize}))};})()`);
+const geometry=()=>evaluate(`(()=>{const nav=document.querySelector('.topbar-primary-nav'),n=nav.getBoundingClientRect();const box=selector=>{const el=document.querySelector(selector),r=el.getBoundingClientRect(),t=document.createRange();t.selectNodeContents(el);return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,textWidth:t.getBoundingClientRect().width,height:r.height,font:getComputedStyle(el).fontSize,client:el.clientWidth,scroll:el.scrollWidth,text:el.textContent}};return {viewport:innerWidth,zoom:visualViewport.scale,document:document.documentElement.scrollWidth,nav:{left:n.left,right:n.right,top:n.top,bottom:n.bottom,width:nav.clientWidth,scroll:nav.scrollWidth},title:box('.brand b'),subtitle:box('.brand small'),brand:box('.brand'),logo:box('.brand-icon'),header:box('.topbar-inner'),identity:box('.user-chip'),identityName:box('.user-name-btn'),identityAction:box('.user-chip>.btn'),buttons:[...nav.children].map(e=>({text:e.textContent,left:e.getBoundingClientRect().left,right:e.getBoundingClientRect().right,top:e.getBoundingClientRect().top,width:e.getBoundingClientRect().width,font:getComputedStyle(e).fontSize}))};})()`);
 try {
   server = await createServer({ root: process.cwd(), base: '/', server: { host: '127.0.0.1', port: 0 }, logLevel: 'error', plugins: [{ name: 'isolated-header-qa', configureServer(vite) { vite.middlewares.use((req, res, next) => { res.setHeader('Content-Security-Policy', "connect-src 'self' ws://127.0.0.1:*"); if (req.url === '/__qa_header') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); void vite.transformIndexHtml('/__qa_header', '<!doctype html><html><head><meta charset="UTF-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{padding:0}.qa-label{padding:5px 8px;margin-bottom:6px;background:#fff0c5;color:#543c00;font-size:12px;font-weight:700}</style></head><body><div class="qa-label">真實 UI＋測試資料｜不連正式環境</div><div id="root"></div><script type="module" src="/@qa-header"></script></body></html>').then(html => res.end(html)).catch(next); } else next(); }); }, resolveId(source) { if (source === '/@qa-header') return '\0qa-header'; }, async load(source) { if (source === '\0qa-header') return ts.transpileModule(entry,{compilerOptions:{jsx:ts.JsxEmit.React,module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText; } }] });
   await server.listen(); await server.transformRequest('/@qa-header'); const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
@@ -51,7 +51,40 @@ try {
   for(const [label,id] of [['配件/物料/工程','tracking'],['數據','stats'],['管理','management']]){await click(label);assert.equal(await evaluate('window.__qaCalls.at(-1)'),id);}
   evidence.cases.push('renamed buttons retain original navigation IDs');
   await evaluate("window.__qaRole('operator')");await settle();assert.equal(await evaluate("[...document.querySelectorAll('.topbar-primary-nav button')].some(n=>n.textContent==='管理')"),false);
-  await evaluate("window.__qaRole('owner')");await call('Emulation.setDeviceMetricsOverride',{width:390,height:600,deviceScaleFactor:1,mobile:false});await settle();await evaluate("document.querySelector('.topbar-primary-nav').scrollLeft=9999");await settle();await screen('header-390');const mobile=await geometry();assert.ok(mobile.document<=390);assert.ok(mobile.buttons.at(-1).left>=mobile.nav.left-1&&mobile.buttons.at(-1).right<=mobile.nav.right+1,'mobile Management is in the visible nav after scrolling');assert.deepEqual(evidence.errors,[]);evidence.cases.push('operator permissions preserved, mobile navigation reachable, no console errors');
+  await evaluate("window.__qaRole('owner');window.__qaName('測試員')");
+  evidence.mobile=[];
+  for(const width of [320,360,375,390,414,430,600]){
+    await call('Emulation.setDeviceMetricsOverride',{width,height:600,deviceScaleFactor:1,mobile:false});await settle();
+    await evaluate("document.querySelector('.topbar-primary-nav').scrollLeft=0");await settle();
+    evidence.mobile.push(await geometry());await screen('header-mobile-'+width);
+  }
+  const sameHeaderRow=g=>{
+    assert.ok(Math.abs((g.brand.top+g.brand.bottom)/2-(g.identity.top+g.identity.bottom)/2)<=1,`${g.viewport}: brand and identity share a row`);
+    assert.ok(g.brand.right+3<=g.identity.left,`${g.viewport}: no brand/identity overlap`);
+    assert.ok(g.nav.top>=Math.max(g.brand.bottom,g.identity.bottom),`${g.viewport}: tabs remain on the next row`);
+    assert.ok(g.nav.top-Math.max(g.brand.bottom,g.identity.bottom)<=8,'no oversized gap above tabs');
+    assert.ok(g.document<=g.viewport,'no document overflow');
+    assert.ok(g.identityAction.left>=g.identity.left&&g.identityAction.right<=g.identity.right,'switch/leave control remains visible');
+    assert.ok(g.identityName.height>=24&&g.identityAction.height>=24,'compact identity controls retain a usable tap target');
+    assert.ok(g.identityName.client>=1&&g.identityName.scroll<=g.identityName.client+1,'identity text remains inside its control');
+    assert.equal(g.title.text,'船舶動態與會議管理系統');assert.ok(g.title.font==='12px'||g.title.font==='11px');
+    assert.equal(g.subtitle.width,0,'mobile English remains hidden as before');
+  };
+  for(const g of evidence.mobile){sameHeaderRow(g);assert.equal(g.identityName.text,'測試員｜Owner');assert.ok(g.header.height-(g.nav.bottom-g.nav.top)-Math.max(g.brand.height,g.identity.height)<=20,'compact padding and gap around the two content rows');}
+  evidence.cases.push('seven phone widths keep brand and complete identity on one row with tabs below');
+  await call('Emulation.setDeviceMetricsOverride',{width:390,height:600,deviceScaleFactor:2,mobile:true});await settle();
+  const phone=await geometry();sameHeaderRow(phone);await screen('header-mobile-390-dpr2');
+  const tap=async selector=>{const p=await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};})()`);await call('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{...p,radiusX:1,radiusY:1}]});await call('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await settle();};
+  await call('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});
+  await tap('.user-name-btn');assert.equal(await evaluate('window.__qaCalls.at(-1)'),'password');
+  await tap('.user-chip>.btn');assert.equal(await evaluate('window.__qaCalls.at(-1)'),'leave');
+  evidence.cases.push('real touch events retain personal-password and switch/leave callbacks');
+  evidence.mobileRoles=[];
+  for(const role of ['admin','operator']){await evaluate(`window.__qaRole(${JSON.stringify(role)})`);await settle();const g=await geometry();sameHeaderRow(g);evidence.mobileRoles.push(g);assert.ok(g.identityName.text.includes(role==='admin'?'管理員':'操作員'));}
+  await evaluate("window.__qaRole('owner');window.__qaName('測試使用者名稱較長')");await call('Emulation.setDeviceMetricsOverride',{width:320,height:600,deviceScaleFactor:1,mobile:false});await settle();
+  const longName=await geometry();sameHeaderRow(longName);assert.equal(longName.identityName.text,'測試使用者名稱較長｜Owner');evidence.longName=longName;await screen('header-mobile-long-name');
+  evidence.cases.push('admin/operator identity remains visible and long names wrap within the same row');
+  await evaluate("window.__qaName('測試員')");await call('Emulation.setDeviceMetricsOverride',{width:390,height:600,deviceScaleFactor:1,mobile:false});await settle();await evaluate("document.querySelector('.topbar-primary-nav').scrollLeft=9999");await settle();await screen('header-390');const mobile=await geometry();assert.ok(mobile.document<=390);assert.ok(mobile.buttons.at(-1).left>=mobile.nav.left-1&&mobile.buttons.at(-1).right<=mobile.nav.right+1,'mobile Management is in the visible nav after scrolling');assert.deepEqual(evidence.errors,[]);evidence.cases.push('operator permissions preserved, mobile navigation reachable, no console errors');
 } catch (error) { failure = error; evidence.failure = error.stack || String(error); evidence.dom = await evaluate('document.body.innerText').catch(()=>null); await screen('failure').catch(()=>{}); }
 finally {
   if (ws?.readyState === WebSocket.OPEN) { await call('Browser.close', {}, null).catch(() => {}); ws.close(); }
