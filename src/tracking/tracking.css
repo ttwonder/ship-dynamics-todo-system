@@ -58,4 +58,25 @@
 .tracking-value-options label{display:flex;gap:5px;align-items:flex-start;min-width:0;padding:3px 0;font-size:12px}
 .tracking-value-options label>span{min-width:0;white-space:normal;overflow-wrap:anywhere}
 .tracking-page .tracking-value-options input[type=checkbox]{width:14px;height:14px;flex:none;margin:1px 0;padding:0}
+/* Compact source lists: native top and bottom horizontal bars share one position. */
+.tracking-table-wrap{min-width:0;max-width:100%}
+.tracking-table-scroll-top{max-width:100%;height:18px;overflow-x:scroll;overflow-y:hidden;margin-left:1px;background:var(--tracking-head)}
+.tracking-table-wrap>.tracking-table-scroll{overflow-x:scroll}
+.tracking-date-cell>.tracking-cell-text{white-space:nowrap;overflow-wrap:normal;overflow-x:auto}
+.tracking-case-link{font:inherit;color:#68447e;background:transparent;border:0;padding:0;text-decoration:underline;cursor:pointer;text-align:left;white-space:normal}
+.tracking-case-link:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+/* Read-only history: grouped by exact item, compact and fully wrapping. */
+.tracking-page .tracking-history-modal{width:min(1050px,calc(100vw - 24px));max-width:100%;min-width:0}
+.tracking-history-note{margin:5px 0;font-size:12px;overflow-wrap:anywhere}
+.tracking-history-item{border:1px solid var(--line);border-radius:6px;margin:6px 0;min-width:0}
+.tracking-history-item>summary{background:var(--tracking-head);overflow-wrap:anywhere;line-height:1.5}
+.tracking-history-item>summary>small{display:block;font-size:11px;font-weight:400}
+.tracking-history-description,.tracking-history-text{white-space:pre-wrap;overflow-wrap:anywhere;margin:5px 8px}
+.tracking-history-timeline{list-style:none;padding:0 8px;margin:0;min-width:0}
+.tracking-history-timeline>li{border-top:1px solid var(--line);padding:7px 0;min-width:0}
+.tracking-history-meta{display:flex;flex-wrap:wrap;gap:3px 6px;font-size:12px;overflow-wrap:anywhere}
+.tracking-history-changes{margin:4px 0;min-width:0}
+.tracking-history-changes>div{display:grid;grid-template-columns:110px minmax(0,1fr);gap:4px;margin:3px 0}
+.tracking-history-changes dt,.tracking-history-changes dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}
+@media(max-width:700px){.tracking-page .tracking-history-modal{padding:10px}.tracking-history-changes>div{grid-template-columns:84px minmax(0,1fr)}}
 /* Follow the App's actual theme tokens; OS dark mode must not restyle only this module. */

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 export async function componentChecks({qa,call,evaluate,click,nodeClick,fill,until,text,screen,check}){
  await call('Page.navigate',{url:qa.origin+'/scripts/fixtures/tracking-ui.html'});
- await until(()=>evaluate('Boolean(window.__trackingQA&&document.querySelector(".tracking-table"))'),'component fixture');
+ const listReady=async()=>{await until(()=>evaluate("Boolean(window.__trackingQA&&document.querySelector('.tracking-page'))"),'component fixture');await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("Boolean(document.querySelector('.tracking-table'))"),'explicit component list');};
+ await listReady();
  const rowIds=()=>evaluate("[...document.querySelectorAll('.tracking-table tbody tr[data-tracking-id]')].map(n=>n.dataset.trackingId)");
  const selectPage=()=>nodeClick("document.querySelector('[aria-label=選取本頁]')");
  await check('component-65-row-sort-before-page-selection-filter-and-hidden-filter',async()=>{
@@ -22,15 +23,15 @@ export async function componentChecks({qa,call,evaluate,click,nodeClick,fill,unt
    const first=await evaluate("document.querySelector('th.tracking-reference').getBoundingClientRect().width");
    await evaluate("document.querySelector('[aria-label=\"調整申請單號(材料或工程)欄寬\"]').focus()");await call('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowRight',code:'ArrowRight'});await call('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowRight',code:'ArrowRight'});
    assert.ok(await evaluate("document.querySelector('th.tracking-reference').getBoundingClientRect().width")>first);
-   await evaluate("window.__trackingQA.change({actorId:'component-b',identity:'session-b'})");await until(()=>evaluate("Boolean([...document.querySelectorAll('.tracking-sort')].find(n=>n.innerText.startsWith('請購案號(非必填)')))"),'independent actor preference');
-   await evaluate("window.__trackingQA.change({actorId:'component-a',identity:'session-a'})");await until(()=>evaluate("!Boolean([...document.querySelectorAll('.tracking-sort')].find(n=>n.innerText.startsWith('請購案號(非必填)')))"),'actor preference restored');
+   await evaluate("window.__trackingQA.change({actorId:'component-b',identity:'session-b'})");await listReady();await until(()=>evaluate("Boolean([...document.querySelectorAll('.tracking-sort')].find(n=>n.innerText.startsWith('請購案號(非必填')))"),'independent actor preference');
+   await evaluate("window.__trackingQA.change({actorId:'component-a',identity:'session-a'})");await listReady();await until(()=>evaluate("!Boolean([...document.querySelectorAll('.tracking-sort')].find(n=>n.innerText.startsWith('請購案號(非必填')))"),'actor preference restored');
    await nodeClick("[...document.querySelectorAll('summary')].find(n=>n.innerText==='欄位設定')");await click('重設欄位配置');assert.ok(await evaluate("Boolean([...document.querySelectorAll('.tracking-sort')].find(n=>n.innerText.startsWith('請購案號(非必填)')))"));
  });
  await check('component-pointer-resize-header-drag-no-accidental-sort',async()=>{
    await evaluate("document.querySelector('.tracking-table-scroll').scrollIntoView()");
    const point=await evaluate("(()=>{const r=document.querySelector('[aria-label=\"調整申請單號(材料或工程)欄寬\"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,w:document.querySelector('th.tracking-reference').getBoundingClientRect().width,sort:document.querySelector('th[aria-sort=descending]')?.innerText||document.querySelector('th[aria-sort=ascending]')?.innerText};})()");
    await call('Input.dispatchMouseEvent',{type:'mousePressed',x:point.x,y:point.y,button:'left',buttons:1,clickCount:1});await call('Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x+44,y:point.y,button:'left',buttons:1});await call('Input.dispatchMouseEvent',{type:'mouseReleased',x:point.x+44,y:point.y,button:'left',buttons:0,clickCount:1});
-   assert.ok(await evaluate("document.querySelector('th.tracking-reference').getBoundingClientRect().width")>point.w);assert.equal(await evaluate("document.querySelector('th[aria-sort=descending]')?.innerText||document.querySelector('th[aria-sort=ascending]')?.innerText"),point.sort);
+   await until(async()=>await evaluate("document.querySelector('th.tracking-reference').getBoundingClientRect().width")>point.w,'completed pointer resize render');assert.equal(await evaluate("document.querySelector('th[aria-sort=descending]')?.innerText||document.querySelector('th[aria-sort=ascending]')?.innerText"),point.sort);
    await evaluate(`(()=>{const h=[...document.querySelectorAll('th')],from=h.find(n=>n.innerText.includes('請購案號')),to=h.find(n=>n.innerText.includes('申請/開單日期')),d=new DataTransfer();from.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:d}));to.dispatchEvent(new DragEvent('dragover',{bubbles:true,dataTransfer:d}));to.dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer:d}));to.querySelector('button').click();from.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:d}));})()`);
    const h=await evaluate("[...document.querySelectorAll('th')].map(n=>n.innerText)");assert.ok(h.findIndex(n=>n.includes('請購案號'))<h.findIndex(n=>n.includes('申請/開單日期')));assert.equal(await evaluate("document.querySelector('th[aria-sort=descending]')?.innerText||document.querySelector('th[aria-sort=ascending]')?.innerText"),point.sort);
    await evaluate('window.scrollTo(0,0)');
@@ -45,11 +46,16 @@ export async function componentChecks({qa,call,evaluate,click,nodeClick,fill,unt
    }
    await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await call('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:'light'}]});
  });
+ await check('component-readonly-history-empty-record-no-claim-and-identity-fence',async()=>{
+   await evaluate("window.__trackingQA.change({canWrite:false})");await until(()=>evaluate("![...document.querySelectorAll('button')].some(n=>n.innerText==='批量更新')"),'readonly identity');
+   await click('清除選取');await nodeClick("document.querySelector('.tracking-table tbody .tracking-check input')");const before=await evaluate("({claims:window.__trackingQA.claims,submissions:window.__trackingQA.submissions,data:JSON.stringify(window.__trackingQA.data)})");await click('查看所選紀錄');await until(()=>evaluate("Boolean(document.querySelector('.tracking-history-modal'))"),'readonly view');assert.ok((await text()).includes('尚無已保存的進度或事件紀錄'));
+   await evaluate("window.__trackingQA.change({identity:'readonly-successor'})");await until(()=>evaluate("!document.querySelector('.tracking-history-modal')"),'old identity history hidden');await evaluate("window.__trackingQA.change({identity:'session-a',canWrite:true})");await until(()=>evaluate("[...document.querySelectorAll('button')].some(n=>n.innerText==='批量更新')"),'writer restored');assert.equal(await evaluate("Boolean(document.querySelector('.tracking-history-modal'))"),false);assert.deepEqual(await evaluate("({claims:window.__trackingQA.claims,submissions:window.__trackingQA.submissions,data:JSON.stringify(window.__trackingQA.data)})"),before);
+ });
  await check('component-dirty-navigation-keep-cancel-user-vessel-draft',async()=>{
    await click('＋ 新增／批量新增');await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','LOCAL-DRAFT');
    await click('取消');await click('取消切換');assert.equal(await evaluate("document.querySelector('[aria-label=\"第 1 筆 申請單號(材料或工程)\"]').value"),'LOCAL-DRAFT');
    await click('取消');await click('保留草稿並繼續');assert.ok(!await evaluate("Boolean(document.querySelector('[role=dialog]'))"));
-   await evaluate("window.__trackingQA.change({actorId:'component-b',identity:'session-b'})");assert.ok(!(await text()).includes('恢復本船未送出草稿'));
+   await evaluate("window.__trackingQA.change({actorId:'component-b',identity:'session-b'})");await until(()=>evaluate("Boolean(document.querySelector('.tracking-statistics'))"),'successor actor remount committed');assert.ok(!(await text()).includes('恢復本船未送出草稿'));
    await evaluate("window.__trackingQA.change({actorId:'component-a',identity:'session-a'})");await until(async()=>(await text()).includes('恢復本船未送出草稿'),'owned draft');await click('恢復本船未送出草稿');assert.equal(await evaluate("document.querySelector('[aria-label=\"第 1 筆 申請單號(材料或工程)\"]').value"),'LOCAL-DRAFT');
  });
  await check('component-rejected-save-retains-draft-selection-and-exact-retry',async()=>{
@@ -58,7 +64,7 @@ export async function componentChecks({qa,call,evaluate,click,nodeClick,fill,unt
    await until(()=>evaluate('window.__trackingQA.submissions.length===2'),'second exact submission');assert.ok(await evaluate('JSON.stringify(window.__trackingQA.submissions[0])===JSON.stringify(window.__trackingQA.submissions[1])'));
  });
  await check('component-owner-config-generation-change-fences-original-pending',async()=>{
-   const before=await evaluate('window.__trackingQA.submissions.length');await evaluate("window.__trackingQA.change({identity:'successor-config'})");await click('確認結果／重試相同提交');assert.equal(await evaluate('window.__trackingQA.submissions.length'),before);assert.ok((await text()).includes('先前工作階段'));
+   const before=await evaluate('window.__trackingQA.submissions.length');await evaluate("window.__trackingQA.change({identity:'successor-config'})");await until(()=>evaluate("Boolean(document.querySelector('[data-qa-identity=successor-config]'))"),'successor config rendered');await click('確認結果／重試相同提交');assert.equal(await evaluate('window.__trackingQA.submissions.length'),before);assert.ok((await text()).includes('先前工作階段'));
    await evaluate("window.__trackingQA.change({actorId:'component-b',identity:'session-b',canWrite:false,allowed:['v2']})");await until(()=>evaluate("document.querySelector('[aria-label=跟蹤船舶]').value==='v2'"),'authorized vessel reset');assert.ok(!(await text()).includes('＋ 新增／批量新增'));assert.ok(!(await text()).includes('LOCAL-DRAFT'));assert.equal((await rowIds()).length,0);
  });
 }

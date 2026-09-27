@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {trackingBatchAction} from './tracking-batch-browser-actions.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -138,6 +139,8 @@ try{
   await until(()=>evaluate(`Boolean(document.querySelector('[aria-label="第 1 筆 類型"]'))`),'explicit create type');assert.equal(await evaluate("document.querySelector('[aria-label=新增跟蹤說明] strong').textContent"),'船舶：QA VESSEL 1');assert.equal(await evaluate("document.querySelectorAll('[aria-label=新增跟蹤說明] input,[aria-label=新增跟蹤說明] select').length"),0);
   await select("document.querySelector('[aria-label=\"第 1 筆 類型\"]')",'repair');assert.ok(await evaluate("Boolean(document.querySelector('[aria-label=\"第 1 筆 實際送達/完工日期\"]'))"));await select("document.querySelector('[aria-label=\"第 1 筆 類型\"]')",'spares');
    await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','UI-001');
+   // Pin the fixture's application date; lifecycle dates below must not age behind a default of today.
+   await evaluate("(()=>{const n=document.querySelector('[aria-label=\"第 1 筆 申請/開單日期\"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'2026-09-21');n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()");
    await fill('[aria-label="第 1 筆 內容摘要/工程內容"]','真實UI測試來源');
    await click('確認保存 1 項');await finishEditor();
    const saved=await qa.read(),created=saved.payload.trackingItems.find(r=>r.referenceNo==='UI-001');
@@ -150,10 +153,14 @@ try{
    assert.deepEqual(await qa.read(),saved);
  });
  const trackingRow=reference=>`[...document.querySelectorAll('.tracking-table tbody tr')].find(n=>n.querySelector('.tracking-reference')?.innerText.includes(${JSON.stringify(reference)}))`;
- const rowAction=async(reference,label)=>{await until(()=>evaluate(`Boolean([...(${trackingRow(reference)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()===${JSON.stringify(label)}&&!n.disabled))`),'ready source '+reference);await nodeClick(`[...(${trackingRow(reference)}).querySelectorAll('button')].find(n=>n.innerText.trim()===${JSON.stringify(label)})`);await until(()=>evaluate("Boolean(document.querySelector('[role=dialog]'))"),'tracking '+label+' dialog');};
+ const rowAction=(reference,label)=>trackingBatchAction({evaluate,click,nodeClick,until},reference,label);
  const dateInput=async(selector,value)=>{await until(()=>evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`),"date field ready");await evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n||n.disabled)throw new Error('date input unavailable');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(selector)}).value`),value);};
  const trackingTab=async(label)=>{await nodeClick(`[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith(${JSON.stringify(label)}))`);};
- if(process.argv.includes('--urgent-shortcut')){
+ if(process.argv.includes('--component-only')){
+  await (await import('./tracking-component-browser-checks.mjs')).componentChecks({qa,call,evaluate,click,nodeClick,fill,until,text,screen,check});
+ }else if(process.argv.includes('--compact')){
+  await (await import('./tracking-compact-browser-checks.mjs')).compactChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'shore',finish:finishEditor});
+ }else if(process.argv.includes('--urgent-shortcut')){
   await (await import('./tracking-urgent-shortcut-browser-checks.mjs')).urgentShortcutChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'shore'});
  }else if(process.argv.includes('--filters')){
   await (await import('./tracking-filter-panel-browser-checks.mjs')).filterPanelChecks({qa,call,evaluate,click,nodeClick,fill,select,until,screen,check,output,audience:'shore'});

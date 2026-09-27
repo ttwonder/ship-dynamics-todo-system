@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AppData, InternalControlCase, UserAccount, Vessel } from '../types';
 import { BatchCreateModal } from '../InternalControlModals';
 import type { InternalControlTaskProjection } from '../internalControlData';
@@ -8,6 +8,7 @@ import { trackingColumnsFor, trackingFilterColumnsFor } from './trackingColumns'
 import { TRACKING_TABS, filterIsActive, selectTrackingRows, trackingInTab, trackingTabKind, type TrackingFilter, type TrackingQuery, type TrackingTab } from './trackingFilters';
 import { defaultTrackingPreferences, readTrackingPreferences, trackingPreferenceKey, writeTrackingPreferences } from './trackingTablePreferences';
 import { TrackingPagination, TrackingTable } from './TrackingTable';
+import { TrackingHistoryModal } from './TrackingHistoryModal';
 import { commandForTrackingDraft, makeTrackingDraft, newTrackingItem, trackingAffectedLabels, TrackingBusinessModal, type TrackingAction, type TrackingDraft } from './TrackingModals';
 import { trackingHelp, type TrackingAudience, type TrackingSubmission, type TrackingUiCallbacks } from './trackingUiTypes';
 import type { TrackingItem } from './trackingTypes';
@@ -41,6 +42,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   const [sort, setSort] = useState<TrackingQuery['sort']>({ key: 'createdAt', direction: 'desc' });
   const [page, setPage] = useState(1); const [selected, setSelected] = useState<string[]>([]);
   const [notice, setNotice] = useState('');
+  const [historySelection, setHistorySelection] = useState<{ scope: string; ids: string[] } | null>(null);
   const vesselReadKey = JSON.stringify([identity, vesselId, vessels.map(v => v.id)]);
   const [settledReadKey, setSettledReadKey] = useState<string | null>(null);
   // Block child capture immediately on entry/scope changes, before effects run.
@@ -69,13 +71,18 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   const [preferences, setPreferences] = useState(() => readTrackingPreferences(prefKey, columns));
   const dataRef = useRef(data); dataRef.current = data;
   const rows = selectTrackingRows(data.trackingItems || [], { vesselId, tab, filters, search, sort });
+  const historyScope = JSON.stringify([workspace, identity, user.id, vesselId, tab]);
+  // Resolve against the current authorized list on every render, never a retained cross-scope snapshot.
+  const historyRows = historySelection?.scope === historyScope && vessels.some(vessel => vessel.id === vesselId && vessel.isActive)
+    ? historySelection.ids.map(id => rows.find(row => row.id === id)).filter((row): row is TrackingItem => Boolean(row)) : [];
+  useEffect(() => { setHistorySelection(null); }, [historyScope]);
   const saveLocalDraft = (value: TrackingDraft | null, submission = pendingRef.current) => {
     try { if (value) localStorage.setItem(draftKey, JSON.stringify({ draft: value, pending: submission })); else localStorage.removeItem(draftKey); return true; }
     catch { setNotice('本機草稿儲存失敗，請勿關閉頁面。'); return false; }
   };
   const draftWritable=(value:TrackingDraft)=>(audience!=='ship'||!busyRef.current&&!pendingRef.current)&&(value.action==='create'?canCreate:currentCallbacks.current.isWritable(value.rows.map(row=>row.id)));
   const changeDraft = (value: TrackingDraft) => { if(!draftWritable(value))return; editGeneration.current++; const next = { ...value, dirty: true }; draftRef.current = next; setDraft(next); saveLocalDraft(next); };
-  const clearSelection = () => { if (selected.length) setNotice('船舶、標籤或條件已切換；已清除原選取。'); setSelected([]); setPage(1); };
+  const clearSelection = () => { setHistorySelection(null); if (selected.length) setNotice('船舶、標籤或條件已切換；已清除原選取。'); setSelected([]); setPage(1); };
   const guard = async (openingOwnsGuard=false): Promise<boolean> => {
     if(openingRef.current&&!openingOwnsGuard){setNotice('正在取得編輯權，請稍候。');return false;}
     if (importGuard.current) { if (!await importGuard.current()) return false; setImportOpen(false); }
@@ -225,14 +232,6 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   };
   const statisticsTab = <button className={`btn ${statisticsView ? 'primary' : ''}`} role="tab" aria-selected={statisticsView} onClick={() => void switchView(() => setStatisticsView(true))}>統計資訊</button>;
   const actionButton = (action: TrackingAction, label: string, ids?: string[], disabled = false) => <HelpAction label={label} help={trackingHelp(audience)[action]} disabled={disabled || loading || busy} onClick={() => void start(action, ids)}/>;
-  const rowActions = (row: TrackingItem): ReactNode => <>
-    {canEdit && !row.isClosed && actionButton('edit', '編輯', [row.id])}
-    {canEdit && !row.isClosed && actionButton('progress', '進度', [row.id])}
-    {canEdit && row.kind === 'supply' && actionButton('delivery', '送達／更正', [row.id])}
-    {canEdit && row.kind === 'engineering' && !row.isClosed && actionButton('completion', '完工／更正', [row.id])}
-    {canClose && actionButton(row.isClosed ? 'reopen' : 'close', row.isClosed ? '重開此案' : '結案', [row.id])}
-    {row.linkState === 'active' && row.linkedCaseId ? <button className="btn small" onClick={() => callbacks.openCase(row.linkedCaseId!)}>查看內控／已同步</button> : canCreate && !row.isClosed && actionButton('sync', '同步到內控', [row.id])}
-  </>;
   let affected: string[] = [];
   if (draft && draft.action !== 'create') { try { affected = audience==='ship' ? draft.originals.map(row=>`${row.referenceNo} [${row.id}]${row.linkState==='active' ? ' → 已同步內控（保存時核對有效關聯）' : '（僅來源）'}`) : trackingAffectedLabels(data, draft.originals); } catch { affected = draft.originals.map(row => `${row.referenceNo} [${row.id}]（關聯已變更，保存將重新驗證）`); } }
   return <section className="tracking-page" aria-label="配件/物料/工程跟蹤">
@@ -244,7 +243,10 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     <div className="tracking-search-actions">
       <div className="tracking-search"><input aria-label="搜尋跟蹤" placeholder="搜尋編號、內容及全部欄位…" value={search} onChange={event => { clearSelection(); setSearch(event.target.value); }}/><button className="btn small" onClick={() => { updateFilters({}); setSearch(''); }}>清除條件</button></div>
       <button type="button" className="btn small tracking-urgent-shortcut" aria-pressed={urgentOnly} title="只顯示符合目前其他條件的緊急件；再按一次取消緊急篩選。" onClick={toggleUrgent}>緊急</button>
-    <div className="tracking-toolbar" aria-label="跟蹤選取與批量操作"><b>已選 {selected.length} 項</b><button className="btn small" onClick={() => setSelected(rows.map(row => row.id))}>選取全部符合條件 {rows.length} 項</button><button className="btn small" onClick={() => setSelected([])}>清除選取</button>{canEdit && actionButton('edit', '批量更新', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'engineering' && actionButton('completion', '批量完工／更正', undefined, !selected.length)}{canEdit && actionButton('progress', '批量更新進度', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'supply' && actionButton('delivery', '批量送達／更正', undefined, !selected.length)}{canClose && actionButton('close', '批量結案', undefined, !selected.length)}{canClose && actionButton('correct-close-date', '修改結案日期', undefined, !selected.length)}{canClose && actionButton('reopen', '重開所選', undefined, !selected.length)}{canCreate && actionButton('sync', '同步所選到內控', undefined, !selected.length)}</div>
+    <div className="tracking-toolbar" aria-label="跟蹤選取與批量操作"><b>已選 {selected.length} 項</b><button className="btn small" onClick={() => setSelected(rows.map(row => row.id))}>選取全部符合條件 {rows.length} 項</button><button className="btn small" onClick={() => setSelected([])}>清除選取</button>{canEdit && actionButton('edit', '批量更新', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'engineering' && actionButton('completion', '批量完工／更正', undefined, !selected.length)}{canEdit && actionButton('progress', '批量更新進度', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'supply' && actionButton('delivery', '批量送達／更正', undefined, !selected.length)}{canClose && actionButton('close', '批量結案', undefined, !selected.length)}{canClose && actionButton('correct-close-date', '修改結案日期', undefined, !selected.length)}{canClose && actionButton('reopen', '重開所選', undefined, !selected.length)}{canCreate && actionButton('sync', '同步所選到內控', undefined, !selected.length)}<button type="button" className="btn small" title="查看所選項目已讀取的進度、送達／完工及結案紀錄；僅供查看，不取得編輯權。" disabled={!selected.length || loading || busy || Boolean(draft) || Boolean(pending) || importOpen} onClick={() => {
+      if (loading || busyRef.current || openingRef.current || draftRef.current || pendingRef.current || importOpen || !selected.length) return;
+      setHistorySelection({ scope: historyScope, ids: [...selected] });
+    }}>查看所選紀錄</button></div>
     </div>
     <div className="tracking-options">
       <details className="tracking-all-filters"><summary>全部欄位篩選</summary><div className="tracking-option-panel"><div className="tracking-filter-grid">{filterColumns.map(column => { const filter = filters[column.key] || {}; const set = (patch: TrackingFilter) => updateFilters({ ...filters, [column.key]: { ...filter, ...patch } }); return <fieldset key={column.key} className={column.key === 'urgent' ? 'tracking-filter-urgent' : undefined}><legend>{column.label}{preferences.hidden.includes(column.key) ? '（隱藏欄）' : ''}</legend><select aria-label={`${column.label}空白條件`} value={filter.mode || ''} onChange={event => set({ mode: event.target.value as TrackingFilter['mode'] })}><option value="">不限</option><option value="blank">空白</option><option value="nonblank">非空白</option></select><TrackingValueFilter label={column.label} values={[...new Set((data.trackingItems || []).filter(row => row.vesselId === vesselId && trackingInTab(row, tab)).map(column.value))].filter(Boolean).sort()} selected={filter.values || []} onChange={values => set({ values })}/></fieldset>; })}</div></div></details>
@@ -258,9 +260,10 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     {savedAvailable && !draft && <button className="btn" onClick={()=>void restoreDraft()}>恢復本船未送出草稿</button>}
     {syncSuccess.length > 0 && <aside className="tracking-sync-success" role="status"><strong>已在這邊輸入項目，不要再在內控重複輸入！</strong>{syncSuccess.map(value => <button className="btn small" key={value.id} onClick={() => callbacks.openCase(value.id)}>{value.reference}｜查看內控</button>)}<button className="btn small" onClick={() => setSyncSuccess([])}>關閉提醒</button></aside>}
     {statisticsView ? <TrackingStatistics key={`${workspace}:${identity}:${vesselId}`} vesselId={vesselId} vesselName={vesselSelectionDisplayName(vessels.find(v => v.id === vesselId))} identity={identity} workspace={workspace} callbacks={callbacks} canExport={canExport} blocked={loading || busy || Boolean(draft) || Boolean(pending) || Boolean(safeRead<SavedDraft>(draftKey)?.pending) || importOpen || !vessels.some(v => v.id === vesselId && v.isActive)}/> : <>
-    <TrackingTable rows={rows.slice((page - 1) * 30, page * 30)} columns={columns} preferences={preferences} onPreferences={value => { setPreferences(value); writeTrackingPreferences(prefKey, value); }} sort={sort} onSort={key => setSort(value => ({ key, direction: value.key === key && value.direction === 'asc' ? 'desc' : 'asc' }))} selected={selected} onSelected={setSelected} actions={rowActions}/>
+    <TrackingTable key={prefKey} rows={rows.slice((page - 1) * 30, page * 30)} columns={columns} preferences={preferences} onPreferences={value => { setPreferences(value); writeTrackingPreferences(prefKey, value); }} sort={sort} onSort={key => setSort(value => ({ key, direction: value.key === key && value.direction === 'asc' ? 'desc' : 'asc' }))} selected={selected} onSelected={setSelected} onOpenCase={callbacks.openCase}/>
     <TrackingPagination count={rows.length} page={page} onPage={setPage}/>
     </>}
+    {historyRows.length > 0 && !statisticsView && <TrackingHistoryModal rows={historyRows} users={data.users} audience={audience} vesselName={vesselSelectionDisplayName(vessels.find(vessel => vessel.id === vesselId))} onClose={() => setHistorySelection(null)}/>}
     {importOpen && <TrackingImportModal key={`${workspace}:${identity}:${vesselId}`} vesselId={vesselId} vesselName={vesselSelectionDisplayName(vessels.find(v=>v.id===vesselId))} workspace={workspace} actorId={user.id} identity={identity} canCreate={canCreate} canClose={canClose} data={data} callbacks={callbacks} onClose={()=>setImportOpen(false)} registerGuard={value=>{importGuard.current=value;}}/>}
     {draft && draft.action === 'sync' && draft.sync ? <div className="tracking-sync-form"><BatchCreateModal data={data} user={user} vessels={vessels.filter(v => v.id === vesselId)} close={() => void closeModal()} shipSubmission={audience==='ship'?{draft:draft.sync,onDraftChange:value=>changeDraft({...draft,sync:value}),busy,pending:Boolean(pending),message:'',catalog:{taskCategories:data.settings.taskCategories,priorities:data.settings.priorities,equipmentFailureSubcategories:data.settings.equipmentFailureSubcategories,departments:data.settings.departments}}:undefined} sourceForm={{ draft: draft.sync, readOnly:!draftWritable(draft), onReconcile:()=>void reconcileRejected(),lockedTaskIds:draft.savedCases?.filter(item=>item.linkedTaskId).map(item=>item.id), onDraftChange: value => changeDraft({ ...draft, sync: value }), busy, pending: Boolean(pending), message: [...draft.warnings, draft.savedCases?'提交版本已建立內控；本次只更正同一批已建立案件，不會重複新增。':'', notice].filter(Boolean).join('\n') }} save={async (cases, projections) => { await submit(cases, projections); return false; }}/></div> : draft && <TrackingBusinessModal audience={audience} readOnly={!draftWritable(draft)} vesselName={vesselSelectionDisplayName(vessels.find(vessel=>vessel.id===vesselId))} draft={draft} busy={busy} pending={Boolean(pending)} message={notice} affected={affected} onChange={changeDraft} onSave={() => void submit()} onReconcile={() => void reconcileRejected()} onClose={() => void closeModal()}/>}
     {navigation && <div className="modal-backdrop tracking-navigation"><div className="modal" role="dialog" aria-modal="true" aria-label="尚未保存的跟蹤草稿"><h3>尚有實際修改未保存</h3><p>保存須等雲端確認；保留草稿只存於此工作區、本人、本船的瀏覽器。</p><button className="btn primary" onClick={() => void resolveNavigation('save')}>保存後繼續</button><button className="btn" onClick={() => void resolveNavigation('keep')}>保留草稿並繼續</button><button className="btn danger" disabled={busy||Boolean(pending)} onClick={() => void resolveNavigation('discard')}>捨棄草稿並關閉</button><button className="btn ghost" onClick={() => void resolveNavigation('cancel')}>取消切換</button></div></div>}

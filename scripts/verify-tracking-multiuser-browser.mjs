@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {trackingBatchAction} from './tracking-batch-browser-actions.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
@@ -50,7 +51,7 @@ async function page(actor,ship=false){
  p.sync=async()=>{const start=evidence.network.length;await p.click('同步最新（安全合併）');await until(()=>evidence.network.slice(start).some(n=>n.actor===actor&&/^read_ship_dynamics_record/.test(n.rpc)&&n.finished),'real sync read '+actor);await until(()=>p.eval("[...document.querySelectorAll('button')].some(n=>n.innerText.trim()==='同步最新（安全合併）'&&!n.disabled)&&!document.querySelector('.save-status-strip.saving')"),'sync idle '+actor);};
  p.tracking=async()=>{if(!await p.eval("!!document.querySelector('.tracking-page')"))await p.click('配件/物料/工程');await until(()=>p.eval("!!document.querySelector('.tracking-page')"),'tracking mounted');await p.choose('[aria-label=跟蹤船舶]','qa-v1');await p.activate("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('配件物料總清單'))");await until(()=>p.eval("!!document.querySelector('.tracking-heading button:not(:disabled)')"),'tracking ready');};
  p.row=ref=>`[...document.querySelectorAll('.tracking-table tbody tr')].find(n=>n.querySelector('.tracking-reference')?.innerText.includes(${JSON.stringify(ref)}))`;
- p.action=async(ref,label)=>{await p.activate(`[...(${p.row(ref)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()===${JSON.stringify(label)})`);await until(()=>p.eval("!!document.querySelector('.modal-backdrop')"),'tracking action '+label);};
+ p.action=(ref,label)=>trackingBatchAction({evaluate:p.eval,click:p.click,nodeClick:p.tap,until},ref,label);
  p.progress=async(ref,value)=>{await p.action(ref,'進度');await p.fill(`[aria-label="${ref} 最新進度"]`,value);};
  p.submit=async(n=1)=>p.click(`確認保存 ${n} 項`);
  p.reconcile=async()=>{await p.click('核對最新資料／解除已拒絕提交');await until(async()=>(await p.text()).includes('已核對最新版本；原輸入保留'),'explicit rejected reconciliation');};

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {trackingBatchAction} from './tracking-batch-browser-actions.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -108,7 +109,9 @@ try{
   await click('確認保存 1 項');await finish();
   const record=(await qa.read()).payload.trackingItems.find(x=>x.referenceNo==='BROWSER-001');assert.equal(record.description,'真實船端輸入測試');assert.equal(record.statusLogs[0].text,'第一筆進度');
  });
- if(process.argv.includes('--urgent-shortcut')){
+ if(process.argv.includes('--compact')){
+  await (await import('./tracking-compact-browser-checks.mjs')).compactChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'ship',finish});
+ }else if(process.argv.includes('--urgent-shortcut')){
   await (await import('./tracking-urgent-shortcut-browser-checks.mjs')).urgentShortcutChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'ship'});
  }else if(process.argv.includes('--filters')){
   await (await import('./tracking-filter-panel-browser-checks.mjs')).filterPanelChecks({qa,call,evaluate,click,nodeClick,fill,select,until,screen,check,output,audience:'ship'});
@@ -119,14 +122,14 @@ try{
  }else{
  if(process.argv.includes('--fields'))await (await import('./tracking-field-browser-checks.mjs')).trackingFieldChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output});
  await check('ship-sync-form-reporter-and-no-office-control',async()=>{
-  await nodeClick("(()=>{const row=[...document.querySelectorAll('.tracking-table tbody tr')].find(n=>n.querySelector('.tracking-reference')?.innerText.includes('BROWSER-001'));return [...row.querySelectorAll('button')].find(n=>n.innerText==='同步到內控');})()");await until(async()=>await evaluate("Boolean(document.querySelector('#ship-internal-reporter'))"),'ship reporter form');
+  await trackingBatchAction({evaluate,click,nodeClick,until},'BROWSER-001','同步到內控');await until(async()=>await evaluate("Boolean(document.querySelector('#ship-internal-reporter'))"),'ship reporter form');
   assert.ok(!(await text()).includes('要事'));await fill('#ship-internal-reporter','陳測試／輪機長');
   await select(field('事件分類 *','select'),'維修');
   await click('提交 1 筆');await finish();const snap=await qa.read(),source=snap.payload.trackingItems.find(x=>x.referenceNo==='BROWSER-001'),item=snap.payload.internalControlCases.find(x=>x.id===source.linkedCaseId);
   assert.ok(item.description.endsWith('報告人姓名＋職務：陳測試／輪機長'));assert.equal(item.syncToTask,false);assert.ok(!item.linkedTaskId);
  });
  await check('lost-ACK-refresh-keeps-exact-pending-before-new-action',async()=>{
-  await nodeClick("(()=>{const row=[...document.querySelectorAll('.tracking-table tbody tr')].find(n=>n.querySelector('.tracking-reference')?.innerText.includes('BROWSER-001'));return [...row.querySelectorAll('button')].find(n=>n.innerText==='進度');})()");await until(async()=>await evaluate("Boolean(document.querySelector('[aria-label=\"BROWSER-001 最新進度\"]'))"),'progress editor');await fill('[aria-label="BROWSER-001 最新進度"]','網路中斷仍保留的進度');
+  await trackingBatchAction({evaluate,click,nodeClick,until},'BROWSER-001','進度');await until(async()=>await evaluate("Boolean(document.querySelector('[aria-label=\"BROWSER-001 最新進度\"]'))"),'progress editor');await fill('[aria-label="BROWSER-001 最新進度"]','網路中斷仍保留的進度');
   let committed=false,original;qa.setRecordFault({after:async({name,body,value})=>{if(name!=='ship_dynamics_tracking_public_v1')return false;if(body.p_action==='submit'&&value.ok===true){committed=true;original=structuredClone(body);}return committed&&['submit','receipt'].includes(body.p_action);}});
   await click('確認保存 1 項');await until(async()=>(await text()).includes('尚未保存；輸入及精確提交已保留'),'unknown outcome retained');assert.ok(committed);const revision=(await qa.read()).revision;
   const storedBefore=await evaluate("Object.fromEntries(Object.entries(localStorage).filter(([k])=>k.startsWith('[\"tracking-unsent-v1\"')))"),key=Object.keys(storedBefore)[0];assert.ok(key);const originalDraft=JSON.parse(storedBefore[key]);assert.ok(originalDraft.pending);

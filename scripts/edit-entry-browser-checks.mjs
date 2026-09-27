@@ -11,12 +11,12 @@ export async function editEntryChecks(c){
   await until(async()=>await editable(p,selector)||(evidence.dialogs||[]).slice(start).some(d=>d.actor===p.actor&&d.type==='alert'),'writable editor or visible admission denial');
   return {editable:await editable(p,selector),dialogs:(evidence.dialogs||[]).slice(start).filter(d=>d.actor===p.actor)};
  };
- const trySource=(p,ref)=>attempt(p,`[...(${p.row(ref)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()==='進度')`,`[aria-label="${ref} 最新進度"]`);
+ const trySource=async(p,ref)=>{await p.click('清除選取');await p.tap(`(${p.row(ref)}).querySelector('.tracking-check input')`);return attempt(p,"[...document.querySelectorAll('button')].find(n=>n.innerText.trim()==='批量更新進度')",`[aria-label="${ref} 最新進度"]`);};
  const group=async(ref)=>{const d=(await read()).payload,s=d.trackingItems.find(r=>r.referenceNo===ref),i=d.internalControlCases.find(r=>r.id===s.linkedCaseId),t=i&&d.tasks.find(r=>r.id===i.linkedTaskId);return{s,i,t,keys:[`tracking:${s.id}`,...(i?[`internal-control:${i.id}`]:[]),...(t?[`task:${t.id}`]:[])].sort()};};
- const tryCase=(p,ref)=>attempt(p,`[...(${p.row(ref)})?.querySelectorAll('button')||[]].find(n=>n.innerText.trim()==='查看內控／已同步')`,'.ic-status-add textarea');
+ const tryCase=(p,ref)=>attempt(p,`(${p.row(ref)}).querySelector('.tracking-case-link')`,'.ic-status-add textarea');
  const clear=async(p)=>{await p.click('取消');await until(()=>p.eval("!document.querySelector('.modal-backdrop')"),'editor close');};
  await check('E01-source-entry-denies-peer-owner-can-save',async()=>{
-  await a.click('＋ 新增／批量新增');await a.fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','ENTRY-001');await a.fill('[aria-label="第 1 筆 內容摘要/工程內容"]','編輯進場排他測試');await a.submit();await a.done();await b.sync();
+  await a.click('＋ 新增／批量新增');await a.fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','ENTRY-001');await a.fill('[aria-label="第 1 筆 內容摘要/工程內容"]','編輯進場排他測試');await a.date('[aria-label="第 1 筆 申請/開單日期"]','2026-09-21');await a.submit();await a.done();await b.sync();
   const before=await read();
   assert.equal((await trySource(a,'ENTRY-001')).editable,true);
   await a.fill('[aria-label="ENTRY-001 最新進度"]','第一位編輯者可以保存');
@@ -54,7 +54,7 @@ export async function editEntryChecks(c){
   await a.tracking();await a.click('＋ 新增／批量新增');
   for(let n=1;n<=2;n++){if(n>1)await a.click('＋ 新增一列');await a.fill(`[aria-label="第 ${n} 筆 申請單號(材料或工程)"]`,`ENTRY-00${n+1}`);await a.fill(`[aria-label="第 ${n} 筆 內容摘要/工程內容"]`,`同船獨立項目 ${n}`);}
   await a.submit(2);await a.done();await b.tracking();await b.sync();
-  for(const ref of ['ENTRY-001','ENTRY-002'])await a.tap(`(${a.row(ref)}).querySelector('input[type=checkbox]')`);
+  await a.click('清除選取');for(const ref of ['ENTRY-001','ENTRY-002'])await a.tap(`(${a.row(ref)}).querySelector('input[type=checkbox]')`);
   await a.click('批量更新進度');await a.fill('[aria-label="ENTRY-001 最新進度"]','整批保護');
   const g1=await group('ENTRY-001'),g2=await group('ENTRY-002'),g3=await group('ENTRY-003');
   assert.deepEqual((await locks()).map(l=>l.section_key),[...g1.keys,...g2.keys].sort());
@@ -64,7 +64,7 @@ export async function editEntryChecks(c){
   await b.fill('[aria-label="ENTRY-003 最新進度"]','不相干項目照常保存');await b.submit();await b.done();
   await a.submit(2);await a.done();await until(async()=>!(await locks()).length,'batch confirmed close releases all');
   await b.tracking();assert.equal((await trySource(b,'ENTRY-001')).editable,true);
-  const before=await read();await a.tracking();
+  const before=await read();await a.tracking();await a.click('清除選取');
   for(const ref of ['ENTRY-001','ENTRY-002'])await a.tap(`(${a.row(ref)}).querySelector('input[type=checkbox]')`);
   const denied=await attempt(a,"[...document.querySelectorAll('button')].find(n=>n.innerText.trim()==='批量更新進度')",'[aria-label="ENTRY-002 最新進度"]');
   assert.equal(denied.editable,false,'one busy member denies the whole batch');
