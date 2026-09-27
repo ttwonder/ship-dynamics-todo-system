@@ -66,7 +66,7 @@ export async function importRecoveryChecks(c) {
     await call('Page.reload');await until(async()=>await evaluate("window.__qaOriginalImportDocument!==true")&&((await text()).includes('人員登入／切換')||(await text()).includes('QA OWNER')),'fresh App document',45000);
     if((await text()).includes('人員登入／切換')){await fill('input[type="password"]',qa.password);await click('登入');}
     await until(async()=>(await text()).includes('QA OWNER')&&!(await text()).includes('人員登入／切換'),'original Owner login');
-    await click('配件/物料/工程跟蹤');await until(()=>evaluate("Boolean(document.querySelector('.tracking-page'))"),'fresh tracking page');
+    await click('配件/物料/工程');await until(()=>evaluate("Boolean(document.querySelector('.tracking-page'))"),'fresh tracking page');
     await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(b=>b.innerText.startsWith('未完成工程單'))");
     await until(()=>evaluate(`Boolean(document.querySelector('[data-tracking-id="${savedId}"]'))`),'authoritatively reloaded import');
     assert.deepEqual(await qa.read(),committed);await screen('import-fresh-document-readback');

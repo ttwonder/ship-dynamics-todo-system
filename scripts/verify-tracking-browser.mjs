@@ -116,8 +116,8 @@ try{
  await screen('internal-control-baseline-desktop');
  evidence.baseline=await evaluate("(()=>{const t=document.querySelector('.ic-table');return {width:innerWidth,table:t?.getBoundingClientRect().width,font:t&&getComputedStyle(t).fontSize,nav:[...document.querySelectorAll('nav button')].map(n=>n.innerText)};})()");
  await check('shore-tracking-navigation-mounted',async()=>{
-   assert.ok((await text()).includes('配件/物料/工程跟蹤'),'Missing approved shore tracking entry');
-   await click('配件/物料/工程跟蹤');
+   assert.ok((await text()).includes('配件/物料/工程'),'Missing approved shore tracking entry');
+   await click('配件/物料/工程');
    await until(()=>evaluate('Boolean(document.querySelector(".tracking-page"))'),'tracking page mounted');
    await call('Emulation.setEmulatedMedia',{features:[{name:'prefers-color-scheme',value:'dark'}]});
    const paper=await evaluate("({tracking:getComputedStyle(document.querySelector('.tracking-page')).getPropertyValue('--tracking-paper').trim(),app:getComputedStyle(document.documentElement).getPropertyValue('--paper').trim()})");
@@ -146,7 +146,7 @@ try{
    assert.ok(qa.metrics.some(m=>m.rpc==='apply_ship_dynamics_record_patch_v1'&&m.status==='SQL_OK'));
    await screen('tracking-created-desktop');
    const previousDocument=await evaluate('performance.timeOrigin');await call('Page.reload');await until(async()=>await evaluate('performance.timeOrigin')!==previousDocument&&(await text()).includes('QA OWNER'),'new document login',60_000);
-   await click('配件/物料/工程跟蹤');await until(()=>evaluate("Boolean(document.querySelector('.tracking-statistics'))"),'shore default after reload');await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("document.querySelector('.tracking-table')?.innerText.includes('UI-001')"),'authoritative reload');
+   await click('配件/物料/工程');await until(()=>evaluate("Boolean(document.querySelector('.tracking-statistics'))"),'shore default after reload');await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("document.querySelector('.tracking-table')?.innerText.includes('UI-001')"),'authoritative reload');
    assert.deepEqual(await qa.read(),saved);
  });
  const trackingRow=reference=>`[...document.querySelectorAll('.tracking-table tbody tr')].find(n=>n.querySelector('.tracking-reference')?.innerText.includes(${JSON.stringify(reference)}))`;

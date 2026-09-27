@@ -114,7 +114,7 @@ try{
  await click('內控異常');await until(async()=>(await text()).includes('QA withdraw'),'record internal control list');
  await screen('internal-control-baseline-desktop');
  evidence.baseline=await evaluate("(()=>{const t=document.querySelector('.ic-table');return {width:innerWidth,table:t?.getBoundingClientRect().width,font:t&&getComputedStyle(t).fontSize,nav:[...document.querySelectorAll('nav button')].map(n=>n.innerText)};})()");
- await click('配件/物料/工程跟蹤');
+ await click('配件/物料/工程');
  await until(()=>evaluate('Boolean(document.querySelector(".tracking-page"))'),'tracking mounted');
  await until(()=>evaluate("Boolean([...document.querySelectorAll('.tracking-heading button')].find(n=>n.innerText==='＋ 新增／批量新增'&&!n.disabled))"),'tracking read ready');
  await check('mounted-import-entry',async()=>{

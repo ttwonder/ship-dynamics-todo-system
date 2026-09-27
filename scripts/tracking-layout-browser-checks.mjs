@@ -81,7 +81,7 @@ export async function layoutChecks(c) {
     assert.ok(added.every(l=>times.some(t=>t.at===l.at&&t.text.trim())),'stored time is displayed with its exact timestamp');
     await screen('tracking-layout-progress-history');await click('取消');await finishEditor();
     await call('Page.reload');await until(()=>evaluate("document.body.innerText.includes('QA OWNER')"),'fresh document');
-    await click('配件/物料/工程跟蹤');await until(()=>evaluate("document.querySelector('.tracking-table')?.innerText.includes('UI-001')"),'record reread');
+    await click('配件/物料/工程');await until(()=>evaluate("document.querySelector('.tracking-table')?.innerText.includes('UI-001')"),'record reread');
     assert.deepEqual((await qa.read()).payload.trackingItems.find(r=>r.id===before.id).statusLogs,saved.statusLogs,'history survives authoritative reread');
   });
 }

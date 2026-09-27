@@ -353,6 +353,10 @@
 
 /* Desktop header fit — keep every tab whole at 100% zoom */
 .topbar-primary-nav{min-width:0}
+.topbar-primary-nav button{font-size:14px}
+.topbar-inner>.brand>span:last-child{display:grid;grid-template-columns:min-content}
+.topbar-inner>.brand b{white-space:nowrap}
+.topbar-inner>.brand small{font-size:6.7px;letter-spacing:0;white-space:normal;text-align-last:justify}
 @media(min-width:1421px){.topbar-primary-nav{justify-content:space-between;gap:2px;scrollbar-width:none}.topbar-primary-nav::-webkit-scrollbar{display:none}.topbar-primary-nav button{padding-inline:9px}.topbar-inner{gap:12px}.user-chip{flex:0 0 auto}}
 @media(min-width:901px) and (max-width:1420px){.topbar-inner{align-items:center;gap:12px;flex-wrap:wrap}.topbar-primary-nav{order:3;flex:1 0 100%;justify-content:flex-start;width:100%;overflow-x:auto}.user-chip{margin-left:auto}}
 @media(max-width:900px){.topbar-primary-nav{flex:1 0 100%}}
