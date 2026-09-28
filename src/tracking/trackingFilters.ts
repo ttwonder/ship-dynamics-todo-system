@@ -25,7 +25,7 @@ export const filterIsActive = (filter: TrackingFilter) => Boolean(filter.mode ||
 export function selectTrackingRows(items: readonly TrackingItem[], query: TrackingQuery): TrackingItem[] {
   const columns = new Map(TRACKING_COLUMNS.map(column => [column.key, column]));
   const needle = query.search?.trim().toLocaleLowerCase();
-  const rows = items.filter(row => row.vesselId === query.vesselId && (query.view === 'deleted' ? isTrackingDeleted(row) : query.view === 'requests' ? Boolean(row.deletionRequest) : trackingInTab(row, query.tab))).filter(row => {
+  const rows = items.filter(row => row.vesselId === query.vesselId && (query.view === 'deleted' ? isTrackingDeleted(row) : query.view === 'requests' ? !isTrackingDeleted(row) && Boolean(row.deletionRequest) : trackingInTab(row, query.tab))).filter(row => {
     if (needle && !TRACKING_COLUMNS.some(column => column.value(row).toLocaleLowerCase().includes(needle))) return false;
     return Object.entries(query.filters).every(([key, filter]) => {
       const column = columns.get(key); if (!column || !filterIsActive(filter)) return true;

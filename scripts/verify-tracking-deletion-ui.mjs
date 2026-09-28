@@ -11,13 +11,20 @@ try {
   const engineering={...deleted,id:'deleted-engine',kind:'engineering',requestType:'repair',completionDate:'2026-09-15',isClosed:true,closedDate:'2026-09-20'};
   const pending={...row,id:'pending',deletionRequest:{at:'2026-09-26T00:00:00Z',byUserId:'ship',reason:'船端申請理由',status:'pending'}};
   const approved={...deleted,id:'approved',deletionRequest:{...pending.deletionRequest,status:'approved',reviewedAt:'2026-09-27T00:00:00Z',reviewedBy:'qa',reviewReason:'確認重複'}};
-  const items=[row,deleted,engineering,pending,approved,{...engineering,id:'other-vessel',vesselId:'not-selected'}];
+  const rejected={...pending,id:'rejected',deletionRequest:{...pending.deletionRequest,status:'rejected',reviewReason:'請保留原申請'}};
+  const items=[row,deleted,engineering,pending,approved,rejected,{...engineering,id:'other-vessel',vesselId:'not-selected'}];
+  const originalItems=structuredClone(items);
   const query={vesselId:row.vesselId,tab:'supply-all',filters:{},sort:{key:'id',direction:'asc'}};
-  assert.deepEqual(selectTrackingRows(items,query).map(x=>x.id),[row.id,pending.id].sort(),'normal list excludes soft deleted rows but keeps pending requests');
+  assert.deepEqual(selectTrackingRows(items,query).map(x=>x.id),[row.id,pending.id,rejected.id].sort(),'normal list excludes soft deleted rows but keeps pending/rejected requests');
   assert.deepEqual(selectTrackingRows(items,{...query,view:'deleted'}).map(x=>x.id),[approved.id,engineering.id,deleted.id].sort(),'deleted list contains BOTH original kinds within selected vessel');
-  assert.deepEqual(selectTrackingRows(items,{...query,view:'requests'}).map(x=>x.id),[approved.id,pending.id].sort(),'request list preserves outcomes including approved deleted source');
+  assert.deepEqual(selectTrackingRows(items,{...query,view:'requests'}).map(x=>x.id),[pending.id,rejected.id].sort(),'approved deleted source belongs only to deleted list; pending/rejected remain in request results');
   assert.deepEqual(selectTrackingRows(items,{...query,view:'requests',filters:{deletionRequestStatus:{values:['待審核']}}}).map(x=>x.id),[pending.id]);
   assert.deepEqual(selectTrackingRows(items,{...query,view:'deleted',search:'重複申請'}).map(x=>x.id),[approved.id,engineering.id,deleted.id].sort());
+  assert.deepEqual(selectTrackingRows(items,{...query,view:'requests',filters:{deletionRequestStatus:{values:['已批准']}}}),[],'a status filter cannot reintroduce an archived source');
+  const deletedRejected={...rejected,deletion:deleted.deletion};
+  assert.deepEqual(selectTrackingRows([deletedRejected],{...query,view:'requests'}),[],'deletion state wins even when an earlier request was rejected');
+  assert.deepEqual(selectTrackingRows([deletedRejected],{...query,view:'deleted'}).map(x=>x.id),[rejected.id]);
+  assert.deepEqual(items,originalItems,'visibility filtering must not alter source data or approval history');
   const {trackingColumnsFor}=await vite.ssrLoadModule('/src/tracking/trackingColumns.ts');
   for(const kind of ['supply','engineering'])assert.ok(!trackingColumnsFor(kind).some(column=>column.key.startsWith('deletion')),'administrative columns must not expand saved ordinary table/export preferences');
   cases.push('UI-DEL-01-active-pending-deleted-both-kinds-scoped-search-and-request-filter');
@@ -44,6 +51,10 @@ try {
   const ship=page('ship',true);assert.ok(ship.includes('>申請刪除</button>'),'ship has real shared request entry');assert.ok(ship.includes('刪除申請／結果'));assert.ok(ship.includes('已刪除清單'));assert.ok(!ship.includes('要事'));assert.ok(!ship.includes('>刪除所選</button>'));assert.ok(!ship.includes('>還原所選</button>'));assert.ok(!ship.includes('>駁回申請</button>'));
   assert.ok(!page('ship',false).includes('>申請刪除</button>'));
   const shore=page('shore',true);assert.ok(shore.includes('已刪除清單'));assert.ok(shore.includes('刪除申請／結果'));
+  for(const markup of [ship,shore]){
+    assert.ok(markup.includes('刪除申請／結果 <span>'+[pending,rejected].length+'</span>'),'both entry badges exclude deleted requests');
+    assert.ok(markup.includes('已刪除清單 <span>'+[approved,engineering,deleted].length+'</span>'),'both entry deleted badges keep archived sources');
+  }
   delete globalThis.localStorage;
   const {trackingDeletionDraftMatchesCommand}=await vite.ssrLoadModule('/src/tracking/TrackingDeletionFields.tsx');
   const current={...makeTrackingDraft('delete',[row],data),deletionReason:'原理由'};const accepted=commandForTrackingDraft(current);
