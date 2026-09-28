@@ -6,6 +6,8 @@ import { taskBelongsToUserWorkCenter } from './workCenterScope';
 import { isTaipeiBusinessDay, taipeiDateKey } from './taipeiTime';
 import { isMeetingTaskSource } from './taskCategories';
 import { trackingProgressEndpointKeys } from './tracking/trackingAuthorization';
+import { isCanonicalTrackingDeletionChange } from './tracking/trackingDeletion';
+import type { TrackingItem } from './tracking/trackingTypes';
 
 export class CloudPatchAuthorizationError extends Error{
   constructor(readonly reason:string){super(`Cloud patch authorization rejected: ${reason}`);this.name='CloudPatchAuthorizationError';}
@@ -363,6 +365,8 @@ function authorizeEntityOperation(data:AppData,actor:UserAccount,operation:Extra
   if(collection==='trackingItems'){
     if(actor.role==='vessel')throw new CloudPatchAuthorizationError('tracking-shore-only');
     if(!value)throw new CloudPatchAuthorizationError('tracking-source-delete-forbidden');
+    if(!expected&&(value.deletion!==undefined||value.deletionRequest!==undefined)
+      ||expected&&!isCanonicalTrackingDeletionChange(expected as unknown as TrackingItem,value as unknown as TrackingItem,actor.id))throw new CloudPatchAuthorizationError('tracking-deletion-invalid');
     permission(data,actor,!expected?'createTasks':[...fields].some(f=>['isClosed','closedDate','closedBy','closureOutcome'].includes(f))?'closeTasks':'editBusinessContent');
     assertEntityScope(data,actor,collection,expected,value);
     return;

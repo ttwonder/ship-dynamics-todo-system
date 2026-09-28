@@ -61,6 +61,7 @@ export async function layoutChecks(c) {
     assert.ok(await evaluate("document.querySelector('[aria-label=有效篩選]').innerText.includes('申請單號(材料或工程)')"));
     await click('清除條件');await toggle('全部欄位篩選');
     await click('導出excel');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=跟蹤匯出]'))"),'moved export');
+    const exportMonth=(await qa.read()).payload.trackingItems.find(row=>row.referenceNo==='UI-001').applicationDate.slice(0,7);await fill('[aria-label=匯出開始月份]',exportMonth);await fill('[aria-label=匯出結束月份]',exportMonth);
     await click('建立共用快照');await until(()=>evaluate("Boolean([...document.querySelectorAll('button')].find(n=>n.innerText==='下載 XLSX'))"),'confirmed export capture');
     await click('關閉匯出');
     const updates=['零件訂購已確認','供應商已完成備貨，等待安排交船'];
@@ -80,8 +81,10 @@ export async function layoutChecks(c) {
     const times=await evaluate("[...document.querySelectorAll('[aria-label=進度更新記錄] time')].map(n=>({at:n.dateTime,text:n.textContent}))");
     assert.ok(added.every(l=>times.some(t=>t.at===l.at&&t.text.trim())),'stored time is displayed with its exact timestamp');
     await screen('tracking-layout-progress-history');await click('取消');await finishEditor();
-    await call('Page.reload');await until(()=>evaluate("document.body.innerText.includes('QA OWNER')"),'fresh document');
-    await click('配件/物料/工程');await until(()=>evaluate("document.querySelector('.tracking-table')?.innerText.includes('UI-001')"),'record reread');
+    const previousDocument=await evaluate('performance.timeOrigin');
+    await call('Page.reload');await until(()=>evaluate(`performance.timeOrigin!==${previousDocument}&&document.readyState==='complete'&&document.body.innerText.includes('QA OWNER')`),'fresh authenticated document');
+    await click('配件/物料/工程');await until(()=>evaluate("Boolean(document.querySelector('.tracking-tabs'))"),'tracking statistics landing');
+    await nodeClick("[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith('未送船清單'))");await until(()=>evaluate("document.querySelector('.tracking-table')?.innerText.includes('UI-001')"),'record reread');
     assert.deepEqual((await qa.read()).payload.trackingItems.find(r=>r.id===before.id).statusLogs,saved.statusLogs,'history survives authoritative reread');
   });
 }

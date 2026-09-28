@@ -1,11 +1,12 @@
 import { trackingRowSnapshot, type TrackingTab, TRACKING_TABS } from './trackingFilters';
 import { trackingColumnsFor, type TrackingColumn } from './trackingColumns';
 import type { TrackingItem, TrackingKind } from './trackingTypes';
+import { isTrackingDeleted } from './trackingDeletion';
 export interface TrackingReport extends ReturnType<typeof trackingRowSnapshot> {
   vesselId:string; vesselName:string; kind:TrackingKind; title:string; generatedAt:string; summary:string; selection:'all'|'selected';
 }
 export function makeTrackingReport(items:TrackingItem[],columns:TrackingColumn[],metadata:Omit<TrackingReport,'rows'|'columns'>):TrackingReport {
-  const report={...trackingRowSnapshot(items,columns),...metadata};
+  const report={...trackingRowSnapshot(items.filter(item=>!isTrackingDeleted(item)),columns),...metadata};
   const freeze=(value:unknown)=>{if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value);}};freeze(report);return report;
 }
 export const trackingTitle=(tab:TrackingTab)=>TRACKING_TABS.find(t=>t.id===tab)!.label;

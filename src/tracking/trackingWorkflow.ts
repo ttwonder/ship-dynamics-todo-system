@@ -2,6 +2,7 @@ import type { AppData, InternalControlCase, PermissionKey, UserAccount } from '.
 import type { TrackingItem, TrackingDeliveryStatus } from './trackingTypes';
 import { TRACKING_REQUEST_TYPES, trackingRequestKind, trackingRequestTypeLabel, type TrackingRequestType } from './trackingRequestTypes';
 import { trackingClassificationValue, synchronizeTrackingClassification } from './trackingReclassification';
+import { applyTrackingDeletion, isTrackingDeleted } from './trackingDeletion';
 import { createInternalControlCases, type InternalControlTaskProjection } from '../internalControlData';
 import { isValidInternalControlDate } from '../internalControlWorkflow';
 import { hasPermission, canAccessAllVessels } from '../permissions';
@@ -16,6 +17,10 @@ export const TRACKING_CREATE_FIELDS=[...TRACKING_LEGACY_EDIT_FIELDS,'id','kind',
 export type TrackingEdit = Partial<Pick<TrackingItem,typeof TRACKING_EDIT_FIELDS[number]>>;
 export type TrackingCommand =
  | {type:'create';items:TrackingItem[]}
+ | {type:'delete';items:(TrackingVersion & {reason:string})[]}
+ | {type:'restore';items:(TrackingVersion & {reason:string})[]}
+ | {type:'request-delete';items:(TrackingVersion & {reason:string})[]}
+ | {type:'reject-delete';items:(TrackingVersion & {reason:string})[]}
  | {type:'progress';items:(TrackingVersion & {text:string})[]}
  | {type:'edit';items:(TrackingVersion & {changes:TrackingEdit})[]}
  | {type:'reclassify';items:(TrackingVersion & {requestType:TrackingRequestType;actualDate:string;deliveryStatus:TrackingDeliveryStatus})[]}
@@ -75,9 +80,18 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
    authorize(next,user,input.vesselId,'createTasks');
    if(next.trackingItems.some(i=>i.id===input.id))fail('tracking-id-exists');
    const item:TrackingItem={...structuredClone(input),urgency:input.urgency || 'normal',expectedDate:input.expectedDate || '',supplementalNotes:input.supplementalNotes || '',progress:input.progress || '',deliveryStatus:input.deliveryStatus || 'not-delivered',isClosed:false,createdBy:user.id,updatedBy:user.id,createdAt:at,updatedAt:at,statusLogs:[],events:[]};
-   delete item.closedDate;delete item.closedBy;delete item.closureOutcome;delete item.linkedCaseId;delete item.linkState;
+   delete item.closedDate;delete item.closedBy;delete item.closureOutcome;delete item.linkedCaseId;delete item.linkState;delete item.deletion;delete item.deletionRequest;
    if(item.progress)item.statusLogs=[{id:`${operationId}:${item.id}:initial`,at,by:user.name,byUserId:user.id,text:item.progress}];
    validateTrackingItem(item);next.trackingItems.push(item);
+  }
+ } else if(command.type==='delete'||command.type==='restore'||command.type==='request-delete'||command.type==='reject-delete'){
+  if(command.type==='request-delete')fail('tracking-ship-request-only');
+  selection(command.items.map(i=>i.id));
+  for(const input of command.items){
+   if(Object.keys(input).some(key=>!['id','expectedUpdatedAt','reason'].includes(key)))fail('tracking-deletion-field-forbidden');
+   const {source}=find(input.id,input.expectedUpdatedAt);
+   authorize(next,user,source.vesselId,'editBusinessContent');
+   applyTrackingDeletion(source,command.type,input.reason,user,at,operationId);
   }
  } else if(command.type==='lifecycle'){
   selection(command.targets.map(t=>`${t.entry}:${t.id}`));
@@ -88,6 +102,7 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
    const item=target.entry==='internal-control'?next.internalControlCases.find(c=>c.id===target.id):target.entry==='task'?next.internalControlCases.find(c=>c.linkedTaskId===target.id):undefined;
    const source=target.entry==='tracking'?next.trackingItems.find(s=>s.id===target.id):item?sourceForCase(next,item):undefined;
    if(!source)fail('tracking-source-missing');
+   if(target.entry==='tracking'&&isTrackingDeleted(source!))fail('tracking-source-deleted');
    if(seen.has(source!.id))continue;seen.add(source!.id);
    const group=resolveTrackingGroup(next,source!.id),members=[group.source,...(group.item?[group.item]:[]),...(group.task?[group.task]:[])];
    authorize(next,user,group.source.vesselId,'closeTasks');
@@ -108,6 +123,7 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
   selection(command.items.map(i=>i.id));
   for(const input of command.items){
    const {source,item,task}=find(input.id,input.expectedUpdatedAt);
+   if(isTrackingDeleted(source))fail('tracking-source-deleted');
    authorize(next,user,source.vesselId,command.type==='sync'?'createTasks':'editBusinessContent');
    const updateProgress=(value:string)=>{
     const text=value.trim();

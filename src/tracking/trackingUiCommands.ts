@@ -1,4 +1,5 @@
 import type { AppData, InternalControlCase } from '../types';
+import { isTrackingDeleted } from './trackingDeletion';
 import { canAccessAllVessels, hasPermission } from '../permissions';
 import { updateInternalControlCase, type InternalControlTaskProjection } from '../internalControlData';
 import { runTrackingCommand, type TrackingCommand, type TrackingContext, type TrackingVersion } from './trackingWorkflow';
@@ -27,6 +28,7 @@ export function runTrackingUiCommand(data: AppData, command: TrackingUiCommand, 
   for (const value of command.items) {
     const source = next.trackingItems?.find(row => row.id === value.id);
     const vessel = source && next.vessels.find(row => row.id === source.vesselId && row.isActive);
+    if (source && isTrackingDeleted(source)) throw new Error('tracking-source-deleted');
     if (!source || source.updatedAt !== value.expectedUpdatedAt || source.linkState !== 'active' || source.linkedCaseId !== value.item.id || !vessel || !canAccessAllVessels(next.settings.rolePermissions, actor, [vessel])) throw new Error('tracking-sync-continuation-stale');
     const previous = next.internalControlCases.find(item => item.id === value.item.id);
     if (!previous || previous.trackingItemId !== source.id || previous.isClosed || value.item.vesselId !== source.vesselId || value.item.isClosed) throw new Error('tracking-sync-continuation-invalid');

@@ -4,12 +4,17 @@ import { formatTaipeiDateTime } from '../taipeiTime';
 import type { TrackingEvent, TrackingItem } from './trackingTypes';
 import type { TrackingAudience } from './trackingUiTypes';
 import { trackingRequestTypeLabel } from './trackingRequestTypes';
+import { TrackingDeletionStatus } from './TrackingDeletionFields';
+import { trackingReviewColumns } from './trackingColumns';
+import { isTrackingDeleted } from './trackingDeletion';
 
 const eventLabels: Record<TrackingEvent['action'], string> = {
+  delete: '刪除來源／批准申請', restore: '還原來源', 'request-delete': '申請刪除', 'reject-delete': '駁回刪除申請',
   reclassify: '修正分類', close: '結案', reopen: '重開', 'correct-close-date': '更正結案日期',
   delivery: '送船狀態／日期更正', completion: '完工日期更正', link: '同步到內控', 'invalidate-link': '內控關聯失效',
 };
 const fieldLabels: Record<string, string> = {
+  deletion: '刪除狀態', deletionRequest: '刪除申請', reason: '操作理由',
   kind: '大類', requestType: '類型', isClosed: '結案狀態', closedDate: '結案日期', closedBy: '結案人', deliveryStatus: '送船狀態',
   actualDeliveryDate: '實際送達日期', completionDate: '完工日期', closureOutcome: '工程結案結果',
   caseId: '內控 ID', taskId: '要事 ID', linkState: '內控同步',
@@ -23,6 +28,11 @@ const displayValue = (key: string, value: unknown, names: Map<string, string>): 
   if (key === 'isClosed' && typeof value === 'boolean') return value ? '已結案' : '未結案';
   if (key === 'requestType' && typeof value === 'string') return trackingRequestTypeLabel(value) || value;
   if (key === 'closedBy' && typeof value === 'string') return names.get(value) || value;
+  if ((key === 'deletion' || key === 'deletionRequest') && typeof value === 'object') {
+    const detail = value as Record<string, unknown>;
+    const state = key === 'deletion' ? '已刪除' : ({ pending: '待審核', approved: '已批准', rejected: '已駁回' }[String(detail.status)] || '申請');
+    return [state, typeof detail.at === 'string' ? formatTaipeiDateTime(detail.at) + '（UTC+8）' : '', typeof detail.byUserId === 'string' ? (names.get(detail.byUserId) || detail.byUserId) : '', `${key === 'deletion' ? '刪除' : '申請'}理由：${detail.reason || '—'}`, typeof detail.reviewedAt === 'string' ? `審核時間：${formatTaipeiDateTime(detail.reviewedAt)}（UTC+8）` : '', detail.reviewReason ? `審核理由：${detail.reviewReason}` : ''].filter(Boolean).join('｜');
+  }
   if (typeof value === 'string') return valueLabels[value] || value;
   return JSON.stringify(value);
 };
@@ -61,6 +71,8 @@ export function TrackingHistoryModal({ rows, users, audience, vesselName, onClos
       return <details className="tracking-history-item" data-history-id={row.id} key={row.id} open={rows.length === 1}>
         <summary><strong>{row.referenceNo}</strong>{row.originalItemNo && <span>｜原項次：{row.originalItemNo}</span>}<span>｜{row.isClosed ? '已結案' : '未結案'}｜{entries.length} 筆紀錄</span><small>{row.id}</small></summary>
         <p className="tracking-history-description">{row.description}</p>
+        <TrackingDeletionStatus row={row}/>
+        <details className="tracking-retained-details" open={isTrackingDeleted(row)}><summary>目前保留資料（含原分類及日期）</summary><dl className="tracking-history-changes">{trackingReviewColumns().filter(column => !['events', 'statusLogs', 'description'].includes(column.key)).map(column => <div key={column.key}><dt>{column.label}</dt><dd>{column.value(row) || '—'}</dd></div>)}</dl></details>
         {entries.length ? <ol className="tracking-history-timeline">{entries.map(entry => <li key={entry.id}>
           <div className="tracking-history-meta"><strong>{entry.title}</strong><time dateTime={entry.at}>{formatTaipeiDateTime(entry.at) || '時間未記錄'}</time><span>（UTC+8）｜{entry.actor || names.get(entry.actorId || '') || entry.actorId || '更新者未記錄'}</span>
             {entry.event && <span>｜{entry.event.entry === 'tracking' ? '跟蹤清單' : entry.event.entry === 'internal-control' ? '內控' : audience === 'shore' ? '要事' : '關聯記錄'}</span>}

@@ -15,7 +15,7 @@ export async function exportChecks(c){
   const from=path.join(actionDir,file),target=path.join(output,alias+path.extname(file));fs.copyFileSync(from,target);
   const wb=new ExcelJS.Workbook();await wb.xlsx.readFile(target);const data=wb.getWorksheet('跟蹤資料');if(data){const expected=Array.from({length:data.rowCount-4},(_,i)=>i+1);assert.equal(data.getCell('A4').text,'序號');assert.deepEqual(expected.map((_,i)=>data.getCell(i+5,1).value),expected);const print=wb.getWorksheet('列印明細');assert.deepEqual(Array.from({length:print.rowCount-4},(_,i)=>print.getCell(i+5,1).value).filter(v=>v!==null&&v!==''),expected);}downloaded.push({file:target,downloadName:file});return {file:target,wb};
  };
- const snapshot=async()=>{await click('建立共用快照');await until(async()=>(await text()).includes('共用快照已固定'),'authoritative shared snapshot',45000);};
+ const snapshot=async()=>{const months=(await qa.read()).payload.trackingItems.filter(row=>row.referenceNo.startsWith('BATCH-')).map(row=>row.applicationDate.slice(0,7)).sort();assert.ok(months.length);await fill('[aria-label=匯出開始月份]',months[0]);await fill('[aria-label=匯出結束月份]',months.at(-1));await click('建立共用快照');await until(async()=>(await text()).includes('共用快照已固定'),'authoritative shared snapshot',45000);};
  const readRows=wb=>{const s=wb.worksheets[0],keys=s.getRow(3).values.slice(1).map(v=>String(v).replace('tracking:',''));return {keys,rows:Array.from({length:Math.max(0,s.rowCount-4)},(_,i)=>Object.fromEntries(keys.map((k,c)=>[k,s.getCell(i+5,c+1).value])))};};
  const pdf=async(name,paper='A4',count)=>{
   await click('PDF 預覽');await until(()=>evaluate("Boolean(document.querySelector('.tracking-report-paper'))"),'mounted PDF paper');if(paper==='A3')await select("document.querySelector('[aria-label=\"PDF 紙張\"]')",'A3');

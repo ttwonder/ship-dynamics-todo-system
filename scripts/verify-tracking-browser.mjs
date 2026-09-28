@@ -23,7 +23,7 @@ const call=(method,params={},session=sessionId)=>new Promise((resolve,reject)=>{
 const evaluate=async(expression)=>{const result=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.exception?.description||result.exceptionDetails.text);return result.result.value;};
 const click=async(text,index=0,expected=1)=>{
  // Native keyboard activation avoids scroll-driven coordinate drift. No handler calls.
- await evaluate(`(()=>{const nodes=[...document.querySelectorAll('button')].filter(n=>n.innerText.trim()===${JSON.stringify(text)}&&n.getClientRects().length&&!n.disabled);if(nodes.length!==${expected})throw new Error('button cardinality: '+nodes.length);nodes[${index}].focus();if(document.activeElement!==nodes[${index}])throw new Error('button focus precondition');})()`);
+ await evaluate(`(()=>{const nodes=[...document.querySelectorAll('button')].filter(n=>n.innerText.trim()===${JSON.stringify(text)}&&n.getClientRects().length&&!n.disabled);if(nodes.length!==${expected})throw new Error('button cardinality '+${JSON.stringify(text)}+': '+nodes.length);nodes[${index}].focus();if(document.activeElement!==nodes[${index}])throw new Error('button focus precondition');})()`);
  await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
 };
 const fill=async(selector,text)=>{
@@ -67,9 +67,10 @@ const leases=async()=> (await qa.db.query("select section_key,locked_by from shi
 
 try{
  native=await createNativeRecordQa(output,evidence,{httpTransactions:true});
- qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,tracking:true,taskMember:true,databaseFactory:async()=>native.adapter});
+ qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,shipTracking:process.argv.includes('--soft-delete'),tracking:true,taskMember:true,databaseFactory:async()=>native.adapter});
  await (await import('./tracking-browser-fixture.mjs')).installTrackingBrowserMigrations(native.adapter);
  await (await import('./tracking-browser-fixture.mjs')).installTrackingFieldRevision(qa.db);
+ if(process.argv.includes('--soft-delete'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260928220000_tracking_soft_delete.sql','utf8'));
 
  assert.equal((await fetch(`${qa.origin}/__qa/health`)).status,200);
  const chrome='C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));
@@ -156,7 +157,11 @@ try{
  const rowAction=(reference,label)=>trackingBatchAction({evaluate,click,nodeClick,until},reference,label);
  const dateInput=async(selector,value)=>{await until(()=>evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`),"date field ready");await evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n||n.disabled)throw new Error('date input unavailable');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(selector)}).value`),value);};
  const trackingTab=async(label)=>{await nodeClick(`[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith(${JSON.stringify(label)}))`);};
- if(process.argv.includes('--component-only')){
+ if(process.argv.includes('--soft-delete')){
+  await (await import('./tracking-soft-delete-browser-checks.mjs')).trackingSoftDeleteChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'shore',finish:finishEditor});
+ }else if(process.argv.includes('--soft-delete-component')){
+  await (await import('./tracking-soft-delete-browser-checks.mjs')).trackingSoftDeleteComponentChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check});
+ }else if(process.argv.includes('--component-only')){
   await (await import('./tracking-component-browser-checks.mjs')).componentChecks({qa,call,evaluate,click,nodeClick,fill,until,text,screen,check});
  }else if(process.argv.includes('--compact')){
   await (await import('./tracking-compact-browser-checks.mjs')).compactChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'shore',finish:finishEditor});

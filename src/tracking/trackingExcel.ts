@@ -6,8 +6,9 @@ import { trackingTextChunks, trackingReportFileName, type TrackingReport } from 
 import type { TrackingKind } from './trackingTypes';
 import { formatTaipeiDateTime } from '../taipeiTime';
 import { TRACKING_REQUEST_TYPES } from './trackingRequestTypes';
+import { isTrackingDeleted } from './trackingDeletion';
 
-function formatSheet(sheet:ExcelJS.Worksheet,widths:number[],header:number,paperSize=9){
+function formatSheet(sheet:ExcelJS.Worksheet,widths:number[],header:number,paperSize=9,fitSummary=false){
  widths.forEach((w,i)=>{sheet.getColumn(i+1).width=w;});
  sheet.eachRow({includeEmpty:true},row=>{
   let lines=1;
@@ -22,6 +23,13 @@ function formatSheet(sheet:ExcelJS.Worksheet,widths:number[],header:number,paper
   }
   if(row.hasValues)row.height=row.number<header?row.number===1?28:32:Math.min(409,lines*16+8);
  });
+ // Merged cells do not auto-fit: retain the header/table coordinates and grow
+ // only report provenance, using the whole merged band (not the first column).
+ if(fitSummary){
+  const width=Math.max(3,widths.reduce((sum,w)=>sum+w,0)-2);
+  const lines=sheet.getCell('A2').text.split('\n').reduce((sum,text)=>sum+Math.max(1,Math.ceil(Array.from(text).reduce((n,ch)=>n+(/[^\x00-\x7f]/.test(ch)?2:1),0)/width)),0);
+  sheet.getRow(2).height=Math.min(409,Math.max(32,lines*16+8));
+ }
  delete sheet.properties.outlineProperties;
  sheet.views=[{state:'frozen',ySplit:header,showGridLines:false}];
  sheet.pageSetup={orientation:'landscape',paperSize,fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:`1:${header}`,printArea:`A1:${sheet.getColumn(widths.length).letter}${Math.max(header+1,sheet.rowCount)}`,margins:{left:.25,right:.25,top:.4,bottom:.4,header:.15,footer:.15}};
@@ -30,6 +38,8 @@ function formatSheet(sheet:ExcelJS.Worksheet,widths:number[],header:number,paper
  sheet.headerFooter={oddFooter:'&LShip Dynamics&R第 &P 頁／共 &N 頁',oddHeader:'&C&"Microsoft JhengHei"跟蹤報表'};
 }
 export async function buildTrackingWorkbook(report:TrackingReport,template=false):Promise<ArrayBuffer>{
+ // Also defend callers that construct a report directly instead of makeTrackingReport.
+ report={...report,rows:report.rows.filter(row=>!isTrackingDeleted(row.item))};
  const runtime=await import('exceljs');const book=new(runtime.Workbook||runtime.default.Workbook)();book.creator='Ship Dynamics';
  const columns=[...report.columns];
  // Report-only numbering never replaces the original item number or template fields.
@@ -51,7 +61,7 @@ export async function buildTrackingWorkbook(report:TrackingReport,template=false
   });sheet.addRow(values);
  }
  if(template)for(let i=0;i<10;i++)sheet.addRow(columns.map(()=>null));
- formatSheet(sheet,columns.map(c=>c.key==='exportOrdinal'?7:c.type==='date'?14:Math.min(45,Math.max(12,c.width/7))),4,8);
+ formatSheet(sheet,columns.map(c=>c.key==='exportOrdinal'?7:c.type==='date'?14:Math.min(45,Math.max(12,c.width/7))),4,8,!template);
  sheet.getRow(3).hidden=true;
  columns.forEach((c,i)=>{const col=sheet.getColumn(i+1);col.numFmt=c.key==='exportOrdinal'?'0':c.type==='date'?['createdAt','updatedAt'].includes(c.key)?'yyyy-mm-dd hh:mm:ss':'yyyy-mm-dd':'@';if(c.key==='vesselId'||(c.key==='id'&&!report.columns.some(x=>x.key==='id')))col.hidden=true;});
  sheet.autoFilter={from:{row:4,column:1},to:{row:Math.max(5,sheet.rowCount),column:columns.length}};
@@ -77,7 +87,7 @@ export async function buildTrackingWorkbook(report:TrackingReport,template=false
  print.addRow(['序號','申請單號(材料或工程)','欄位','內容']);
  const printable=template?[{id:'',item:{referenceNo:''},values:{} as Record<string,string>}]:report.rows;
  printable.forEach((row,index)=>report.columns.forEach((col,columnIndex)=>trackingTextChunks(row.values[col.key]||'').forEach((text,part)=>print.addRow([template?String(index+1):columnIndex===0&&part===0?index+1:null,row.item.referenceNo,col.label+(part?`（續 ${part+1}）`:''),text]))));
- formatSheet(print,[7,25,25,94],4);
+ formatSheet(print,[7,25,25,94],4,9,!template);
  print.getColumn(1).numFmt='@';print.getColumn(2).numFmt='@';print.getColumn(4).numFmt='@';
  const schema=book.addWorksheet('_tracking_schema');schema.addRows([['version',TRACKING_XLSX_VERSION],['kind',report.kind],['vesselName',report.vesselName],['vesselId',report.vesselId],['mapping','資料表 tracking: 技術列的欄位鍵；與個人欄序分離'],['policy','只新增；ID／歷程／人員不作寫入授權；重複 ID 必須排除'],['print','請列印「列印明細」；資料表完整保留所有選定欄位'],['dates','純日期 yyyy-mm-dd；完工、交船、結案與 DL 互不推導']]);schema.state='hidden';
  const buffer=await book.xlsx.writeBuffer();return Uint8Array.from(new Uint8Array(buffer)).buffer;

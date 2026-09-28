@@ -4,7 +4,7 @@ import { BatchCreateModal } from '../InternalControlModals';
 import type { InternalControlTaskProjection } from '../internalControlData';
 import { uid, nowIso } from '../runtimeUtils';
 import { vesselSelectionDisplayName } from '../vesselDisplay';
-import { trackingColumnsFor, trackingFilterColumnsFor } from './trackingColumns';
+import { trackingColumnsFor, trackingFilterColumnsFor, trackingReviewColumns } from './trackingColumns';
 import { TRACKING_TABS, filterIsActive, selectTrackingRows, trackingInTab, trackingTabKind, type TrackingFilter, type TrackingQuery, type TrackingTab } from './trackingFilters';
 import { defaultTrackingPreferences, readTrackingPreferences, trackingPreferenceKey, writeTrackingPreferences } from './trackingTablePreferences';
 import { TrackingPagination, TrackingTable } from './TrackingTable';
@@ -13,6 +13,8 @@ import { reconcileTrackingReclassification, trackingReclassificationMatchesComma
 import { commandForTrackingDraft, makeTrackingDraft, newTrackingItem, trackingAffectedLabels, TrackingBusinessModal, type TrackingAction, type TrackingDraft } from './TrackingModals';
 import { trackingHelp, type TrackingAudience, type TrackingSubmission, type TrackingUiCallbacks } from './trackingUiTypes';
 import type { TrackingItem } from './trackingTypes';
+import { isTrackingDeleted, isTrackingDeletionPending } from './trackingDeletion';
+import { isTrackingDeletionAction, trackingDeletionSelectionError, trackingDeletionDraftMatchesCommand } from './TrackingDeletionFields';
 import TrackingImportModal from './TrackingImportModal';
 import TrackingExports from './TrackingExports';
 import TrackingStatistics from './TrackingStatisticsPanel';
@@ -38,6 +40,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   const selectionKey = JSON.stringify(['tracking-vessel', workspace, user.id]);
   const [vesselId, setVesselId] = useState(() => { const last = safeRead<string>(selectionKey); return vessels.some(v => v.id === last) ? last! : vessels[0]?.id || ''; });
   const [tab, setTab] = useState<TrackingTab>('undelivered');
+  const [reviewView, setReviewView] = useState<'deleted' | 'requests' | null>(null);
   const [statisticsView, setStatisticsView] = useState(audience === 'shore');
   const [filters, setFilters] = useState<Record<string, TrackingFilter>>({}); const [search, setSearch] = useState('');
   const [sort, setSort] = useState<TrackingQuery['sort']>({ key: 'createdAt', direction: 'desc' });
@@ -66,13 +69,13 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   useEffect(() => { currentCallbacks.current.onPrivateDraftChange?.(draftFeedbackToken.current, Boolean(draft?.dirty || pending)); });
   useEffect(() => () => { currentCallbacks.current.onPrivateDraftChange?.(draftFeedbackToken.current, false); }, []);
   const draftKey = JSON.stringify(['tracking-unsent-v1', workspace, user.id, vesselId]);
-  const columns = trackingColumnsFor(trackingTabKind(tab));
-  const filterColumns = trackingFilterColumnsFor(trackingTabKind(tab));
-  const prefKey = trackingPreferenceKey(workspace, user.id, tab);
+  const columns = reviewView ? trackingReviewColumns() : trackingColumnsFor(trackingTabKind(tab));
+  const filterColumns = reviewView ? columns.filter(column => ['referenceNo', 'requestType', 'applicationDate', 'isClosed', 'deletionRequestStatus', 'deletionRequestReason', 'deletionReviewReason', 'deletionReason', 'deletionAt'].includes(column.key)) : trackingFilterColumnsFor(trackingTabKind(tab));
+  const prefKey = trackingPreferenceKey(workspace, user.id, reviewView || tab);
   const [preferences, setPreferences] = useState(() => readTrackingPreferences(prefKey, columns));
   const dataRef = useRef(data); dataRef.current = data;
-  const rows = selectTrackingRows(data.trackingItems || [], { vesselId, tab, filters, search, sort });
-  const historyScope = JSON.stringify([workspace, identity, user.id, vesselId, tab]);
+  const rows = selectTrackingRows(data.trackingItems || [], { vesselId, tab, view: reviewView || 'active', filters, search, sort });
+  const historyScope = JSON.stringify([workspace, identity, user.id, vesselId, tab, reviewView]);
   // Resolve against the current authorized list on every render, never a retained cross-scope snapshot.
   const historyRows = historySelection?.scope === historyScope && vessels.some(vessel => vessel.id === vesselId && vessel.isActive)
     ? historySelection.ids.map(id => rows.find(row => row.id === id)).filter((row): row is TrackingItem => Boolean(row)) : [];
@@ -81,7 +84,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     try { if (value) localStorage.setItem(draftKey, JSON.stringify({ draft: value, pending: submission })); else localStorage.removeItem(draftKey); return true; }
     catch { setNotice('本機草稿儲存失敗，請勿關閉頁面。'); return false; }
   };
-  const draftWritable=(value:TrackingDraft)=>(audience!=='ship'||!busyRef.current&&!pendingRef.current)&&(value.action==='create'?canCreate:currentCallbacks.current.isWritable(value.rows.map(row=>row.id)));
+  const draftWritable=(value:TrackingDraft)=>(audience!=='ship'||!busyRef.current&&!pendingRef.current)&&(value.action==='create'?canCreate:(!isTrackingDeletionAction(value.action)||canEdit&&(audience==='ship'?value.action==='request-delete':value.action!=='request-delete'))&&currentCallbacks.current.isWritable(value.rows.map(row=>row.id)));
   const changeDraft = (value: TrackingDraft) => { if(!draftWritable(value))return; editGeneration.current++; const next = { ...value, dirty: true }; draftRef.current = next; setDraft(next); saveLocalDraft(next); };
   const clearSelection = () => { setHistorySelection(null); if (selected.length) setNotice('船舶、標籤或條件已切換；已清除原選取。'); setSelected([]); setPage(1); };
   const guard = async (openingOwnsGuard=false): Promise<boolean> => {
@@ -104,8 +107,8 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   };
   useEffect(() => { currentCallbacks.current.registerNavigationGuard(() => guard()); return () => currentCallbacks.current.registerNavigationGuard(null); });
   useEffect(() => {
-    setPreferences(readTrackingPreferences(prefKey, trackingColumnsFor(trackingTabKind(tab))));
-  }, [prefKey, tab]);
+    setPreferences(readTrackingPreferences(prefKey, reviewView ? trackingReviewColumns() : trackingColumnsFor(trackingTabKind(tab))));
+  }, [prefKey, tab, reviewView]);
   useEffect(() => {
     const valid = vessels.some(v => v.id === vesselId && v.isActive);
     if (!valid) { setVesselId(vessels[0]?.id || ''); setSelected([]); setDraft(null); setPending(null); return; }
@@ -127,6 +130,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
   };
   const start = async (action: TrackingAction, ids = selected) => {
     if (busyRef.current || openingRef.current || loading || !vesselId) return;
+    if (isTrackingDeletionAction(action) && (!canEdit || (audience === 'ship' ? action !== 'request-delete' : action === 'request-delete'))) { setNotice('目前身份沒有此操作權限；未修改任何資料。'); return; }
     openingRef.current=true;
     try{
     if (!await guard(true)) return;
@@ -138,6 +142,11 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     if (!fresh || currentIdentity.current !== owner || generation !== requestGeneration.current) return;
     let picked = ids.map(id => fresh.trackingItems?.find(row => row.id === id && row.vesselId === vesselId));
     if (picked.some(row => !row)) { setNotice('所選資料已變更，未開啟操作。'); return; }
+    if (isTrackingDeletionAction(action)) {
+      if (reviewView === 'requests' && action === 'delete' && picked.some(row => !isTrackingDeletionPending(row!))) { setNotice('所選申請已不再待審核；請重新核對，未修改任何資料。'); return; }
+      const error = trackingDeletionSelectionError(action, picked as TrackingItem[]);
+      if (error) { setNotice(error); return; }
+    } else if (picked.some(row => isTrackingDeleted(row!))) { setNotice('所選來源已刪除，僅可查看紀錄或由岸端還原。'); return; }
     if (action === 'sync') {
       const linked = picked.filter(row => row!.linkState === 'active');
       const eligible = picked.filter(row => row!.linkState !== 'active' && !row!.isClosed);
@@ -172,7 +181,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
       if (!ok) { setNotice('尚未保存；輸入及精確提交已保留。可確認結果／重試相同提交。'); return false; }
       pendingRef.current = null; setPending(null);
       if (submission.command.type === 'sync') setSyncSuccess(submission.command.items.map(value => ({ id: value.item.id, reference: submittedDraft.rows.find(row => row.id === value.id)!.referenceNo })));
-      if (editGeneration.current === generation && (submission.command.type !== 'reclassify' || trackingReclassificationMatchesCommand(draftRef.current?.reclassification, submission.command))) { if(!await callbacks.release()){setNotice('已保存，編輯鎖尚未完成釋放；請稍後關閉。');return true;} setDraft(null); draftRef.current = null; saveLocalDraft(null, null); setSelected(previous => previous.filter(id => !submittedDraft.rows.some(row => row.id === id))); setNotice('已收到伺服器確認並讀回。'); }
+      if (editGeneration.current === generation && trackingDeletionDraftMatchesCommand(draftRef.current, submission.command) && (submission.command.type !== 'reclassify' || trackingReclassificationMatchesCommand(draftRef.current?.reclassification, submission.command))) { if(!await callbacks.release()){setNotice('已保存，編輯鎖尚未完成釋放；請稍後關閉。');return true;} setDraft(null); draftRef.current = null; saveLocalDraft(null, null); setSelected(previous => previous.filter(id => !submittedDraft.rows.some(row => row.id === id))); setNotice('已收到伺服器確認並讀回。'); }
       else {
         const retained = draftRef.current!;
         const latest = dataRef.current.trackingItems || [];
@@ -232,30 +241,37 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
       draftRef.current=saved.draft;setDraft(saved.draft);pendingRef.current=saved.pending;setPending(saved.pending);setSavedAvailable(false);
     }finally{openingRef.current=false;}
   };
-  const statisticsTab = <button className={`btn ${statisticsView ? 'primary' : ''}`} role="tab" aria-selected={statisticsView} onClick={() => void switchView(() => setStatisticsView(true))}>統計資訊</button>;
+  const statisticsTab = <button className={`btn ${statisticsView ? 'primary' : ''}`} role="tab" aria-selected={statisticsView} onClick={() => void switchView(() => { setStatisticsView(true); setReviewView(null); })}>統計資訊</button>;
   const actionButton = (action: TrackingAction, label: string, ids?: string[], disabled = false) => <HelpAction label={label} help={trackingHelp(audience)[action]} disabled={disabled || loading || busy} onClick={() => void start(action, ids)}/>;
   const statusNotice = (notice || loading) && <p role="status" className="tracking-notice">{loading ? '讀取此船最新資料…' : notice}</p>;
   let affected: string[] = [];
-  if (draft && draft.action !== 'create') { try { affected = audience==='ship' ? draft.originals.map(row=>`${row.referenceNo} [${row.id}]${row.linkState==='active' ? ' → 已同步內控（保存時核對有效關聯）' : '（僅來源）'}`) : trackingAffectedLabels(data, draft.originals); } catch { affected = draft.originals.map(row => `${row.referenceNo} [${row.id}]（關聯已變更，保存將重新驗證）`); } }
+  if (draft && draft.action !== 'create') { try { affected = isTrackingDeletionAction(draft.action) ? draft.originals.map(row => `${row.referenceNo} [${row.id}]（僅變更來源刪除／申請狀態；${row.linkState === 'active' ? `內控 [${row.linkedCaseId}] 保持有效、不變` : '不建立關聯'}）`) : audience==='ship' ? draft.originals.map(row=>`${row.referenceNo} [${row.id}]${row.linkState==='active' ? ' → 已同步內控（保存時核對有效關聯）' : '（僅來源）'}`) : trackingAffectedLabels(data, draft.originals); } catch { affected = draft.originals.map(row => `${row.referenceNo} [${row.id}]（關聯已變更，保存將重新驗證）`); } }
   return <section className="tracking-page" aria-label="配件/物料/工程跟蹤">
-    <div className="tracking-heading"><h2>配件/物料/工程跟蹤</h2><label>船舶<select aria-label="跟蹤船舶" value={vesselId} onChange={event => { const id = event.target.value; void switchView(() => setVesselId(id)); }}>{vessels.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselSelectionDisplayName(vessel)}</option>)}</select></label>{canCreate && actionButton('create', '＋ 新增／批量新增')}{canCreate && <button className="btn small" disabled={loading||busy||!vesselId} onClick={()=>void guard().then(ok=>{if(ok)setImportOpen(true);})}>導入 Excel</button>}
-    {canExport && !statisticsView && <TrackingExports query={{vesselId,tab,filters,search,sort}} preferences={preferences} selected={selected} count={rows.length} vesselName={vesselSelectionDisplayName(vessels.find(v=>v.id===vesselId))} identity={identity} workspace={workspace} callbacks={callbacks} blocked={loading||busy||Boolean(draft)||Boolean(pending)||importOpen||!vessels.some(v=>v.id===vesselId&&v.isActive)}/>}
+    <div className="tracking-heading"><h2>配件/物料/工程跟蹤</h2><label>船舶<select aria-label="跟蹤船舶" value={vesselId} onChange={event => { const id = event.target.value; void switchView(() => setVesselId(id)); }}>{vessels.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselSelectionDisplayName(vessel)}</option>)}</select></label>{canCreate && !reviewView && actionButton('create', '＋ 新增／批量新增')}{canCreate && !reviewView && <button className="btn small" disabled={loading||busy||!vesselId} onClick={()=>void guard().then(ok=>{if(ok)setImportOpen(true);})}>導入 Excel</button>}
+    {canExport && !statisticsView && !reviewView && <TrackingExports query={{vesselId,tab,filters,search,sort}} preferences={preferences} selected={selected} count={rows.length} vesselName={vesselSelectionDisplayName(vessels.find(v=>v.id===vesselId))} identity={identity} workspace={workspace} callbacks={callbacks} blocked={loading||busy||Boolean(draft)||Boolean(pending)||importOpen||!vessels.some(v=>v.id===vesselId&&v.isActive)}/>}
     </div>
     <div className="tracking-tab-actions">
-      <div className="tracking-tabs" role="tablist" aria-label="跟蹤分類">{audience === 'shore' && statisticsTab}{TRACKING_TABS.map(value => <button className={`btn ${!statisticsView && value.id === tab ? 'primary' : ''}`} role="tab" aria-selected={!statisticsView && value.id === tab} key={value.id} onClick={() => void switchView(() => { setStatisticsView(false); setTab(value.id); setFilters({}); setSearch(''); })}>{value.label} <span>{(data.trackingItems || []).filter(row => row.vesselId === vesselId && trackingInTab(row, value.id)).length}</span></button>)}{audience === 'ship' && statisticsTab}</div>
+      <div className="tracking-tabs" role="tablist" aria-label="跟蹤分類">{audience === 'shore' && statisticsTab}{TRACKING_TABS.map(value => <button className={`btn ${!statisticsView && !reviewView && value.id === tab ? 'primary' : ''}`} role="tab" aria-selected={!statisticsView && !reviewView && value.id === tab} key={value.id} onClick={() => void switchView(() => { setStatisticsView(false); setReviewView(null); setTab(value.id); setFilters({}); setSearch(''); })}>{value.label} <span>{(data.trackingItems || []).filter(row => row.vesselId === vesselId && trackingInTab(row, value.id)).length}</span></button>)}{audience === 'ship' && statisticsTab}</div>
+      <div className="tracking-review-tabs" aria-label="刪除與申請清單">{(['requests', 'deleted'] as const).map(view => <button key={view} className={`btn small ${reviewView === view ? 'primary' : ''}`} aria-pressed={reviewView === view} onClick={() => void switchView(() => { setStatisticsView(false); setReviewView(view); setFilters({}); setSearch(''); })}>{view === 'deleted' ? '已刪除清單' : '刪除申請／結果'} <span>{(data.trackingItems || []).filter(row => row.vesselId === vesselId && (view === 'deleted' ? isTrackingDeleted(row) : Boolean(row.deletionRequest))).length}</span></button>)}</div>
       {audience === 'shore' && <a className="btn tracking-ship-link" href="https://ttwonder.github.io/ship-dynamics-todo-system/packageorwork-tracking" target="_blank" rel="noopener noreferrer" title="在新標籤頁打開船端網頁">打開船端網頁</a>}
     </div>
     {!statisticsView && <>
+    {reviewView && <p className="tracking-review-note">{reviewView === 'deleted' ? '已刪除清單包含配件／物料及工程；保留原分類、日期及完整內容，僅供查看紀錄與岸端還原，不提供匯出。' : '待審核來源仍在正常清單、統計及匯出；此處查看本船申請理由與審核結果。'}{reviewView === 'requests' && <label>申請狀態<select aria-label="刪除申請狀態" value={filters.deletionRequestStatus?.values?.[0] || ''} onChange={event => updateFilters({ ...filters, deletionRequestStatus: { values: event.target.value ? [event.target.value] : [] } })}><option value="">全部結果</option><option>待審核</option><option>已批准</option><option>已駁回</option></select></label>}</p>}
     <div className="tracking-search-actions">
       <div className="tracking-search"><input aria-label="搜尋跟蹤" placeholder="搜尋編號、內容及全部欄位…" value={search} onChange={event => { clearSelection(); setSearch(event.target.value); }}/><button className="btn small" onClick={() => { updateFilters({}); setSearch(''); }}>清除條件</button></div>
       <button type="button" className="btn small tracking-urgent-shortcut" aria-pressed={urgentOnly} title="只顯示符合目前其他條件的緊急件；再按一次取消緊急篩選。" onClick={toggleUrgent}>緊急</button>
-    <div className="tracking-toolbar" aria-label="跟蹤選取與批量操作"><b>已選 {selected.length} 項</b><button className="btn small" onClick={() => setSelected(rows.map(row => row.id))}>選取全部符合條件 {rows.length} 項</button><button className="btn small" onClick={() => setSelected([])}>清除選取</button>{canEdit && actionButton('edit', '批量更新', undefined, !selected.length)}{canEdit && actionButton('reclassify', '修正分類', undefined, !selected.length || selected.length > 100)}{canEdit && trackingTabKind(tab) === 'engineering' && actionButton('completion', '批量完工／更正', undefined, !selected.length)}{canEdit && actionButton('progress', '批量更新進度', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'supply' && actionButton('delivery', '批量送達／更正', undefined, !selected.length)}{canClose && actionButton('close', '批量結案', undefined, !selected.length)}{canClose && actionButton('correct-close-date', '修改結案日期', undefined, !selected.length)}{canClose && actionButton('reopen', '重開所選', undefined, !selected.length)}{canCreate && actionButton('sync', '同步所選到內控', undefined, !selected.length)}<button type="button" className="btn small" title="查看所選項目已讀取的進度、送達／完工及結案紀錄；僅供查看，不取得編輯權。" disabled={!selected.length || loading || busy || Boolean(draft) || Boolean(pending) || importOpen} onClick={() => {
+    <div className="tracking-toolbar" aria-label="跟蹤選取與批量操作"><b>已選 {selected.length} 項</b><button className="btn small" onClick={() => setSelected(rows.map(row => row.id))}>選取全部符合條件 {rows.length} 項</button><button className="btn small" onClick={() => setSelected([])}>清除選取</button>{!reviewView && <>{canEdit && actionButton('edit', '批量更新', undefined, !selected.length)}{canEdit && actionButton('reclassify', '修正分類', undefined, !selected.length || selected.length > 100)}{canEdit && trackingTabKind(tab) === 'engineering' && actionButton('completion', '批量完工／更正', undefined, !selected.length)}{canEdit && actionButton('progress', '批量更新進度', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'supply' && actionButton('delivery', '批量送達／更正', undefined, !selected.length)}{canClose && actionButton('close', '批量結案', undefined, !selected.length)}{canClose && actionButton('correct-close-date', '修改結案日期', undefined, !selected.length)}{canClose && actionButton('reopen', '重開所選', undefined, !selected.length)}{canCreate && actionButton('sync', '同步所選到內控', undefined, !selected.length)}</>}
+      {canEdit && audience === 'shore' && reviewView === 'deleted' && actionButton('restore', '還原所選', undefined, !selected.length || selected.length > 100)}
+      {canEdit && audience === 'shore' && reviewView !== 'deleted' && actionButton('delete', reviewView === 'requests' ? '批准刪除申請' : '刪除所選', undefined, !selected.length || selected.length > 100 || reviewView === 'requests' && selected.some(id => !rows.some(row => row.id === id && isTrackingDeletionPending(row))))}
+      {canEdit && audience === 'shore' && reviewView === 'requests' && actionButton('reject-delete', '駁回申請', undefined, !selected.length || selected.length > 100 || selected.some(id => !rows.some(row => row.id === id && isTrackingDeletionPending(row))))}
+      {canEdit && audience === 'ship' && reviewView !== 'deleted' && actionButton('request-delete', '申請刪除', undefined, !selected.length || selected.length > 100 || selected.some(id => { const row = rows.find(value => value.id === id); return !row || isTrackingDeleted(row) || isTrackingDeletionPending(row); }))}
+      <button type="button" className="btn small" title="查看所選項目已讀取的進度、送達／完工及結案紀錄；僅供查看，不取得編輯權。" disabled={!selected.length || loading || busy || Boolean(draft) || Boolean(pending) || importOpen} onClick={() => {
       if (loading || busyRef.current || openingRef.current || draftRef.current || pendingRef.current || importOpen || !selected.length) return;
       setHistorySelection({ scope: historyScope, ids: [...selected] });
     }}>查看所選紀錄</button></div>
     </div>
     <div className="tracking-options">
-      <details className="tracking-all-filters"><summary>全部欄位篩選</summary><div className="tracking-option-panel"><div className="tracking-filter-grid">{filterColumns.map(column => { const filter = filters[column.key] || {}; const set = (patch: TrackingFilter) => updateFilters({ ...filters, [column.key]: { ...filter, ...patch } }); return <fieldset key={column.key} className={column.key === 'urgent' ? 'tracking-filter-urgent' : undefined}><legend>{column.label}{preferences.hidden.includes(column.key) ? '（隱藏欄）' : ''}</legend><select aria-label={`${column.label}空白條件`} value={filter.mode || ''} onChange={event => set({ mode: event.target.value as TrackingFilter['mode'] })}><option value="">不限</option><option value="blank">空白</option><option value="nonblank">非空白</option></select><TrackingValueFilter label={column.label} values={[...new Set((data.trackingItems || []).filter(row => row.vesselId === vesselId && trackingInTab(row, tab)).map(column.value))].filter(Boolean).sort()} selected={filter.values || []} onChange={values => set({ values })}/></fieldset>; })}</div></div></details>
+      <details className="tracking-all-filters"><summary>全部欄位篩選</summary><div className="tracking-option-panel"><div className="tracking-filter-grid">{filterColumns.map(column => { const filter = filters[column.key] || {}; const set = (patch: TrackingFilter) => updateFilters({ ...filters, [column.key]: { ...filter, ...patch } }); return <fieldset key={column.key} className={column.key === 'urgent' ? 'tracking-filter-urgent' : undefined}><legend>{column.label}{preferences.hidden.includes(column.key) ? '（隱藏欄）' : ''}</legend><select aria-label={`${column.label}空白條件`} value={filter.mode || ''} onChange={event => set({ mode: event.target.value as TrackingFilter['mode'] })}><option value="">不限</option><option value="blank">空白</option><option value="nonblank">非空白</option></select><TrackingValueFilter label={column.label} values={[...new Set((data.trackingItems || []).filter(row => row.vesselId === vesselId && (reviewView === 'deleted' ? isTrackingDeleted(row) : reviewView === 'requests' ? Boolean(row.deletionRequest) : trackingInTab(row, tab))).map(column.value))].filter(Boolean).sort()} selected={filter.values || []} onChange={values => set({ values })}/></fieldset>; })}</div></div></details>
     <details className="tracking-preferences"><summary>欄位設定</summary><div className="tracking-option-panel"><p>表頭可拖曳欄序，邊界拖曳或方向鍵調欄寬；勾選及編號固定。只保存在本人本機，不影響草稿。</p><button className="btn small" onClick={() => { const value = defaultTrackingPreferences(columns); setPreferences(value); writeTrackingPreferences(prefKey, value); }}>重設欄位配置</button><div>{preferences.order.map((key, index) => { const column = columns.find(c => c.key === key); if (!column) return null; return <span key={key}><label><input type="checkbox" disabled={key === 'referenceNo'} checked={!preferences.hidden.includes(key)} onChange={event => { const value = { ...preferences, hidden: event.target.checked ? preferences.hidden.filter(k => k !== key) : [...preferences.hidden, key] }; setPreferences(value); writeTrackingPreferences(prefKey, value); }}/>{column.label}</label><button className="btn small" aria-label={`將${column.label}前移`} disabled={index < 2 || key === 'referenceNo'} onClick={() => { const order = [...preferences.order]; [order[index - 1], order[index]] = [order[index], order[index - 1]]; const value = { ...preferences, order }; setPreferences(value); writeTrackingPreferences(prefKey, value); }}>←</button></span>; })}</div></div></details>
       {statusNotice}
     </div>

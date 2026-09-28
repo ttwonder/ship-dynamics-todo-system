@@ -11,6 +11,7 @@ import type { InternalControlTaskProjection } from '../internalControlData';
 import type { TrackingUiCommand } from './trackingUiCommands';
 import { TRACKING_REQUEST_TYPES, trackingRequestKind, type TrackingRequestType } from './trackingRequestTypes';
 import { TrackingReclassifyFields, trackingReclassificationNeedsReview } from './TrackingReclassifyFields';
+import { isTrackingDeletionAction, trackingDeletionSelectionError, TrackingDeletionFields } from './TrackingDeletionFields';
 
 export interface TrackingReclassificationDraft {
   requestType: TrackingRequestType | '';
@@ -23,6 +24,7 @@ export interface TrackingDraft {
   action: TrackingAction; rows: TrackingItem[]; originals: TrackingItem[];
   date: string; delivery: TrackingDeliveryStatus; outcome: 'completed' | 'cancelled';
   reclassification?: TrackingReclassificationDraft;
+  deletionReason?: string;
   sync?: InternalControlBatchDraft; savedCases?: InternalControlCase[]; warnings: string[]; dirty: boolean;
 }
 export function newTrackingItem(vesselId: string, kind: TrackingKind): TrackingItem {
@@ -30,6 +32,7 @@ export function newTrackingItem(vesselId: string, kind: TrackingKind): TrackingI
 }
 export function makeTrackingDraft(action: TrackingAction, rows: TrackingItem[], data: AppData): TrackingDraft {
   const draft: TrackingDraft = { action, rows: structuredClone(rows), originals: structuredClone(rows), date: '', delivery: 'delivered', outcome: 'completed', warnings: [], dirty: false };
+  if (isTrackingDeletionAction(action)) draft.deletionReason = '';
   if (action === 'reclassify') draft.reclassification = { requestType: '', values: [], reviewed: false };
   if (action === 'sync') {
     const prefilled = rows.map(row => prefillTrackingCase(data, row, uid('internal')));
@@ -43,6 +46,14 @@ export function commandForTrackingDraft(draft: TrackingDraft, cases?: InternalCo
   const versions = draft.originals.map(row => ({ id: row.id, expectedUpdatedAt: row.updatedAt }));
   switch (draft.action) {
     case 'create': return { type: 'create', items: draft.rows };
+    case 'delete': case 'restore': case 'request-delete': case 'reject-delete': {
+      const reason = draft.deletionReason?.trim() || '';
+      if (!reason || reason.length > 500) throw new Error('請填寫操作理由（1 至 500 字）。');
+      const error = trackingDeletionSelectionError(draft.action, draft.originals);
+      if (error) throw new Error(error);
+      if (draft.rows.length !== versions.length || new Set(draft.rows.map(row => row.id)).size !== versions.length || draft.rows.some(row => !versions.some(version => version.id === row.id))) throw new Error('所選來源集合不一致，請重新核對。');
+      return { type: draft.action, items: versions.map(version => ({ ...version, reason })) };
+    }
     case 'reclassify': {
       const value = draft.reclassification;
       if (!value?.requestType || !TRACKING_REQUEST_TYPES.some(option => option.value === value.requestType)) throw new Error('請選擇本批目標類型。');
@@ -87,11 +98,11 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, au
   draft: TrackingDraft; busy: boolean; pending: boolean; readOnly?: boolean; audience?: TrackingAudience; message: string; affected: string[]; vesselName: string;
   onChange: (draft: TrackingDraft) => void; onSave: () => void; onReconcile: () => void; onClose: () => void;
 }) {
-  const titles: Record<TrackingAction, string> = { create: '新增／批量新增跟蹤', edit: '編輯／批量更新跟蹤項目', reclassify: '修正分類', progress: '批量更新最新進度', completion: '工程完工／更正', delivery: '送達確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
+  const titles: Record<TrackingAction, string> = { delete: '刪除所選／批准申請', restore: '還原所選', 'request-delete': '申請刪除', 'reject-delete': '駁回刪除申請', create: '新增／批量新增跟蹤', edit: '編輯／批量更新跟蹤項目', reclassify: '修正分類', progress: '批量更新最新進度', completion: '工程完工／更正', delivery: '送達確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
   const change = (patch: Partial<TrackingDraft>) => onChange({ ...draft, ...patch, dirty: true });
   const update = (id: string, patch: Partial<TrackingItem>) => change({ rows: draft.rows.map(row => row.id === id ? { ...row, ...patch } : row) });
   const formFields = ['create', 'edit'].includes(draft.action);
-  return <div className="modal-backdrop"><form className={`modal tracking-modal${draft.action === 'progress' ? ' tracking-progress-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" noValidate={pending && draft.action === 'reclassify'} onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
+  return <div className="modal-backdrop"><form className={`modal tracking-modal${draft.action === 'progress' ? ' tracking-progress-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" noValidate={pending && (draft.action === 'reclassify' || isTrackingDeletionAction(draft.action))} onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
     <div className="modal-head"><h2 id="tracking-modal-title">{titles[draft.action]}</h2><button type="button" className="btn ghost" onClick={onClose}>關閉</button></div>
     {draft.action === 'create' ? <div className="tracking-create-context" role="group" aria-label="新增跟蹤說明"><strong>船舶：{vesselName}</strong><span>{trackingHelp(audience).create}</span></div> : <>
       <p>{trackingHelp(audience)[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
@@ -100,7 +111,7 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, au
     <fieldset disabled={readOnly} style={{border:0,padding:0,margin:0,minWidth:0}}>
 
     {!formFields && <ul className="tracking-affected" aria-label="實際影響範圍">{affected.map(label => <li key={label}>{label}</li>)}</ul>}
-    {draft.action === 'reclassify' ? <TrackingReclassifyFields originals={draft.originals} value={draft.reclassification || { requestType: '', values: [], reviewed: false }} onChange={reclassification => change({ reclassification })}/> : draft.action === 'progress' ? draft.rows.map(row => {
+    {isTrackingDeletionAction(draft.action) ? <TrackingDeletionFields draft={draft} onChange={deletionReason => change({ deletionReason })}/> : draft.action === 'reclassify' ? <TrackingReclassifyFields originals={draft.originals} value={draft.reclassification || { requestType: '', values: [], reviewed: false }} onChange={reclassification => change({ reclassification })}/> : draft.action === 'progress' ? draft.rows.map(row => {
       const original = draft.originals.find(value => value.id === row.id);
       const history = original?.statusLogs || [];
       return <div className="tracking-progress-row" key={row.id}>

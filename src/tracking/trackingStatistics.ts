@@ -1,4 +1,5 @@
 import type { TrackingItem } from './trackingTypes';
+import { isTrackingDeleted } from './trackingDeletion';
 import { isValidInternalControlDate as validDate } from '../internalControlWorkflow';
 import { TRACKING_REQUEST_TYPES, type TrackingRequestType } from './trackingRequestTypes';
 
@@ -39,7 +40,7 @@ export function calculateTrackingStatistics(items: readonly TrackingItem[], quer
   const error = statisticsQueryError(query); if (error) throw new Error(error);
   if (!validDate(today)) throw new Error('統計基準日期無效。');
   const vesselIds = new Set(query.vesselIds ?? [query.vesselId]);
-  const rows = [...new Map(items.filter(item => vesselIds.has(item.vesselId)).map(item => [item.id, item])).values()]
+  const rows = [...new Map(items.filter(item => !isTrackingDeleted(item) && vesselIds.has(item.vesselId)).map(item => [item.id, item])).values()]
     .map(item => trackingStatisticsFacts(item, today)).filter(row => {
       const item = row.item;
       if ((query.from || query.to) && (!validDate(item.applicationDate) || query.from && item.applicationDate < query.from || query.to && item.applicationDate > query.to)) return false;

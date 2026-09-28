@@ -9,7 +9,7 @@ export interface TrackingEvent {
   at: string;
   byUserId: string;
   entry: 'tracking' | 'internal-control' | 'task';
-  action: 'close' | 'reopen' | 'correct-close-date' | 'delivery' | 'completion' | 'link' | 'invalidate-link' | 'reclassify';
+  action: 'close' | 'reopen' | 'correct-close-date' | 'delivery' | 'completion' | 'link' | 'invalidate-link' | 'reclassify' | 'delete' | 'restore' | 'request-delete' | 'reject-delete';
   before: Record<string, unknown>;
   after: Record<string, unknown>;
 }
@@ -18,6 +18,11 @@ export interface TrackingSource {
   sheetName: string;
   row: number;
   originalValues: Record<string, string | number | boolean | null>;
+}
+export interface TrackingDeletion { at: string; byUserId: string; reason: string }
+export interface TrackingDeletionRequest extends TrackingDeletion {
+  status: 'pending' | 'approved' | 'rejected';
+  reviewedAt?: string; reviewedBy?: string; reviewReason?: string;
 }
 /** A source is one independently actionable row, never a reference-number group. */
 export interface TrackingItem {
@@ -60,6 +65,8 @@ export interface TrackingItem {
   updatedAt: string;
   statusLogs: StatusLog[];
   events?: TrackingEvent[];
+  deletion?: TrackingDeletion;
+  deletionRequest?: TrackingDeletionRequest;
 }
 
 /** Reads preserve every field and historical fact. Commands validate mutations. */

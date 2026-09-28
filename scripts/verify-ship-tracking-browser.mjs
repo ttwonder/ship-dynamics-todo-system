@@ -56,7 +56,8 @@ try{
  native=await createNativeRecordQa(output,evidence,{httpTransactions:true});
  qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,shipTracking:true,tracking:true,taskMember:true,databaseFactory:async()=>native.adapter});
  await (await import('./tracking-browser-fixture.mjs')).installTrackingBrowserMigrations(qa.db);
- for(const name of ['20260925020000_edit_lock_holder.sql','20260925080000_ship_tracking_public.sql','20260925160000_tracking_field_revision.sql','20260927130000_tracking_fleet_statistics.sql','20260928140000_tracking_annual_types.sql','20260928180000_tracking_reclassification.sql'])await qa.db.exec(fs.readFileSync('supabase/migrations/'+name,'utf8'));
+ for(const name of ['20260925020000_edit_lock_holder.sql','20260925080000_ship_tracking_public.sql','20260925160000_tracking_field_revision.sql','20260927130000_tracking_fleet_statistics.sql','20260928140000_tracking_annual_types.sql','20260928180000_tracking_reclassification.sql','20260928220000_tracking_soft_delete.sql'])await qa.db.exec(fs.readFileSync('supabase/migrations/'+name,'utf8'));
+ if(process.argv.includes('--soft-delete'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260928220000_tracking_soft_delete.sql','utf8'));
  await qa.db.query("update ship_dynamics_records set value=jsonb_set(value,'{name}','\"測試輪\"'::jsonb) where workspace_key=$1 and collection='vessels' and entity_id='qa-v1'",[qa.workspace]);
  assert.ok(fs.existsSync('packageorwork-tracking.html'),'Dedicated public entry packageorwork-tracking.html must exist');
  const chrome='C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));
@@ -109,7 +110,9 @@ try{
   await click('確認保存 1 項');await finish();
   const record=(await qa.read()).payload.trackingItems.find(x=>x.referenceNo==='BROWSER-001');assert.equal(record.description,'真實船端輸入測試');assert.equal(record.statusLogs[0].text,'第一筆進度');
  });
- if(process.argv.includes('--compact')){
+ if(process.argv.includes('--soft-delete')){
+  await (await import('./tracking-soft-delete-browser-checks.mjs')).trackingSoftDeleteChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'ship',finish});
+ }else if(process.argv.includes('--compact')){
   await (await import('./tracking-compact-browser-checks.mjs')).compactChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'ship',finish});
  }else if(process.argv.includes('--urgent-shortcut')){
   await (await import('./tracking-urgent-shortcut-browser-checks.mjs')).urgentShortcutChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'ship'});

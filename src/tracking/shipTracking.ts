@@ -42,6 +42,15 @@ export function shipTrackingMessage(error: unknown): string {
 
 export function shipTrackingCommand(submission: TrackingSubmission, vesselId: string): Record<string, unknown> {
   const command = submission.command;
+  if (command.type === 'delete' || command.type === 'restore' || command.type === 'reject-delete') throw new Error('刪除、還原及申請審核僅由岸端處理；船端只能申請刪除。');
+  if (command.type === 'request-delete') {
+    if (!command.items.length || command.items.length > 100 || new Set(command.items.map(item => item.id)).size !== command.items.length) throw new Error('請選取 1–100 筆不重複項目。');
+    return { type: 'request-delete', items: command.items.map(item => {
+      const reason = typeof item.reason === 'string' ? item.reason.trim() : '';
+      if (!reason || reason.length > 500) throw new Error('請填寫刪除原因（1–500 字）。');
+      return { id: item.id, expectedUpdatedAt: item.expectedUpdatedAt, reason };
+    }) };
+  }
   if (command.type === 'sync-edit') throw new Error('原案件已建立；請關閉已完成的提交，從跟蹤清單繼續操作。');
   if (command.type === 'create') {
     for (const item of command.items) { if (item.vesselId !== vesselId) throw new Error('所選船舶不符；未送出。'); validateTrackingItem(item); }

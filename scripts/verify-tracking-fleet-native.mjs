@@ -50,6 +50,13 @@ try {
     const rows=(await qa.db.exec(fs.readFileSync('supabase/verification/tracking-reclassification-readback.sql','utf8'))).flatMap(r=>r.rows||[]);
     assert.deepEqual(rows,[{status:'PASS',checks:'9',failures:[]}]);evidence.reclassificationReadback=rows;
   });
+  await check('soft-delete-upgrade-preserves-statistics-and-readback',async()=>{
+    const before=await qa.read();let sql=fs.readFileSync('supabase/migrations/20260928220000_tracking_soft_delete.sql','utf8');
+    if(process.argv.includes('--crlf-install'))sql=sql.replace(/\r?\n/g,'\r\n');
+    await qa.db.exec(sql);assert.deepEqual(await qa.read(),before);
+    const rows=(await qa.db.exec(fs.readFileSync('supabase/verification/tracking-soft-delete-readback.sql','utf8'))).flatMap(r=>r.rows||[]);
+    assert.deepEqual(rows,[{status:'PASS',checks:'11',expected_functions:'18',failures:[]}]);evidence.softDeleteReadback=rows;
+  });
   statisticsRpc='read_ship_dynamics_tracking_statistics_public_v2';
   const today=(await rpc({kind:'all',value:''})).today;
   const row = (id, patch = {}) => ({ id, vesselId: 'qa-v1', kind: 'supply', requestType: 'spares', referenceNo: 'PRIVATE NUMBER', description: 'PRIVATE CONTENT', applicationDate: '2026-09-15', expectedDate: '2020-01-01', urgency: 'normal', deliveryStatus: 'not-delivered', isClosed: false, progress: 'PRIVATE PROGRESS', statusLogs: [], ...patch });

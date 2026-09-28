@@ -39,7 +39,7 @@ try {
   assert.deepEqual(await qa.db.query("select prosrc from pg_proc where oid='public.read_ship_dynamics_tracking_statistics_public_v1(text,jsonb,jsonb)'::regprocedure"),v1);
   evidence.cases.push('annual-upgrade-idempotent-no-data-rewrite-v1-preserved');
  }
- if(!process.argv.includes('--before-upgrade')&&!process.argv.includes('--before-annual-upgrade')) await qa.db.exec(fs.readFileSync('supabase/migrations/20260928180000_tracking_reclassification.sql','utf8').replace(/\r?\n/g,process.argv.includes('--crlf-install')?'\r\n':'\n'));
+ if(!process.argv.includes('--before-upgrade')&&!process.argv.includes('--before-annual-upgrade')) for(const name of ['20260928180000_tracking_reclassification.sql','20260928220000_tracking_soft_delete.sql']) await qa.db.exec(fs.readFileSync('supabase/migrations/'+name,'utf8').replace(/\r?\n/g,process.argv.includes('--crlf-install')?'\r\n':'\n'));
  const rpc=async(action,payload={})=>qa.db.transaction(async tx=>{await tx.exec('set local role anon');return (await tx.query('select public.ship_dynamics_tracking_public_v1($1,$2,$3::uuid,$4::uuid,$5,$6::jsonb) result',[qa.workspace,'qa-v1','11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222',action,JSON.stringify(payload)])).rows[0].result;});
  const base={vesselId:'qa-v1',description:'欄位原生測試',applicationDate:'2026-09-25',urgency:'normal',progress:'初始進度',supplementalNotes:'',expectedDate:'2026-10-01',deliveryStatus:'not-delivered',purchaseNos:'000001'};
  const types=[['repair','engineering'],['drydock','engineering'],['semiannual-materials','supply'],['temporary-materials','supply'],['spares','supply'],['annual-inspection','engineering'],['drydock-spares','supply'],['drydock-materials','supply']];
@@ -86,6 +86,6 @@ try {
  await check('private-field-helper-remains-denied-to-anonymous-caller',async()=>{
   await assert.rejects(()=>qa.db.transaction(async tx=>{await tx.exec('set local role anon');await tx.query('select ship_dynamics_tracking_private.edit_fields_v1()');}),/permission denied/);
  });
- const readback='supabase/verification/tracking-reclassification-readback.sql';if(fs.existsSync(readback)){const r=await qa.db.exec(fs.readFileSync(readback,'utf8'));const row=r.flatMap(x=>x.rows||[]).find(x=>x.status);assert.equal(row?.status,'PASS',JSON.stringify(row));evidence.readback=row;}
+ const readback='supabase/verification/tracking-soft-delete-readback.sql';if(fs.existsSync(readback)){const r=await qa.db.exec(fs.readFileSync(readback,'utf8'));const row=r.flatMap(x=>x.rows||[]).find(x=>x.status);assert.equal(row?.status,'PASS',JSON.stringify(row));evidence.readback=row;}
 } catch(error){failure=error;evidence.error=error.stack;console.error(error.stack);}
 finally{try{await qa?.close();await native?.close();}catch(error){failure??=error;evidence.cleanupError=error.message;}evidence.status=failure?'FAIL':'PASS';fs.writeFileSync(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify({status:evidence.status,output,caseCount:evidence.cases.length}));if(failure)process.exitCode=1;}

@@ -99,4 +99,15 @@
 .tracking-reclassify-review{display:flex;align-items:flex-start;gap:6px;margin:8px 0;font-size:12px;line-height:1.5}
 .tracking-page .tracking-reclassify-review>input{width:15px;height:15px;flex:none;margin:2px 0}
 @media(max-width:700px){.tracking-reclassify-grid{grid-template-columns:minmax(0,1fr)}}
+/* Source-only deletion: retain compact controls and wrap complete reasons. */
+.tracking-review-tabs{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.tracking-review-note{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:12px;margin:5px 0;overflow-wrap:anywhere}
+.tracking-review-note>label{display:flex;align-items:center;gap:5px}
+.tracking-deletion-fields,.tracking-deletion-sources,.tracking-deletion-status,.tracking-retained-details{min-width:0;overflow-wrap:anywhere}
+.tracking-deletion-sources{max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+.tracking-deletion-sources>article+article{border-top:1px solid var(--line);padding-top:5px;margin-top:5px}
+.tracking-deletion-fields>label{display:flex;flex-direction:column;gap:4px;margin:8px 0}
+.tracking-deletion-fields textarea{width:100%;min-height:76px;box-sizing:border-box;resize:vertical}
+.tracking-deletion-status p{margin:5px 0;white-space:pre-wrap}
+.tracking-history-item>.tracking-deletion-status,.tracking-retained-details{margin:5px 8px}
 /* Follow the App's actual theme tokens; OS dark mode must not restyle only this module. */

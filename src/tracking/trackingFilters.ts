@@ -1,5 +1,6 @@
 import type { TrackingItem, TrackingKind } from './trackingTypes';
 import { isValidInternalControlDate } from '../internalControlWorkflow';
+import { isTrackingDeleted } from './trackingDeletion';
 import { TRACKING_COLUMNS, type TrackingColumn } from './trackingColumns';
 export const TRACKING_TABS = [
   { id: 'undelivered', label: '未送船清單', kind: 'supply' },
@@ -10,10 +11,10 @@ export const TRACKING_TABS = [
 ] as const;
 export type TrackingTab = typeof TRACKING_TABS[number]['id'];
 export interface TrackingFilter { mode?: '' | 'blank' | 'nonblank'; text?: string; from?: string; to?: string; values?: string[] }
-export interface TrackingQuery { vesselId: string; tab: TrackingTab; filters: Record<string, TrackingFilter>; sort: { key: string; direction: 'asc' | 'desc' }; search?: string }
+export interface TrackingQuery { vesselId: string; tab: TrackingTab; view?: 'active' | 'deleted' | 'requests'; filters: Record<string, TrackingFilter>; sort: { key: string; direction: 'asc' | 'desc' }; search?: string }
 export const trackingTabKind = (tab: TrackingTab): TrackingKind => TRACKING_TABS.find(value => value.id === tab)!.kind;
 export function trackingInTab(row: TrackingItem, tab: TrackingTab): boolean {
-  if (row.kind !== trackingTabKind(tab)) return false;
+  if (isTrackingDeleted(row) || row.kind !== trackingTabKind(tab)) return false;
   if (tab === 'supply-all') return true;
   if (tab === 'undelivered') return !row.isClosed && row.deliveryStatus !== 'delivered';
   if (tab === 'delivered') return row.deliveryStatus === 'delivered';
@@ -24,7 +25,7 @@ export const filterIsActive = (filter: TrackingFilter) => Boolean(filter.mode ||
 export function selectTrackingRows(items: readonly TrackingItem[], query: TrackingQuery): TrackingItem[] {
   const columns = new Map(TRACKING_COLUMNS.map(column => [column.key, column]));
   const needle = query.search?.trim().toLocaleLowerCase();
-  const rows = items.filter(row => row.vesselId === query.vesselId && trackingInTab(row, query.tab)).filter(row => {
+  const rows = items.filter(row => row.vesselId === query.vesselId && (query.view === 'deleted' ? isTrackingDeleted(row) : query.view === 'requests' ? Boolean(row.deletionRequest) : trackingInTab(row, query.tab))).filter(row => {
     if (needle && !TRACKING_COLUMNS.some(column => column.value(row).toLocaleLowerCase().includes(needle))) return false;
     return Object.entries(query.filters).every(([key, filter]) => {
       const column = columns.get(key); if (!column || !filterIsActive(filter)) return true;
