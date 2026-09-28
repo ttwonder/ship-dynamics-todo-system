@@ -2,21 +2,30 @@ import type { TrackingStatisticsSummary } from './trackingStatisticsReport';
 import { statisticsPercent } from './trackingStatistics';
 
 export function trackingStatisticsCharts(stats: TrackingStatisticsSummary) {
-  const s = stats.summary;
+  const s = stats.summary, annual = stats.categories.find(c => c.value === 'annual-inspection')?.summary;
+  if (!annual) throw new Error('年檢到期統計尚未取得完整分類。');
   return [
     { title: '完成狀態', total: s.total, denominator: '全部申請', rows: [
       { label: '已完成', value: s.completed, color: '#28774f' },
       { label: '未完成', value: s.incomplete, color: '#b86d16' },
       { label: '取消', value: s.cancelled, color: '#788290' },
     ] },
-    { title: '類型件數', total: s.total, denominator: '全部申請', rows: stats.categories.map((c, i) => ({ label: c.label, value: c.summary.total, color: ['#3977a5', '#62833b', '#7353a2', '#b87928', '#27878d', '#788290'][i] })) },
+    { title: '類型件數', total: s.total, denominator: '全部申請', rows: stats.categories.map((c, i) => ({ label: c.label, value: c.summary.total, color: ['#3977a5', '#62833b', '#658576', '#7353a2', '#a04e78', '#b87928', '#27878d', '#5265aa', '#788290'][i] })) },
     { title: '延遲狀態', total: s.effective, denominator: '有效項目（不含取消）', rows: [
       { label: '逾期未完成', value: s.overdueIncomplete, color: '#b73939' },
       { label: '逾期完成', value: s.overdueCompleted, color: '#b86d16' },
       { label: '準時完成', value: s.delayEligible - s.delayed, color: '#28774f' },
       { label: '未到期未完成', value: s.notYetDue, color: '#3977a5' },
-      { label: '未填／無效 DL', value: s.noDeadline, color: '#788290' },
+      { label: '未填／無效 DL／到期日', value: s.noDeadline, color: '#788290' },
       { label: '完成日期不足', value: s.insufficientDate, color: '#7353a2' },
+    ] },
+    { title: '年檢到期狀態', total: annual.effective, denominator: '有效年檢工程（不含取消；已含於總計）', rows: [
+      { label: '逾期未完成', value: annual.overdueIncomplete, color: '#b73939' },
+      { label: '逾期完成', value: annual.overdueCompleted, color: '#b86d16' },
+      { label: '到期前／當日完成', value: annual.delayEligible - annual.delayed, color: '#28774f' },
+      { label: '未到期未完成', value: annual.notYetDue, color: '#3977a5' },
+      { label: '未填／無效到期日', value: annual.noDeadline, color: '#788290' },
+      { label: '完成日期不足', value: annual.insufficientDate, color: '#7353a2' },
     ] },
   ];
 }

@@ -46,7 +46,7 @@ export function parseStatisticsSnapshot(raw: unknown, workspace: string, selecti
       && s.urgent <= s.total && s.partial <= s.incomplete && s.delayEligible + s.noDeadline + s.insufficientDate + s.notYetDue === s.effective
       && rate(s.completionRate, s.completed, s.effective) && rate(s.delayRate, s.delayed, s.delayEligible);
   };
-  if (!exact(raw, ['protocol', 'workspace', 'vessels', 'vesselIds', 'at', 'today', 'stats']) || raw.protocol !== 'ship-tracking-statistics-v1' || raw.workspace !== workspace
+  if (!exact(raw, ['protocol', 'workspace', 'vessels', 'vesselIds', 'at', 'today', 'stats']) || raw.protocol !== 'ship-tracking-statistics-v2' || raw.workspace !== workspace
     || typeof raw.at !== 'string' || !Number.isFinite(Date.parse(raw.at)) || typeof raw.today !== 'string' || !isValidInternalControlDate(raw.today)
     || !Array.isArray(raw.vessels) || !raw.vessels.every(v => exact(v, ['id', 'name', 'shortName', 'fullName', 'shipType', 'fleetCategory']) && Object.values(v).every(x => typeof x === 'string') && Boolean(v.id))
     || !Array.isArray(raw.vesselIds) || !exact(raw.stats, ['summary', 'categories']) || !summary(raw.stats.summary) || !Array.isArray(raw.stats.categories) || raw.stats.categories.length !== STATISTICS_CATEGORIES.length) return fail();

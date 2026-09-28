@@ -16,8 +16,8 @@ export async function trackingFieldChecks(c){
   await click('取消切換');assert.equal(await evaluate("document.querySelector('[aria-label=\"第 1 筆 內容摘要/工程內容\"]').value"),'只捨棄這份未送出草稿');await click('取消');await click('保留草稿並繼續');await until(()=>evaluate("!document.querySelector('.modal-backdrop')"),'kept draft closed');await click('恢復本船未送出草稿');await click('取消');await click('捨棄草稿並關閉');await until(()=>evaluate("!document.querySelector('.modal-backdrop')"),'discard closed');
   assert.equal(await evaluate("Object.keys(localStorage).filter(k=>k.startsWith('[\"tracking-unsent-v1\"')).length"),0);assert.deepEqual(await qa.read(),before,'discard does not write business data');
  });
- const types=['repair','drydock','semiannual-materials','temporary-materials','spares'];const refs=types.map((_,i)=>'FIELD-UI-'+i);
- await check('one-cell-urgency-equal-notes-progress-five-types-mixed-batch-create',async()=>{
+ const types=['repair','drydock','semiannual-materials','temporary-materials','spares','annual-inspection','drydock-spares','drydock-materials'];const refs=types.map((_,i)=>'FIELD-UI-'+i);
+ await check('one-cell-urgency-equal-notes-progress-eight-types-mixed-batch-create',async()=>{
   const before=await qa.read();await click('＋ 新增／批量新增');
   await check('compact-create-header-desktop-mobile-and-fixed-vessel',async()=>{
    const header=()=>evaluate("(()=>{const n=document.querySelector('[aria-label=新增跟蹤說明]');if(!n)return null;return {text:n.textContent,controls:n.querySelectorAll('input,select,textarea').length,vessel:n.querySelector('strong').textContent,selected:document.querySelector('.tracking-heading select').selectedOptions[0].textContent,children:[...n.children].map(x=>{const r=x.getBoundingClientRect();return {top:r.top,left:r.left,right:r.right,width:r.width};}),viewport:innerWidth,scroll:document.documentElement.scrollWidth};})()");
@@ -51,22 +51,22 @@ export async function trackingFieldChecks(c){
   assert.equal(await evaluate("document.querySelector('[aria-label=\"第 1 筆 補充說明\"]').value"),notesText);assert.equal(await evaluate("document.querySelector('[aria-label=\"第 1 筆 最新進度\"]').value"),progressText);
   fs.writeFileSync(path.join(output,'third-row-mobile-geometry.json'),JSON.stringify({lines:mobileGeometry,options:mobileOptions},null,2));await screen('third-row-mobile-filled');
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});assert.deepEqual(await qa.read(),before,'layout/input probes do not save before explicit submission');
-  assert.deepEqual(await evaluate("[...document.querySelector('[aria-label=\"第 1 筆 類型\"]').options].map(n=>n.text)"),['維修工程','塢修工程','半年物料','臨時物料','備件']);
+  assert.deepEqual(await evaluate("[...document.querySelector('[aria-label=\"第 1 筆 類型\"]').options].map(n=>n.text)"),['維修工程','塢修工程','年檢工程','半年物料','臨時物料','備件','塢修備件','塢修物料']);
   for(let i=0;i<types.length;i++){
-   if(i)await click('＋ 新增一列');await fill(`[aria-label="第 ${i+1} 筆 申請單號(材料或工程)"]`,refs[i]);await fill(`[aria-label="第 ${i+1} 筆 內容摘要/工程內容"]`,'中性欄位測試 '+i);await select(`document.querySelector('[aria-label="第 ${i+1} 筆 類型"]')`,types[i]);await date(`第 ${i+1} 筆 申請/開單日期`,'2026-09-25');
+   if(i)await click('＋ 新增一列');await fill(`[aria-label="第 ${i+1} 筆 申請單號(材料或工程)"]`,refs[i]);await fill(`[aria-label="第 ${i+1} 筆 內容摘要/工程內容"]`,'中性欄位測試 '+i);await select(`document.querySelector('[aria-label="第 ${i+1} 筆 類型"]')`,types[i]);await date(`第 ${i+1} 筆 申請/開單日期`,'2026-09-25');await date(`第 ${i+1} 筆 期望完成日/DL/到期日`,'2026-10-01');
   }
   await screen('fields-create-desktop');await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'));await screen('fields-create-mobile');await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
-  await save(5);await finish();const saved=await qa.read();assert.equal(saved.revision,before.revision+1);for(let i=0;i<types.length;i++){const row=saved.payload.trackingItems.find(r=>r.referenceNo===refs[i]);assert.equal(row.requestType,types[i]);assert.equal(row.kind,i<2?'engineering':'supply');assert.equal(row.isClosed,false);}
+  await save(types.length);await finish();const saved=await qa.read();assert.equal(saved.revision,before.revision+1);for(let i=0;i<types.length;i++){const row=saved.payload.trackingItems.find(r=>r.referenceNo===refs[i]);assert.equal(row.requestType,types[i]);assert.equal(row.kind,['repair','drydock','annual-inspection'].includes(types[i])?'engineering':'supply');assert.equal(row.expectedDate,'2026-10-01');assert.equal(row.isClosed,false);}
   const firstSaved=saved.payload.trackingItems.find(r=>r.referenceNo===refs[0]);assert.equal(firstSaved.urgency,'urgent');assert.equal(firstSaved.supplementalNotes,notesText);assert.equal(firstSaved.progress,progressText);
  });
  await check('dropdown-filter-settings-selection-and-global-search',async()=>{
   await toggle('全部欄位篩選');assert.equal(await evaluate("document.querySelectorAll('.tracking-filter-grid input:not([type=checkbox]),.tracking-filter-grid textarea').length"),0);
   await nodeClick("document.querySelector('[aria-label=\"類型篩選內容\"]')");await nodeClick("[...document.querySelectorAll('[aria-label=\"類型多選\"] label')].find(n=>n.textContent==='半年物料').querySelector('input')");
   await until(()=>evaluate("document.querySelectorAll('.tracking-table tbody tr .tracking-reference').length===1"),'request type dropdown narrows table');assert.ok(await evaluate("document.querySelector('.tracking-table').innerText.includes('FIELD-UI-2')"));await screen('fields-dropdown');await click('清除條件');await toggle('全部欄位篩選');
-  await toggle('欄位設定');const settings=await evaluate("document.querySelector('.tracking-preferences').textContent");for(const old of ['備貨完成日期','供應商','預計供料日期','實際全部送達日期'])assert.ok(!settings.includes(old));assert.ok(settings.includes('類型'));await toggle('欄位設定');await fill('[aria-label="搜尋跟蹤"]','FIELD-UI');await until(()=>evaluate("document.querySelectorAll('.tracking-table tbody tr .tracking-reference').length===3"),'global search still works');await click('清除條件');
+  await toggle('欄位設定');const settings=await evaluate("document.querySelector('.tracking-preferences').textContent");for(const old of ['備貨完成日期','供應商','預計供料日期','實際全部送達日期'])assert.ok(!settings.includes(old));assert.ok(settings.includes('類型'));await toggle('欄位設定');await fill('[aria-label="搜尋跟蹤"]','FIELD-UI');await until(()=>evaluate("document.querySelectorAll('.tracking-table tbody tr .tracking-reference').length===5"),'global search still works');await click('清除條件');
  });
  await check('explicit-multiselect-batch-edit-delivery-close-and-reopen',async()=>{
-  const supply=refs.slice(2),before=await qa.read();await choose(supply);await click('批量更新');await until(()=>evaluate("document.querySelectorAll('.tracking-form-row').length===3"),'batch full field editor');
+  const supply=refs.slice(2,5),before=await qa.read();await choose(supply);await click('批量更新');await until(()=>evaluate("document.querySelectorAll('.tracking-form-row').length===3"),'batch full field editor');
   for(let i=0;i<3;i++){await fill(`[aria-label="第 ${i+1} 筆 請購案號(非必填)"]`,'0000'+i);await fill(`[aria-label="第 ${i+1} 筆 最新進度"]`,'批量更新的進度 '+i);}
   await date('第 1 筆 實際送達/完工日期','2026-09-28');await date('第 1 筆 實際送達/完工日期','');await save(3);await finish();let saved=await qa.read();assert.equal(saved.revision,before.revision+1);assert.deepEqual(saved.payload.trackingItems.filter(r=>!supply.includes(r.referenceNo)),before.payload.trackingItems.filter(r=>!supply.includes(r.referenceNo)));
   await choose(supply);await click('批量送達／更正');await date('實際送達/完工日期','2026-09-26');await save(3);await finish();await tab('已送船清單');
@@ -75,10 +75,11 @@ export async function trackingFieldChecks(c){
   for(const ref of supply){const row=(await qa.read()).payload.trackingItems.find(r=>r.referenceNo===ref);assert.equal(row.isClosed,false);assert.equal(row.actualDeliveryDate,'2026-09-26');}
  });
  await check('engineering-batch-completion-independent-of-close-reopen',async()=>{
-  await tab('未完成工程單');await choose(refs.slice(0,2));await click('批量完工／更正');await date('實際送達/完工日期','2026-09-26');await save(2);await finish();await tab('已完成工程單');
-  for(const ref of refs.slice(0,2)){const row=(await qa.read()).payload.trackingItems.find(r=>r.referenceNo===ref);assert.equal(row.completionDate,'2026-09-26');assert.equal(row.isClosed,false);}
-  await choose(refs.slice(0,2));await click('批量結案');await date('結案日期','2026-09-27');await save(2);await finish();await choose(refs.slice(0,2));await click('重開所選');await save(2);await finish();
-  assert.equal(await evaluate("document.querySelectorAll('.tracking-table tbody tr .tracking-reference').length"),2);await screen('fields-engineering-completed');await tab('未送船清單');
+  const engineering=refs.filter((_,i)=>['repair','drydock','annual-inspection'].includes(types[i]));
+  await tab('未完成工程單');await choose(engineering);await click('批量完工／更正');await date('實際送達/完工日期','2026-09-26');await save(engineering.length);await finish();await tab('已完成工程單');
+  for(const ref of engineering){const row=(await qa.read()).payload.trackingItems.find(r=>r.referenceNo===ref);assert.equal(row.completionDate,'2026-09-26');assert.equal(row.isClosed,false);}
+  await choose(engineering);await click('批量結案');await date('結案日期','2026-09-27');await save(engineering.length);await finish();await choose(engineering);await click('重開所選');await save(engineering.length);await finish();
+  assert.equal(await evaluate("document.querySelectorAll('.tracking-table tbody tr .tracking-reference').length"),3);await screen('fields-engineering-completed');await tab('未送船清單');
  });
  await check('import-same-kind-type-change-preserves-partial-delivery-native-ACK',async()=>{
   const book=new ExcelJS.Workbook(),sheet=book.addWorksheet('跟蹤資料'),keys=['referenceNo','description','applicationDate','deliveryStatus','actualDeliveryDate','normal','urgent','supplementalNotes'];
@@ -102,15 +103,15 @@ export async function trackingFieldChecks(c){
   const input=(i,label)=>`[aria-label="第 ${i} 筆 ${label}"]`;
   const value=(i,label)=>evaluate(`document.querySelector(${JSON.stringify(input(i,label))}).value`);
   const type=async(i,value)=>{await evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(input(i,'類型'))});Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('change',{bubbles:true}));})()`);await until(()=>evaluate(`document.querySelector(${JSON.stringify(input(i,'類型'))}).value===${JSON.stringify(value)}`),'same-application type selected');};
-  const named=async i=>Promise.all(['申請單號(材料或工程)','申請/開單日期','類型','期望完成日期/DL'].map(label=>value(i,label)));
+  const named=async i=>Promise.all(['申請單號(材料或工程)','申請/開單日期','類型','期望完成日/DL/到期日'].map(label=>value(i,label)));
   const fresh=async i=>{for(const label of ['請購案號(非必填)','原項次','內容摘要/工程內容','實際送達/完工日期','補充說明','最新進度'])assert.equal(await value(i,label),'',`row ${i}: ${label} must not be copied`);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(input(i,'普通'))}).checked`),true);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(input(i,'緊急'))}).checked`),false);};
-  await fill(input(1,'申請單號(材料或工程)'),'SAME-APP-INITIAL');await date('第 1 筆 申請/開單日期','2026-10-01');await type(1,'semiannual-materials');await date('第 1 筆 期望完成日期/DL','2026-11-01');
+  await fill(input(1,'申請單號(材料或工程)'),'SAME-APP-INITIAL');await date('第 1 筆 申請/開單日期','2026-10-01');await type(1,'semiannual-materials');await date('第 1 筆 期望完成日/DL/到期日','2026-11-01');
   for(const [label,text] of [['內容摘要/工程內容','第一筆獨立內容'],['請購案號(非必填)','P-FIRST-ONLY'],['原項次','01'],['補充說明','第一筆獨立說明'],['最新進度','第一筆獨立進度']])await fill(input(1,label),text);
   await date('第 1 筆 實際送達/完工日期','2026-10-02');await nodeClick(`document.querySelector(${JSON.stringify(input(1,'緊急'))})`);
   await click('同申請單號新增一筆');assert.deepEqual(await named(2),['SAME-APP-INITIAL','2026-10-01','semiannual-materials','2026-11-01']);await fresh(2);
-  await fill(input(2,'內容摘要/工程內容'),'第二筆獨立內容');await fill(input(2,'申請單號(材料或工程)'),'SAME-APP-OTHER');await type(2,'temporary-materials');await date('第 2 筆 期望完成日期/DL','2027-01-01');
+  await fill(input(2,'內容摘要/工程內容'),'第二筆獨立內容');await fill(input(2,'申請單號(材料或工程)'),'SAME-APP-OTHER');await type(2,'temporary-materials');await date('第 2 筆 期望完成日/DL/到期日','2027-01-01');
   assert.deepEqual(await named(1),['SAME-APP-INITIAL','2026-10-01','semiannual-materials','2026-11-01'],'editing appended row does not mutate first');
-  await fill(input(1,'申請單號(材料或工程)'),'SAME-APP-LATEST');await date('第 1 筆 申請/開單日期','2026-10-03');await type(1,'spares');await date('第 1 筆 期望完成日期/DL','2026-11-03');await click('同申請單號新增一筆');
+  await fill(input(1,'申請單號(材料或工程)'),'SAME-APP-LATEST');await date('第 1 筆 申請/開單日期','2026-10-03');await type(1,'spares');await date('第 1 筆 期望完成日/DL/到期日','2026-11-03');await click('同申請單號新增一筆');
   assert.deepEqual(await named(3),['SAME-APP-LATEST','2026-10-03','spares','2026-11-03'],'new click uses current first, not initial first or last');await fresh(3);assert.deepEqual(await named(2),['SAME-APP-OTHER','2026-10-01','temporary-materials','2027-01-01'],'previous append is an independent snapshot');
   const ids=await evaluate("[...document.querySelectorAll('.tracking-form-row legend')].map(n=>n.innerText.split('｜')[1])");assert.equal(ids.length,3);assert.equal(new Set(ids).size,3);assert.ok(ids.every(id=>id&&!before.payload.trackingItems.some(row=>row.id===id)));
   await save(3);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(input(3,'內容摘要/工程內容'))}).validity.valueMissing`),true);assert.deepEqual(await qa.read(),before,'adding rows and invalid submit do not write business data');

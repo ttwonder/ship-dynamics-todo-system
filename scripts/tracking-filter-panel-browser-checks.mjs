@@ -12,7 +12,7 @@ export async function filterPanelChecks({qa,call,evaluate,click,nodeClick,fill,s
    assert.equal(await evaluate("[...document.querySelectorAll('.tracking-page > p')].some(n=>n.textContent==='是否完成依實際完工日期判定；結案或重開不會自動填入或清除完工日期。')"),false,'remove the redundant engineering-page hint');
   }
  });
- const expectedBase=['申請單號(材料或工程)','請購案號(非必填)','申請/開單日期','類型','期望完成日期/DL','實際送達/完工日期','普通','緊急'];
+ const expectedBase=['申請單號(材料或工程)','請購案號(非必填)','申請/開單日期','類型','期望完成日/DL/到期日','實際送達/完工日期','普通','緊急'];
  const expected=kind=>[...expectedBase,...(kind==='supply'?['送船狀態']:[]),'結案狀態','結案日期','內控同步'];
  const geometry=[];
  const measure=()=>evaluate(`(()=>{

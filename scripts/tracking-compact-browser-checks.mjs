@@ -14,7 +14,7 @@ export async function compactChecks(c){
  const select=async(label,value)=>evaluate(`(()=>{const n=document.querySelector('[aria-label='+${JSON.stringify(JSON.stringify(label))}+']');if(!n||n.disabled)throw Error('select missing');n.value=${JSON.stringify(value)};n.dispatchEvent(new Event('change',{bubbles:true}));})()`);
  const key=async value=>{const windowsVirtualKeyCode={ArrowRight:39,Escape:27,Tab:9}[value];await call('Input.dispatchKeyEvent',{type:'keyDown',key:value,code:value,windowsVirtualKeyCode});await call('Input.dispatchKeyEvent',{type:'keyUp',key:value,code:value,windowsVirtualKeyCode});};
  const save=async n=>{await click(`確認保存 ${n} 項`);await finish();};
- const expected={'申請單號(材料或工程)':120,'請購案號(非必填)':120,'原項次':64,'申請/開單日期':112,'類型':88,'內容摘要/工程內容':300,'期望完成日期/DL':112,'實際送達/完工日期':112,'普通':52,'緊急':52,'補充說明':160,'最新進度':170,'送船狀態':88,'結案狀態':80,'結案日期':112,'內控同步':96};
+ const expected={'申請單號(材料或工程)':120,'請購案號(非必填)':120,'原項次':64,'申請/開單日期':112,'類型':88,'內容摘要/工程內容':300,'期望完成日/DL/到期日':112,'實際送達/完工日期':112,'普通':52,'緊急':52,'補充說明':160,'最新進度':170,'送船狀態':88,'結案狀態':80,'結案日期':112,'內控同步':96};
  const geometry=[];
  await check(`${audience}-explicit-export-labels-desktop-mobile-and-unchanged-entry`,async()=>{
   const before=await qa.read(),metricStart=qa.metrics.length;
@@ -108,7 +108,7 @@ export async function compactChecks(c){
    await fill(`[aria-label="${prefix}原項次"]`,String(i));
    await fill(`[aria-label="${prefix}內容摘要/工程內容"]`,'測試用完整摘要，不截內容；'+(i===1?'LONG-'.repeat(35):'記錄分組'));
    if(i>2)await select(prefix+'類型','repair');
-   await date(prefix+'申請/開單日期','2026-09-21');await date(prefix+'期望完成日期/DL','2026-10-01');
+   await date(prefix+'申請/開單日期','2026-09-21');await date(prefix+'期望完成日/DL/到期日','2026-10-01');
    await fill(`[aria-label="${prefix}最新進度"]`,`COMPACT-${i} 已保存進度`);
   }
   await save(4);await tab('配件物料總清單');await choose(['COMPACT-1','COMPACT-2']);await click('批量更新');

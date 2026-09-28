@@ -20,5 +20,13 @@ export async function buildStatisticsWorkbook(report: StatisticsReport): Promise
   STATISTICS_METRICS.forEach(([key,label])=>summary.addRow([label,report.stats.summary[key]]));
   summary.addRow(['完成率',statisticsPercent(report.stats.summary.completionRate),report.stats.summary.completed,report.stats.summary.effective]);summary.addRow(['延遲率',statisticsPercent(report.stats.summary.delayRate),report.stats.summary.delayed,report.stats.summary.delayEligible]);format(summary,[40,35,35,35]);
   const categories=book.addWorksheet('分類統計');heading(categories,11);categories.addRow(['分類','申請數','有效項目','已完成','未完成','取消','完成率','延遲數','延遲可判定','延遲率','急件總數']);report.stats.categories.forEach(c=>categories.addRow([c.label,c.summary.total,c.summary.effective,c.summary.completed,c.summary.incomplete,c.summary.cancelled,statisticsPercent(c.summary.completionRate),c.summary.delayed,c.summary.delayEligible,statisticsPercent(c.summary.delayRate),c.summary.urgent]));format(categories,[24,13,13,13,13,13,13,13,15,13,13]);
+  const annual=report.stats.categories.find(c=>c.value==='annual-inspection')?.summary;
+  if(!annual)throw new Error('年檢到期統計尚未取得完整分類。');
+  const expiry=book.addWorksheet('年檢到期日統計');heading(expiry,4);
+  expiry.getCell('A1').value=`${report.vesselName}｜年檢到期日統計`;
+  expiry.getCell('A2').value=`統計範圍：${report.scope.cohort}\n年檢工程 ${annual.total} 項（同一範圍的子集，已包含於總計，不重複加總）`;
+  expiry.addRow(['指標','數量／比率','分子','分母']);
+  STATISTICS_METRICS.filter(([key])=>key!=='partial').forEach(([key,label])=>expiry.addRow([key==='noDeadline'?'未填／無效到期日':key==='delayEligible'?'到期可判定':key==='delayed'?'逾期數':label,annual[key]]));
+  expiry.addRow(['完成率',statisticsPercent(annual.completionRate),annual.completed,annual.effective]);expiry.addRow(['到期延遲率',statisticsPercent(annual.delayRate),annual.delayed,annual.delayEligible]);format(expiry,[40,35,35,35]);
   const buffer=await book.xlsx.writeBuffer();return Uint8Array.from(new Uint8Array(buffer)).buffer;
 }

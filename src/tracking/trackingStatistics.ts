@@ -5,8 +5,8 @@ import { TRACKING_REQUEST_TYPES, type TrackingRequestType } from './trackingRequ
 export type StatisticsCategory = TrackingRequestType | 'unclassified';
 export type StatisticsType = StatisticsCategory | 'all' | 'materials' | 'engineering';
 export interface TrackingStatisticsQuery { vesselId: string; vesselIds?: readonly string[]; from: string; to: string; type: StatisticsType; urgency: 'all' | 'normal' | 'urgent' }
-export const STATISTICS_CATEGORIES = ['semiannual-materials', 'temporary-materials', 'spares', 'repair', 'drydock', 'unclassified'].map(value => ({ value: value as StatisticsCategory, label: TRACKING_REQUEST_TYPES.find(t => t.value === value)?.label || '舊資料未分類' }));
-export const STATISTICS_TYPES = [{ value: 'all', label: '全部類型' }, { value: 'materials', label: '物料（半年／臨時）' }, { value: 'engineering', label: '工程（維修／塢修）' }, ...STATISTICS_CATEGORIES];
+export const STATISTICS_CATEGORIES = ['semiannual-materials', 'temporary-materials', 'drydock-materials', 'spares', 'drydock-spares', 'repair', 'drydock', 'annual-inspection', 'unclassified'].map(value => ({ value: value as StatisticsCategory, label: TRACKING_REQUEST_TYPES.find(t => t.value === value)?.label || '舊資料未分類' }));
+export const STATISTICS_TYPES = [{ value: 'all', label: '全部類型' }, { value: 'materials', label: '物料（半年／臨時／塢修）' }, { value: 'engineering', label: '工程（維修／塢修／年檢）' }, ...STATISTICS_CATEGORIES];
 export function statisticsQueryError(query: TrackingStatisticsQuery): string {
   if ((query.from && !validDate(query.from)) || (query.to && !validDate(query.to))) return '請填寫有效的申請／開單日期。';
   if (query.from && query.to && query.from > query.to) return '開始日期不能晚於結束日期。';
@@ -44,7 +44,7 @@ export function calculateTrackingStatistics(items: readonly TrackingItem[], quer
       const item = row.item;
       if ((query.from || query.to) && (!validDate(item.applicationDate) || query.from && item.applicationDate < query.from || query.to && item.applicationDate > query.to)) return false;
       if (query.urgency !== 'all' && item.urgency !== query.urgency) return false;
-      return query.type === 'all' || (query.type === 'materials' ? ['semiannual-materials', 'temporary-materials'].includes(row.category) : query.type === 'engineering' ? item.kind === 'engineering' : row.category === query.type);
+      return query.type === 'all' || (query.type === 'materials' ? ['semiannual-materials', 'temporary-materials', 'drydock-materials'].includes(row.category) : query.type === 'engineering' ? item.kind === 'engineering' : row.category === query.type);
     }).sort((a, b) => b.item.applicationDate.localeCompare(a.item.applicationDate) || a.item.id.localeCompare(b.item.id));
   return { rows, summary: summarize(rows), categories: STATISTICS_CATEGORIES.map(category => ({ ...category, summary: summarize(rows.filter(r => r.category === category.value)) })) };
 }
@@ -53,7 +53,7 @@ export const STATISTICS_METRICS = [
   ['total','申請數'], ['effective','有效項目'], ['completed','已完成'], ['incomplete','未完成'], ['cancelled','取消'], ['partial','部分送船'],
   ['delayed','延遲數'], ['delayEligible','延遲可判定'], ['overdueIncomplete','逾期未完成'], ['overdueCompleted','逾期完成'],
   ['urgent','急件總數'], ['urgentCompleted','急件已完成'], ['urgentIncomplete','急件未完成'], ['urgentCancelled','急件取消'],
-  ['noDeadline','未填／無效 DL'], ['insufficientDate','完成日期不足'], ['notYetDue','未到期未完成'],
+  ['noDeadline','未填／無效 DL／到期日'], ['insufficientDate','完成日期不足'], ['notYetDue','未到期未完成'],
 ] as const;
 export type StatisticsMetric = typeof STATISTICS_METRICS[number][0];
 export interface StatisticsFocus { metric: StatisticsMetric; category: StatisticsCategory | 'all' }

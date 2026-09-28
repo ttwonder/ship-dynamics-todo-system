@@ -25,21 +25,35 @@ try {
   assert.equal((await pre('submit',request)).replayed,true);assert.deepEqual(await qa.read(),before);evidence.cases.push('pre-upgrade-exact-submission-replays-after-idempotent-upgrade-without-data-rewrite');
   evidence.migrationInstalled=true;
  } else evidence.migrationInstalled=false;
+ await qa.db.exec(fs.readFileSync('supabase/migrations/20260927130000_tracking_fleet_statistics.sql','utf8'));
+ if(!process.argv.includes('--before-annual-upgrade')) {
+  const before=await qa.read(),v1=await qa.db.query("select prosrc from pg_proc where oid='public.read_ship_dynamics_tracking_statistics_public_v1(text,jsonb,jsonb)'::regprocedure");
+  const raw=fs.readFileSync('supabase/migrations/20260928140000_tracking_annual_types.sql','utf8');const sql=process.argv.includes('--crlf-install')?raw.replace(/\r?\n/g,'\r\n'):raw;
+  const original=(await qa.db.query("select pg_get_functiondef('public.ship_dynamics_tracking_validate_v1(text,jsonb,text,jsonb,jsonb)'::regprocedure) definition")).rows[0].definition;
+  const unknown=original.replace(/begin\r?\n/,'begin\n -- QA unknown predecessor\n');assert.notEqual(unknown,original);
+  await qa.db.exec(unknown);
+  await assert.rejects(qa.db.exec(sql),/tracking-annual-types-predecessor-mismatch/);
+  await qa.db.exec('rollback');await qa.db.exec(original);assert.deepEqual(await qa.read(),before);
+  evidence.cases.push('annual-upgrade-rejects-unknown-predecessor-without-partial-install');
+  await qa.db.exec(sql);await qa.db.exec(sql);assert.deepEqual(await qa.read(),before);
+  assert.deepEqual(await qa.db.query("select prosrc from pg_proc where oid='public.read_ship_dynamics_tracking_statistics_public_v1(text,jsonb,jsonb)'::regprocedure"),v1);
+  evidence.cases.push('annual-upgrade-idempotent-no-data-rewrite-v1-preserved');
+ }
  const rpc=async(action,payload={})=>qa.db.transaction(async tx=>{await tx.exec('set local role anon');return (await tx.query('select public.ship_dynamics_tracking_public_v1($1,$2,$3::uuid,$4::uuid,$5,$6::jsonb) result',[qa.workspace,'qa-v1','11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222',action,JSON.stringify(payload)])).rows[0].result;});
  const base={vesselId:'qa-v1',description:'欄位原生測試',applicationDate:'2026-09-25',urgency:'normal',progress:'初始進度',supplementalNotes:'',expectedDate:'2026-10-01',deliveryStatus:'not-delivered',purchaseNos:'000001'};
- const types=[['repair','engineering'],['drydock','engineering'],['semiannual-materials','supply'],['temporary-materials','supply'],['spares','supply']];
+ const types=[['repair','engineering'],['drydock','engineering'],['semiannual-materials','supply'],['temporary-materials','supply'],['spares','supply'],['annual-inspection','engineering'],['drydock-spares','supply'],['drydock-materials','supply']];
  const items=types.map(([requestType,kind],i)=>({...base,id:'field-native-'+i,referenceNo:'FIELD-NATIVE-'+i,kind,requestType}));
  const submit=async(name,ids,creation,make)=>{
   const bundleId=crypto.randomUUID();const claim=await rpc('claim',{bundleId,ids,creation});assert.equal(claim.ok,true,JSON.stringify(claim));
   const command=make(claim.data.trackingItems);const request={operationId:name,bundleId,command};
   try {return {request,result:await rpc('submit',request)};}finally{await rpc('release',{bundleId});}
  };
- await check('five-type-create-readback-idempotent-legacy-and-kind-guard',async()=>{
-  const {request,result}=await submit('five-type-create',items.map(row=>row.id),true,()=>({type:'create',items}));
+ await check('eight-type-create-readback-idempotent-legacy-and-kind-guard',async()=>{
+  const {request,result}=await submit('eight-type-create',items.map(row=>row.id),true,()=>({type:'create',items}));
   assert.equal(result.status,'committed',JSON.stringify(result));
   const saved=await rpc('read');for(const item of items)assert.equal(saved.trackingItems.find(row=>row.id===item.id)?.requestType,item.requestType,'public read retains type');
   const after=await qa.read();assert.equal((await rpc('submit',request)).replayed,true);assert.deepEqual(await qa.read(),after);
-  for(const [i,requestType,kind] of [[0,'repair','supply'],[1,'arbitrary','engineering']]) {
+  for(const [i,requestType,kind] of [[0,'repair','supply'],[1,'arbitrary','engineering'],[2,'annual-inspection','supply'],[3,'drydock-spares','engineering'],[4,'drydock-materials','engineering']]) {
    const wrong={...base,id:'field-invalid-'+i,referenceNo:'INVALID',requestType,kind};const before=await qa.read();
    const {result:rejected}=await submit('type-invalid-'+i,[wrong.id],true,()=>({type:'create',items:[wrong]}));assert.equal(rejected.status,'rejected');assert.deepEqual(await qa.read(),before);
   }
@@ -71,6 +85,6 @@ try {
  await check('private-field-helper-remains-denied-to-anonymous-caller',async()=>{
   await assert.rejects(()=>qa.db.transaction(async tx=>{await tx.exec('set local role anon');await tx.query('select ship_dynamics_tracking_private.edit_fields_v1()');}),/permission denied/);
  });
- const readback='supabase/verification/tracking-field-revision-readback.sql';if(fs.existsSync(readback)){const sql=fs.readFileSync(readback,'utf8');const prefix=sql.slice(sql.indexOf('with public_rpc'),sql.indexOf('), checks as ('))+')';evidence.fingerprint=(await qa.db.query(prefix+" select md5(string_agg(identity||E'\\n'||definition,E'\\n' order by identity)) fingerprint from definitions")).rows[0].fingerprint;console.log('Installed field revision fingerprint',evidence.fingerprint);const r=await qa.db.exec(sql);const row=r.flatMap(x=>x.rows||[]).find(x=>x.status);assert.equal(row?.status,'PASS',JSON.stringify(row));evidence.readback=row;}
+ const readback='supabase/verification/tracking-annual-types-readback.sql';if(fs.existsSync(readback)){const r=await qa.db.exec(fs.readFileSync(readback,'utf8'));const row=r.flatMap(x=>x.rows||[]).find(x=>x.status);assert.equal(row?.status,'PASS',JSON.stringify(row));evidence.readback=row;}
 } catch(error){failure=error;evidence.error=error.stack;console.error(error.stack);}
 finally{try{await qa?.close();await native?.close();}catch(error){failure??=error;evidence.cleanupError=error.message;}evidence.status=failure?'FAIL':'PASS';fs.writeFileSync(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify({status:evidence.status,output,caseCount:evidence.cases.length}));if(failure)process.exitCode=1;}

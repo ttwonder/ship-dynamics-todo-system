@@ -43,11 +43,11 @@ try {
   const chartsApi = fs.existsSync('src/tracking/TrackingStatisticsCharts.tsx') ? await vite.ssrLoadModule('/src/tracking/TrackingStatisticsCharts.tsx') : null;
   assert.equal(typeof chartsApi?.trackingStatisticsCharts, 'function', 'replace details with chart totals');
   const charts = chartsApi.trackingStatisticsCharts(stats);
-  assert.equal(charts.length, 3);
+  assert.equal(charts.length, 4);
   for (const chart of charts) assert.equal(chart.rows.reduce((sum, r) => sum + r.value, 0), chart.total);
   assert.equal(charts[0].total, 3);
-  cases.push('three-chart-partitions-reconcile-with-summary');
-  const raw = { protocol: 'ship-tracking-statistics-v1', workspace: 'qa', vessels: catalog, vesselIds: ['v1', 'v2', 'other'], at: '2026-09-27T00:00:00Z', today: '2026-09-27', stats: report.stats };
+  cases.push('four-chart-partitions-reconcile-with-summary');
+  const raw = { protocol: 'ship-tracking-statistics-v2', workspace: 'qa', vessels: catalog, vesselIds: ['v1', 'v2', 'other'], at: '2026-09-27T00:00:00Z', today: '2026-09-27', stats: report.stats };
   assert.equal(typeof scopeApi.parseStatisticsSnapshot, 'function', 'ship receiver must validate aggregate scope and reject partial/extra detail payloads');
   assert.equal(scopeApi.parseStatisticsSnapshot(raw, 'qa', { kind: 'all', value: '' }).stats.summary.total, 3);
   for (const invalid of [{ ...raw, workspace: 'other' }, { ...raw, vesselIds: ['v1'] }, { ...raw, rows: [] }, { ...raw, stats: { ...raw.stats, rows: [] } }, { ...raw, stats: { ...raw.stats, categories: [] } }]) assert.throws(() => scopeApi.parseStatisticsSnapshot(invalid, 'qa', { kind: 'all', value: '' }));

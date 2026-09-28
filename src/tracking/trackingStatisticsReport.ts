@@ -15,4 +15,4 @@ export function makeStatisticsReport(items: readonly TrackingItem[], query: Trac
   return makeStatisticsSummaryReport(calculateTrackingStatistics(items, query, metadata.today), query, metadata);
 }
 export type StatisticsReport = ReturnType<typeof makeStatisticsSummaryReport>;
-export const STATISTICS_POLICY = '目前已保存狀態；非歷史重建。按項目 ID 計數，同單號不合併。取消排除有效項目及比率；完成率＝已完成／有效項目。延遲率＝延遲／可判定（有效 DL 且已完成日期齊全，或已過 DL 仍未完成）；今日等於 DL 不逾期。無 DL、日期不足、未到期未完成不當作準時。摘要、分類與圖形使用同一範圍，不包含逐項明細。';
+export const STATISTICS_POLICY = '目前已保存狀態；非歷史重建。按項目 ID 計數，同單號不合併。取消排除有效項目及比率；完成率＝已完成／有效項目。延遲率＝延遲／可判定（有效 DL／到期日且已完成日期齊全，或已過 DL／到期日仍未完成）；今日等於 DL／到期日不逾期。年檢工程的日期代表到期日，獨立列入分類及年檢到期圖表，已包含於總計，不重複加總。無 DL／到期日、日期不足、未到期未完成不當作準時。摘要、分類與圖形使用同一範圍，不包含逐項明細。';

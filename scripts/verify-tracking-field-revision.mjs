@@ -38,13 +38,14 @@ try {
   for(const kind of ['supply','engineering']) {
     const columns=trackingColumnsFor(kind);
     assert.equal(columns.find(c=>c.key==='referenceNo')?.label,'申請單號(材料或工程)','application number label propagates from canonical columns');
+    assert.equal(columns.find(c=>c.key==='expectedDate')?.label,'期望完成日/DL/到期日','one canonical date label across forms, lists, filters and exports');
     for(const key of expectedFields)assert.ok(columns.some(c=>c.key===key),`${kind}: ${key} column present`);
     assert.ok(!columns.some(c=>retired.includes(c.key)),`${kind}: retired fields excluded even from complete export/settings`);
     assert.equal(columns.find(c=>c.key==='description').required,true);
     assert.ok(!columns.find(c=>c.key==='purchaseNos').required);
     const draft=makeTrackingDraft('create',[newTrackingItem(vessel.id,kind)],data);
     const html=renderToStaticMarkup(React.createElement(TrackingBusinessModal,{draft,audience:'ship',busy:false,pending:false,message:'',affected:[],vesselName:'測試輪 QA SHIP',onChange:()=>{},onSave:()=>{},onReconcile:()=>{},onClose:()=>{}}));
-    for(const label of ['維修工程','塢修工程','半年物料','臨時物料','備件'])assert.ok(html.includes(`>${label}</option>`),`${kind}: exact five request choices`);
+    for(const label of ['維修工程','塢修工程','年檢工程','半年物料','臨時物料','備件','塢修備件','塢修物料'])assert.ok(html.includes(`>${label}</option>`),`${kind}: complete request-type choices including ${label}`);
     assert.ok(!html.includes('新增跟蹤類型'),'per-row request type replaces coarse batch kind selector');
     for(const label of ['備貨完成日期','供應商','預計供料日期','實際全部送達日期','安排廠家','原備註'])assert.ok(!html.includes(label),`${kind}: no retired ${label} form`);
     cases.push(`${kind}-canonical-fields-and-create-form`);

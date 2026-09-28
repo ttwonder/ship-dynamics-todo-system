@@ -21,7 +21,7 @@ export const TRACKING_COLUMNS: readonly TrackingColumn[] = [
   field('applicationDate', '申請/開單日期', 'date', 112, { ...edit, required: true }),
   { ...field('requestType', '類型', 'multi', 88, edit), value: row => trackingRequestTypeLabel(row.requestType) },
   field('description', '內容摘要/工程內容', 'text', 300, { ...edit, required: true }),
-  field('expectedDate', '期望完成日期/DL', 'date', 112, edit),
+  field('expectedDate', '期望完成日/DL/到期日', 'date', 112, edit),
   field('actualDeliveryDate', '實際送達/完工日期', 'date', 112, supply),
   field('completionDate', '實際送達/完工日期', 'date', 112, engineering),
   { key: 'normal', label: '普通', type: 'multi', width: 52, value: row => row.urgency === 'normal' ? '是' : '否' },
