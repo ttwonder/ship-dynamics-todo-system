@@ -1,6 +1,7 @@
 import type { AppData, InternalControlCase, PermissionKey, UserAccount } from '../types';
 import type { TrackingItem, TrackingDeliveryStatus } from './trackingTypes';
-import { TRACKING_REQUEST_TYPES, trackingRequestKind, trackingRequestTypeLabel } from './trackingRequestTypes';
+import { TRACKING_REQUEST_TYPES, trackingRequestKind, trackingRequestTypeLabel, type TrackingRequestType } from './trackingRequestTypes';
+import { trackingClassificationValue, synchronizeTrackingClassification } from './trackingReclassification';
 import { createInternalControlCases, type InternalControlTaskProjection } from '../internalControlData';
 import { isValidInternalControlDate } from '../internalControlWorkflow';
 import { hasPermission, canAccessAllVessels } from '../permissions';
@@ -17,6 +18,7 @@ export type TrackingCommand =
  | {type:'create';items:TrackingItem[]}
  | {type:'progress';items:(TrackingVersion & {text:string})[]}
  | {type:'edit';items:(TrackingVersion & {changes:TrackingEdit})[]}
+ | {type:'reclassify';items:(TrackingVersion & {requestType:TrackingRequestType;actualDate:string;deliveryStatus:TrackingDeliveryStatus})[]}
  | {type:'delivery';items:(TrackingVersion & {status:TrackingDeliveryStatus;date:string})[]}
  | {type:'sync';items:(TrackingVersion & {item:InternalControlCase;projection?:InternalControlTaskProjection})[]}
  | {type:'lifecycle';action:TrackingLifecycleAction;date?:string;outcome?:'completed'|'cancelled';targets:(TrackingVersion & {entry:TrackingEntry})[]};
@@ -121,6 +123,8 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
     if(source.isClosed)fail('tracking-closed-edit');
     const changes=(input as Extract<TrackingCommand,{type:'edit'}>['items'][number]).changes;
     if(!changes||Object.keys(changes).some(k=>!(TRACKING_EDIT_FIELDS as readonly string[]).includes(k)))fail('tracking-edit-field-forbidden');
+    const beforeClassification=structuredClone(source);
+    if(changes.requestType!==undefined&&changes.requestType!==source.requestType&&(item?.isClosed||task?.isClosed))fail('tracking-closed-edit');
     const beforeDelivery={deliveryStatus:source.deliveryStatus,actualDeliveryDate:source.actualDeliveryDate || ''};
     const beforeCompletion=source.completionDate || '';
     Object.assign(source,structuredClone(Object.fromEntries(Object.entries(changes).filter(([key,value])=>key!=='progress'&&value!==undefined&&(key!=='actualDeliveryDate'||(value||'')!==beforeDelivery.actualDeliveryDate)))));
@@ -131,6 +135,28 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
     }
     if(source.kind==='engineering'&&(source.completionDate || '')!==beforeCompletion)appendTrackingEvent(source,'completion',{completionDate:beforeCompletion},{completionDate:source.completionDate || ''},user,at,'tracking',operationId);
     validateTrackingItem(source);
+    if(source.requestType!==beforeClassification.requestType){
+     const event=appendTrackingEvent(source,'reclassify',trackingClassificationValue(beforeClassification),trackingClassificationValue(source),user,at,'tracking',operationId);
+     synchronizeTrackingClassification(beforeClassification,source,item,task,event);
+    }
+   } else if(command.type==='reclassify'){
+    if(source.isClosed||item?.isClosed||task?.isClosed)fail('tracking-closed-edit');
+    const correction=input as Extract<TrackingCommand,{type:'reclassify'}>['items'][number];
+    if(Object.keys(correction).some(key=>!['id','expectedUpdatedAt','requestType','actualDate','deliveryStatus'].includes(key))
+     ||!TRACKING_REQUEST_TYPES.some(option=>option.value===correction.requestType)||typeof correction.actualDate!=='string'
+     ||!['not-delivered','partially-delivered','delivered'].includes(correction.deliveryStatus))fail('tracking-reclassification-invalid');
+    const before=structuredClone(source);
+    source.kind=trackingRequestKind(correction.requestType);source.requestType=correction.requestType;
+    if(source.kind==='supply'){
+     if((correction.deliveryStatus==='delivered')!==Boolean(correction.actualDate))fail('tracking-reclassification-delivery-date');
+     source.actualDeliveryDate=correction.actualDate;source.deliveryStatus=correction.deliveryStatus;
+    } else {
+     if(correction.deliveryStatus!==before.deliveryStatus)fail('tracking-reclassification-inactive-fact');
+     source.completionDate=correction.actualDate;
+    }
+    validateTrackingItem(source);
+    const event=appendTrackingEvent(source,'reclassify',trackingClassificationValue(before),trackingClassificationValue(source),user,at,'tracking',operationId);
+    synchronizeTrackingClassification(before,source,item,task,event);
    } else if(command.type==='progress'){
     const text=(input as Extract<TrackingCommand,{type:'progress'}>['items'][number]).text.trim();
     if(source.isClosed||item?.isClosed||task?.isClosed)fail('tracking-closed-progress');

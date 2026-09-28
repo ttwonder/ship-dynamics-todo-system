@@ -43,6 +43,13 @@ try {
     const result=await qa.db.exec(fs.readFileSync('supabase/verification/tracking-annual-types-readback.sql','utf8'));
     const rows=result.flatMap(r=>r.rows||[]);assert.deepEqual(rows,[{status:'PASS',checks:'6',failures:[]}]);evidence.annualReadback=rows;
   });
+  await check('reclassification-upgrade-preserves-statistics-and-readback',async()=>{
+    const before=await qa.read();let sql=fs.readFileSync('supabase/migrations/20260928180000_tracking_reclassification.sql','utf8');
+    if(process.argv.includes('--crlf-install'))sql=sql.replace(/\r?\n/g,'\r\n');
+    await qa.db.exec(sql);assert.deepEqual(await qa.read(),before);
+    const rows=(await qa.db.exec(fs.readFileSync('supabase/verification/tracking-reclassification-readback.sql','utf8'))).flatMap(r=>r.rows||[]);
+    assert.deepEqual(rows,[{status:'PASS',checks:'9',failures:[]}]);evidence.reclassificationReadback=rows;
+  });
   statisticsRpc='read_ship_dynamics_tracking_statistics_public_v2';
   const today=(await rpc({kind:'all',value:''})).today;
   const row = (id, patch = {}) => ({ id, vesselId: 'qa-v1', kind: 'supply', requestType: 'spares', referenceNo: 'PRIVATE NUMBER', description: 'PRIVATE CONTENT', applicationDate: '2026-09-15', expectedDate: '2020-01-01', urgency: 'normal', deliveryStatus: 'not-delivered', isClosed: false, progress: 'PRIVATE PROGRESS', statusLogs: [], ...patch });

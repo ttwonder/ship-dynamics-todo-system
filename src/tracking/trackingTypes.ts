@@ -9,7 +9,7 @@ export interface TrackingEvent {
   at: string;
   byUserId: string;
   entry: 'tracking' | 'internal-control' | 'task';
-  action: 'close' | 'reopen' | 'correct-close-date' | 'delivery' | 'completion' | 'link' | 'invalidate-link';
+  action: 'close' | 'reopen' | 'correct-close-date' | 'delivery' | 'completion' | 'link' | 'invalidate-link' | 'reclassify';
   before: Record<string, unknown>;
   after: Record<string, unknown>;
 }

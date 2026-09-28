@@ -86,4 +86,17 @@
 .tracking-history-changes>div{display:grid;grid-template-columns:110px minmax(0,1fr);gap:4px;margin:3px 0}
 .tracking-history-changes dt,.tracking-history-changes dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}
 @media(max-width:700px){.tracking-page .tracking-history-modal{padding:10px}.tracking-history-changes>div{grid-template-columns:84px minmax(0,1fr)}}
+/* Reclassification only: compact original/target comparison, stacked on phones. */
+.tracking-reclassify-fields{min-width:0}
+.tracking-reclassify-fields>label:not(.tracking-reclassify-review){display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.tracking-reclassify-fields>label>select{min-width:160px}
+.tracking-reclassify-grid{display:grid;grid-template-columns:minmax(0,1.4fr) repeat(2,minmax(0,1fr));align-items:start;gap:8px;min-width:0}
+.tracking-reclassify-grid>label,.tracking-reclassify-original{display:flex;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}
+.tracking-reclassify-grid input,.tracking-reclassify-grid select{width:100%;box-sizing:border-box}
+.tracking-reclassify-row legend{max-width:100%;overflow-wrap:anywhere;font-size:12px}
+.tracking-reclassify-note{margin:5px 0;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.tracking-reclassify-grid>.tracking-reclassify-note{margin:0}
+.tracking-reclassify-review{display:flex;align-items:flex-start;gap:6px;margin:8px 0;font-size:12px;line-height:1.5}
+.tracking-page .tracking-reclassify-review>input{width:15px;height:15px;flex:none;margin:2px 0}
+@media(max-width:700px){.tracking-reclassify-grid{grid-template-columns:minmax(0,1fr)}}
 /* Follow the App's actual theme tokens; OS dark mode must not restyle only this module. */

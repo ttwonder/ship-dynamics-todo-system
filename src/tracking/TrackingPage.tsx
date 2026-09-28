@@ -9,6 +9,7 @@ import { TRACKING_TABS, filterIsActive, selectTrackingRows, trackingInTab, track
 import { defaultTrackingPreferences, readTrackingPreferences, trackingPreferenceKey, writeTrackingPreferences } from './trackingTablePreferences';
 import { TrackingPagination, TrackingTable } from './TrackingTable';
 import { TrackingHistoryModal } from './TrackingHistoryModal';
+import { reconcileTrackingReclassification, trackingReclassificationMatchesCommand } from './TrackingReclassifyFields';
 import { commandForTrackingDraft, makeTrackingDraft, newTrackingItem, trackingAffectedLabels, TrackingBusinessModal, type TrackingAction, type TrackingDraft } from './TrackingModals';
 import { trackingHelp, type TrackingAudience, type TrackingSubmission, type TrackingUiCallbacks } from './trackingUiTypes';
 import type { TrackingItem } from './trackingTypes';
@@ -145,7 +146,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
       picked = eligible;
     }
     if ((action === 'close' && picked.some(row => row!.isClosed)) || (['reopen', 'correct-close-date'].includes(action) && picked.some(row => !row!.isClosed))) { setNotice('請先選取相同結案狀態；不會把結案和日期更正混為一個動作。'); return; }
-    if (['edit', 'progress', 'completion'].includes(action) && picked.some(row => row!.isClosed)) { setNotice('已結案項目請先重開，未修改任何資料。'); return; }
+    if (['edit', 'reclassify', 'progress', 'completion'].includes(action) && picked.some(row => row!.isClosed)) { setNotice('已結案項目請先重開，未修改任何資料。'); return; }
     if (action==='completion'&&picked.some(row=>row!.kind!=='engineering')) {setNotice('完工只適用工程；未修改任何資料。');return;}
     const value=makeTrackingDraft(action, picked as TrackingItem[], fresh);draftRef.current=value;setDraft(value); setPending(null); setNotice('');
     }finally{openingRef.current=false;if(!draftRef.current&&currentIdentity.current===identity)await callbacks.release();}
@@ -171,13 +172,14 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
       if (!ok) { setNotice('尚未保存；輸入及精確提交已保留。可確認結果／重試相同提交。'); return false; }
       pendingRef.current = null; setPending(null);
       if (submission.command.type === 'sync') setSyncSuccess(submission.command.items.map(value => ({ id: value.item.id, reference: submittedDraft.rows.find(row => row.id === value.id)!.referenceNo })));
-      if (editGeneration.current === generation) { if(!await callbacks.release()){setNotice('已保存，編輯鎖尚未完成釋放；請稍後關閉。');return true;} setDraft(null); draftRef.current = null; saveLocalDraft(null, null); setSelected(previous => previous.filter(id => !submittedDraft.rows.some(row => row.id === id))); setNotice('已收到伺服器確認並讀回。'); }
+      if (editGeneration.current === generation && (submission.command.type !== 'reclassify' || trackingReclassificationMatchesCommand(draftRef.current?.reclassification, submission.command))) { if(!await callbacks.release()){setNotice('已保存，編輯鎖尚未完成釋放；請稍後關閉。');return true;} setDraft(null); draftRef.current = null; saveLocalDraft(null, null); setSelected(previous => previous.filter(id => !submittedDraft.rows.some(row => row.id === id))); setNotice('已收到伺服器確認並讀回。'); }
       else {
         const retained = draftRef.current!;
         const latest = dataRef.current.trackingItems || [];
         const rebased = retained.rows.map(row => ({ ...row, updatedAt: latest.find(saved => saved.id === row.id)?.updatedAt || submission!.context.at }));
         const savedCases = retained.action==='sync' ? rebased.map(row=>dataRef.current.internalControlCases.find(item=>item.id===row.linkedCaseId||item.trackingItemId===row.id)!).filter(Boolean) : undefined;
-        const next = { ...retained, ...(savedCases?.length===rebased.length?{savedCases}:{}), action: retained.action === 'create' ? 'edit' as const : retained.action, rows: rebased, originals: rebased.map(row => structuredClone(latest.find(saved => saved.id === row.id) || row)), dirty: true };
+        const originals = rebased.map(row => structuredClone(latest.find(saved => saved.id === row.id) || row));
+        const next = { ...retained, ...(retained.action === 'reclassify' ? { reclassification: reconcileTrackingReclassification(retained.reclassification, originals) } : {}), ...(savedCases?.length===rebased.length?{savedCases}:{}), action: retained.action === 'create' ? 'edit' as const : retained.action, rows: rebased, originals, dirty: true };
         setDraft(next); draftRef.current = next; saveLocalDraft(next, null); setNotice('提交版本已保存；等待期間的新輸入仍保留，尚未提交。');
       }
       return true;
@@ -196,7 +198,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
       if(!fresh||owner!==currentIdentity.current)return;
       const retained=draftRef.current;if(!retained)return;
       const originals=retained.originals.map(row=>fresh.trackingItems?.find(item=>item.id===row.id)||row);
-      const next={...retained,originals,rows:retained.rows.map(row=>({...row,updatedAt:originals.find(item=>item.id===row.id)?.updatedAt||row.updatedAt})),dirty:true};
+      const next={...retained,...(retained.action==='reclassify'?{reclassification:reconcileTrackingReclassification(retained.reclassification,originals)}:{}),originals,rows:retained.rows.map(row=>({...row,updatedAt:originals.find(item=>item.id===row.id)?.updatedAt||row.updatedAt})),dirty:true};
       draftRef.current=next;setDraft(next);saveLocalDraft(next,null);setNotice('已核對最新版本；原輸入保留，尚未提交。請核對下列原值、移除衝突列或重新保存。');
     } catch(error) { if(owner===currentIdentity.current)setNotice(`核對未完成；原輸入保留：${error instanceof Error?error.message:String(error)}`); }
     finally { busyRef.current=false;setBusy(false); }
@@ -247,7 +249,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     <div className="tracking-search-actions">
       <div className="tracking-search"><input aria-label="搜尋跟蹤" placeholder="搜尋編號、內容及全部欄位…" value={search} onChange={event => { clearSelection(); setSearch(event.target.value); }}/><button className="btn small" onClick={() => { updateFilters({}); setSearch(''); }}>清除條件</button></div>
       <button type="button" className="btn small tracking-urgent-shortcut" aria-pressed={urgentOnly} title="只顯示符合目前其他條件的緊急件；再按一次取消緊急篩選。" onClick={toggleUrgent}>緊急</button>
-    <div className="tracking-toolbar" aria-label="跟蹤選取與批量操作"><b>已選 {selected.length} 項</b><button className="btn small" onClick={() => setSelected(rows.map(row => row.id))}>選取全部符合條件 {rows.length} 項</button><button className="btn small" onClick={() => setSelected([])}>清除選取</button>{canEdit && actionButton('edit', '批量更新', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'engineering' && actionButton('completion', '批量完工／更正', undefined, !selected.length)}{canEdit && actionButton('progress', '批量更新進度', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'supply' && actionButton('delivery', '批量送達／更正', undefined, !selected.length)}{canClose && actionButton('close', '批量結案', undefined, !selected.length)}{canClose && actionButton('correct-close-date', '修改結案日期', undefined, !selected.length)}{canClose && actionButton('reopen', '重開所選', undefined, !selected.length)}{canCreate && actionButton('sync', '同步所選到內控', undefined, !selected.length)}<button type="button" className="btn small" title="查看所選項目已讀取的進度、送達／完工及結案紀錄；僅供查看，不取得編輯權。" disabled={!selected.length || loading || busy || Boolean(draft) || Boolean(pending) || importOpen} onClick={() => {
+    <div className="tracking-toolbar" aria-label="跟蹤選取與批量操作"><b>已選 {selected.length} 項</b><button className="btn small" onClick={() => setSelected(rows.map(row => row.id))}>選取全部符合條件 {rows.length} 項</button><button className="btn small" onClick={() => setSelected([])}>清除選取</button>{canEdit && actionButton('edit', '批量更新', undefined, !selected.length)}{canEdit && actionButton('reclassify', '修正分類', undefined, !selected.length || selected.length > 100)}{canEdit && trackingTabKind(tab) === 'engineering' && actionButton('completion', '批量完工／更正', undefined, !selected.length)}{canEdit && actionButton('progress', '批量更新進度', undefined, !selected.length)}{canEdit && trackingTabKind(tab) === 'supply' && actionButton('delivery', '批量送達／更正', undefined, !selected.length)}{canClose && actionButton('close', '批量結案', undefined, !selected.length)}{canClose && actionButton('correct-close-date', '修改結案日期', undefined, !selected.length)}{canClose && actionButton('reopen', '重開所選', undefined, !selected.length)}{canCreate && actionButton('sync', '同步所選到內控', undefined, !selected.length)}<button type="button" className="btn small" title="查看所選項目已讀取的進度、送達／完工及結案紀錄；僅供查看，不取得編輯權。" disabled={!selected.length || loading || busy || Boolean(draft) || Boolean(pending) || importOpen} onClick={() => {
       if (loading || busyRef.current || openingRef.current || draftRef.current || pendingRef.current || importOpen || !selected.length) return;
       setHistorySelection({ scope: historyScope, ids: [...selected] });
     }}>查看所選紀錄</button></div>

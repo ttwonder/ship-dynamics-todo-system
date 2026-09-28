@@ -9,11 +9,20 @@ import { resolveTrackingGroup } from './trackingLifecycle';
 import { TRACKING_HELP, trackingHelp, type TrackingAudience } from './trackingUiTypes';
 import type { InternalControlTaskProjection } from '../internalControlData';
 import type { TrackingUiCommand } from './trackingUiCommands';
+import { TRACKING_REQUEST_TYPES, trackingRequestKind, type TrackingRequestType } from './trackingRequestTypes';
+import { TrackingReclassifyFields, trackingReclassificationNeedsReview } from './TrackingReclassifyFields';
+
+export interface TrackingReclassificationDraft {
+  requestType: TrackingRequestType | '';
+  values: { id: string; actualDate: string; deliveryStatus: TrackingDeliveryStatus }[];
+  reviewed: boolean;
+}
 
 export type TrackingAction = keyof typeof TRACKING_HELP;
 export interface TrackingDraft {
   action: TrackingAction; rows: TrackingItem[]; originals: TrackingItem[];
   date: string; delivery: TrackingDeliveryStatus; outcome: 'completed' | 'cancelled';
+  reclassification?: TrackingReclassificationDraft;
   sync?: InternalControlBatchDraft; savedCases?: InternalControlCase[]; warnings: string[]; dirty: boolean;
 }
 export function newTrackingItem(vesselId: string, kind: TrackingKind): TrackingItem {
@@ -21,6 +30,7 @@ export function newTrackingItem(vesselId: string, kind: TrackingKind): TrackingI
 }
 export function makeTrackingDraft(action: TrackingAction, rows: TrackingItem[], data: AppData): TrackingDraft {
   const draft: TrackingDraft = { action, rows: structuredClone(rows), originals: structuredClone(rows), date: '', delivery: 'delivered', outcome: 'completed', warnings: [], dirty: false };
+  if (action === 'reclassify') draft.reclassification = { requestType: '', values: [], reviewed: false };
   if (action === 'sync') {
     const prefilled = rows.map(row => prefillTrackingCase(data, row, uid('internal')));
     draft.warnings = [...new Set(prefilled.flatMap(value => value.missingDepartments))].map(name => `缺少預設部門「${name}」，請從現有部門核對選擇；不會自動新增。`);
@@ -33,6 +43,26 @@ export function commandForTrackingDraft(draft: TrackingDraft, cases?: InternalCo
   const versions = draft.originals.map(row => ({ id: row.id, expectedUpdatedAt: row.updatedAt }));
   switch (draft.action) {
     case 'create': return { type: 'create', items: draft.rows };
+    case 'reclassify': {
+      const value = draft.reclassification;
+      if (!value?.requestType || !TRACKING_REQUEST_TYPES.some(option => option.value === value.requestType)) throw new Error('請選擇本批目標類型。');
+      if (!versions.length || versions.length > 100 || new Set(versions.map(row => row.id)).size !== versions.length
+        || draft.rows.length !== versions.length || value.values.length !== versions.length
+        || new Set(value.values.map(row => row.id)).size !== versions.length
+        || draft.rows.some(row => !versions.some(version => version.id === row.id))) throw new Error('請精確選取 1 至 100 項；修正分類的來源集合不一致。');
+      if (draft.originals.some(row => row.isClosed)) throw new Error('已結案項目請先重開，未修改任何資料。');
+      const requestType = value.requestType, kind = trackingRequestKind(requestType);
+      if (trackingReclassificationNeedsReview(draft.originals, requestType) && !value.reviewed) throw new Error('請先逐筆核對日期及送船狀態並勾選確認。');
+      return { type: 'reclassify', items: versions.map((version, index) => {
+        const target = value.values.find(row => row.id === version.id);
+        if (!target) throw new Error('修正分類的來源集合不一致，請重新核對。');
+        if (typeof target.actualDate !== 'string' || target.actualDate && (!/^\d{4}-\d{2}-\d{2}$/.test(target.actualDate) || !Number.isFinite(Date.parse(target.actualDate)) || new Date(target.actualDate).toISOString().slice(0, 10) !== target.actualDate)) throw new Error('請核對目標日期，須為有效日期。');
+        if (!['not-delivered', 'partially-delivered', 'delivered'].includes(target.deliveryStatus)) throw new Error('請核對目標送船狀態。');
+        if (kind === 'supply' && (target.deliveryStatus === 'delivered') !== Boolean(target.actualDate)) throw new Error('已送船須填實際送達日期；未送船或部分送船的日期須留空。');
+        if (kind === 'engineering' && target.deliveryStatus !== draft.originals[index].deliveryStatus) throw new Error('改為工程須保留原送船狀態，請重新核對。');
+        return { ...version, requestType, actualDate: target.actualDate, deliveryStatus: target.deliveryStatus };
+      }) };
+    }
     case 'edit': return { type: 'edit', items: draft.rows.map((row, index) => ({ ...versions[index], changes: Object.fromEntries(TRACKING_EDIT_FIELDS.map(key => [key, row[key]])) })) };
     case 'progress': {
       const items = draft.rows.flatMap((row, index) => row.progress.trim() === draft.originals[index].progress ? [] : [{ ...versions[index], text: row.progress }]);
@@ -57,11 +87,11 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, au
   draft: TrackingDraft; busy: boolean; pending: boolean; readOnly?: boolean; audience?: TrackingAudience; message: string; affected: string[]; vesselName: string;
   onChange: (draft: TrackingDraft) => void; onSave: () => void; onReconcile: () => void; onClose: () => void;
 }) {
-  const titles: Record<TrackingAction, string> = { create: '新增／批量新增跟蹤', edit: '編輯／批量更新跟蹤項目', progress: '批量更新最新進度', completion: '工程完工／更正', delivery: '送達確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
+  const titles: Record<TrackingAction, string> = { create: '新增／批量新增跟蹤', edit: '編輯／批量更新跟蹤項目', reclassify: '修正分類', progress: '批量更新最新進度', completion: '工程完工／更正', delivery: '送達確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
   const change = (patch: Partial<TrackingDraft>) => onChange({ ...draft, ...patch, dirty: true });
   const update = (id: string, patch: Partial<TrackingItem>) => change({ rows: draft.rows.map(row => row.id === id ? { ...row, ...patch } : row) });
   const formFields = ['create', 'edit'].includes(draft.action);
-  return <div className="modal-backdrop"><form className={`modal tracking-modal${draft.action === 'progress' ? ' tracking-progress-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
+  return <div className="modal-backdrop"><form className={`modal tracking-modal${draft.action === 'progress' ? ' tracking-progress-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" noValidate={pending && draft.action === 'reclassify'} onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
     <div className="modal-head"><h2 id="tracking-modal-title">{titles[draft.action]}</h2><button type="button" className="btn ghost" onClick={onClose}>關閉</button></div>
     {draft.action === 'create' ? <div className="tracking-create-context" role="group" aria-label="新增跟蹤說明"><strong>船舶：{vesselName}</strong><span>{trackingHelp(audience).create}</span></div> : <>
       <p>{trackingHelp(audience)[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
@@ -70,7 +100,7 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, au
     <fieldset disabled={readOnly} style={{border:0,padding:0,margin:0,minWidth:0}}>
 
     {!formFields && <ul className="tracking-affected" aria-label="實際影響範圍">{affected.map(label => <li key={label}>{label}</li>)}</ul>}
-    {draft.action === 'progress' ? draft.rows.map(row => {
+    {draft.action === 'reclassify' ? <TrackingReclassifyFields originals={draft.originals} value={draft.reclassification || { requestType: '', values: [], reviewed: false }} onChange={reclassification => change({ reclassification })}/> : draft.action === 'progress' ? draft.rows.map(row => {
       const original = draft.originals.find(value => value.id === row.id);
       const history = original?.statusLogs || [];
       return <div className="tracking-progress-row" key={row.id}>

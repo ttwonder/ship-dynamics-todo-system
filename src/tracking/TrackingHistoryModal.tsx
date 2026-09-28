@@ -3,23 +3,25 @@ import type { UserAccount } from '../types';
 import { formatTaipeiDateTime } from '../taipeiTime';
 import type { TrackingEvent, TrackingItem } from './trackingTypes';
 import type { TrackingAudience } from './trackingUiTypes';
+import { trackingRequestTypeLabel } from './trackingRequestTypes';
 
 const eventLabels: Record<TrackingEvent['action'], string> = {
-  close: '結案', reopen: '重開', 'correct-close-date': '更正結案日期',
+  reclassify: '修正分類', close: '結案', reopen: '重開', 'correct-close-date': '更正結案日期',
   delivery: '送船狀態／日期更正', completion: '完工日期更正', link: '同步到內控', 'invalidate-link': '內控關聯失效',
 };
 const fieldLabels: Record<string, string> = {
-  isClosed: '結案狀態', closedDate: '結案日期', closedBy: '結案人', deliveryStatus: '送船狀態',
+  kind: '大類', requestType: '類型', isClosed: '結案狀態', closedDate: '結案日期', closedBy: '結案人', deliveryStatus: '送船狀態',
   actualDeliveryDate: '實際送達日期', completionDate: '完工日期', closureOutcome: '工程結案結果',
   caseId: '內控 ID', taskId: '要事 ID', linkState: '內控同步',
 };
 const valueLabels: Record<string, string> = {
   'not-delivered': '未送船', 'partially-delivered': '部分送船', delivered: '已送船',
-  active: '已同步', invalid: '關聯已失效', completed: '正常結案', cancelled: '取消結案',
+  supply: '配件／物料', engineering: '工程', active: '已同步', invalid: '關聯已失效', completed: '正常結案', cancelled: '取消結案',
 };
 const displayValue = (key: string, value: unknown, names: Map<string, string>): string => {
   if (value === undefined || value === null || value === '') return '—';
   if (key === 'isClosed' && typeof value === 'boolean') return value ? '已結案' : '未結案';
+  if (key === 'requestType' && typeof value === 'string') return trackingRequestTypeLabel(value) || value;
   if (key === 'closedBy' && typeof value === 'string') return names.get(value) || value;
   if (typeof value === 'string') return valueLabels[value] || value;
   return JSON.stringify(value);

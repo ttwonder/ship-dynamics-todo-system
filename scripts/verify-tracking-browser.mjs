@@ -168,6 +168,8 @@ try{
   await (await import('./tracking-template-date-browser-checks.mjs')).templateDateChecks({qa,call,click,nodeClick,until,text,screen,check,output,audience:'shore'});
  }else if(process.argv.includes('--statistics')){
    await (await import('./tracking-statistics-browser-checks.mjs')).statisticsChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output,audience:'shore',expectReadFailure:value=>{expectStatisticsReadFailure=value;}});
+ }else if(process.argv.includes('--reclassify')){
+   await (await import('./tracking-reclassify-browser-checks.mjs')).trackingReclassifyChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,output,audience:'shore',finish:finishEditor});
  }else if(process.argv.includes('--fields')){
    await (await import('./tracking-field-browser-checks.mjs')).trackingFieldChecks({qa,evaluate,call,click,nodeClick,fill,select,until,screen,check,output});
  }else if(process.argv.includes('--layout-only')){

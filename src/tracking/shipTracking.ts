@@ -53,6 +53,10 @@ export function shipTrackingCommand(submission: TrackingSubmission, vesselId: st
     if (command.items.some(x => x.item.vesselId !== vesselId || x.item.syncToTask || x.projection)) throw new Error('本頁只可建立所選船的內控；未送出。');
     return { type: 'sync', reporterNameAndRole: reporter, items: command.items.map(x => ({ id: x.id, expectedUpdatedAt: x.expectedUpdatedAt, item: pick(x.item, ['id', 'reportDate', 'reportSource', 'description', 'priority', 'category', 'equipmentSubcategory', 'isAware', 'status', 'departments', 'expectedDate']) })) };
   }
+  if (command.type === 'reclassify') return { type: 'reclassify', items: command.items.map(item => ({
+    id: item.id, expectedUpdatedAt: item.expectedUpdatedAt, requestType: item.requestType,
+    actualDate: item.actualDate, deliveryStatus: item.deliveryStatus,
+  })) };
   if (command.type === 'lifecycle' && command.targets.some(t => t.entry !== 'tracking')) throw new Error('本頁只能從跟蹤來源操作；未送出。');
   return structuredClone(command) as unknown as Record<string, unknown>;
 }

@@ -31,9 +31,9 @@ try {
  data=runTrackingCommand(data,{type:'edit',items:[{id:source.id,expectedUpdatedAt:selected.updatedAt,changes:{requestType:'temporary-materials',purchaseNos:'000099',description:'來源修正，不覆寫內控',progress:'整合更新進度',actualDeliveryDate:'2026-09-26'}}]},context(4));
  const saved=data.trackingItems.find(row=>row.id===source.id),linked=data.internalControlCases.find(row=>row.id===item.id);
  assert.equal(saved.requestType,'temporary-materials');assert.equal(saved.deliveryStatus,'delivered');assert.equal(saved.actualDeliveryDate,'2026-09-26');assert.equal(saved.isClosed,false);
- assert.equal(saved.statusLogs[0].text,'整合更新進度');assert.equal(linked.status,'整合更新進度');assert.equal(linked.description,linkedBefore.description);assert.equal(linked.expectedDate,linkedBefore.expectedDate);assert.equal(linked.isClosed,false);
+ assert.equal(saved.statusLogs[0].text,'整合更新進度');assert.equal(linked.status,'整合更新進度');assert.equal(linked.description,linkedBefore.description.replace('類型：半年物料','類型：臨時物料'));assert.equal(linked.expectedDate,linkedBefore.expectedDate);assert.equal(linked.isClosed,false);
  assert.deepEqual(data.trackingItems.filter(row=>row.id!==source.id),unselected,'unselected sources untouched');
- assert.equal(saved.events.at(-1).action,'delivery');
+ assert.equal(saved.events.at(-2).action,'delivery');assert.equal(saved.events.at(-1).action,'reclassify');
  cases.push('batch-edit-source-progress-delivery-and-linked-field-ownership');
  const engineers=data.trackingItems.filter(row=>row.kind==='engineering');
  data=runTrackingCommand(data,{type:'edit',items:engineers.map(row=>({id:row.id,expectedUpdatedAt:row.updatedAt,changes:{completionDate:'2026-09-27'}}))},context(5));
