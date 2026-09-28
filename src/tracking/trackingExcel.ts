@@ -37,10 +37,12 @@ function formatSheet(sheet:ExcelJS.Worksheet,widths:number[],header:number,paper
  delete sheet.pageSetup.scale;
  sheet.headerFooter={oddFooter:'&LShip Dynamics&R第 &P 頁／共 &N 頁',oddHeader:'&C&"Microsoft JhengHei"跟蹤報表'};
 }
+// Warm the same lazy runtime on explicit XLSX intent, without creating any report.
+export const preloadTrackingWorkbook = () => import('exceljs');
 export async function buildTrackingWorkbook(report:TrackingReport,template=false):Promise<ArrayBuffer>{
  // Also defend callers that construct a report directly instead of makeTrackingReport.
  report={...report,rows:report.rows.filter(row=>!isTrackingDeleted(row.item))};
- const runtime=await import('exceljs');const book=new(runtime.Workbook||runtime.default.Workbook)();book.creator='Ship Dynamics';
+ const runtime=await preloadTrackingWorkbook();const book=new(runtime.Workbook||runtime.default.Workbook)();book.creator='Ship Dynamics';
  const columns=[...report.columns];
  // Report-only numbering never replaces the original item number or template fields.
  if(!template)columns.unshift({key:'exportOrdinal',label:'序號',type:'text',width:49});

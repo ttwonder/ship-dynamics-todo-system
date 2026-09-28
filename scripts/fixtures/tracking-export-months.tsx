@@ -18,6 +18,17 @@ data.vessels=data.vessels.slice(0,2).map((v,i)=>({...v,id:`month-v${i+1}`,name:`
 data.trackingItems=rows as any;
 let refresh:()=>void,release:(()=>void)|null=null;
 const control:any={identity:'month-session-a',workspace:'month-workspace',query:{vesselId:'month-v1',tab:'undelivered',search:'MONTH MATCH',filters:{purchaseNos:{text:'KEEP'}},sort:{key:'referenceNo',direction:'desc'}},preferences:defaultTrackingPreferences(trackingColumnsFor('supply')),selected:['KEEP-A','KEEP-B','EXCLUDE-DELETED','EXCLUDE-MAR'],blocked:false,held:false,valid:true,captures:[],captureCalls:0,data,
+  layout(kind='supply',long=false){
+    const count=long?3:72;
+    data.trackingItems=Array.from({length:count},(_,i)=>row(`ROW-${String(i+1).padStart(3,'0')}`,'2024-02-20',{
+      kind,requestType:kind==='engineering'?'annual-inspection':'drydock-materials',originalItemNo:String(i+8),purchaseNos:'P-0001、P-0002',expectedDate:'2024-03-01',
+      description:`DESC-${String(i+1).padStart(3,'0')} 例行保養及船用材料申請，依技術規格核對。`,supplementalNotes:'請按規格供應，保留原包裝及檢驗證書。',progress:'已詢價，待供應商確認交期。',
+      urgency:i%5===0?'urgent':'normal',linkState:i%2===0?'active':'unlinked',actualDeliveryDate:'',completionDate:'',
+    })) as any;
+    if(long){const middle=data.trackingItems[1];middle.description=Array.from({length:180},(_,i)=>`D${String(i).padStart(4,'0')} 長文完整內容，不可逐欄拆列或省略。`).join('\n');middle.supplementalNotes=Array.from({length:90},(_,i)=>`N${String(i).padStart(4,'0')} 補充備註，保留每行。`).join('\n');middle.progress=Array.from({length:90},(_,i)=>`P${String(i).padStart(4,'0')} 最新進度，保留每行。`).join('\n');}
+    control.query={vesselId:'month-v1',tab:kind==='supply'?'undelivered':'engineering-open',search:'',filters:{},sort:{key:'referenceNo',direction:'asc'}};
+    control.preferences=defaultTrackingPreferences(trackingColumnsFor(kind));control.selected=[];control.valid=true;refresh();
+  },
   change(patch:any){Object.assign(control,patch);refresh();},
   release(){release?.();release=null;},
 };

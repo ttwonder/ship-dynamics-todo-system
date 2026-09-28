@@ -12,7 +12,7 @@ const root=process.env.QA_EVIDENCE_ROOT||path.join(process.env.LOCALAPPDATA||os.
 fs.mkdirSync(root,{recursive:true});
 const output=fs.mkdtempSync(path.join(root,'tracking-export-months-')),profile=path.join(output,'chrome-profile');
 const evidence={gate:'tracking-export-months-browser',label:'真實 TrackingExports／TrackingPage UI＋記憶體測試資料；非資料庫／正式環境',cases:[],errors:[],external:[],geometry:[],artifacts:[]};
-const inputFiles=['src/tracking/TrackingExports.tsx','src/tracking/trackingExportMonths.ts','src/tracking/trackingReport.ts','src/tracking/trackingExcel.ts','src/tracking/TrackingReportPreview.tsx','src/tracking/trackingReport.css','src/tracking/TrackingPage.tsx','src/tracking/trackingFilters.ts','src/tracking/trackingColumns.ts','src/tracking/trackingDeletion.ts','src/tracking/tracking.css','scripts/fixtures/tracking-export-months.tsx','scripts/verify-tracking-export-months-browser.mjs'];
+const inputFiles=['src/tracking/TrackingExports.tsx','src/tracking/trackingExportMonths.ts','src/tracking/trackingReport.ts','src/tracking/trackingExcel.ts','src/tracking/TrackingReportPreview.tsx','src/tracking/trackingPrintLayout.ts','src/tracking/trackingReport.css','src/tracking/TrackingPage.tsx','src/tracking/trackingFilters.ts','src/tracking/trackingColumns.ts','src/tracking/trackingDeletion.ts','src/tracking/tracking.css','scripts/fixtures/tracking-export-months.tsx','scripts/verify-tracking-export-months-browser.mjs'];
 const hashes=()=>Object.fromEntries(inputFiles.filter(f=>fs.existsSync(f)).map(f=>[f,createHash('sha256').update(fs.readFileSync(f)).digest('hex')]));evidence.inputs=hashes();
 let server,browser,ws,sessionId,id=0,failure,origin;
 const pending=new Map(),wait=ms=>new Promise(r=>setTimeout(r,ms));
@@ -29,23 +29,26 @@ const check=async(name,run)=>{await run();assert.ok(!evidence.cases.includes(nam
 const snapshot=async()=>{await click('建立共用快照');await until(async()=>(await text()).includes('共用快照已固定'),'shared snapshot');};
 const setMonths=async(start,end=start)=>{await change('[aria-label="匯出開始月份"]',start);await change('[aria-label="匯出結束月份"]',end);};
 const hasDownload=()=>evaluate("[...document.querySelectorAll('button')].some(n=>n.textContent.trim()==='下載 XLSX')");
-const download=async name=>{const dir=path.join(output,'downloads',name);fs.mkdirSync(dir,{recursive:true});await call('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:dir},null);await click('下載 XLSX');let file;await until(()=>{file=fs.readdirSync(dir).find(f=>f.endsWith('.xlsx'));return Boolean(file);},'actual XLSX download',45000);const saved=path.join(dir,file),book=new ExcelJS.Workbook();await book.xlsx.readFile(saved);evidence.artifacts.push(saved);return {book,file:saved};};
+const download=async name=>{const dir=path.join(output,'downloads',name);fs.mkdirSync(dir,{recursive:true});await call('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:dir},null);const started=await evaluate('performance.now()');await click('下載 XLSX');let file;await until(()=>{file=fs.readdirSync(dir).find(f=>f.endsWith('.xlsx'));return Boolean(file);},'actual XLSX download',45000);(evidence.xlsxTimings??=[]).push({name,clickToFileMs:(await evaluate('performance.now()'))-started});const saved=path.join(dir,file),book=new ExcelJS.Workbook();await book.xlsx.readFile(saved);evidence.artifacts.push(saved);return {book,file:saved};};
 const workbookRows=book=>{const s=book.getWorksheet('跟蹤資料'),keys=s.getRow(3).values.slice(1).map(v=>String(v).replace('tracking:',''));return Array.from({length:s.rowCount-4},(_,i)=>Object.fromEntries(keys.map((key,j)=>[key,s.getCell(i+5,j+1).value])));};
 const assertGrid=book=>{for(const sheet of book.worksheets.filter(s=>s.state==='visible'))for(let r=4;r<=sheet.rowCount;r++)for(let c=1;c<=sheet.columnCount;c++)for(const side of ['top','bottom','left','right'])assert.equal(sheet.getCell(r,c).border[side]?.style,'thin',sheet.name+'!'+sheet.getCell(r,c).address+':'+side);};
-const pdf=async(name,expectedIds)=>{
+const pdf=async(name,expectedIds,options={})=>{
  await click('PDF 預覽');await until(()=>evaluate("Boolean(document.querySelector('.tracking-report-paper'))"),'PDF mounted');
- const ids=await evaluate("[...document.querySelectorAll('.tracking-report-paper tbody tr')].filter(n=>n.children[2]?.textContent==='系統 ID').map(n=>n.children[3].textContent)");
+ if(options.paper)await change('[aria-label="PDF 紙張"]',options.paper);
+ const layout=await evaluate("({rows:[...document.querySelectorAll('.tracking-report-paper tbody tr')].map(n=>({id:n.dataset.itemId,cells:n.children.length})),widths:[...document.querySelectorAll('.tracking-report-paper col')].map(n=>parseFloat(n.style.width))})");
+ assert.equal(layout.rows.length,expectedIds.length,'PDF must render one data row per item, not one per field');assert.ok(layout.rows.every(r=>r.cells===5),'PDF must have five grouped cells');assert.deepEqual(layout.rows.map(r=>r.id),expectedIds,'PDF retains exact item order');assert.ok(layout.widths[4]>layout.widths[3]&&layout.widths[3]>Math.max(...layout.widths.slice(0,3)),'description is wide and notes/progress is widest');const ids=layout.rows.map(r=>r.id);
  const paperText=await evaluate("document.querySelector('.tracking-report-paper').innerText");for(const marker of expectedIds)assert.ok(paperText.includes(marker));
  assert.ok(!paperText.includes('EXCLUDE-'),'excluded markers absent in print DOM');
  await evaluate("window.__realPrint=window.print;window.__printCalled=false;window.print=()=>{window.__printCalled=true}");await click('導出／列印 PDF');await until(()=>evaluate('window.__printCalled'),'actual print handler');
  assert.equal(await evaluate("document.body.classList.contains('printing-tracking-report')"),true);
  await screen(name+'-preview');const data=await call('Page.printToPDF',{preferCSSPageSize:true,printBackground:true,displayHeaderFooter:false});const file=path.join(output,name+'.pdf'),bytes=Buffer.from(data.data,'base64');assert.ok(bytes.subarray(0,5).equals(Buffer.from('%PDF-'))&&bytes.length>3000);fs.writeFileSync(file,bytes);evidence.artifacts.push(file);
  await evaluate("window.dispatchEvent(new Event('afterprint'));window.print=window.__realPrint");assert.equal(await evaluate("document.body.classList.contains('printing-tracking-report')"),false);await click('關閉 PDF 預覽');
- const readback=spawnSync(process.env.QA_PYTHON||'python3',['scripts/verify-tracking-export-pdf.py',file,'--expect',JSON.stringify(expectedIds)],{encoding:'utf8',timeout:45000});
+ const readback=spawnSync(process.env.QA_PYTHON||'python3',['scripts/verify-tracking-export-pdf.py',file,'--expect',JSON.stringify(expectedIds),'--grouped',...(options.long?['--long-markers']:[]),...(options.list?['--list-markers']:[])],{encoding:'utf8',timeout:45000});
  assert.equal(readback.status,0,readback.stderr||readback.stdout);const parsed=JSON.parse(readback.stdout);(evidence.pdfReadbacks??=[]).push(parsed);evidence.artifacts.push(...parsed.rasters,parsed.text);return {file,ids};
 };
 try {
- server=await createServer({configFile:false,root:process.cwd(),publicDir:false,base:'/',plugins:[react(),{name:'month-export-isolated-qa',configureServer(vite){vite.middlewares.use((req,res,next)=>{res.setHeader('Content-Security-Policy',"connect-src 'self'; img-src 'self' data: blob:");if(req.url?.startsWith('/__qa_month_export')){res.setHeader('Content-Type','text/html; charset=utf-8');void vite.transformIndexHtml('/__qa_month_export','<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"></head><body><div id="root"></div><script type="module" src="/scripts/fixtures/tracking-export-months.tsx"></script></body></html>').then(html=>res.end(html)).catch(next);}else next();});}}],server:{host:'127.0.0.1',port:0,hmr:false},logLevel:'error'});
+ server=await createServer({configFile:false,root:process.cwd(),publicDir:false,base:'/',plugins:[react(),{name:'month-export-isolated-qa',enforce:'pre',transform(code,id){if(id.replace(/\\/g,'/').endsWith('/src/tracking/trackingExcel.ts')){const marker=' // Also defend callers';assert.ok(code.includes(marker),'workbook instrumentation anchor');return code.replace(marker,` if(typeof window!=='undefined'&&(window as any).__xlsxQA){const qa=(window as any).__xlsxQA;qa.builds++;if(qa.hold)await new Promise<void>(resolve=>{qa.release=resolve;});}
+${marker}`);}},configureServer(vite){vite.middlewares.use((req,res,next)=>{res.setHeader('Content-Security-Policy',"connect-src 'self'; img-src 'self' data: blob:");if(req.url?.startsWith('/__qa_month_export')){res.setHeader('Content-Type','text/html; charset=utf-8');void vite.transformIndexHtml('/__qa_month_export','<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,"></head><body><div id="root"></div><script type="module" src="/scripts/fixtures/tracking-export-months.tsx"></script></body></html>').then(html=>res.end(html)).catch(next);}else next();});}}],server:{host:'127.0.0.1',port:0,hmr:false},logLevel:'error'});
  await server.listen();await server.transformRequest('/scripts/fixtures/tracking-export-months.tsx');origin='http://127.0.0.1:'+server.httpServer.address().port;assert.equal((await fetch(origin+'/__qa_month_export')).status,200);evidence.origin=origin;
  const chrome=process.env.QA_CHROME||'C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));browser=spawn(chrome,['--headless=new','--disable-gpu','--disable-background-networking','--no-first-run','--no-default-browser-check','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let port,socketPath;await until(()=>{try{[port,socketPath]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(port)&&socketPath?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'owned Chrome handshake');
@@ -53,8 +56,13 @@ try {
  ws.addEventListener('message',event=>{const m=JSON.parse(event.data);if(m.id){const p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.error?p.reject(new Error(m.error.message)):p.resolve(m.result);return;}if(m.method==='Runtime.exceptionThrown')evidence.errors.push(m.params.exceptionDetails.exception?.description||m.params.exceptionDetails.text);if(m.method==='Runtime.consoleAPICalled'&&m.params.type==='error')evidence.errors.push(JSON.stringify(m.params.args));if(m.method==='Network.requestWillBeSent'&&/^https?:/.test(m.params.request.url)&&!m.params.request.url.startsWith(origin+'/'))evidence.external.push(m.params.request.url);});
  const {targetId}=await call('Target.createTarget',{url:'about:blank'},null);({sessionId}=await call('Target.attachToTarget',{targetId,flatten:true},null));await call('Runtime.enable');await call('Page.enable');await call('Network.enable');await call('Network.setBlockedURLs',{urls:['https://*']});
  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await call('Page.navigate',{url:origin+'/__qa_month_export'});await until(()=>evaluate('Boolean(window.__monthQA)&&Boolean(document.querySelector(".tracking-export-actions"))'),'production export mounted');
+ await evaluate("window.__xlsxQA={builds:0,hold:false};window.__xlsxNotices=[];new MutationObserver(()=>{const n=document.querySelector('.tracking-export [role=status]');if(n)window.__xlsxNotices.push(n.textContent)}).observe(document.body,{subtree:true,childList:true,characterData:true})");
  await click('導出excel');
- await check('mounted-required-natural-month-controls-default-Taipei',async()=>{
+ await check('xlsx-intent-preloads-real-exceljs-before-download',async()=>{
+   await until(()=>evaluate("performance.getEntriesByType('resource').some(r=>/exceljs/i.test(r.name)&&r.responseEnd>0)"),'ExcelJS preloaded when export dialog opens',3500);
+   assert.equal(await evaluate('window.__xlsxQA.builds'),0,'preloading cannot construct a workbook or read business data');assert.equal(await evaluate('window.__monthQA.captureCalls'),0);
+ });
+ await check('mounted-required-natural-month-controls-default-Taipei' ,async()=>{
    const fields=await evaluate("[...document.querySelectorAll('.tracking-export input[type=month]')].map(n=>({label:n.getAttribute('aria-label'),value:n.value,required:n.required}))");
    const today=await evaluate("new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit'}).format(new Date())");
    assert.deepEqual(fields,[{label:'匯出開始月份',value:today,required:true},{label:'匯出結束月份',value:today,required:true}]);
@@ -70,7 +78,22 @@ try {
    await pdf('selected-full-A4',['KEEP-B','KEEP-A']);
    assert.equal(await evaluate('window.__monthQA.captureCalls'),1,'Excel and PDF must share one capture, not reread independently');
  });
- await check('prepared-month-changes-invalidate-XLSX-and-PDF',async()=>{
+ await check('xlsx-repeat-download-reuses-only-the-same-confirmed-snapshot',async()=>{
+   const builds=await evaluate('window.__xlsxQA.builds');assert.ok(builds>0);
+   const {book}=await download('same-snapshot-repeat');assert.deepEqual(workbookRows(book).map(r=>r.id),['KEEP-B','KEEP-A']);
+   assert.equal(await evaluate('window.__xlsxQA.builds'),builds,'repeated download must not rebuild unchanged immutable workbook');
+   assert.ok(await evaluate("window.__xlsxNotices.some(n=>n.includes('正在產生 XLSX'))"),'show an honest generating phase instead of stale snapshot-ready text');
+ });
+ await check('xlsx-fresh-snapshot-rebuilds-and-late-invalid-build-never-downloads',async()=>{
+   let builds=await evaluate('window.__xlsxQA.builds');await snapshot();await download('new-snapshot');assert.equal(await evaluate('window.__xlsxQA.builds'),builds+1,'new report must not reuse the prior workbook');
+   await snapshot();builds=await evaluate('window.__xlsxQA.builds');const dir=path.join(output,'downloads','invalidated-build');fs.mkdirSync(dir,{recursive:true});await call('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:dir},null);
+   await evaluate('window.__xlsxQA.hold=true');await click('下載 XLSX');await until(()=>evaluate('typeof window.__xlsxQA.release==="function"'),'workbook construction held');
+   assert.ok((await text()).includes('正在產生 XLSX'));await screen('xlsx-generating-status');assert.equal(await evaluate('window.__xlsxQA.builds'),builds+1);
+   await evaluate("window.__monthQA.change({identity:'download-successor-session'})");await settle();await evaluate('window.__xlsxQA.hold=false;window.__xlsxQA.release()');
+   await until(()=>evaluate("![...document.querySelectorAll('.tracking-export button')].find(n=>n.textContent==='建立共用快照').disabled"),'obsolete build drained');assert.equal(fs.readdirSync(dir).length,0,'invalidated result may not download or cache');
+   await evaluate("window.__monthQA.change({identity:'month-session-a'})");await settle();await snapshot();await download('after-invalidated-build');assert.equal(await evaluate('window.__xlsxQA.builds'),builds+2,'invalid result cannot populate new report cache');
+ });
+ await check('prepared-month-changes-invalidate-XLSX-and-PDF' ,async()=>{
    await click('PDF 預覽');await change('[aria-label="匯出開始月份"]','2024-01');assert.equal(await hasDownload(),false);assert.equal(await evaluate("Boolean(document.querySelector('.tracking-report-paper'))"),false);
    await setMonths('2024-02');await snapshot();await change('[aria-label="匯出結束月份"]','2024-03');assert.equal(await hasDownload(),false);await setMonths('2024-02');
  });
@@ -117,6 +140,19 @@ try {
    const {book}=await download(audience+'-page-selected');assertGrid(book);assert.deepEqual(workbookRows(book).map(r=>r.id),['KEEP-A','KEEP-B']);await pdf(audience+'-page-selected-A4',['KEEP-A','KEEP-B']);await click('關閉匯出');
    assert.deepEqual(await evaluate("({search:document.querySelector('[aria-label=搜尋跟蹤]').value,selected:[...document.querySelectorAll('.tracking-table tbody .tracking-check input:checked')].length,filters:document.querySelector('[aria-label=有效篩選]').textContent})"),pre,'export must preserve parent filters and selection');
    for(const label of ['已刪除清單','刪除申請／結果']){await nodeClick(`[...document.querySelectorAll('.tracking-review-tabs button')].find(n=>n.textContent.startsWith(${JSON.stringify(label)}))`);assert.equal(await evaluate("Boolean(document.querySelector('.tracking-export-actions'))"),false);}
+ });
+ await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+ await call('Page.navigate',{url:origin+'/__qa_month_export'});await until(()=>evaluate('Boolean(window.__monthQA)&&Boolean(document.querySelector(".tracking-export-actions"))'),'layout fixture ready');
+ await click('導出pdf');await setMonths('2024-02');
+ for(const kind of ['supply','engineering'])await check('grouped-'+kind+'-72-items-one-row-each-real-A4-A3',async()=>{
+   await evaluate(`window.__monthQA.layout(${JSON.stringify(kind)},false)`);await settle();await snapshot();
+   const ids=Array.from({length:72},(_,i)=>'ROW-'+String(i+1).padStart(3,'0'));
+   if(kind==='supply'){await download('supply-72-first');await download('supply-72-repeat');}
+   await pdf(kind+'-grouped-72-A4',ids,{list:true});await pdf(kind+'-grouped-72-A3',ids,{paper:'A3',list:true});
+ });
+ await check('grouped-long-item-complete-across-pages-with-following-row-intact',async()=>{
+   await evaluate("window.__monthQA.layout('supply',true)");await settle();await snapshot();
+   for(const paper of ['A4','A3'])await pdf('grouped-long-'+paper,['ROW-001','ROW-002','ROW-003'],{paper,long:true});
  });
  assert.deepEqual(evidence.errors,[]);assert.deepEqual(evidence.external,[]);evidence.status='PASS';
 } catch(error){failure=error;evidence.status='FAIL';evidence.failure=error.stack||String(error);if(ws?.readyState===WebSocket.OPEN){evidence.dom=await text().catch(()=>null);await screen('failure').catch(()=>{});}}
