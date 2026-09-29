@@ -16,7 +16,7 @@ export async function trackingBatchUsabilityChecks({qa,evaluate,call,click,nodeC
  });
  await check(audience+'-every-available-open-batch-dialog-has-business-content',async()=>{
   const before=await qa.read();
-  for(const action of ['批量修正','修正分類','批量更新進度','批量送達／更正','批量結案','同步所選到內控',audience==='shore'?'刪除所選':'申請刪除']){
+  for(const action of ['批量修正','修正分類','批量更新進度','批量送達／更正','批量結案','同步到內控',audience==='shore'?'刪除所選':'申請刪除']){
    await open(action);if(action==='批量更新進度'){await screen(audience+'-batch-labels-desktop');await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});await screen(audience+'-batch-labels-mobile');assert.ok(await evaluate('document.documentElement.scrollWidth<=innerWidth+1'));await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});}await close();
   }
   assert.deepEqual(await qa.read(),before,'opening/cancelling dialogs cannot mutate data');
@@ -33,7 +33,7 @@ export async function trackingBatchUsabilityChecks({qa,evaluate,call,click,nodeC
  await tab('已送船清單');
  await check(audience+'-closed-batch-labels-readonly-status-history-no-write',async()=>{
   const before=await qa.read(),start=qa.metrics.length;
-  await open('查看所選狀態更新紀錄');assert.equal(await evaluate('document.querySelectorAll(".tracking-history-item[open]").length'),2);const text=await evaluate('document.querySelector(".tracking-history-modal").innerText');for(const value of ['送船狀態／日期更正','結案','送船備註：','2026-09-29'])assert.ok(text.includes(value),value);assert.ok(!await evaluate('document.querySelector(".tracking-other-history").open'));await screen(audience+'-status-history');await click('關閉紀錄');
+  await open('查看歷史記錄');assert.equal(await evaluate('document.querySelectorAll(".tracking-history-item[open]").length'),2);const text=await evaluate('document.querySelector(".tracking-history-modal").innerText');for(const value of ['送船狀態／日期更正','結案','送船備註：','2026-09-29'])assert.ok(text.includes(value),value);assert.ok(!await evaluate('document.querySelector(".tracking-other-history").open'));await screen(audience+'-status-history');await click('關閉紀錄');
   assert.deepEqual(qa.metrics.slice(start).filter(m=>/acquire|claim|renew|apply|save/.test(m.rpc)||['claim','submit','renew'].includes(m.action)),[]);assert.deepEqual(await qa.read(),before);
   await open('批量送達／更正');assert.equal(await evaluate('document.querySelector("[aria-label=同時結案]").disabled'),true);await close();
   for(const action of ['修改結案日期','重開所選']){await open(action);await close();}assert.deepEqual(await qa.read(),before);

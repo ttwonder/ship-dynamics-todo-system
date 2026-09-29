@@ -54,7 +54,7 @@ export async function layoutChecks(c) {
     await until(()=>evaluate("document.querySelector('.tracking-table').innerText.includes('沒有符合條件')"),'search result');
     await click('清除條件');
     await until(()=>evaluate("document.querySelector('.tracking-table').innerText.includes('UI-001')"),'clear search');
-    await click('選取全部符合條件 1 項');
+    await click('選取全部');
     assert.ok(await evaluate("document.querySelector('.tracking-page').innerText.includes('已選 1 項')"));
     await click('清除選取');
     await toggle('全部欄位篩選');await nodeClick("document.querySelector('[aria-label=\"申請單號(材料或工程)篩選內容\"]')");await nodeClick("[...document.querySelectorAll('[aria-label=\"申請單號(材料或工程)多選\"] label')].find(n=>n.textContent==='UI-001').querySelector('input')");

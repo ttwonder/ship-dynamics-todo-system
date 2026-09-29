@@ -81,7 +81,7 @@ export async function trackingReclassifyChecks({qa,evaluate,call,click,nodeClick
     await set('第 3 筆 目標送船狀態','delivered');await reviewed();const before=await qa.read();await click('確認保存 3 項');assert.deepEqual(await qa.read(),before,'delivered requires an explicit date');
     await set('第 3 筆 目標實際送達日期','2026-09-14');assert.equal(await evaluate(`(${field('已逐筆核對日期及送船狀態')}).checked`),false,'new date requires a new review');await reviewed();await save(3);
     const saved=await qa.read();assert.equal(saved.revision,before.revision+1);for(const ref of refs){const source=await find(ref);assert.equal(source.kind,'supply');assert.equal(source.requestType,'drydock-materials');assert.equal(source.completionDate,ref===refs[2]?'2026-09-12':'2026-09-10');}
-    await tab('配件物料總清單');await choose([refs[0]]);await click('查看所選狀態更新紀錄');await until(()=>evaluate("Boolean(document.querySelector('.tracking-history-modal'))"),'classification audit viewer');assert.ok(await evaluate("document.querySelector('.tracking-history-modal').innerText.includes('修正分類')"));await screen(audience+'-reclassify-history');await click('關閉紀錄');
+    await tab('配件物料總清單');await choose([refs[0]]);await click('查看歷史記錄');await until(()=>evaluate("Boolean(document.querySelector('.tracking-history-modal'))"),'classification audit viewer');assert.ok(await evaluate("document.querySelector('.tracking-history-modal').innerText.includes('修正分類')"));await screen(audience+'-reclassify-history');await click('關閉紀錄');
   });
 
   await check(audience+'-reclassify-closed-reopen-and-same-kind-no-extra-review',async()=>{

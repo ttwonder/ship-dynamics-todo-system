@@ -1,0 +1,26 @@
+.tracking-history-pdf-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.tracking-history-print-root{display:none}
+.tracking-history-print-document{font-family:"Microsoft JhengHei","Noto Sans TC",Arial,sans-serif;font-size:10pt;line-height:1.4;color:#111;background:#fff;overflow-wrap:anywhere;word-break:normal}
+.tracking-history-print-document *{box-sizing:border-box;color:inherit;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.tracking-history-print-document header{border-bottom:1.5pt solid #315a62;padding-bottom:5pt;margin-bottom:8pt}
+.tracking-history-print-document h1{font-size:15pt;line-height:1.3;margin:0 0 4pt}
+.tracking-history-print-document header p{font-size:8.5pt;line-height:1.4;margin:2pt 0;color:#444}
+.tracking-history-print-document h2{font-size:12pt;line-height:1.4;margin:10pt 0 4pt;padding:3pt 5pt;border-left:3pt solid #315a62;border-bottom:1pt solid #9aadb0;background:#edf3f4;break-after:avoid}
+.tracking-history-print-document h3{font-size:10pt;line-height:1.4;margin:6pt 0 3pt;border-bottom:.5pt solid #a9b5b8;break-after:avoid}
+.tracking-history-print-document p{margin:3pt 0}
+.tracking-history-print-document table{width:100%;table-layout:fixed;border-collapse:collapse;margin:3pt 0 5pt}
+.tracking-history-print-document th,.tracking-history-print-document td{border:.5pt solid #879398;text-align:left;vertical-align:top;padding:3pt 4pt;font-size:9pt;line-height:1.35;white-space:pre-wrap;overflow-wrap:anywhere}
+.tracking-history-print-document th{background:#f0f3f4;font-weight:600}
+.tracking-history-print-document tr{break-inside:avoid}
+.tracking-history-print-description,.tracking-history-print-text,.tracking-history-print-change{white-space:pre-wrap;overflow-wrap:anywhere;orphans:2;widows:2}
+.tracking-history-print-timeline{list-style:none;margin:0;padding:0}
+.tracking-history-print-timeline li{display:block;margin:0;padding:3pt 0 5pt;border-bottom:.5pt solid #c9d0d2;break-inside:auto}
+.tracking-history-print-document .tracking-history-print-meta{font-size:9pt;margin:0 0 2pt;break-after:avoid}
+.tracking-history-print-document .tracking-history-print-change{padding-left:6pt;margin:2pt 0}
+@media print{
+  body.printing-tracking-history{margin:0!important;background:#fff!important}
+  body.printing-tracking-history>*:not(.tracking-history-print-root){display:none!important}
+  body.printing-tracking-history>.tracking-history-print-root{display:block!important;position:static!important;width:100%!important;height:auto!important;overflow:visible!important;margin:0!important;padding:0!important}
+  body.printing-tracking-history .tracking-history-print-document{display:block!important;width:100%!important;max-width:none!important;height:auto!important;overflow:visible!important;margin:0!important;padding:0!important;zoom:1!important}
+  body.printing-tracking-history .tracking-history-print-item{display:block;break-inside:auto}
+}

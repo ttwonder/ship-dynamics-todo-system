@@ -11,7 +11,7 @@ export async function componentChecks({qa,call,evaluate,click,nodeClick,fill,unt
    await selectPage();assert.ok((await text()).includes('已選 30 項'));
    await click('下一頁');assert.equal((await rowIds())[0],'r34');assert.ok((await text()).includes('已選 30 項'));
    await click('末頁');assert.equal((await rowIds()).length,5);await fill('[aria-label="跳到頁碼"]','2');await click('跳頁');assert.equal((await rowIds())[0],'r34');
-   await click('選取全部符合條件 65 項');assert.ok((await text()).includes('已選 65 項'));await click('申請單號(材料或工程) ↑');assert.ok((await text()).includes('已選 65 項'));
+   await click('選取全部');assert.ok((await text()).includes('已選 65 項'));await click('申請單號(材料或工程) ↑');assert.ok((await text()).includes('已選 65 項'));
    await nodeClick("[...document.querySelectorAll('summary')].find(n=>n.innerText==='全部欄位篩選')");await nodeClick("document.querySelector('[aria-label=\"請購案號(非必填)篩選內容\"]')");await nodeClick("[...document.querySelectorAll('[aria-label=\"請購案號(非必填)多選\"] label')].find(n=>n.textContent==='A').querySelector('input')");assert.ok((await text()).includes('已選 0 項'));assert.ok((await text()).includes('已清除原選取'));
    await nodeClick("[...document.querySelectorAll('summary')].find(n=>n.innerText==='欄位設定')");
    await nodeClick("[...document.querySelectorAll('.tracking-preferences label')].find(n=>n.innerText==='請購案號(非必填)').querySelector('input')");
@@ -48,7 +48,7 @@ export async function componentChecks({qa,call,evaluate,click,nodeClick,fill,unt
  });
  await check('component-readonly-history-empty-record-no-claim-and-identity-fence',async()=>{
    await evaluate("window.__trackingQA.change({canWrite:false})");await until(()=>evaluate("![...document.querySelectorAll('button')].some(n=>n.innerText==='批量修正')"),'readonly identity');
-   await click('清除選取');await nodeClick("document.querySelector('.tracking-table tbody .tracking-check input')");const before=await evaluate("({claims:window.__trackingQA.claims,submissions:window.__trackingQA.submissions,data:JSON.stringify(window.__trackingQA.data)})");await click('查看所選狀態更新紀錄');await until(()=>evaluate("Boolean(document.querySelector('.tracking-history-modal'))"),'readonly view');assert.ok((await text()).includes('尚無已保存的狀態更新紀錄'));
+   await click('清除選取');await nodeClick("document.querySelector('.tracking-table tbody .tracking-check input')");const before=await evaluate("({claims:window.__trackingQA.claims,submissions:window.__trackingQA.submissions,data:JSON.stringify(window.__trackingQA.data)})");await click('查看歷史記錄');await until(()=>evaluate("Boolean(document.querySelector('.tracking-history-modal'))"),'readonly view');assert.ok((await text()).includes('尚無已保存的狀態更新紀錄'));
    await evaluate("window.__trackingQA.change({identity:'readonly-successor'})");await until(()=>evaluate("!document.querySelector('.tracking-history-modal')"),'old identity history hidden');await evaluate("window.__trackingQA.change({identity:'session-a',canWrite:true})");await until(()=>evaluate("[...document.querySelectorAll('button')].some(n=>n.innerText==='批量修正')"),'writer restored');assert.equal(await evaluate("Boolean(document.querySelector('.tracking-history-modal'))"),false);assert.deepEqual(await evaluate("({claims:window.__trackingQA.claims,submissions:window.__trackingQA.submissions,data:JSON.stringify(window.__trackingQA.data)})"),before);
  });
  await check('component-dirty-navigation-keep-cancel-user-vessel-draft',async()=>{

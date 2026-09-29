@@ -17,7 +17,7 @@ export async function nativeChecks({qa,call,evaluate,click,nodeClick,fill,until,
    assert.equal(await evaluate("[...document.querySelectorAll('button')].find(n=>n.innerText==='批量更新進度').disabled"),true);
    await click('＋ 新增／批量新增');await fill('[aria-label="第 1 筆 申請單號(材料或工程)"]','UI-002');await fill('[aria-label="第 1 筆 內容摘要/工程內容"]','第二來源');await click('＋ 新增一列');await fill('[aria-label="第 2 筆 申請單號(材料或工程)"]','UI-003');await fill('[aria-label="第 2 筆 內容摘要/工程內容"]','第三來源');for(const i of [1,2])await dateInput(`[aria-label="第 ${i} 筆 申請/開單日期"]`,'2026-09-21');await click('確認保存 2 項');await finishEditor();
    let saved=await qa.read();assert.equal(saved.payload.trackingItems.length,before.payload.trackingItems.length+2);assert.equal(saved.revision,before.revision+1);
-   await click('選取全部符合條件 2 項');await click('批量更新進度');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=\"UI-003 最新進度\"]'))"),'batch progress');await fill('[aria-label="UI-003 最新進度"]','只變更第三項');await click('確認保存 2 項');await finishEditor();
+   await click('選取全部');await click('批量更新進度');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=\"UI-003 最新進度\"]'))"),'batch progress');await fill('[aria-label="UI-003 最新進度"]','只變更第三項');await click('確認保存 2 項');await finishEditor();
    assert.equal((await readSource('UI-002')).statusLogs.length,0);assert.equal((await readSource('UI-003')).statusLogs.length,1);assert.equal((await readSource('UI-003')).progress,'只變更第三項');
  });
  await check('native-partial-delivery-remains-open-and-correction-history',async()=>{
@@ -39,13 +39,13 @@ export async function nativeChecks({qa,call,evaluate,click,nodeClick,fill,until,
    }finally{release?.();qa.setRecordFault(null);}
  });
  await check('native-mixed-sync-exact-unlinked-subset-and-linked-task',async()=>{
-   await trackingTab('配件物料總清單');await click('選取全部符合條件 3 項');await click('同步所選到內控');await until(()=>evaluate("Boolean(document.querySelector('.ic-batch-modal'))"),'mixed eligible sync form');
+   await trackingTab('配件物料總清單');await click('選取全部');await click('同步到內控');await until(()=>evaluate("Boolean(document.querySelector('.ic-batch-modal'))"),'mixed eligible sync form');
    assert.equal(await evaluate("document.querySelectorAll('.ic-batch-row').length"),2);await nodeClick(labelInput('同步到要事','.ic-batch-row:first-child'));await click('保存 2 筆案件');await finishEditor();
    const saved=await qa.read();for(const ref of ['UI-002','UI-003']){const source=saved.payload.trackingItems.find(r=>r.referenceNo===ref);const item=saved.payload.internalControlCases.find(c=>c.id===source.linkedCaseId);assert.ok(item);if(item.syncToTask)assert.ok(saved.payload.tasks.find(t=>t.id===item.linkedTaskId));}
    assert.equal(saved.payload.internalControlCases.filter(c=>c.trackingItemId).length,3);assert.equal(saved.payload.tasks.filter(t=>saved.payload.internalControlCases.some(c=>c.trackingItemId&&c.linkedTaskId===t.id)).length,1);
  });
  await check('native-stale-batch-zero-partial-draft-and-explicit-reconciliation',async()=>{
-   await trackingTab('未送船清單');await click('選取全部符合條件 2 項');await click('批量更新進度');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=\"UI-002 最新進度\"]'))"),'stale batch editor');await fill('[aria-label="UI-002 最新進度"]','本機第二項');await fill('[aria-label="UI-003 最新進度"]','本機第三項');
+   await trackingTab('未送船清單');await click('選取全部');await click('批量更新進度');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=\"UI-002 最新進度\"]'))"),'stale batch editor');await fill('[aria-label="UI-002 最新進度"]','本機第二項');await fill('[aria-label="UI-003 最新進度"]','本機第三項');
    await click('取消');await click('保留草稿並繼續');await until(()=>evaluate("!document.querySelector('.modal-backdrop')"),'stale draft stored and entire entry bundle released');
    await peerUpdate((await readSource('UI-003')).id);const afterPeer=await qa.read();await click('恢復本船未送出草稿');await until(()=>evaluate("Boolean(document.querySelector('[aria-label=\"UI-002 最新進度\"]'))"),'stale draft restored with new entry lock');await click('確認保存 2 項');await until(async()=>(await text()).includes('確認結果／重試相同提交'),'rejected stale input retained');assert.deepEqual(await qa.read(),afterPeer);assert.equal(await evaluate("document.querySelector('[aria-label=\"UI-002 最新進度\"]').value"),'本機第二項');
    let reconciliationReadHeld=false,releaseRead;const readBarrier=new Promise(resolve=>{releaseRead=resolve;});

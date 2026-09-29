@@ -112,7 +112,9 @@ try{
   await click('確認保存 1 項');await finish();
   const record=(await qa.read()).payload.trackingItems.find(x=>x.referenceNo==='BROWSER-001');assert.equal(record.description,'真實船端輸入測試');assert.equal(record.statusLogs[0].text,'第一筆進度');
  });
- if(process.argv.includes('--action-colors')){
+ if(process.argv.includes('--history-pdf')){
+  await (await import('./tracking-history-pdf-browser-checks.mjs')).trackingHistoryPdfChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'ship',finish:finish});
+ }else if(process.argv.includes('--action-colors')){
   await (await import('./tracking-action-colors-browser-checks.mjs')).trackingActionColorsChecks({qa,call,evaluate,click,nodeClick,until,screen,check,output,audience:'ship'});
  }else if(process.argv.includes('--batch-usability')){
   await (await import('./tracking-batch-usability-browser-checks.mjs')).trackingBatchUsabilityChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'ship',finish:finish});

@@ -64,7 +64,7 @@ try {
   const data=createInitialData();data.trackingItems=[];
   const callbacks={load:async()=>data,claim:async()=>{throw new Error('read-only view must not claim');},isWritable:()=>false,submit:async()=>{throw new Error('read-only view must not submit');},release:async()=>true,openCase:()=>{},registerNavigationGuard:()=>{}};
   const page=renderToStaticMarkup(React.createElement(TrackingPage,{data,vessels:data.vessels,user:data.users[0],workspace:'readonly',identity:'readonly',canCreate:false,canEdit:false,canClose:false,audience:'ship',callbacks}));
-  assert.ok(page.includes('>查看所選狀態更新紀錄</button>'),'read-only viewers need a separate history action');
+  assert.ok(page.includes('>查看歷史記錄</button>'),'read-only viewers need a separate history action');
   const {TrackingHistoryModal,trackingHistoryEntries}=await vite.ssrLoadModule('/src/tracking/TrackingHistoryModal.tsx');
   const row={...newTrackingItem('v1','supply'),id:'history-1',referenceNo:'SAME-REF',originalItemNo:'01',isClosed:true,statusLogs:[{id:'p1',at:'2026-09-26T01:00:00Z',by:'測試更新者',text:'已收到備件 <script>invalid</script>'}],events:[{id:'e1',action:'reopen',at:'2026-09-27T01:00:00Z',byUserId:'user-a',entry:'task',before:{isClosed:true,closedDate:'2026-09-26'},after:{isClosed:false,closedDate:''}}]};
   const baseline=structuredClone(row);

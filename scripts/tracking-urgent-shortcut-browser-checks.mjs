@@ -15,7 +15,7 @@ export async function urgentShortcutChecks({qa,call,evaluate,click,nodeClick,fil
   for(const width of [1440,390]){await call('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile:false});await evaluate('window.scrollTo(0,0)');geometry.push({phase:'initial',...await measure()});await screen(`urgent-initial-${width}`);}
   fs.writeFileSync(path.join(output,'urgent-geometry.json'),JSON.stringify(geometry,null,2));
   assert.equal(await evaluate("document.querySelectorAll('.tracking-search-actions button[aria-pressed]').length"),1,'one urgent toggle in the list toolbar');assert.equal(await pressed(),'false');
-  const buttons=geometry[0].buttons,urgent=buttons.indexOf('緊急');assert.equal(urgent,buttons.indexOf('清除條件')+1);assert.ok(buttons[urgent+1].startsWith('選取全部符合條件'));
+  const buttons=geometry[0].buttons,urgent=buttons.indexOf('緊急');assert.equal(urgent,buttons.indexOf('清除條件')+1);assert.equal(buttons[urgent+1],'選取全部');
  });
  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
  const now='2026-09-26T00:00:00.000Z';
@@ -33,8 +33,8 @@ export async function urgentShortcutChecks({qa,call,evaluate,click,nodeClick,fil
  for(const [label,accept] of cases)await check(`${audience}-${label}-urgent-toggle-clear-and-selection`,async()=>{
   await tab(label);await click('清除條件');await fill('[aria-label="搜尋跟蹤"]','QUICK-');
   const all=fixture.filter(r=>r.vesselId==='qa-v1'&&accept(r)),expected=all.filter(r=>r.urgency==='urgent').map(r=>r.referenceNo).sort();
-  await until(()=>evaluate(`document.querySelector('.tracking-toolbar').innerText.includes('選取全部符合條件 ${all.length} 項')`),'complete unfiltered count');const baseline=await refs();
-  await click(`選取全部符合條件 ${all.length} 項`);await click('緊急');await until(async()=>await pressed()==='true'&&JSON.stringify(await refs())===JSON.stringify(expected),'urgent-only exact rows');
+  await until(()=>evaluate(`[...document.querySelectorAll('.tracking-toolbar button')].some(n=>n.innerText==='選取全部'&&n.title==='選取目前符合條件的 ${all.length} 項（含其他分頁）')`),'complete unfiltered count');const baseline=await refs();
+  await click('選取全部');await click('緊急');await until(async()=>await pressed()==='true'&&JSON.stringify(await refs())===JSON.stringify(expected),'urgent-only exact rows');
   assert.equal(await evaluate("document.querySelector('.tracking-toolbar>b').textContent"),'已選 0 項');assert.equal(await evaluate("document.querySelector('[aria-label=搜尋跟蹤]').value"),'QUICK-');
   assert.ok(await evaluate("[...document.querySelectorAll('[aria-label=\"緊急多選\"] label')].find(n=>n.textContent==='是').querySelector('input').checked"),'quick toggle updates the existing field filter');
   await click('緊急');await until(async()=>await pressed()==='false'&&JSON.stringify(await refs())===JSON.stringify(baseline),'second click restores prior rows');

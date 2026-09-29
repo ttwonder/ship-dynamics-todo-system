@@ -21,7 +21,7 @@ const control:any={ actorId:actor.id,identity:'session-a',canWrite:true,allowed:
 (window as any).__trackingQA=control;
 function Fixture(){const [,render]=useState(0);update=()=>render(n=>n+1);
  const user=control.data.users.find((u:any)=>u.id===control.actorId);
- return <main data-qa-identity={control.identity} style={{padding:12,maxWidth:'100%',minWidth:0}}><p>真實UI＋測試資料｜組件回呼模擬，不是資料庫驗收</p><TrackingPage key={control.actorId} data={control.data} user={user} vessels={control.data.vessels.filter((v:any)=>control.allowed.includes(v.id))} identity={control.identity} workspace="component-fixture" canCreate={control.canWrite} canEdit={control.canWrite} canClose={control.canWrite} callbacks={{
+ return <main data-qa-identity={control.identity} style={{padding:12,maxWidth:'100%',minWidth:0}}><p>真實UI＋測試資料｜組件回呼模擬，不是資料庫驗收</p><TrackingPage key={control.actorId} data={control.data} user={user} vessels={control.data.vessels.filter((v:any)=>control.allowed.includes(v.id))} identity={control.identity} workspace="component-fixture" canCreate={control.canWrite} canEdit={control.canWrite} canClose={control.canWrite} canExport={control.canExport === true} callbacks={{
   load:async()=>structuredClone(control.data),claim:async()=>{control.claims++;return structuredClone(control.data);},isWritable:()=>control.canWrite,release:async()=>true, openCase:()=>{},registerNavigationGuard:guard=>{control.guard=guard;},
   submit:async submission=>{control.submissions.push(structuredClone(submission));const ok=control.mode==='held'?await new Promise<boolean>(resolve=>{release=resolve;}):control.mode==='confirm';if(ok){control.data=runTrackingCommand(control.data,submission.command,submission.context);update();}return ok;},
  }}/></main>;
