@@ -24,11 +24,22 @@ export type TrackingCommand =
  | {type:'progress';items:(TrackingVersion & {text:string})[]}
  | {type:'edit';items:(TrackingVersion & {changes:TrackingEdit})[]}
  | {type:'reclassify';items:(TrackingVersion & {requestType:TrackingRequestType;actualDate:string;deliveryStatus:TrackingDeliveryStatus})[]}
- | {type:'delivery';items:(TrackingVersion & {status:TrackingDeliveryStatus;date:string})[]}
+ | {type:'delivery';items:(TrackingVersion & {status:TrackingDeliveryStatus;date:string;note?:string})[]}
  | {type:'sync';items:(TrackingVersion & {item:InternalControlCase;projection?:InternalControlTaskProjection})[]}
  | {type:'lifecycle';action:TrackingLifecycleAction;date?:string;outcome?:'completed'|'cancelled';targets:(TrackingVersion & {entry:TrackingEntry})[]};
 
 const fail=(message:string):never=>{throw new Error(message);};
+/** Append only the newly entered delivery detail; the existing progress is not a draft replacement. */
+export function trackingDeliveryProgress(progress:string,note:unknown):string {
+ if(note===undefined)return progress;
+ if(typeof note!=='string')return fail('tracking-delivery-note-invalid');
+ const text=note.trim();
+ if([...text].length>2000)return fail('tracking-delivery-note-invalid');
+ if(!text)return progress;
+ const merged=[progress,`送船備註：${text}`].filter(Boolean).join('\n');
+ if([...merged].length>10000)return fail('tracking-progress-too-long');
+ return merged;
+}
 const selection=(ids:string[])=>{if(!ids.length||ids.length>100||new Set(ids).size!==ids.length)fail('tracking-selection-invalid');};
 function authorize(data:AppData,actor:UserAccount,vesselId:string,permission:PermissionKey) {
  if(actor.role==='vessel')fail('tracking-shore-only');
@@ -182,6 +193,7 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
    } else if(command.type==='delivery'){
     const delivery=input as Extract<TrackingCommand,{type:'delivery'}>['items'][number];
     if(source.kind!=='supply')fail('tracking-not-supply');
+    updateProgress(trackingDeliveryProgress(source.progress,delivery.note));
     const before={deliveryStatus:source.deliveryStatus,actualDeliveryDate:source.actualDeliveryDate || ''};
     source.deliveryStatus=delivery.status;
     if(delivery.status==='delivered')source.actualDeliveryDate=delivery.date;

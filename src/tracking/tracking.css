@@ -110,4 +110,9 @@
 .tracking-deletion-fields textarea{width:100%;min-height:76px;box-sizing:border-box;resize:vertical}
 .tracking-deletion-status p{margin:5px 0;white-space:pre-wrap}
 .tracking-history-item>.tracking-deletion-status,.tracking-retained-details{margin:5px 8px}
+/* Delivery detail stays attached to its source row, with usable full-width input. */
+.tracking-delivery-notes{display:grid;gap:6px;min-width:0;margin:6px 0}
+.tracking-delivery-notes>p{margin:3px 0}
+.tracking-delivery-notes>label{display:flex;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}
+.tracking-delivery-notes textarea{width:100%;box-sizing:border-box;resize:vertical}
 /* Follow the App's actual theme tokens; OS dark mode must not restyle only this module. */

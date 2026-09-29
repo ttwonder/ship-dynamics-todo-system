@@ -85,7 +85,7 @@ async function freshReadback(name,expected){
 
 try{
  native=await createNativeRecordQa(run,receipt,{httpTransactions:true});
- qa=await createRecordStorageLocalQa({internalControl:true,taskMember:true,scopedRead:true,performanceTrace:true,preparePerformanceFixture:async (initial,vite)=>{
+ qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,tracking:true,taskMember:true,scopedRead:true,hmr:false,performanceTrace:true,preparePerformanceFixture:async (initial,vite)=>{
   const {upsertDailyMorningReport}=await vite.ssrLoadModule('/src/morningHistory.ts');
   initial.tasks.forEach(t=>{t.createdAt='2026-01-01T00:00:00.000Z';t.updatedAt='2026-01-01T00:00:00.000Z';});
   initial.agendaReports=[];
@@ -107,6 +107,7 @@ try{
   for(const rows of [initial.tasks,initial.internalControlCases,initial.meetings])for(const row of rows){row.createdAt='2026-08-06T02:00:00.000Z';row.updatedAt=row.createdAt;}
   fs.writeFileSync(path.join(run,'fixture-intent-before-import.json'),JSON.stringify(scrub(initial),null,2));
  },databaseFactory:async()=>native.adapter});
+ await (await import('./tracking-browser-fixture.mjs')).installTrackingBrowserMigrations(qa.db);
  receipt.origin=qa.origin;assert.equal((await (await fetch(qa.origin+'/__qa/health')).json()).kind,'REAL_UI_SYNTHETIC_DATA_NATIVE_POSTGRES');
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let socketPath;await until(()=>{try{[chromePort,socketPath]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(chromePort)&&socketPath?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'Chrome handshake');
@@ -133,6 +134,7 @@ try{
     netRows.set(m.sessionId+':'+m.params.requestId,row);receipt.network.push(row);
    }
    const row=netRows.get(m.sessionId+':'+m.params.requestId);
+   if(m.method==='Network.loadingFailed'&&row){Object.assign(row,{finished:Date.now(),result:m.params.canceled?'CANCELLED':'NETWORK_FAILED',cancelled:Boolean(m.params.canceled),networkError:m.params.errorText});if(!m.params.canceled)receipt.errors.push(m.params.errorText);save();}
    if(m.method==='Network.responseReceived'&&row)row.httpStatus=m.params.response.status;
    if(m.method==='Network.loadingFinished'&&row){const response=await call('Network.getResponseBody',{requestId:m.params.requestId},m.sessionId);const v=JSON.parse(response.base64Encoded?Buffer.from(response.body,'base64').toString():response.body);if(/^read_ship_dynamics_record/.test(row.rpc))fs.writeFileSync(path.join(run,'response-'+receipt.network.indexOf(row)+'.json'),JSON.stringify(scrub(v),null,2));Object.assign(row,{containsUnloadedDetail:JSON.stringify(v).includes('QA_UNLOADED_DETAIL_SENTINEL'),containsOtherMeetingHistory:JSON.stringify(v).includes('QA_OTHER_MEETING_HISTORY'),finished:Date.now(),result:v?.ok===false?v.code:'SQL_OK',conflictKey:v?.conflict_key,revision:v?.revision});save();}
   };void handle().catch(e=>receipt.errors.push(e.message));
@@ -153,7 +155,7 @@ try{
  const titles=await a.eval("[...document.querySelectorAll('.morning-daily-history-panel .saved-report b')].map(n=>n.innerText)");assert.deepEqual(titles,expected);await a.screen('report-list');
  receipt.list={expected,actual:titles,fullComponentEqualsHome:render(model)===render(home)};
  const rows=receipt.network.filter(r=>/^read_ship_dynamics_record/.test(r.rpc));await until(()=>rows.every(r=>r.finished),'all actual product read bodies');
- receipt.productReadCount=rows.length;receipt.productFullReadCount=rows.filter(r=>r.readScope==='full'||r.rpc!=='read_ship_dynamics_record_scopes_v1').length;receipt.unselectedSentinelReadCount=rows.filter(r=>r.containsUnloadedDetail).length;
+ receipt.productReadCount=rows.length;receipt.productFullReadCount=rows.filter(r=>r.readScope==='full'||!/^read_ship_dynamics_record_scopes_v[12]$/.test(r.rpc)).length;receipt.unselectedSentinelReadCount=rows.filter(r=>r.containsUnloadedDetail).length;
  fs.writeFileSync(path.join(run,'sql-after.json'),JSON.stringify(scrub(await read()),null,2));assert.deepEqual(await read(),original,'read-only journey no business changes');
  assert.equal(receipt.productFullReadCount,0,'report list must not read full graph');
  assert.equal(receipt.unselectedSentinelReadCount,0,'unselected frozen snapshots must not cross product wire');
@@ -177,7 +179,7 @@ try{
  assert.equal(receipt.network.some(r=>r.caseId===currentCase&&r.readScope==='full'),false);
  receipt.cases.push({caseId:currentCase,layer:'original-UI-native-PG',status:'PASS',twoActors:true,dateValueRetained:true});
  currentCase='RH-STALE';let entered=false;
- qa.setRecordFault({after:async({name,body})=>{if(name==='read_ship_dynamics_record_scopes_v1'&&body.p_scope==='targets'&&body.p_targets.some(t=>t.id==='daily-morning-2026-08-04')&&!entered){entered=true;await new Promise(r=>releaseHeldRead=r);}return false;}});
+ qa.setRecordFault({after:async({name,body})=>{if(/^read_ship_dynamics_record_scopes_v[12]$/.test(name)&&body.p_scope==='targets'&&body.p_targets.some(t=>t.id==='daily-morning-2026-08-04')&&!entered){entered=true;await new Promise(r=>releaseHeldRead=r);}return false;}});
  await a.activate("[...document.querySelectorAll('.morning-daily-history-panel .saved-report')].find(n=>n.innerText.includes('RH FROZEN B'))?.querySelector('button')");await until(()=>entered,'native exact B response held');await a.click('待辦總表');await until(()=>a.eval("[...document.querySelectorAll('nav button')].some(n=>n.innerText==='待辦總表'&&n.classList.contains('active'))"),'leave reports');
  releaseHeldRead();await until(()=>receipt.network.filter(r=>r.caseId===currentCase&&r.readScope==='targets').every(r=>r.finished),'held native body complete');await wait(150);assert.equal(await preview(),false);qa.setRecordFault(null);
  receipt.cases.push({caseId:currentCase,layer:'original-UI-native-PG',status:'PASS',heldActualSqlResponse:true});
@@ -192,11 +194,13 @@ try{
  fs.writeFileSync(path.join(run,'save-after-sql.json'),JSON.stringify(scrub(saved),null,2));
  assert.ok(receipt.network.some(r=>r.caseId===currentCase&&r.readScope==='full'&&r.started<outgoing.find(o=>o.caseId===currentCase).captured),'full before outgoing snapshot');
  assert.deepEqual(receipt.errors,[]);await a.screen('save-confirmed');receipt.cases.push({caseId:currentCase,layer:'original-UI-native-PG',status:'PASS',preSqlExpected:true,completeGraph:true});
- currentCase='RH-LIVE';await a.click('船隊看板');await until(()=>a.eval("Boolean(document.querySelector('article.ship-card'))"),'dashboard summary');await a.click('報告中心');await until(()=>a.eval("Boolean(document.querySelector('.morning-daily-history-panel'))"),'report summary for live');await a.click('開啟 PDF 預覽');await until(preview,'original live PDF preview');assert.ok((await a.text()).includes('QA FORMAL KAOHSIUNG'));assert.ok(receipt.network.some(r=>r.caseId===currentCase&&r.readScope==='full'));await a.screen('live-preview');await a.click('關閉');
+ currentCase='RH-LIVE';await a.click('船隊看板');await until(()=>a.eval("Boolean(document.querySelector('article.ship-card'))"),'dashboard summary');await a.click('報告中心');await until(()=>a.eval("Boolean(document.querySelector('.morning-daily-history-panel'))"),'report summary for live');await a.click('開啟 PDF 預覽');await until(preview,'original live PDF preview');assert.ok((await a.text()).includes('QA FORMAL KAOHSIUNG'));assert.ok(receipt.network.some(r=>r.caseId===currentCase&&r.readScope==='targets'));assert.ok(receipt.network.filter(r=>r.caseId===currentCase).every(r=>r.readScope!=='full'));await a.screen('live-preview');await a.click('關閉');
  const c=await makePage('qa-vessel',(await call('Target.createBrowserContext')).browserContextId);await login(c);assert.equal(await c.eval("[...document.querySelectorAll('button')].some(n=>['報告中心','預覽報告','開啟 PDF 預覽'].includes(n.innerText))"),false,'original vessel-role negative');
  receipt.cases.push({caseId:currentCase,layer:'original-UI-native-PG',status:'PASS',vesselRoleNegative:true});
  await until(()=>receipt.network.filter(r=>/^read_ship_dynamics_record/.test(r.rpc)).every(r=>r.finished),'all product bodies before teardown');
- currentCase='teardown';for(const p of actors.filter(p=>!p.reader))await call('Target.closeTarget',{targetId:p.targetId});
+ // Freeze original tabs instead of destroying their CDP sessions while an auth
+ // response can still schedule its dependent record read. No product writes.
+ currentCase='teardown';await until(()=>receipt.network.every(r=>r.finished),'all RPC terminal outcomes before tab freeze');for(const p of actors.filter(p=>!p.reader))await call('Page.setWebLifecycleState',{state:'frozen'},p.s);
  currentCase='RH-INDEPENDENT-QA-FULL';await freshReadback('report-final',saved);await until(()=>receipt.network.filter(r=>/^read_ship_dynamics_record/.test(r.rpc)).every(r=>r.finished),'all wire bodies complete');
  receipt.cases.push({caseId:currentCase,layer:'independent-QA-full-readback-not-product',status:'PASS'});
  assert.deepEqual(receipt.errors,[]);receipt.status='PASS';

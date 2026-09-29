@@ -10,6 +10,7 @@ function fixture(){
  let config={readMode:'scoped-v1',workspaceKey:'qa'},opened=false,history='',selection=[],reads=[],captures=0,saves=0,prints=0;
  const user={id:'actor',role:'owner',isActive:true},report={id:'exact',kind:'daily-morning',vesselIds:['v1'],snapshot:{capturedAt:'fresh'}};
  const c={reportActionGeneration:ref(0),liveCurrentUserId:ref('actor'),identitySessionGeneration:ref(1),liveAuthorizationEpoch:ref('epoch'),getSupabaseConfig:()=>config,canExportReports:true,activeVessels:[{id:'v1',isActive:true}],liveData:ref({users:[user],vessels:[{id:'v1',isActive:true}],agendaReports:[report],settings:{rolePermissions:{}}}),alert:()=>{},setReportPreviewOpen:v=>opened=v,setReportPreviewHistoryId:v=>history=v,setReportPreviewLiveItinerarySnapshot:()=>{},setAgendaSelection:v=>selection=v,hasPermission:()=>false,vesselMatchesUser:()=>true,console};
+ Object.assign(c,{reportPreparationRef:ref(null),setReportPreparing:()=>{},setReportPreviewLiveCapture:()=>{},agendaSelection:[],freshPageData:()=>c.liveData.current,hasPermission:(_permissions,_user,key)=>key==='exportReports'&&c.canExportReports,formatTaipeiDate:()=> '2026-09-09',morningReportReadError:error=>error.message});
  c.configIoCoordinator=ref(mount('createAsyncConfigCoordinator',{sameCloudConfig:(a,b)=>JSON.stringify(a)===JSON.stringify(b)})());
  c.captureReportAction=mount('captureReportAction',c);c.closeReportPreview=mount('closeReportPreview',c);
  c.loadRecordActionScope=async(scope,owner,fresh)=>{reads.push({scope,fresh});return !owner||owner();};
