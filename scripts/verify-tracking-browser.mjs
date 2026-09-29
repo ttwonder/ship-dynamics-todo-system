@@ -159,7 +159,9 @@ try{
  const rowAction=(reference,label)=>trackingBatchAction({evaluate,click,nodeClick,until},reference,label);
  const dateInput=async(selector,value)=>{await until(()=>evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`),"date field ready");await evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n||n.disabled)throw new Error('date input unavailable');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(selector)}).value`),value);};
  const trackingTab=async(label)=>{await nodeClick(`[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith(${JSON.stringify(label)}))`);};
- if(process.argv.includes('--batch-usability')){
+ if(process.argv.includes('--action-colors')){
+  await (await import('./tracking-action-colors-browser-checks.mjs')).trackingActionColorsChecks({qa,call,evaluate,click,nodeClick,until,screen,check,output,audience:'shore'});
+ }else if(process.argv.includes('--batch-usability')){
   await (await import('./tracking-batch-usability-browser-checks.mjs')).trackingBatchUsabilityChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'shore',finish:finishEditor});
  }else if(process.argv.includes('--delivery-notes')){
   await (await import('./tracking-delivery-notes-browser-checks.mjs')).trackingDeliveryNoteChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'shore',finish:finishEditor});

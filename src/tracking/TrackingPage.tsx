@@ -22,8 +22,8 @@ import TrackingStatistics from './TrackingStatisticsPanel';
 import './tracking.css';
 
 const safeRead = <T,>(key: string): T | null => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch { return null; } };
-function HelpAction({ label, help, disabled, onClick }: { label: string; help: string; disabled?: boolean; onClick: () => void }) {
-  return <span className="tracking-help-action"><button className="btn small" title={help} disabled={disabled} onClick={onClick}>{label}</button><details><summary aria-label={`${label}說明`}>ⓘ</summary><span role="tooltip">{help}</span></details><span className="tracking-focus-help">{help}</span></span>;
+function HelpAction({ action, label, help, disabled, onClick }: { action: TrackingAction; label: string; help: string; disabled?: boolean; onClick: () => void }) {
+  return <span className="tracking-help-action"><button className={`btn small tracking-action-${action}`} title={help} disabled={disabled} onClick={onClick}>{label}</button><details><summary aria-label={`${label}說明`}>ⓘ</summary><span role="tooltip">{help}</span></details><span className="tracking-focus-help">{help}</span></span>;
 }
 function TrackingValueFilter({ label, values, selected, onChange }: { label: string; values: string[]; selected: string[]; onChange: (values: string[]) => void }) {
   return <details className="tracking-value-filter">
@@ -244,7 +244,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     }finally{openingRef.current=false;}
   };
   const statisticsTab = <button className={`btn ${statisticsView ? 'primary' : ''}`} role="tab" aria-selected={statisticsView} onClick={() => void switchView(() => { setStatisticsView(true); setReviewView(null); })}>統計資訊</button>;
-  const actionButton = (action: TrackingAction, label: string, ids?: string[], disabled = false) => <HelpAction label={label} help={trackingHelp(audience)[action]} disabled={disabled || loading || busy} onClick={() => void start(action, ids)}/>;
+  const actionButton = (action: TrackingAction, label: string, ids?: string[], disabled = false) => <HelpAction action={action} label={label} help={trackingHelp(audience)[action]} disabled={disabled || loading || busy} onClick={() => void start(action, ids)}/>;
   const statusNotice = (notice || loading) && <p role="status" className="tracking-notice">{loading ? '讀取此船最新資料…' : notice}</p>;
   // Refresh display-only references even for drafts saved before business labels existed.
   const syncDraft = draft?.sync && { ...draft.sync, rows: draft.sync.rows.map(row => {
@@ -272,7 +272,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
       {canEdit && audience === 'shore' && reviewView !== 'deleted' && actionButton('delete', reviewView === 'requests' ? '批准刪除申請' : '刪除所選', undefined, !selected.length || selected.length > 100 || reviewView === 'requests' && selected.some(id => !rows.some(row => row.id === id && isTrackingDeletionPending(row))))}
       {canEdit && audience === 'shore' && reviewView === 'requests' && actionButton('reject-delete', '駁回申請', undefined, !selected.length || selected.length > 100 || selected.some(id => !rows.some(row => row.id === id && isTrackingDeletionPending(row))))}
       {canEdit && audience === 'ship' && reviewView !== 'deleted' && actionButton('request-delete', '申請刪除', undefined, !selected.length || selected.length > 100 || selected.some(id => { const row = rows.find(value => value.id === id); return !row || isTrackingDeleted(row) || isTrackingDeletionPending(row); }))}
-      <button type="button" className="btn small" title="查看所選項目已讀取的進度、送達／完工及結案紀錄；僅供查看，不取得編輯權。" disabled={!selected.length || loading || busy || Boolean(draft) || Boolean(pending) || importOpen} onClick={() => {
+      <button type="button" className="btn small tracking-action-history" title="查看所選項目已讀取的進度、送達／完工及結案紀錄；僅供查看，不取得編輯權。" disabled={!selected.length || loading || busy || Boolean(draft) || Boolean(pending) || importOpen} onClick={() => {
       if (loading || busyRef.current || openingRef.current || draftRef.current || pendingRef.current || importOpen || !selected.length) return;
       setHistorySelection({ scope: historyScope, ids: [...selected] });
     }}>查看所選狀態更新紀錄</button></div>

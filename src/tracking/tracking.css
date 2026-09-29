@@ -18,6 +18,15 @@
 .tracking-page .tracking-urgent-shortcut[aria-pressed=true]{color:#fff;background:#b42318;border-color:#b42318}
 .tracking-search-actions>.tracking-toolbar{flex:1;min-width:0;margin:0;padding:4px 6px;gap:4px}
 .tracking-search-actions>.tracking-toolbar>b{white-space:nowrap}
+/* Semantic colors are restricted to the five batch-toolbar actions. */
+.tracking-toolbar .tracking-action-edit{--tracking-action-bg:#e2e8f0;--tracking-action-fg:#334155;--tracking-action-hover:#cbd5e1;--tracking-action-ring:#475569}
+.tracking-toolbar .tracking-action-reclassify{--tracking-action-bg:#ffedd5;--tracking-action-fg:#9a3412;--tracking-action-hover:#fed7aa;--tracking-action-ring:#9a3412}
+.tracking-toolbar .tracking-action-progress{--tracking-action-bg:#1d4ed8;--tracking-action-fg:#fff;--tracking-action-hover:#1e40af;--tracking-action-ring:#1d4ed8}
+.tracking-toolbar .tracking-action-sync{--tracking-action-bg:#ede9fe;--tracking-action-fg:#6d28d9;--tracking-action-hover:#ddd6fe;--tracking-action-ring:#6d28d9}
+.tracking-toolbar .tracking-action-history{--tracking-action-bg:#0f766e;--tracking-action-fg:#fff;--tracking-action-hover:#115e59;--tracking-action-ring:#0f766e}
+.tracking-toolbar .btn:is(.tracking-action-edit,.tracking-action-reclassify,.tracking-action-progress,.tracking-action-sync,.tracking-action-history){background:var(--tracking-action-bg);color:var(--tracking-action-fg)}
+.tracking-toolbar .btn:is(.tracking-action-edit,.tracking-action-reclassify,.tracking-action-progress,.tracking-action-sync,.tracking-action-history):hover:not(:disabled){background:var(--tracking-action-hover);filter:none}
+.tracking-toolbar .btn:is(.tracking-action-edit,.tracking-action-reclassify,.tracking-action-progress,.tracking-action-sync,.tracking-action-history):focus-visible{outline:2px solid var(--tracking-action-ring);outline-offset:2px}
 .tracking-options{display:grid;grid-template-columns:max-content max-content minmax(0,1fr);align-items:start;column-gap:14px;row-gap:4px;margin:5px 0;min-width:0}
 .tracking-options>details,.tracking-options>details::details-content{display:contents}
 .tracking-options>details>summary{grid-row:1;white-space:nowrap}
