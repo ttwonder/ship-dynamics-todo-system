@@ -12,7 +12,7 @@ export async function shipTrackingChecks({a,b,page,qa,native,read,source,until,c
   await a.sync();await a.tracking();await until(()=>a.eval(`Boolean(${a.row('SHIP-PEER')})`),'shore source visible');assert.equal((await source('SHIP-PEER')).progress,'船端初始');
  });
  await check('shore-held-bundle-blocks-ship-and-releases-after-ACK',async()=>{
-  await a.progress('SHIP-PEER','岸端確認更新');const before=await read();await action(ship,'SHIP-PEER','進度');await until(async()=>(await ship.text()).includes('編輯權未取得或已失效'),'ship blocked');assert.equal(await ship.eval("Boolean(document.querySelector('.modal-backdrop'))"),false);assert.deepEqual(await read(),before);
+  await a.progress('SHIP-PEER','岸端確認更新');const before=await read();await action(ship,'SHIP-PEER','進度');await until(async()=>(await ship.text()).includes('所選項目或其關聯資料正由其他人／另一個視窗編輯'),'ship blocked by another editor');assert.equal(await ship.eval("Boolean(document.querySelector('.modal-backdrop'))"),false);assert.deepEqual(await read(),before);
   await a.submit();await a.done();await refresh();await until(()=>ship.eval(`(${ship.row('SHIP-PEER')})?.innerText.includes('岸端確認更新')`),'ship sees shore update');
  });
  await check('actual-ship-renewal-loss-freezes-same-draft-and-reconciles',async()=>{

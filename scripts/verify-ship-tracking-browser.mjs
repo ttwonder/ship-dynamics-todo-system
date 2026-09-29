@@ -115,6 +115,8 @@ try{
  });
  if(process.argv.includes('--history-pdf')){
   await (await import('./tracking-history-pdf-browser-checks.mjs')).trackingHistoryPdfChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'ship',finish:finish});
+ }else if(process.argv.includes('--lock-message')){
+  await (await import('./ship-tracking-lock-message-browser-checks.mjs')).shipTrackingLockMessageChecks({qa,native,call,evaluate,click,nodeClick,fill,until,screen,check,finish});
  }else if(process.argv.includes('--urgency')){
   await (await import('./tracking-urgency-browser-checks.mjs')).trackingUrgencyChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,audience:'ship',finish:finish});
  }else if(process.argv.includes('--progress-copy')){

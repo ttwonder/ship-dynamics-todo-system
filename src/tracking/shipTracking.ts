@@ -31,6 +31,7 @@ export function shipTrackingMessage(error: unknown): string {
   const domain = error instanceof ShipTrackingError ? error.domain : '';
   if (error instanceof ShipTrackingError && ['PGRST202', '42883'].includes(error.code)) return '船端跟蹤接口尚未啟用，請通知岸端完成 SQL 更新。';
   if (domain === 'stale-config') return '雲端設定已變更；原輸入與提交編號保留，已停止新提交。';
+  if (domain === 'locked' || domain === 'ship-tracking-locked') return '所選項目或其關聯資料正由其他人／另一個視窗編輯。請待對方保存或關閉編輯後再試；原輸入已保留。';
   if (domain.includes('lease') || domain.includes('locked')) return '編輯權未取得或已失效；原輸入保留，請核對最新資料後重新取得編輯權。';
   if (domain.includes('revision-conflict') || domain.includes('link-inconsistent') || domain.includes('lifecycle-inconsistent')) return '資料或關聯已變更；整批未保存，請核對最新資料，原輸入保留。';
   if (domain === 'business-writes-paused') return '雲端暫停保存；原輸入與原提交編號保留。';

@@ -11,6 +11,26 @@ try{
  const {newTrackingItem}=await qa.loadModule('/src/tracking/TrackingModals.tsx');const item={...newTrackingItem('qa-v1','supply'),referenceNo:'CLIENT-001',description:'Client real SQL',progress:'Client initial'};
  const submission={identity:repo.identity,context:{actorId:repo.actorKey,operationId:'client-create-1',at:new Date().toISOString()},command:{type:'create',items:[item]}};
  await check('client-submit-exact-ACK-and-authoritative-read',async()=>{const result=await repo.submit(submission);assert.equal(result.kind,'committed',result.message);assert.equal(result.snapshot.trackingItems.find(x=>x.id===item.id).description,item.description);assert.equal(await repo.release(),true);});
+ await check('locked-message-names-other-editor-without-changing-lease-or-data',async()=>{
+  const {shipTrackingMessage}=await qa.loadModule('/src/tracking/shipTracking.ts');
+  const peerValues=new Map(),peerStorage={getItem:k=>peerValues.get(k)??null,setItem:(k,v)=>peerValues.set(k,v),removeItem:k=>peerValues.delete(k)};
+  const peer=new ShipTrackingRepository(config,{storage:peerStorage,isCurrent:()=>true});assert.notEqual(peer.actorKey,repo.actorKey);
+  const before=await qa.read();await peer.claim('qa-v1',[item.id]);
+  try{
+   await assert.rejects(()=>repo.claim('qa-v1',[item.id]),error=>{
+    assert.equal(error.message,'locked');
+    assert.equal(shipTrackingMessage(error),'所選項目或其關聯資料正由其他人／另一個視窗編輯。請待對方保存或關閉編輯後再試；原輸入已保留。');return true;
+   });
+   assert.equal(repo.isWritable([item.id]),false);assert.equal(peer.isWritable([item.id]),true);assert.deepEqual(await qa.read(),before);
+  }finally{assert.equal(await peer.release(),true);}
+  await repo.claim('qa-v1',[item.id]);assert.equal(repo.isWritable([item.id]),true);assert.deepEqual(await qa.read(),before);assert.equal(await repo.release(),true);
+ });
+ await check('expired-lease-is-not-misreported-as-another-editor',async()=>{
+  const {shipTrackingMessage}=await qa.loadModule('/src/tracking/shipTracking.ts');const before=await qa.read();await repo.claim('qa-v1',[item.id]);
+  await qa.db.query("update ship_dynamics_tracking_private.bundles set expires_at=clock_timestamp()-interval '1 second' where workspace=$1 and holder=$2::uuid",[qa.workspace,repo.holder]);
+  await assert.rejects(()=>repo.renew(),error=>{assert.equal(error.message,'lease-expired');assert.equal(shipTrackingMessage(error),'編輯權未取得或已失效；原輸入保留，請核對最新資料後重新取得編輯權。');assert.ok(!shipTrackingMessage(error).includes('其他人'));return true;});
+  assert.equal(repo.isWritable([item.id]),false);assert.deepEqual(await qa.read(),before);assert.equal(await repo.release(),true);
+ });
  await check('reload-reconciles-original-committed-envelope-without-duplicate',async()=>{const rev=(await qa.read()).revision;const recovered=new ShipTrackingRepository(config,{storage,isCurrent:()=>true});const result=await recovered.submit(submission);assert.equal(result.kind,'committed',result.message);assert.equal((await qa.read()).revision,rev);assert.notEqual(recovered.holder,repo.holder);});
  await check('corrupt-ACK-remains-unknown-until-exact-receipt-and-read',async()=>{
   const c=new ShipTrackingRepository(config,{storage,isCurrent:()=>true}),entry={...item,id:'client-corrupt-ack',referenceNo:'CLIENT-ACK'};
