@@ -24,9 +24,9 @@ export function trackingInTab(row: TrackingItem, tab: TrackingTab): boolean {
 export const filterIsActive = (filter: TrackingFilter) => Boolean(filter.mode || filter.text || filter.from || filter.to || filter.values?.length);
 export function selectTrackingRows(items: readonly TrackingItem[], query: TrackingQuery): TrackingItem[] {
   const columns = new Map(TRACKING_COLUMNS.map(column => [column.key, column]));
-  const needle = query.search?.trim().toLocaleLowerCase();
+  const needles = [...new Set((query.search || '').split(/[,，]/).map(value => value.trim().toLocaleLowerCase()).filter(Boolean))];
   const rows = items.filter(row => row.vesselId === query.vesselId && (query.view === 'deleted' ? isTrackingDeleted(row) : query.view === 'requests' ? !isTrackingDeleted(row) && Boolean(row.deletionRequest) : trackingInTab(row, query.tab))).filter(row => {
-    if (needle && !TRACKING_COLUMNS.some(column => column.value(row).toLocaleLowerCase().includes(needle))) return false;
+    if (needles.length && !TRACKING_COLUMNS.some(column => { const value = column.value(row).toLocaleLowerCase(); return needles.some(needle => value.includes(needle)); })) return false;
     return Object.entries(query.filters).every(([key, filter]) => {
       const column = columns.get(key); if (!column || !filterIsActive(filter)) return true;
       const value = column.value(row); const date = value.slice(0, 10);
