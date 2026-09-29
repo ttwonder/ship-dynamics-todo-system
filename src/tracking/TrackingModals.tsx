@@ -113,11 +113,22 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, ca
   const change = (patch: Partial<TrackingDraft>) => onChange({ ...draft, ...patch, dirty: true });
   const update = (id: string, patch: Partial<TrackingItem>) => change({ rows: draft.rows.map(row => row.id === id ? { ...row, ...patch } : row) });
   const formFields = ['create', 'edit'].includes(draft.action);
+  const firstProgress = draft.rows[0]?.progress || '';
+  const copyProgressDisabled = busy || pending || readOnly || draft.rows.length < 2 || !firstProgress.trim();
+  const copyFirstProgress = () => {
+    if (draft.action !== 'progress' || copyProgressDisabled) return;
+    const overwritesInput = draft.rows.slice(1).some(row => row.progress.trim() && row.progress !== firstProgress && row.progress !== draft.originals.find(original => original.id === row.id)?.progress);
+    if (overwritesInput && !confirm('其他項目已有本次輸入的不同更新內容。要以第一個項目的內容覆蓋全部嗎？（尚未保存）')) return;
+    change({ rows: draft.rows.map(row => ({ ...row, progress: firstProgress })) });
+  };
   return <div className="modal-backdrop"><form className={`modal tracking-modal${draft.action === 'progress' ? ' tracking-progress-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" noValidate={pending && (draft.action === 'reclassify' || isTrackingDeletionAction(draft.action))} onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
     <div className="modal-head"><h2 id="tracking-modal-title">{titles[draft.action]}</h2><button type="button" className="btn ghost" onClick={onClose}>關閉</button></div>
     {draft.action === 'create' ? <div className="tracking-create-context" role="group" aria-label="新增跟蹤說明"><strong>船舶：{vesselName}</strong><span>{trackingHelp(audience).create}</span></div> : <>
       <p>{trackingHelp(audience)[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
-      <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>
+      {draft.action === 'progress' ? <div className="tracking-progress-context">
+        <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>
+        <button type="button" className="btn small" disabled={copyProgressDisabled} title="先填寫第一項，再將其輸入框內容填入本批全部項目；不複製歷史記錄，不會自動保存。" onClick={copyFirstProgress}>複製第一項更新至全部</button>
+      </div> : <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>}
     </>}
     <fieldset disabled={readOnly} style={{border:0,padding:0,margin:0,minWidth:0}}>
 
@@ -130,7 +141,7 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, ca
         <small>最新已讀值：{original?.progress || '（空白）'}</small>
         {!pending && draft.rows.length > 1 && <button type="button" className="btn small" onClick={() => change({ rows: draft.rows.filter(value => value.id !== row.id), originals: draft.originals.filter(value => value.id !== row.id) })}>從本批移除 {trackingItemLabel(row)}</button>}
         <textarea id={`tracking-progress-${row.id}`} aria-label={`${row.referenceNo} 最新進度`} value={row.progress} onChange={event => update(row.id, { progress: event.target.value })}/>
-        <details className="tracking-progress-history" aria-label="進度更新記錄" open>
+        <details className="tracking-progress-history" aria-label="進度更新記錄">
           <summary>進度更新記錄（{history.length}）</summary>
           {history.length ? <div>{history.map(log => <article key={log.id}><small><time dateTime={log.at}>{formatTaipeiDateTime(log.at)}</time>（UTC+8）｜{log.by}</small><p>{log.text}</p></article>)}</div> : <p>尚無已保存的進度記錄。</p>}
         </details>

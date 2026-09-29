@@ -12,7 +12,7 @@ const profile=path.join(output,'chrome-profile');
 const b1=process.env.QA_RELATED_DRAFT_B1==='1';
 let native,qa,browser,ws,failure=null,sessionId,releaseHeldReceipt,expectDeleteRejection=false,expectStatisticsReadFailure=false;
 const pending=new Map(),evidence={label:'真實 UI＋測試資料；原生 PostgreSQL，非 hosted Supabase',scenarios:[],errors:[],blockedExternal:[],metrics:[],dialogs:[]};
-let id=0;
+let id=0,copyConfirmationAccept=true;
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const until=async(test,label,timeout=25_000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(await test())return;await wait(100);}throw new Error(`QA timeout: ${label}`);};
 const call=(method,params={},session=sessionId)=>new Promise((resolve,reject)=>{
@@ -89,14 +89,15 @@ try{
   if(message.method==='Runtime.exceptionThrown')evidence.errors.push(message.params.exceptionDetails.exception?.description||message.params.exceptionDetails.text);
   if(message.method==='Page.javascriptDialogOpening'){
    (evidence.dialogs??=[]).push({type:message.params.type,message:message.params.message});
+   const copyDialog=process.argv.includes('--progress-copy')&&message.params.type==='confirm'&&message.params.message==='其他項目已有本次輸入的不同更新內容。要以第一個項目的內容覆蓋全部嗎？（尚未保存）';
    const abnormal=message.params.type==='confirm'&&message.params.message.startsWith('是否將這筆關聯要事');
    const rejected=expectDeleteRejection&&message.params.type==='alert'&&message.params.message.startsWith('刪除要事未完成：');
    if(rejected)evidence.expectedDeleteRejection=message.params.message;
    // Disposal of the isolated failure page only; NOT a product save/close claim.
    const disposeFailurePage=message.params.type==='beforeunload'&&evidence.rejectedDelete?.draftRetained===true;
-   const expected=(expectStatisticsReadFailure&&message.params.type==='alert'&&message.params.message==='Synthetic record ACK loss after actual SQL commit')||(message.params.type==='prompt'&&message.params.message==='請選擇完成日期（YYYY-MM-DD）')||(message.params.type==='confirm'&&/^確認保存本次結案／重開變更/.test(message.params.message))||(message.params.type==='confirm'&&/^確定將此內控案件改為未結案/.test(message.params.message))||(message.params.type==='alert'&&/^(tracking-stale-source|跟蹤保存結果尚未確認|此項目正在由 QA other editor)/.test(message.params.message))||(message.params.type==='confirm'&&/^重新核對/.test(message.params.message))||(message.params.type==='confirm'&&/^只同步以下/.test(message.params.message))||disposeFailurePage||rejected||abnormal||(message.params.type==='confirm'&&/^(確定撤回同步要事|確定刪除此內控案件|確定刪除待辦|同步最新會保留本機修改)/.test(message.params.message))||(message.params.type==='alert'&&/^(同步要事已撤回；|請務必在FLOW系統中申報异常|請務必在FLOW系統中申報異常)/.test(message.params.message));
+   const expected=copyDialog||(expectStatisticsReadFailure&&message.params.type==='alert'&&message.params.message==='Synthetic record ACK loss after actual SQL commit')||(message.params.type==='prompt'&&message.params.message==='請選擇完成日期（YYYY-MM-DD）')||(message.params.type==='confirm'&&/^確認保存本次結案／重開變更/.test(message.params.message))||(message.params.type==='confirm'&&/^確定將此內控案件改為未結案/.test(message.params.message))||(message.params.type==='alert'&&/^(tracking-stale-source|跟蹤保存結果尚未確認|此項目正在由 QA other editor)/.test(message.params.message))||(message.params.type==='confirm'&&/^重新核對/.test(message.params.message))||(message.params.type==='confirm'&&/^只同步以下/.test(message.params.message))||disposeFailurePage||rejected||abnormal||(message.params.type==='confirm'&&/^(確定撤回同步要事|確定刪除此內控案件|確定刪除待辦|同步最新會保留本機修改)/.test(message.params.message))||(message.params.type==='alert'&&/^(同步要事已撤回；|請務必在FLOW系統中申報异常|請務必在FLOW系統中申報異常)/.test(message.params.message));
    if(!expected)evidence.errors.push('Unexpected QA dialog: '+message.params.message);
-   void call('Page.handleJavaScriptDialog',{accept:expected&&!abnormal,...(message.params.type==='prompt'?{promptText:'2026-09-26'}:{})},message.sessionId).catch(error=>evidence.errors.push(error.message));
+   void call('Page.handleJavaScriptDialog',{accept:copyDialog?copyConfirmationAccept:expected&&!abnormal,...(message.params.type==='prompt'?{promptText:'2026-09-26'}:{})},message.sessionId).catch(error=>evidence.errors.push(error.message));
   }
   if(message.method==='Network.requestWillBeSent'){const url=message.params.request.url;if(/^https?:/.test(url)&&!url.startsWith(qa.origin+'/'))evidence.blockedExternal.push(new URL(url).origin);}
  });
@@ -163,6 +164,8 @@ try{
   await (await import('./tracking-history-pdf-component-checks.mjs')).historyPdfComponentChecks({qa,call,evaluate,click,nodeClick,until,screen,check,output});
  }else if(process.argv.includes('--history-pdf')){
   await (await import('./tracking-history-pdf-browser-checks.mjs')).trackingHistoryPdfChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'shore',finish:finishEditor});
+ }else if(process.argv.includes('--progress-copy')){
+  await (await import('./tracking-progress-copy-browser-checks.mjs')).trackingProgressCopyChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'shore',finish:finishEditor,dialogs:evidence.dialogs,setCopyConfirmation:value=>{copyConfirmationAccept=value;}});
  }else if(process.argv.includes('--action-colors')){
   await (await import('./tracking-action-colors-browser-checks.mjs')).trackingActionColorsChecks({qa,call,evaluate,click,nodeClick,until,screen,check,output,audience:'shore'});
  }else if(process.argv.includes('--batch-usability')){

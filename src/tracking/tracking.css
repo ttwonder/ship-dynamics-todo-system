@@ -49,6 +49,7 @@
 .tracking-preferences .tracking-option-panel>div{margin-top:5px}.tracking-preferences .tracking-option-panel>div>span{display:inline-flex;align-items:center;gap:3px}
 .tracking-active-filters:empty{display:none}
 .tracking-page .tracking-progress-modal{width:min(2200px,calc(100vw - 24px))}
+.tracking-progress-context{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}.tracking-progress-context>label{display:flex;align-items:center;gap:5px;min-width:0;max-width:100%}.tracking-progress-context>label>input{min-width:0}.tracking-progress-context>.btn{max-width:100%;white-space:normal}
 .tracking-progress-history{min-width:0;border:1px solid var(--line);border-radius:6px;padding:3px 6px}
 .tracking-progress-history>div{max-height:220px;overflow:auto}
 .tracking-progress-history article{padding:5px 0;border-top:1px solid var(--line)}

@@ -76,6 +76,9 @@ export async function layoutChecks(c) {
     assert.ok(added.every(l=>Number.isFinite(Date.parse(l.at))),'each confirmed update has a timestamp');
     assert.ok(Date.parse(added[0].at)<=Date.parse(added[1].at),'history timestamp order');
     await rowAction('UI-001','進度');
+    assert.equal(await evaluate("document.querySelector('[aria-label=進度更新記錄]').open"),false,'progress editor history starts collapsed');
+    await nodeClick("document.querySelector('[aria-label=進度更新記錄] summary')");
+    await until(()=>evaluate("document.querySelector('[aria-label=進度更新記錄]').open"),'manual history expansion');
     const history=await evaluate("document.querySelector('[aria-label=進度更新記錄]')?.innerText||''");
     assert.ok(updates.every(t=>history.includes(t)),'all prior updates visible in progress editor');
     const times=await evaluate("[...document.querySelectorAll('[aria-label=進度更新記錄] time')].map(n=>({at:n.dateTime,text:n.textContent}))");
