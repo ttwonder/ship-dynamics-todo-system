@@ -26,7 +26,7 @@ export async function trackingTwoRowToolsChecks({qa,call,evaluate,click,fill,unt
    assert.ok(Math.abs(m.search.right-m.group.right)<=2&&m.search.width>=m.group.width-m.clear.width-m.urgent.width-14,'search fills remaining first-row width');
    assert.ok(m.document<=m.viewport+1,'page must not overflow');
    assert.ok(m.actions.every(n=>n.left>=m.toolbar.left&&n.right<=m.toolbar.right+1&&n.top>=m.toolbar.top&&n.bottom<=m.toolbar.bottom+1),'all original actions wrap inside second row');
-   assert.equal(m.placeholder,'用","區分多筆搜索');
+   assert.equal(m.placeholder,'可以使用","來隔開不同關鍵詞，實現多詞多筆同時搜索。');
    assert.ok(m.hasSelection?!m.selected.includes('已選 0 項'):m.selected==='已選 0 項');
   }
   await size(1440);await click('清除選取');

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 // Original shore/ship entry, synthetic records and private native PostgreSQL only.
 export async function trackingMultiSearchChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience,finish}){
- const selector='[aria-label="搜尋跟蹤"]',hint='用","區分多筆搜索';
+ const selector='[aria-label="搜尋跟蹤"]',hint='可以使用","來隔開不同關鍵詞，實現多詞多筆同時搜索。';
  const rowIds=()=>evaluate("[...document.querySelectorAll('.tracking-table tbody tr[data-tracking-id]')].map(n=>n.dataset.trackingId).sort()");
  const expectRows=async ids=>{await until(async()=>JSON.stringify(await rowIds())===JSON.stringify([...ids].sort()),'exact multi-search row set');assert.deepEqual(await rowIds(),[...ids].sort());};
  const search=async(value,ids)=>{await fill(selector,value);await expectRows(ids);assert.equal(await evaluate("document.querySelector('.tracking-toolbar>b').innerText"),'已選 0 項','typing does not auto-select and clears prior selection');};
@@ -13,7 +13,14 @@ export async function trackingMultiSearchChecks({qa,call,evaluate,click,nodeClic
   const measurements=[];
   for(const width of [1440,390]){await size(width);await evaluate("document.querySelector('[aria-label=搜尋跟蹤]').scrollIntoView({block:'center'})");await evaluate('document.fonts.ready');measurements.push(await evaluate(`(()=>{const n=document.querySelector('[aria-label=搜尋跟蹤]'),s=getComputedStyle(n),r=n.getBoundingClientRect(),c=document.createElement('canvas').getContext('2d');c.font=s.font;return{width:innerWidth,document:document.documentElement.scrollWidth,placeholder:n.placeholder,placeholderColor:getComputedStyle(n,'::placeholder').color,inputColor:s.color,hintWidth:c.measureText(n.placeholder).width,space:n.clientWidth-parseFloat(s.paddingLeft)-parseFloat(s.paddingRight),geometry:{width:r.width,height:r.height,font:s.font,padding:s.padding},left:r.left,right:r.right};})()`));await screen(audience+'-multi-search-placeholder-'+width);}
   fs.writeFileSync(path.join(output,'multi-search-geometry.json'),JSON.stringify(measurements,null,2));
-  for(const m of measurements){assert.equal(m.placeholder,hint);assert.notEqual(m.placeholderColor,m.inputColor);assert.ok(m.hintWidth<=m.space+1,'complete hint fits existing input');assert.ok(m.document<=m.width+1&&m.left>=0&&m.right<=m.width+1);}
+  const baseline=process.env.QA_SEARCH_HINT_BASELINE?JSON.parse(fs.readFileSync(process.env.QA_SEARCH_HINT_BASELINE,'utf8')):null;
+  for(const m of measurements){
+   assert.equal(m.placeholder,hint);assert.notEqual(m.placeholderColor,m.inputColor);
+   // A long native placeholder may clip on mobile; never widen/shrink the control or font to fit it.
+   if(m.width===1440)assert.ok(m.hintWidth<=m.space+1,'complete hint fits desktop input');
+   assert.ok(m.document<=m.width+1&&m.left>=0&&m.right<=m.width+1);
+   if(baseline){const old=baseline.find(b=>b.width===m.width);assert.ok(old);assert.deepEqual(m.geometry,old.geometry,'copy-only change preserves input geometry and typography');assert.equal(m.placeholderColor,old.placeholderColor);assert.equal(m.left,old.left);assert.equal(m.right,old.right);}
+  }
   await size(1440);
  });
  const refs=['MULTI-A','MULTI-B','MULTI-C','MULTI-SLASH'],purchase=['QA-RED','QA-BLUE','QA-GREEN','QA/PART'],descriptions=['甲濾芯','乙泵件','丙閥件','斜線備件'];let created,before;
