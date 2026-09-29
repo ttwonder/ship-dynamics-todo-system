@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import ShipPortalBrand from '../ShipPortalBrand';
 import { LocalDemoItineraryBackend, type ItineraryLease } from './itineraryCollaboration';
 import { createDemoItineraryDocuments } from './itineraryDemoData';
 import { ITINERARY_DEMO_VESSELS } from './itineraryDemoVessels';
@@ -395,10 +396,10 @@ export default function ShipItineraryPortal() {
     }
   };
 
-  if (!backend) return <main className="ship-portal-shell"><div className="ship-state-card"><h1>船端服務設定不完整</h1><p>目前無法建立受限 Itinerary RPC 連線，未讀取或寫入資料。</p></div></main>;
+  if (!backend) return <main className="ship-portal-shell"><div className="ship-state-card"><ShipPortalBrand><h1>船端服務設定不完整</h1><p>目前無法建立受限 Itinerary RPC 連線，未讀取或寫入資料。</p></ShipPortalBrand></div></main>;
 
   return <main className="ship-portal-shell">
-    <header className="ship-portal-header ship-itinerary-header"><div>{demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></div>
+    <header className="ship-portal-header ship-itinerary-header"><ShipPortalBrand>{demoMode && <span className="ship-demo-label">真實 UI＋測試資料</span>}<h1>船端 Itinerary</h1><p>{demoMode ? '免登入測試頁｜只使用去敏資料與獨立本機 demo namespace' : '免登入｜資料經受限單船 RPC 保存至 Itinerary 雲端'}</p></ShipPortalBrand>
       <nav className="ship-itinerary-shortcuts" aria-label="船端快捷入口">
         <a className="ship-internal-control-shortcut ship-tracking-shortcut" href="https://ttwonder.github.io/ship-dynamics-todo-system/packageorwork-tracking" target="_blank" rel="noopener noreferrer" title="另開分頁前往船端配件／物料／工程跟蹤">船端配件／物料／工程跟蹤</a>
         <a className="ship-internal-control-shortcut" href={`${import.meta.env.BASE_URL}ship-internal-control.html`} target="_blank" rel="noopener noreferrer" title="另開分頁前往船端內控／訴求">內控異常/訴求/報告需求</a>

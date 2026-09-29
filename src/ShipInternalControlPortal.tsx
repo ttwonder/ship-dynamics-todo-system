@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import ShipPortalBrand from './ShipPortalBrand';
 import { BatchCreateModal, createInternalControlBatchDraft, type InternalControlBatchDraft } from './InternalControlModals';
 import { getSupabaseConfig } from './cloud';
 import { vesselDisplayName } from './vesselDisplay';
@@ -142,7 +143,7 @@ export default function ShipInternalControlPortal() {
   const options = record && !vessels.some(vessel => vessel.id === record.vessel.id) ? [record.vessel, ...vessels] : vessels;
   const hasDraft = record && (record.pending || record.draft.reporterNameAndRole?.trim() || record.draft.rows.some(row => row.description || row.status));
   return <main className="ship-portal-shell ship-internal-portal">
-    <header className="ship-portal-header"><div><h1>船端內控/訴求</h1><p>免登入｜選擇船名後新增內控；雲端確認保存才會顯示成功。</p></div>
+    <header className="ship-portal-header"><ShipPortalBrand><h1>船端內控/訴求</h1><p>免登入｜選擇船名後新增內控；雲端確認保存才會顯示成功。</p></ShipPortalBrand>
       <div className="ship-vessel-picker"><label htmlFor="ship-internal-vessel">船名</label><select id="ship-internal-vessel" value={selected} disabled={!backend || loading || busy || open} onChange={event => void selectVessel(event.target.value)}><option value="">請選擇船舶</option>{options.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div>
     </header>
     <section className="ship-state-card compact ship-internal-guidance" aria-label="填報說明"><h2>內控／訴求填報說明</h2><ul>

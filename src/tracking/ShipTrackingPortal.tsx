@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import ShipPortalBrand from '../ShipPortalBrand';
 import { getSupabaseConfig } from '../cloud';
 import { createInitialData } from '../data/seed';
 import type { AppData, InternalControlCase, UserAccount } from '../types';
@@ -93,7 +94,7 @@ export default function ShipTrackingPortal() {
   };
   const caseSource = caseView && view?.data.trackingItems?.find(row => row.id === caseView.trackingItemId && row.linkedCaseId === caseView.id && row.linkState === 'active');
   return <main className="ship-portal-shell ship-tracking-portal">
-    <header className="ship-portal-header"><div><h1>船端配件／物料／工程跟蹤</h1><p>免登入選船｜船岸共用資料｜只有雲端確認並讀回才算保存。選船不代表驗證身份。</p></div><button className="btn small" disabled={!backend || refreshing || changing.current} onClick={() => void refresh()}>{refreshing ? '讀取中…' : '讀取最新資料'}</button></header>
+    <header className="ship-portal-header"><ShipPortalBrand><h1>船端配件／物料／工程跟蹤</h1><p>免登入選船｜船岸共用資料｜只有雲端確認並讀回才算保存。選船不代表驗證身份。</p></ShipPortalBrand><button className="btn small" disabled={!backend || refreshing || changing.current} onClick={() => void refresh()}>{refreshing ? '讀取中…' : '讀取最新資料'}</button></header>
     {notice && <p className="ship-notice" role="status">{notice}</p>}
     {view && backend ? <TrackingPage data={view.data} vessels={view.data.vessels} user={view.user} workspace={backend.namespace} identity={backend.identity} canCreate canEdit canClose canExport audience="ship" callbacks={callbacks}/> : !notice && <p role="status">正在讀取啟用船舶…</p>}
     {caseView && <div className="modal-backdrop"><section className="modal ship-tracking-case" role="dialog" aria-modal="true" aria-label="已同步內控內容"><div className="modal-head"><h2>已同步內控內容</h2><button className="btn ghost" onClick={() => setCaseView(null)}>關閉內控內容</button></div>{caseSource && <TrackingDeletionStatus row={caseSource}/>}<p>{vesselSelectionDisplayName(view?.data.vessels.find(v => v.id === caseView.vesselId))}｜{caseView.reportDate}｜{caseView.reportSource}</p><p>{caseView.priority}｜{caseView.category}｜{caseView.departments.join('、')}｜{caseView.isClosed ? `已結案 ${caseView.closedDate}` : '未結案'}</p><h3>事項內容</h3><p className="ship-tracking-text">{caseView.description}</p><h3>最新狀態</h3><p className="ship-tracking-text">{caseView.status}</p><p>期望完成日/DL/到期日：{caseView.expectedDate || '未填'}</p><details><summary>更新記錄</summary>{caseView.statusLogs.map(log => <p key={log.id}>{formatTaipeiDateTime(log.at)}｜{log.by}<br/>{log.text}</p>)}</details><p>{caseSource?.deletion ? '此處唯讀；來源已刪除，但內控及有效關聯仍保留。來源須由岸端還原後，才能從跟蹤清單更新進度、結案或重開。' : '此處唯讀；回到跟蹤清單更新進度、結案或重開，雲端核對有效關聯後同步。'}</p></section></div>}

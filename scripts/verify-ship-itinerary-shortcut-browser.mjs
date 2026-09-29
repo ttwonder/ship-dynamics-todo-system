@@ -125,6 +125,7 @@ try {
   await call('Runtime.enable'); await call('Page.enable');
   await call('Page.navigate', { url: sourceUrl });
   await until(() => evaluate("document.querySelectorAll('#ship-vessel-select option').length > 1"), 'original local demo ready');
+  if (process.argv.includes('--portal-logos')) await (await import('./ship-portal-logo-browser-checks.mjs')).shipPortalLogoChecks({call,evaluate,until,screen,origin,base,sourceUrl,evidence});
   for (const [width, height] of [[1440, 900], [1024, 800], [390, 844]]) {
     await call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
     await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
