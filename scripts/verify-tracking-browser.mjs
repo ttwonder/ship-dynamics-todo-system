@@ -67,11 +67,12 @@ const leases=async()=> (await qa.db.query("select section_key,locked_by from shi
 
 try{
  native=await createNativeRecordQa(output,evidence,{httpTransactions:true});
- qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,shipTracking:process.argv.includes('--soft-delete'),tracking:true,taskMember:true,hmr:!process.argv.includes('--delivery-notes'),databaseFactory:async()=>native.adapter});
+ qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,shipTracking:process.argv.includes('--soft-delete'),tracking:true,taskMember:true,hmr:!process.argv.includes('--delivery-notes')&&!process.argv.includes('--batch-usability')&&!process.argv.includes('--current-tracking-sql'),databaseFactory:async()=>native.adapter});
  await (await import('./tracking-browser-fixture.mjs')).installTrackingBrowserMigrations(native.adapter);
  await (await import('./tracking-browser-fixture.mjs')).installTrackingFieldRevision(qa.db);
  if(process.argv.includes('--soft-delete'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260928220000_tracking_soft_delete.sql','utf8'));
  if(process.argv.includes('--delivery-notes'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929090000_tracking_delivery_notes.sql','utf8'));
+ if(process.argv.includes('--batch-usability')||process.argv.includes('--current-tracking-sql'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929120000_tracking_delivery_close.sql','utf8'));
 
  assert.equal((await fetch(`${qa.origin}/__qa/health`)).status,200);
  const chrome='C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));
@@ -158,7 +159,9 @@ try{
  const rowAction=(reference,label)=>trackingBatchAction({evaluate,click,nodeClick,until},reference,label);
  const dateInput=async(selector,value)=>{await until(()=>evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)}))`),"date field ready");await evaluate(`(()=>{const n=document.querySelector(${JSON.stringify(selector)});if(!n||n.disabled)throw new Error('date input unavailable');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,${JSON.stringify(value)});n.dispatchEvent(new Event('input',{bubbles:true}));n.dispatchEvent(new Event('change',{bubbles:true}));})()`);assert.equal(await evaluate(`document.querySelector(${JSON.stringify(selector)}).value`),value);};
  const trackingTab=async(label)=>{await nodeClick(`[...document.querySelectorAll('.tracking-tabs button')].find(n=>n.innerText.startsWith(${JSON.stringify(label)}))`);};
- if(process.argv.includes('--delivery-notes')){
+ if(process.argv.includes('--batch-usability')){
+  await (await import('./tracking-batch-usability-browser-checks.mjs')).trackingBatchUsabilityChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'shore',finish:finishEditor});
+ }else if(process.argv.includes('--delivery-notes')){
   await (await import('./tracking-delivery-notes-browser-checks.mjs')).trackingDeliveryNoteChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'shore',finish:finishEditor});
  }else if(process.argv.includes('--soft-delete')){
   await (await import('./tracking-soft-delete-browser-checks.mjs')).trackingSoftDeleteChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'shore',finish:finishEditor});

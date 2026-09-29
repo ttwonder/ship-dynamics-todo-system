@@ -28,7 +28,7 @@ try {
     assert.doesNotMatch(filterPanel,/<textarea\b|<input\b(?![^>]*type="checkbox")/,`${audience}: field filters must contain dropdown criteria only, not text/date input boxes`);
     assert.match(filterPanel,/<select\b/,`${audience}: dropdown criteria retained`);
     assert.match(html,/<input[^>]+aria-label="搜尋跟蹤"/,`${audience}: global text search retained`);
-    assert.ok(html.includes('>批量更新</button>'),`${audience}: multi-selected full-field update reachable`);
+    assert.ok(html.includes('>批量修正</button>'),`${audience}: multi-selected full-field update reachable`);
     cases.push(`${audience}-dropdown-only-field-filters`);
   }
   const {trackingColumnsFor}=await vite.ssrLoadModule('/src/tracking/trackingColumns.ts');

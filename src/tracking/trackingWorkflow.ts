@@ -24,7 +24,7 @@ export type TrackingCommand =
  | {type:'progress';items:(TrackingVersion & {text:string})[]}
  | {type:'edit';items:(TrackingVersion & {changes:TrackingEdit})[]}
  | {type:'reclassify';items:(TrackingVersion & {requestType:TrackingRequestType;actualDate:string;deliveryStatus:TrackingDeliveryStatus})[]}
- | {type:'delivery';items:(TrackingVersion & {status:TrackingDeliveryStatus;date:string;note?:string})[]}
+ | {type:'delivery';items:(TrackingVersion & {status:TrackingDeliveryStatus;date:string;note?:string;closeOnDelivery?:boolean})[]}
  | {type:'sync';items:(TrackingVersion & {item:InternalControlCase;projection?:InternalControlTaskProjection})[]}
  | {type:'lifecycle';action:TrackingLifecycleAction;date?:string;outcome?:'completed'|'cancelled';targets:(TrackingVersion & {entry:TrackingEntry})[]};
 
@@ -85,6 +85,22 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
   if(group.source.updatedAt!==version)fail('tracking-stale-source');
   return group;
  };
+ const applyLifecycle=(sourceId:string,action:TrackingLifecycleAction,date:string|undefined,outcome:'completed'|'cancelled'|undefined,entry:TrackingEntry)=>{
+  const group=resolveTrackingGroup(next,sourceId),members=[group.source,...(group.item?[group.item]:[]),...(group.task?[group.task]:[])];
+  authorize(next,user,group.source.vesselId,'closeTasks');
+  if(members.some(m=>m.isClosed!==group.source.isClosed||(m.isClosed&&m.closedDate!==group.source.closedDate)))fail('tracking-lifecycle-inconsistent');
+  if(action==='close'&&group.source.isClosed||action!=='close'&&!group.source.isClosed)fail('tracking-lifecycle-state');
+  if(action!=='reopen')validateTrackingClosureDate(group.source,date || '',group.item?.reportDate);
+  const before=closureValue(group.source);
+  for(const member of members){
+   member.isClosed=action!=='reopen';member.updatedBy=user.id;member.updatedAt=at;
+   if(member.isClosed){member.closedDate=date;member.closedBy=action==='close'?user.id:member.closedBy;}
+   else {delete member.closedDate;delete member.closedBy;}
+  }
+  if(group.source.kind==='engineering'&&action==='close')group.source.closureOutcome=outcome || 'completed';
+  const event=appendTrackingEvent(group.source,action,before,closureValue(group.source),user,at,entry,operationId);
+  for(const member of [group.item,group.task])if(member)member.trackingLifecycle=[...(member.trackingLifecycle || []),structuredClone(event)];
+ };
  if(command.type==='create'){
   selection(command.items.map(i=>i.id));
   for(const input of command.items){
@@ -115,20 +131,7 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
    if(!source)fail('tracking-source-missing');
    if(target.entry==='tracking'&&isTrackingDeleted(source!))fail('tracking-source-deleted');
    if(seen.has(source!.id))continue;seen.add(source!.id);
-   const group=resolveTrackingGroup(next,source!.id),members=[group.source,...(group.item?[group.item]:[]),...(group.task?[group.task]:[])];
-   authorize(next,user,group.source.vesselId,'closeTasks');
-   if(members.some(m=>m.isClosed!==group.source.isClosed||(m.isClosed&&m.closedDate!==group.source.closedDate)))fail('tracking-lifecycle-inconsistent');
-   if(command.action==='close'&&group.source.isClosed||command.action!=='close'&&!group.source.isClosed)fail('tracking-lifecycle-state');
-   if(command.action!=='reopen')validateTrackingClosureDate(group.source,command.date || '',group.item?.reportDate);
-   const before=closureValue(group.source);
-   for(const member of members){
-    member.isClosed=command.action!=='reopen';member.updatedBy=user.id;member.updatedAt=at;
-    if(member.isClosed){member.closedDate=command.date;member.closedBy=command.action==='close'?user.id:member.closedBy;}
-    else {delete member.closedDate;delete member.closedBy;}
-   }
-   if(group.source.kind==='engineering'&&command.action==='close')group.source.closureOutcome=command.outcome || 'completed';
-   const event=appendTrackingEvent(group.source,command.action,before,closureValue(group.source),user,at,target.entry,operationId);
-   for(const member of [group.item,group.task])if(member)member.trackingLifecycle=[...(member.trackingLifecycle || []),structuredClone(event)];
+   applyLifecycle(source!.id,command.action,command.date,command.outcome,target.entry);
   }
  } else {
   selection(command.items.map(i=>i.id));
@@ -193,6 +196,8 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
    } else if(command.type==='delivery'){
     const delivery=input as Extract<TrackingCommand,{type:'delivery'}>['items'][number];
     if(source.kind!=='supply')fail('tracking-not-supply');
+    if(delivery.closeOnDelivery!==undefined&&typeof delivery.closeOnDelivery!=='boolean')fail('tracking-delivery-close-invalid');
+    if(delivery.closeOnDelivery&&delivery.status!=='delivered')fail('tracking-delivery-close-requires-delivered');
     updateProgress(trackingDeliveryProgress(source.progress,delivery.note));
     const before={deliveryStatus:source.deliveryStatus,actualDeliveryDate:source.actualDeliveryDate || ''};
     source.deliveryStatus=delivery.status;
@@ -200,6 +205,7 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
     else delete source.actualDeliveryDate;
     validateTrackingItem(source);
     appendTrackingEvent(source,'delivery',before,{deliveryStatus:source.deliveryStatus,actualDeliveryDate:source.actualDeliveryDate || ''},user,at,'tracking',operationId);
+    if(delivery.closeOnDelivery)applyLifecycle(source.id,'close',delivery.date,undefined,'tracking');
    } else {
     const sync=input as Extract<TrackingCommand,{type:'sync'}>['items'][number];
     if(item||source.linkState==='active')fail('tracking-already-linked');

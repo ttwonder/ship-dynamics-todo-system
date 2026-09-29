@@ -1,5 +1,6 @@
 import type { TrackingReclassificationDraft } from './TrackingModals';
 import type { TrackingItem } from './trackingTypes';
+import { trackingItemLabel } from './trackingDisplay';
 import type { TrackingUiCommand } from './trackingUiCommands';
 import { TRACKING_REQUEST_TYPES, trackingRequestKind, trackingRequestTypeLabel, type TrackingRequestType } from './trackingRequestTypes';
 
@@ -51,7 +52,7 @@ export function TrackingReclassifyFields({ originals, value, onChange }: {
       const target = value.values.find(row => row.id === original.id);
       const prefix = `第 ${index + 1} 筆 `;
       return <fieldset className="tracking-form-row tracking-reclassify-row" key={original.id} data-reclassify-id={original.id}>
-        <legend>{prefix}｜{original.referenceNo} {original.originalItemNo || ''} [{original.id}]</legend>
+        <legend>{prefix}｜{trackingItemLabel(original)}</legend>
         <div className="tracking-reclassify-grid">
           <div className="tracking-reclassify-original"><strong>原類型：{trackingRequestTypeLabel(original.requestType) || '未指定（舊資料）'}</strong><span>原實際{original.kind === 'supply' ? '送達' : '完工'}日期：{(original.kind === 'supply' ? original.actualDeliveryDate : original.completionDate) || '—'}</span><span>原送船狀態：{deliveryLabels[original.deliveryStatus]}</span></div>
           {kind && target && <>

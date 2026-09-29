@@ -115,4 +115,14 @@
 .tracking-delivery-notes>p{margin:3px 0}
 .tracking-delivery-notes>label{display:flex;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}
 .tracking-delivery-notes textarea{width:100%;box-sizing:border-box;resize:vertical}
+/* Full business labels, without internal IDs or forced truncation. */
+.tracking-affected>li,.tracking-form-row>legend,.tracking-progress-row>label{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere}
+.tracking-other-history{margin:5px 8px}
+.tracking-page .tracking-delivery-close{display:inline-flex;align-items:center;gap:9px;max-width:100%;box-sizing:border-box;margin:6px 0 6px 12px;padding:8px 12px;border:2px solid #167368;border-radius:7px;background:#e8f6f0;color:#174d43;vertical-align:middle;cursor:pointer}
+.tracking-delivery-close input[type=checkbox]{width:20px;height:20px;flex-shrink:0;accent-color:#12665c}
+.tracking-delivery-close strong{display:block;font-size:15px}.tracking-delivery-close small{display:block;white-space:normal;overflow-wrap:anywhere}
+.tracking-page .tracking-delivery-close.is-checked{background:#12665c;color:#fff}
+.tracking-delivery-close:has(input:disabled){border-color:var(--line);background:var(--tracking-head);color:var(--tracking-text);cursor:default}
+.tracking-delivery-close:focus-within{outline:2px solid currentColor;outline-offset:2px}
+@media(max-width:700px){.tracking-page .tracking-delivery-close{display:flex;margin:6px 0;width:100%}}
 /* Follow the App's actual theme tokens; OS dark mode must not restyle only this module. */

@@ -66,7 +66,7 @@ export async function trackingFieldChecks(c){
   await toggle('欄位設定');const settings=await evaluate("document.querySelector('.tracking-preferences').textContent");for(const old of ['備貨完成日期','供應商','預計供料日期','實際全部送達日期'])assert.ok(!settings.includes(old));assert.ok(settings.includes('類型'));await toggle('欄位設定');await fill('[aria-label="搜尋跟蹤"]','FIELD-UI');await until(()=>evaluate("document.querySelectorAll('.tracking-table tbody tr .tracking-reference').length===5"),'global search still works');await click('清除條件');
  });
  await check('explicit-multiselect-batch-edit-delivery-close-and-reopen',async()=>{
-  const supply=refs.slice(2,5),before=await qa.read();await choose(supply);await click('批量更新');await until(()=>evaluate("document.querySelectorAll('.tracking-form-row').length===3"),'batch full field editor');
+  const supply=refs.slice(2,5),before=await qa.read();await choose(supply);await click('批量修正');await until(()=>evaluate("document.querySelectorAll('.tracking-form-row').length===3"),'batch full field editor');
   for(let i=0;i<3;i++){await fill(`[aria-label="第 ${i+1} 筆 請購案號(非必填)"]`,'0000'+i);await fill(`[aria-label="第 ${i+1} 筆 最新進度"]`,'批量更新的進度 '+i);}
   await date('第 1 筆 實際送達/完工日期','2026-09-28');await date('第 1 筆 實際送達/完工日期','');await save(3);await finish();let saved=await qa.read();assert.equal(saved.revision,before.revision+1);assert.deepEqual(saved.payload.trackingItems.filter(r=>!supply.includes(r.referenceNo)),before.payload.trackingItems.filter(r=>!supply.includes(r.referenceNo)));
   await choose(supply);await click('批量送達／更正');await date('實際送達/完工日期','2026-09-26');await save(3);await finish();await tab('已送船清單');

@@ -1,4 +1,5 @@
 import type { TrackingItem } from './trackingTypes';
+import { trackingItemLabel } from './trackingDisplay';
 import type { TrackingDraft } from './TrackingModals';
 import type { TrackingUiCommand } from './trackingUiCommands';
 import { isTrackingDeleted, isTrackingDeletionPending, type TrackingDeletionAction } from './trackingDeletion';
@@ -28,7 +29,7 @@ export function TrackingDeletionStatus({ row }: { row: TrackingItem }) {
 }
 export function TrackingDeletionFields({ draft, onChange }: { draft: TrackingDraft; onChange: (reason: string) => void }) {
   return <div className="tracking-deletion-fields">
-    <div className="tracking-deletion-sources">{draft.originals.map(row => <article key={row.id}><strong>{row.referenceNo} [{row.id}]</strong><span>｜{trackingRequestTypeLabel(row.requestType) || (row.kind === 'supply' ? '配件／物料' : '工程')}｜{row.isClosed ? '已結案' : '未結案'}｜申請/開單日期：{row.applicationDate}</span><TrackingDeletionStatus row={row}/></article>)}</div>
+    <div className="tracking-deletion-sources">{draft.originals.map(row => <article key={row.id}><strong>{trackingItemLabel(row)}</strong><span>｜{trackingRequestTypeLabel(row.requestType) || (row.kind === 'supply' ? '配件／物料' : '工程')}｜{row.isClosed ? '已結案' : '未結案'}｜申請/開單日期：{row.applicationDate}</span><TrackingDeletionStatus row={row}/></article>)}</div>
     <label>本批操作理由（必填，最多 500 字）<textarea aria-label="本批操作理由" required maxLength={500} value={draft.deletionReason || ''} onChange={event => onChange(event.target.value)}/></label>
     <small>同一理由套用至上述精確選取項目；保存確認前不移出清單。原分類、業務日期、進度與歷程均保留。</small>
   </div>;

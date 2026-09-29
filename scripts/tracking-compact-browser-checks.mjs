@@ -111,7 +111,7 @@ export async function compactChecks(c){
    await date(prefix+'申請/開單日期','2026-09-21');await date(prefix+'期望完成日/DL/到期日','2026-10-01');
    await fill(`[aria-label="${prefix}最新進度"]`,`COMPACT-${i} 已保存進度`);
   }
-  await save(4);await tab('配件物料總清單');await choose(['COMPACT-1','COMPACT-2']);await click('批量更新');
+  await save(4);await tab('配件物料總清單');await choose(['COMPACT-1','COMPACT-2']);await click('批量修正');
   await until(()=>evaluate("Boolean(document.querySelector('[aria-label=\"第 1 筆 緊急\"]'))"),'bulk editor');
   await nodeClick("document.querySelector('[aria-label=\"第 1 筆 緊急\"]')");
   assert.equal(await evaluate("document.querySelector('[aria-label=\"第 1 筆 普通\"]').checked"),false);
@@ -140,7 +140,7 @@ export async function compactChecks(c){
     await evaluate("document.querySelector('.tracking-table-scroll-top').scrollIntoView({block:'center'})");await screen(`compact-${label}-${width}`);
     const before=await qa.read(),metricStart=qa.metrics.length;
     const reference=await evaluate("document.querySelector('.tracking-table tbody tr[data-tracking-id] .tracking-reference .tracking-cell-text')?.childNodes[0]?.textContent");assert.ok(reference,'populated list');
-    await choose([reference]);await until(()=>evaluate("[...document.querySelectorAll('button')].some(n=>n.innerText==='查看所選紀錄'&&!n.disabled)"),'readonly ready');await click('查看所選紀錄');
+    await choose([reference]);await until(()=>evaluate("[...document.querySelectorAll('button')].some(n=>n.innerText==='查看所選狀態更新紀錄'&&!n.disabled)"),'readonly ready');await click('查看所選狀態更新紀錄');
     await until(()=>evaluate("Boolean(document.querySelector('.tracking-history-modal'))"),'readonly modal');
     assert.equal(await evaluate("document.querySelectorAll('.tracking-history-item').length"),1);assert.ok(await evaluate("document.querySelector('.tracking-history-item').open"));
     const h=await evaluate("(()=>{const n=document.querySelector('.tracking-history-modal'),r=n.getBoundingClientRect();return{left:r.left,right:r.right,width:n.clientWidth,scroll:n.scrollWidth,inputs:n.querySelectorAll('input,textarea,select').length,text:n.textContent};})()");
@@ -153,9 +153,9 @@ export async function compactChecks(c){
  }
  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});await tab('配件物料總清單');
  await check(`${audience}-multi-history-grouped-open-closed-zero-writes`,async()=>{
-  await choose(['COMPACT-1','COMPACT-2']);const before=await qa.read(),start=qa.metrics.length;await click('查看所選紀錄');
+  await choose(['COMPACT-1','COMPACT-2']);const before=await qa.read(),start=qa.metrics.length;await click('查看所選狀態更新紀錄');
   await until(()=>evaluate("document.querySelectorAll('.tracking-history-item').length===2"),'two exact groups');
-  for(let i=0;i<2;i++)await nodeClick(`document.querySelectorAll('.tracking-history-item>summary')[${i}]`);
+  assert.equal(await evaluate("document.querySelectorAll('.tracking-history-item[open]').length"),2,'selected status records start expanded');
   const text=await evaluate("document.querySelector('.tracking-history-modal').textContent");for(const value of ['COMPACT-1 已保存進度','COMPACT-2 已保存進度','送船狀態／日期更正','結案','2026-09-27'])assert.ok(text.includes(value),value);
   await screen('history-multi-open-closed');await click('關閉紀錄');assert.deepEqual(await qa.read(),before);assert.deepEqual(qa.metrics.slice(start).filter(m=>/acquire|claim|renew|apply|save/.test(m.rpc)||['claim','submit','renew'].includes(m.action)),[]);
  });

@@ -7,6 +7,7 @@ import { trackingRequestTypeLabel } from './trackingRequestTypes';
 import { TrackingDeletionStatus } from './TrackingDeletionFields';
 import { trackingReviewColumns } from './trackingColumns';
 import { isTrackingDeleted } from './trackingDeletion';
+import { trackingItemLabel } from './trackingDisplay';
 
 const eventLabels: Record<TrackingEvent['action'], string> = {
   delete: '刪除來源／批准申請', restore: '還原來源', 'request-delete': '申請刪除', 'reject-delete': '駁回刪除申請',
@@ -55,6 +56,12 @@ export function TrackingHistoryModal({ rows, users, audience, vesselName, onClos
     return () => { if (previous?.isConnected) previous.focus({ preventScroll: true }); };
   }, []);
   const names = new Map(users.map(user => [user.id, user.name]));
+  const timeline = (entries: ReturnType<typeof trackingHistoryEntries>) => <ol className="tracking-history-timeline">{entries.map(entry => <li key={entry.id}>
+    <div className="tracking-history-meta"><strong>{entry.title}</strong><time dateTime={entry.at}>{formatTaipeiDateTime(entry.at) || '時間未記錄'}</time><span>（UTC+8）｜{entry.actor || names.get(entry.actorId || '') || '更新者未記錄'}</span>
+      {entry.event && <span>｜{entry.event.entry === 'tracking' ? '跟蹤清單' : entry.event.entry === 'internal-control' ? '內控' : audience === 'shore' ? '要事' : '關聯記錄'}</span>}
+    </div>
+    {entry.event ? <dl className="tracking-history-changes">{[...new Set([...Object.keys(entry.event.before || {}), ...Object.keys(entry.event.after || {})])].filter(key => !['caseId', 'taskId'].includes(key)).map(key => <div key={key}><dt>{fieldLabels[key] || key}</dt><dd><span>{displayValue(key, entry.event!.before?.[key], names)}</span><span aria-label="變更為"> → </span><span>{displayValue(key, entry.event!.after?.[key], names)}</span></dd></div>)}</dl> : <p className="tracking-history-text">{entry.text}</p>}
+  </li>)}</ol>;
   return <div className="modal-backdrop"><section className="modal tracking-history-modal" role="dialog" aria-modal="true" aria-labelledby="tracking-history-title" onKeyDown={event => {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); }
     if (event.key === 'Tab') {
@@ -63,22 +70,19 @@ export function TrackingHistoryModal({ rows, users, audience, vesselName, onClos
       if (document.activeElement === edge) { event.preventDefault(); next?.focus(); }
     }
   }}>
-    <div className="modal-head"><h2 id="tracking-history-title">所選項目紀錄（{rows.length} 項）</h2><button ref={closeButton} type="button" className="btn ghost" onClick={onClose}>關閉紀錄</button></div>
+    <div className="modal-head"><h2 id="tracking-history-title">所選狀態更新紀錄（{rows.length} 項）</h2><button ref={closeButton} type="button" className="btn ghost" onClick={onClose}>關閉紀錄</button></div>
     <p className="tracking-history-note"><strong>{vesselName}</strong>｜目前清單已讀取的紀錄，不含未保存輸入。此視窗僅供查看，不取得編輯權。</p>
-    <p className="tracking-history-note">顯示已保存的進度與送達／完工、結案等事件；不是所有欄位的完整修改歷史。</p>
+    <p className="tracking-history-note">優先顯示已保存的進度文字、送船／完工及結案狀態變更；其他操作另行收合。不是所有欄位的完整修改歷史。</p>
     {rows.map(row => {
       const entries = trackingHistoryEntries(row);
-      return <details className="tracking-history-item" data-history-id={row.id} key={row.id} open={rows.length === 1}>
-        <summary><strong>{row.referenceNo}</strong>{row.originalItemNo && <span>｜原項次：{row.originalItemNo}</span>}<span>｜{row.isClosed ? '已結案' : '未結案'}｜{entries.length} 筆紀錄</span><small>{row.id}</small></summary>
-        <p className="tracking-history-description">{row.description}</p>
+      const isStatus = (entry: typeof entries[number]) => !entry.event || ['delivery', 'completion', 'close', 'reopen', 'correct-close-date'].includes(entry.event.action);
+      const statuses = entries.filter(isStatus), other = entries.filter(entry => !isStatus(entry));
+      return <details className="tracking-history-item" data-history-id={row.id} key={row.id} open>
+        <summary><strong>{trackingItemLabel(row)}</strong><span>｜{row.isClosed ? '已結案' : '未結案'}｜{statuses.length} 筆狀態更新</span></summary>
         <TrackingDeletionStatus row={row}/>
-        <details className="tracking-retained-details" open={isTrackingDeleted(row)}><summary>目前保留資料（含原分類及日期）</summary><dl className="tracking-history-changes">{trackingReviewColumns().filter(column => !['events', 'statusLogs', 'description'].includes(column.key)).map(column => <div key={column.key}><dt>{column.label}</dt><dd>{column.value(row) || '—'}</dd></div>)}</dl></details>
-        {entries.length ? <ol className="tracking-history-timeline">{entries.map(entry => <li key={entry.id}>
-          <div className="tracking-history-meta"><strong>{entry.title}</strong><time dateTime={entry.at}>{formatTaipeiDateTime(entry.at) || '時間未記錄'}</time><span>（UTC+8）｜{entry.actor || names.get(entry.actorId || '') || entry.actorId || '更新者未記錄'}</span>
-            {entry.event && <span>｜{entry.event.entry === 'tracking' ? '跟蹤清單' : entry.event.entry === 'internal-control' ? '內控' : audience === 'shore' ? '要事' : '關聯記錄'}</span>}
-          </div>
-          {entry.event ? <dl className="tracking-history-changes">{[...new Set([...Object.keys(entry.event.before || {}), ...Object.keys(entry.event.after || {})])].filter(key => audience !== 'ship' || key !== 'taskId').map(key => <div key={key}><dt>{fieldLabels[key] || key}</dt><dd><span>{displayValue(key, entry.event!.before?.[key], names)}</span><span aria-label="變更為"> → </span><span>{displayValue(key, entry.event!.after?.[key], names)}</span></dd></div>)}</dl> : <p className="tracking-history-text">{entry.text}</p>}
-        </li>)}</ol> : <p>尚無已保存的進度或事件紀錄。</p>}
+        {statuses.length ? timeline(statuses) : <p>尚無已保存的狀態更新紀錄。</p>}
+        <details className="tracking-other-history"><summary>其他操作紀錄（{other.length}）</summary>{other.length ? timeline(other) : <p>尚無其他操作紀錄。</p>}</details>
+        <details className="tracking-retained-details" open={isTrackingDeleted(row)}><summary>目前保留資料（含原分類及日期）</summary><dl className="tracking-history-changes">{trackingReviewColumns().filter(column => !['events', 'statusLogs', 'description', 'id', 'source'].includes(column.key)).map(column => <div key={column.key}><dt>{column.label}</dt><dd>{column.key === 'closedBy' ? names.get(row.closedBy || '') || '—' : column.value(row) || '—'}</dd></div>)}</dl></details>
       </details>;
     })}
   </section></div>;

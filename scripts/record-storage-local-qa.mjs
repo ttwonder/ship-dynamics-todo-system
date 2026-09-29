@@ -68,7 +68,11 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
   if(handoverMigrationFixture)await handoverMigrationFixture(db,'before');
   else await db.exec(fs.readFileSync('supabase/development/20260911_vessel_manager_handover.sql','utf8'));
   if(scopedRead)await db.exec(fs.readFileSync('supabase/development/20260908_appdata_record_scoped_read.sql','utf8'));
-  vite=await createViteServer({cacheDir:process.env.QA_VITE_CACHE_DIR,server:{middlewareMode:true,...(!hmr?{hmr:false}:process.env.QA_HMR_PORT?{hmr:{port:Number(process.env.QA_HMR_PORT)}}:{})},logLevel:'silent',plugins:[{
+  // Vite 8's client still connects to its WebSocket when hot replacement is off.
+  // Keep that real transport on a private port; parallel QA must not share 24678.
+  let privateWs;
+  if(!hmr){const listener=createHttpServer();await new Promise((r,j)=>{listener.once('error',j);listener.listen(0,'127.0.0.1',r);});const port=listener.address().port;await new Promise(r=>listener.close(r));privateWs={host:'127.0.0.1',port,clientPort:port};}
+  vite=await createViteServer({cacheDir:process.env.QA_VITE_CACHE_DIR,server:{middlewareMode:true,...(!hmr?{hmr:false,ws:privateWs}:process.env.QA_HMR_PORT?{hmr:{port:Number(process.env.QA_HMR_PORT)}}:{})},logLevel:'silent',plugins:[{
    name:'isolated-record-qa-label',
    transformIndexHtml(html){return html.replace('<body>','<body><aside id="isolated-qa-label" style="position:fixed;z-index:2147483647;bottom:0;right:0;background:#442200;color:white;padding:4px 10px;font:12px sans-serif;pointer-events:none">真實 UI＋測試資料｜本機 SQL；非正式環境</aside>');},
   }]});
