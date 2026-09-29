@@ -243,7 +243,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
       draftRef.current=saved.draft;setDraft(saved.draft);pendingRef.current=saved.pending;setPending(saved.pending);setSavedAvailable(false);
     }finally{openingRef.current=false;}
   };
-  const statisticsTab = <button className={`btn ${statisticsView ? 'primary' : ''}`} role="tab" aria-selected={statisticsView} onClick={() => void switchView(() => { setStatisticsView(true); setReviewView(null); })}>統計資訊</button>;
+  const statisticsTab = <button className={`btn tracking-tab-statistics ${statisticsView ? 'primary' : ''}`} role="tab" aria-selected={statisticsView} onClick={() => void switchView(() => { setStatisticsView(true); setReviewView(null); })}>統計資訊</button>;
   const actionButton = (action: TrackingAction, label: string, ids?: string[], disabled = false) => <HelpAction action={action} label={label} help={trackingHelp(audience)[action]} disabled={disabled || loading || busy} onClick={() => void start(action, ids)}/>;
   const statusNotice = (notice || loading) && <p role="status" className="tracking-notice">{loading ? '讀取此船最新資料…' : notice}</p>;
   // Refresh display-only references even for drafts saved before business labels existed.

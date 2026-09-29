@@ -18,6 +18,13 @@
 .tracking-page .tracking-urgent-shortcut[aria-pressed=true]{color:#fff;background:#b42318;border-color:#b42318}
 .tracking-search-actions>.tracking-toolbar{flex:1;min-width:0;margin:0;padding:4px 6px;gap:4px}
 .tracking-search-actions>.tracking-toolbar>b{white-space:nowrap}
+/* Prominent entry colors; preserve existing geometry, permissions and tab order. */
+.tracking-heading .btn.tracking-action-create{--tracking-entry-bg:#15803d;--tracking-entry-hover:#166534;--tracking-entry-ring:#166534}
+.tracking-tabs .btn.tracking-tab-statistics{--tracking-entry-bg:#0369a1;--tracking-entry-hover:#075985;--tracking-entry-ring:#0369a1}
+.tracking-tabs .btn.tracking-tab-statistics[aria-selected=true]{--tracking-entry-bg:#075985;--tracking-entry-hover:#0c4a6e;box-shadow:inset 0 0 0 2px #bae6fd}
+.tracking-page :is(.tracking-heading .btn.tracking-action-create,.tracking-tabs .btn.tracking-tab-statistics){background:var(--tracking-entry-bg);color:#fff}
+.tracking-page :is(.tracking-heading .btn.tracking-action-create,.tracking-tabs .btn.tracking-tab-statistics):hover:not(:disabled){background:var(--tracking-entry-hover);filter:none}
+.tracking-page :is(.tracking-heading .btn.tracking-action-create,.tracking-tabs .btn.tracking-tab-statistics):focus-visible{outline:2px solid var(--tracking-entry-ring);outline-offset:2px}
 /* Semantic colors are restricted to the batch-toolbar actions. */
 .tracking-toolbar .tracking-action-urgency{--tracking-action-bg:#b4555d;--tracking-action-fg:#fff;--tracking-action-hover:#a84e56;--tracking-action-ring:#b4555d}
 .tracking-toolbar .tracking-action-edit{--tracking-action-bg:#e2e8f0;--tracking-action-fg:#334155;--tracking-action-hover:#cbd5e1;--tracking-action-ring:#475569}
