@@ -167,7 +167,7 @@ export default function TrackingPage({ data, vessels, user, workspace, identity,
     try {
       if (!submission) {
         if(!draftWritable(submittedDraft)){setNotice('編輯鎖尚未重新取得；原輸入保留，本次未保存。');return false;}
-        if (submittedDraft.action === 'delivery' && submittedDraft.closeOnDelivery && !canClose) { setNotice('目前身份沒有結案權限；原輸入保留，本次未保存。'); return false; }
+        if (((submittedDraft.action === 'delivery' && submittedDraft.closeOnDelivery) || (submittedDraft.action === 'completion' && submittedDraft.closeOnCompletion)) && !canClose) { setNotice('目前身份沒有結案權限；原輸入保留，本次未保存。'); return false; }
         const command = commandForTrackingDraft(submittedDraft, cases, projections);
         if (!command) { setNotice('沒有變更的進度列；未提交。'); return false; }
         if(audience==='ship'&&command.type==='sync'&&!submittedDraft.sync?.reporterNameAndRole?.trim()){setNotice('請填寫報告人姓名＋職務；輸入已保留。');return false;}

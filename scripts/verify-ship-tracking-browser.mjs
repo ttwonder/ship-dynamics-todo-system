@@ -59,7 +59,8 @@ try{
  for(const name of ['20260925020000_edit_lock_holder.sql','20260925080000_ship_tracking_public.sql','20260925160000_tracking_field_revision.sql','20260927130000_tracking_fleet_statistics.sql','20260928140000_tracking_annual_types.sql','20260928180000_tracking_reclassification.sql','20260928220000_tracking_soft_delete.sql'])await qa.db.exec(fs.readFileSync('supabase/migrations/'+name,'utf8'));
  if(process.argv.includes('--soft-delete'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260928220000_tracking_soft_delete.sql','utf8'));
  if(process.argv.includes('--delivery-notes'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929090000_tracking_delivery_notes.sql','utf8'));
- if(process.argv.includes('--batch-usability')||process.argv.includes('--current-tracking-sql'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929120000_tracking_delivery_close.sql','utf8'));
+ if(process.argv.includes('--batch-usability')||process.argv.includes('--current-tracking-sql')||process.argv.includes('--completion-close'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929120000_tracking_delivery_close.sql','utf8'));
+ if(process.argv.includes('--current-tracking-sql')||process.argv.includes('--completion-close'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929180000_tracking_completion_close.sql','utf8'));
  await qa.db.query("update ship_dynamics_records set value=jsonb_set(value,'{name}','\"測試輪\"'::jsonb) where workspace_key=$1 and collection='vessels' and entity_id='qa-v1'",[qa.workspace]);
  assert.ok(fs.existsSync('packageorwork-tracking.html'),'Dedicated public entry packageorwork-tracking.html must exist');
  const chrome='C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));
@@ -129,6 +130,8 @@ try{
   await (await import('./tracking-progress-copy-browser-checks.mjs')).trackingProgressCopyChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'ship',finish:finish,dialogs:evidence.dialogs,setCopyConfirmation:value=>{copyConfirmationAccept=value;}});
  }else if(process.argv.includes('--action-colors')){
   await (await import('./tracking-action-colors-browser-checks.mjs')).trackingActionColorsChecks({qa,call,evaluate,click,nodeClick,until,screen,check,output,audience:'ship'});
+ }else if(process.argv.includes('--completion-close')){
+  await (await import('./tracking-completion-close-browser-checks.mjs')).trackingCompletionCloseChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'ship',finish:finish});
  }else if(process.argv.includes('--batch-usability')){
   await (await import('./tracking-batch-usability-browser-checks.mjs')).trackingBatchUsabilityChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'ship',finish:finish});
  }else if(process.argv.includes('--delivery-notes')){

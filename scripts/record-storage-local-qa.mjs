@@ -161,7 +161,7 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
    }catch(error){send(res,500,{code:'QA_HARNESS_ERROR',message:error.message});}
   });
   // Windows can allocate browser/Fetch-blocked ephemeral ports; retry only the local test listener.
-  const blockedPorts=new Set([2049,3659,4045,6000,6566,6665,6666,6667,6668,6669,6697,10080]);
+  const blockedPorts=new Set([1720,2049,3659,4045,6000,6566,6665,6666,6667,6668,6669,6697,10080]);
   for(let attempt=0;attempt<12;attempt++){await new Promise((resolve,reject)=>{http.once('error',reject);http.listen(0,'127.0.0.1',()=>{http.off('error',reject);resolve();});});const port=http.address().port;if(port>1024&&!blockedPorts.has(port))break;await new Promise(r=>http.close(r));}
   if(!http.listening)throw new Error('Local QA could not allocate a browser-safe port');
   origin=`http://127.0.0.1:${http.address().port}`;

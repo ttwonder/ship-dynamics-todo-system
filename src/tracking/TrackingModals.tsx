@@ -30,6 +30,7 @@ export interface TrackingDraft {
   deletionReason?: string;
   deliveryNotes?: Record<string, string>;
   closeOnDelivery?: boolean;
+  closeOnCompletion?: boolean;
   sync?: InternalControlBatchDraft; savedCases?: InternalControlCase[]; warnings: string[]; dirty: boolean;
 }
 export function newTrackingItem(vesselId: string, kind: TrackingKind): TrackingItem {
@@ -39,6 +40,7 @@ export function makeTrackingDraft(action: TrackingAction, rows: TrackingItem[], 
   const draft: TrackingDraft = { action, rows: structuredClone(rows), originals: structuredClone(rows), date: '', delivery: 'delivered', outcome: 'completed', warnings: [], dirty: false };
   if (isTrackingDeletionAction(action)) draft.deletionReason = '';
   if (action === 'delivery') { draft.deliveryNotes = Object.fromEntries(rows.map(row => [row.id, ''])); draft.closeOnDelivery = false; }
+  if (action === 'completion') draft.closeOnCompletion = false;
   if (action === 'reclassify') draft.reclassification = { requestType: '', values: [], reviewed: false };
   if (action === 'urgency') draft.urgencyChange = { urgency: '', notes: '' };
   if (action === 'sync') {
@@ -109,7 +111,9 @@ export function commandForTrackingDraft(draft: TrackingDraft, cases?: InternalCo
       const items = draft.rows.flatMap((row, index) => row.progress.trim() === draft.originals[index].progress ? [] : [{ ...versions[index], text: row.progress }]);
       return items.length ? { type: 'progress', items } : null;
     }
-    case 'completion': return { type: 'edit', items: versions.map(version => ({ ...version, changes: { completionDate: draft.date } })) };
+    case 'completion':
+      if (draft.closeOnCompletion && draft.originals.some(row => row.kind !== 'engineering' || row.isClosed)) throw new Error('同時結案僅適用未結案工程；請核對選取。');
+      return { type: 'edit', items: versions.map(version => ({ ...version, changes: { completionDate: draft.date }, ...(draft.closeOnCompletion ? { closeOnCompletion: true } : {}) })) };
     case 'delivery':
       if (draft.closeOnDelivery && (draft.delivery !== 'delivered' || draft.originals.some(row => row.isClosed))) throw new Error('同時結案僅適用全部已送船的未結案項目；請核對選取與送船狀態。');
       return { type: 'delivery', items: versions.map((version, index) => {
@@ -137,7 +141,9 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, ca
 }) {
   const titles: Record<TrackingAction, string> = { delete: '刪除所選／批准申請', restore: '還原所選', 'request-delete': '申請刪除', 'reject-delete': '駁回刪除申請', create: '新增／批量新增跟蹤', edit: '編輯／批量修正跟蹤項目', urgency: '修改急迫度', reclassify: '修正分類', progress: '批量更新最新進度', completion: '工程完工／更正', delivery: '送達確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
   const urgencyFrozen = draft.action === 'urgency' && (busy || pending || readOnly);
-  const change = (patch: Partial<TrackingDraft>) => { if (!urgencyFrozen) onChange({ ...draft, ...patch, dirty: true }); };
+  const completionFrozen = draft.action === 'completion' && (busy || pending || readOnly);
+  const completionCloseDisabled = !canClose || completionFrozen || draft.originals.some(row => row.kind !== 'engineering' || row.isClosed);
+  const change = (patch: Partial<TrackingDraft>) => { if (!urgencyFrozen && !completionFrozen) onChange({ ...draft, ...patch, dirty: true }); };
   const urgencyChange = draft.urgencyChange || { urgency: '', notes: '' };
   const update = (id: string, patch: Partial<TrackingItem>) => change({ rows: draft.rows.map(row => row.id === id ? { ...row, ...patch } : row) });
   const formFields = ['create', 'edit'].includes(draft.action);
@@ -158,7 +164,7 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, ca
         <button type="button" className="btn small" disabled={copyProgressDisabled} title="先填寫第一項，再將其輸入框內容填入本批全部項目；不複製歷史記錄，不會自動保存。" onClick={copyFirstProgress}>複製第一項更新至全部</button>
       </div> : <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>}
     </>}
-    <fieldset disabled={readOnly || urgencyFrozen} style={{border:0,padding:0,margin:0,minWidth:0}}>
+    <fieldset disabled={readOnly || urgencyFrozen || completionFrozen} style={{border:0,padding:0,margin:0,minWidth:0}}>
 
     {!formFields && <ul className="tracking-affected" aria-label="實際影響範圍">{affected.map((label, index) => <li key={draft.originals[index]?.id || index}>{label}</li>)}</ul>}
     {draft.action === 'urgency' ? <div className="tracking-urgency-fields">
@@ -189,6 +195,10 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, ca
         <input type="checkbox" aria-label="同時結案" checked={Boolean(draft.closeOnDelivery)} disabled={!canClose || draft.delivery !== 'delivered' || draft.originals.some(row => row.isClosed)} onChange={event => change({ closeOnDelivery: event.target.checked })}/>
         <span><strong>同時結案</strong><small>{!canClose ? '目前身份沒有結案權限' : draft.originals.some(row => row.isClosed) ? '所選含已結案項目，本次僅更正送達資料' : draft.delivery !== 'delivered' ? '僅全部實際送達才可同時結案' : `結案日期同送達日期；${audience === 'shore' ? '有效關聯內控與既有要事' : '有效關聯內控'}一併結案`}</small></span>
       </label>}
+      {draft.action === 'completion' && <label className={`tracking-delivery-close${draft.closeOnCompletion ? ' is-checked' : ''}`}>
+        <input type="checkbox" aria-label="同時結案" checked={Boolean(draft.closeOnCompletion)} disabled={completionCloseDisabled} onChange={event => { if (!completionCloseDisabled) change({ closeOnCompletion: event.target.checked }); }}/>
+        <span><strong>同時結案</strong><small>{!canClose ? '目前身份沒有結案權限' : draft.originals.some(row => row.kind !== 'engineering' || row.isClosed) ? '僅未結案工程可同時結案' : `結案日期同完工日期；${audience === 'shore' ? '有效關聯內控與既有要事' : '有效關聯內控'}一併結案`}</small></span>
+      </label>}
       {draft.action === 'delivery' && <div className="tracking-delivery-notes">
         <p>備註可填已送／未送內容，保存時追加至最新進度；留空不改原文字。</p>
         {draft.rows.map(row => <label key={row.id}>{trackingItemLabel(row)}｜送船備註
@@ -204,6 +214,6 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, ca
     <div className="modal-actions">{draft.action === 'create' && <><button type="button" className="btn ghost" disabled={pending || draft.rows.length >= 100} onClick={() => change({ rows: [...draft.rows, newTrackingItem(draft.rows[0].vesselId, draft.rows[0].kind)] })}>＋ 新增一列</button><button type="button" className="btn ghost" disabled={busy || pending || readOnly || !draft.rows.length || draft.rows.length >= 100} title="沿用第一筆目前的申請單號、申請/開單日期、類型及期望完成日/DL/到期日；其餘欄位按新項目重新填寫。" onClick={() => {
       const first = draft.rows[0];
       change({ rows: [...draft.rows, { ...newTrackingItem(first.vesselId, first.kind), referenceNo: first.referenceNo, applicationDate: first.applicationDate, requestType: first.requestType, expectedDate: first.expectedDate }] });
-    }}>同申請單號新增一筆</button></>}<button type="button" className="btn ghost" onClick={onClose}>取消</button><button className="btn primary" disabled={busy||readOnly&&!pending}>{busy ? '等待雲端確認…' : pending ? '確認結果／重試相同提交' : draft.action === 'delivery' && draft.closeOnDelivery ? `確認送達並結案 ${draft.rows.length} 項` : `確認保存 ${draft.rows.length} 項`}</button></div>
+    }}>同申請單號新增一筆</button></>}<button type="button" className="btn ghost" onClick={onClose}>取消</button><button className="btn primary" disabled={busy||readOnly&&!pending}>{busy ? '等待雲端確認…' : pending ? '確認結果／重試相同提交' : draft.action === 'delivery' && draft.closeOnDelivery ? `確認送達並結案 ${draft.rows.length} 項` : draft.action === 'completion' && draft.closeOnCompletion ? `確認完工並結案 ${draft.rows.length} 項` : `確認保存 ${draft.rows.length} 項`}</button></div>
   </form></div>;
 }

@@ -12,7 +12,7 @@ class Listener extends EventEmitter{
  close(done){this.closes++;this.listening=false;done();}
 }
 const cases=[];
-for(const [name,ports,starts,closes] of [['safe-port-no-retry',[41000],1,0],['browser-blocked-ports-closed-before-retry',[6667,6000,10080,41000],4,3],['privileged-port-skipped',[80,41000],2,1]]){
+for(const [name,ports,starts,closes] of [['safe-port-no-retry',[41000],1,0],['browser-blocked-ports-closed-before-retry',[6667,6000,10080,1720,41000],5,4],['privileged-port-skipped',[80,41000],2,1]]){
  const http=new Listener(ports);await allocate(http);assert.equal(http.address().port,41000);assert.equal(http.starts,starts);assert.equal(http.closes,closes);assert.equal(http.listenerCount('error'),0);cases.push(name);
 }
 const blocked=new Listener([6667]);await assert.rejects(()=>allocate(blocked),/could not allocate a browser-safe port/);assert.equal(blocked.starts,12);assert.equal(blocked.closes,12);assert.equal(blocked.listening,false);assert.equal(blocked.listenerCount('error'),0);cases.push('bounded-exhaustion-leaves-no-listener');

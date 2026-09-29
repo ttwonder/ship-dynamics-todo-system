@@ -33,6 +33,7 @@ try{
   await assert.rejects(qa.db.exec(sql),/tracking-delivery-close-predecessor-mismatch/);await qa.db.exec('rollback');await qa.db.exec(original);
   await qa.db.exec(sql);await qa.db.exec(sql.replace(/\r?\n/g,'\r\n'));assert.deepEqual(await qa.read(),before);assert.deepEqual(await acl(),originalAcl);assert.equal((await rpc('submit',old.request)).replayed,true);assert.deepEqual(await qa.read(),before);
  });
+ if(process.argv.includes('--current-tracking-sql'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929180000_tracking_completion_close.sql','utf8'));
  const {buildCloudBlockPatch}=await qa.loadModule('/src/cloudBlockPatch.ts');
  const {runTrackingCommand}=await qa.loadModule('/src/tracking/trackingWorkflow.ts');
  const {updateInternalControlCase}=await qa.loadModule('/src/internalControlData.ts');
@@ -74,6 +75,6 @@ try{
   }
  });
  await check('legacy-no-checkbox-delivery-never-closes',async()=>{const before=await qa.read();const {result}=await submit('close-default',['first'],rows=>delivery(rows,['first'],{closeOnDelivery:false,note:''}));assert.equal(result.status,'committed');const row=(await qa.read()).payload.trackingItems.find(r=>r.id==='first');assert.equal(row.isClosed,false);assert.equal(row.progress,before.payload.trackingItems.find(r=>r.id==='first').progress);});
- const readback='supabase/verification/tracking-delivery-close-readback.sql';if(fs.existsSync(readback)){const rows=(await qa.db.query(fs.readFileSync(readback,'utf8'))).rows;assert.equal(rows[0].status,'PASS',JSON.stringify(rows));evidence.readback=rows[0];}
+ const readback=process.argv.includes('--current-tracking-sql')?'supabase/verification/tracking-completion-close-readback.sql':'supabase/verification/tracking-delivery-close-readback.sql';if(fs.existsSync(readback)){const rows=(await qa.db.query(fs.readFileSync(readback,'utf8'))).rows;assert.equal(rows[0].status,'PASS',JSON.stringify(rows));evidence.readback=rows[0];}
 }catch(error){failure=error;evidence.error=error.stack;console.error(error.stack);}
 finally{try{await qa?.close();await native?.close();}catch(error){failure??=error;evidence.cleanupError=error.message;}evidence.status=failure?'FAIL':'PASS';fs.writeFileSync(path.join(output,'evidence.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify({status:evidence.status,output,caseCount:evidence.cases.length}));if(failure)process.exitCode=1;}

@@ -22,7 +22,7 @@ export type TrackingCommand =
  | {type:'request-delete';items:(TrackingVersion & {reason:string})[]}
  | {type:'reject-delete';items:(TrackingVersion & {reason:string})[]}
  | {type:'progress';items:(TrackingVersion & {text:string})[]}
- | {type:'edit';items:(TrackingVersion & {changes:TrackingEdit})[]}
+ | {type:'edit';items:(TrackingVersion & {changes:TrackingEdit;closeOnCompletion?:boolean})[]}
  | {type:'reclassify';items:(TrackingVersion & {requestType:TrackingRequestType;actualDate:string;deliveryStatus:TrackingDeliveryStatus})[]}
  | {type:'delivery';items:(TrackingVersion & {status:TrackingDeliveryStatus;date:string;note?:string;closeOnDelivery?:boolean})[]}
  | {type:'sync';items:(TrackingVersion & {item:InternalControlCase;projection?:InternalControlTaskProjection})[]}
@@ -151,7 +151,9 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
    };
    if(command.type==='edit'){
     if(source.isClosed)fail('tracking-closed-edit');
-    const changes=(input as Extract<TrackingCommand,{type:'edit'}>['items'][number]).changes;
+    const edit=input as Extract<TrackingCommand,{type:'edit'}>['items'][number],changes=edit.changes;
+    if(edit.closeOnCompletion!==undefined&&typeof edit.closeOnCompletion!=='boolean')fail('tracking-completion-close-invalid');
+    if(edit.closeOnCompletion&&(source.kind!=='engineering'||!changes||Object.keys(changes).length!==1||typeof changes.completionDate!=='string'||!isValidInternalControlDate(changes.completionDate)))fail('tracking-completion-close-invalid');
     if(!changes||Object.keys(changes).some(k=>!(TRACKING_EDIT_FIELDS as readonly string[]).includes(k)))fail('tracking-edit-field-forbidden');
     const beforeClassification=structuredClone(source);
     if(changes.requestType!==undefined&&changes.requestType!==source.requestType&&(item?.isClosed||task?.isClosed))fail('tracking-closed-edit');
@@ -163,8 +165,9 @@ export function runTrackingCommand(data:AppData,command:TrackingCommand,context:
      source.deliveryStatus=source.actualDeliveryDate?'delivered':'not-delivered';
      appendTrackingEvent(source,'delivery',beforeDelivery,{deliveryStatus:source.deliveryStatus,actualDeliveryDate:source.actualDeliveryDate || ''},user,at,'tracking',operationId);
     }
-    if(source.kind==='engineering'&&(source.completionDate || '')!==beforeCompletion)appendTrackingEvent(source,'completion',{completionDate:beforeCompletion},{completionDate:source.completionDate || ''},user,at,'tracking',operationId);
+    if(source.kind==='engineering'&&(edit.closeOnCompletion||(source.completionDate || '')!==beforeCompletion))appendTrackingEvent(source,'completion',{completionDate:beforeCompletion},{completionDate:source.completionDate || ''},user,at,'tracking',operationId);
     validateTrackingItem(source);
+    if(edit.closeOnCompletion)applyLifecycle(source.id,'close',changes.completionDate,'completed','tracking');
     if(source.requestType!==beforeClassification.requestType){
      const event=appendTrackingEvent(source,'reclassify',trackingClassificationValue(beforeClassification),trackingClassificationValue(source),user,at,'tracking',operationId);
      synchronizeTrackingClassification(beforeClassification,source,item,task,event);

@@ -72,7 +72,8 @@ try{
  await (await import('./tracking-browser-fixture.mjs')).installTrackingFieldRevision(qa.db);
  if(process.argv.includes('--soft-delete'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260928220000_tracking_soft_delete.sql','utf8'));
  if(process.argv.includes('--delivery-notes'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929090000_tracking_delivery_notes.sql','utf8'));
- if(process.argv.includes('--batch-usability')||process.argv.includes('--current-tracking-sql'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929120000_tracking_delivery_close.sql','utf8'));
+ if(process.argv.includes('--batch-usability')||process.argv.includes('--current-tracking-sql')||process.argv.includes('--completion-close'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929120000_tracking_delivery_close.sql','utf8'));
+ if(process.argv.includes('--current-tracking-sql')||process.argv.includes('--completion-close'))await qa.db.exec(fs.readFileSync('supabase/migrations/20260929180000_tracking_completion_close.sql','utf8'));
 
  assert.equal((await fetch(`${qa.origin}/__qa/health`)).status,200);
  const chrome='C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));
@@ -174,6 +175,8 @@ try{
   await (await import('./tracking-progress-copy-browser-checks.mjs')).trackingProgressCopyChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'shore',finish:finishEditor,dialogs:evidence.dialogs,setCopyConfirmation:value=>{copyConfirmationAccept=value;}});
  }else if(process.argv.includes('--action-colors')){
   await (await import('./tracking-action-colors-browser-checks.mjs')).trackingActionColorsChecks({qa,call,evaluate,click,nodeClick,until,screen,check,output,audience:'shore'});
+ }else if(process.argv.includes('--completion-close')){
+  await (await import('./tracking-completion-close-browser-checks.mjs')).trackingCompletionCloseChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'shore',finish:finishEditor});
  }else if(process.argv.includes('--batch-usability')){
   await (await import('./tracking-batch-usability-browser-checks.mjs')).trackingBatchUsabilityChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'shore',finish:finishEditor});
  }else if(process.argv.includes('--delivery-notes')){
