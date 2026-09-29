@@ -160,7 +160,10 @@ export async function createRecordStorageLocalQa({manualReportAuthority=false,br
     (uiMiddleware||vite.middlewares)(req,res,()=>send(res,404,{code:'QA_NOT_FOUND'}));
    }catch(error){send(res,500,{code:'QA_HARNESS_ERROR',message:error.message});}
   });
-  await new Promise((resolve,reject)=>{http.once('error',reject);http.listen(0,'127.0.0.1',resolve);});
+  // Windows can allocate browser/Fetch-blocked ephemeral ports; retry only the local test listener.
+  const blockedPorts=new Set([2049,3659,4045,6000,6566,6665,6666,6667,6668,6669,6697,10080]);
+  for(let attempt=0;attempt<12;attempt++){await new Promise((resolve,reject)=>{http.once('error',reject);http.listen(0,'127.0.0.1',()=>{http.off('error',reject);resolve();});});const port=http.address().port;if(port>1024&&!blockedPorts.has(port))break;await new Promise(r=>http.close(r));}
+  if(!http.listening)throw new Error('Local QA could not allocate a browser-safe port');
   origin=`http://127.0.0.1:${http.address().port}`;
   return {origin,password,metrics,db,close,workspace,setUiMiddleware:middleware=>{uiMiddleware=middleware;},loadModule:path=>vite.ssrLoadModule(path),setRecordFault:fault=>{if(!internalControl)throw new Error("Record fault hooks require internalControl fixture");recordFault=fault;},loseNextPruneAck:()=>{losePruneAck=true;},loseNextReportAck:()=>{loseReportAck=true;},loseNextItineraryAck:()=>{loseItineraryAck=true;},itineraryBaseline,itinerarySnapshot:()=>snapshotItineraryAuthority(db),read:async()=> (await db.query('select read_ship_dynamics_records_v1($1) as result',[workspace])).rows[0].result};
  }catch(error){await close();throw error;}
