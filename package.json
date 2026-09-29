@@ -3,6 +3,7 @@
     "test:record-storage:qa-http-ports": "node scripts/verify-record-qa-http-ports.mjs",
     "test:tracking:notice-spacing:browser": "node scripts/verify-ship-tracking-browser.mjs --notice-spacing --current-tracking-sql",
     "test:tracking:multi-search": "node scripts/verify-tracking-multi-search.mjs",
+    "test:tracking:two-row-tools:browser": "node scripts/verify-tracking-browser.mjs --two-row-tools --current-tracking-sql && node scripts/verify-ship-tracking-browser.mjs --two-row-tools --current-tracking-sql",
     "test:tracking:multi-search:browser": "node scripts/verify-tracking-browser.mjs --multi-search --current-tracking-sql && node scripts/verify-ship-tracking-browser.mjs --multi-search --current-tracking-sql",
     "test:tracking:urgency": "node scripts/verify-tracking-urgency.mjs",
     "test:tracking:urgency:browser": "node scripts/verify-tracking-browser.mjs --urgency --current-tracking-sql && node scripts/verify-ship-tracking-browser.mjs --urgency --current-tracking-sql",

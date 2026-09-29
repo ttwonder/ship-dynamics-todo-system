@@ -70,36 +70,8 @@ export async function compactChecks(c){
   assert.deepEqual(qa.metrics.slice(metricStart).filter(m=>/acquire|claim|renew|apply|save/.test(m.rpc)||['claim','submit','renew'].includes(m.action)),[],'view-only actions never obtain edit rights or submit');
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
  });
- await check(`${audience}-search-half-width-and-original-search-clear-behavior`,async()=>{
-  const before=await qa.read(),metricStart=qa.metrics.length,layouts=[];
-  const measureSearch=()=>evaluate(`(()=>{const box=n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return{left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height,font:s.font}};return{input:box(document.querySelector('[aria-label="搜尋跟蹤"]')),clear:box(document.querySelector('.tracking-search>.btn')),urgent:box(document.querySelector('.tracking-urgent-shortcut')),document:document.documentElement.scrollWidth};})()`);
-  for(const width of [1440,390]){
-   await call('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile:false});
-   await evaluate(`(()=>{const s=document.createElement('style');s.id='qa-original-search-width';s.textContent='.tracking-search{display:flex;flex:0 1 330px;align-items:center;gap:5px;min-width:210px}.tracking-search>input{width:240px;flex:1;min-width:0}@media(max-width:700px){.tracking-search{flex:1 1 0;min-width:0}}';document.head.append(s);})()`);
-   const original=await measureSearch();await screen(`search-original-${width}`);
-   await evaluate("document.getElementById('qa-original-search-width').remove()");
-   const current=await measureSearch();layouts.push({width,original,current});await screen(`search-half-${width}`);
-  }
-  fs.writeFileSync(path.join(output,'search-widths.json'),JSON.stringify(layouts,null,2));
-  for(const {width,original,current} of layouts){
-   if(width>700)assert.ok(Math.abs(current.input.width-original.input.width/2)<=1,'desktop input must really halve, not be stretched back by flex: '+JSON.stringify({audience,width,original,current}));
-   else assert.ok(current.input.width<original.input.width&&current.input.width>=80,'mobile input is compact but still usable');
-   assert.equal(current.input.height,original.input.height);assert.equal(current.input.font,original.input.font);
-   assert.equal(current.clear.width,original.clear.width);assert.equal(current.urgent.width,original.urgent.width);
-   assert.ok(current.input.right<=current.clear.left&&current.clear.right<=current.urgent.left,'search and adjacent buttons cannot overlap');
-   assert.ok(current.document<=width+1,'shorter input cannot cause document overflow');
-  }
-  const ids=()=>evaluate("[...document.querySelectorAll('.tracking-table tbody tr[data-tracking-id]')].map(n=>n.dataset.trackingId)");
-  const originalIds=await ids(),reference=audience==='ship'?'BROWSER-001':'UI-001';
-  await fill('[aria-label="搜尋跟蹤"]',reference);await until(async()=>(await ids()).length===1,'original search still filters');
-  assert.ok(await evaluate(`document.querySelector('.tracking-table tbody .tracking-reference').textContent.includes(${JSON.stringify(reference)})`));
-  const long='找不到的長搜尋字串，輸入內容完整保留，不改搜尋邏輯。'.repeat(4);
-  await fill('[aria-label="搜尋跟蹤"]',long);await until(async()=>(await ids()).length===0,'unmatched search stays empty');assert.equal(await evaluate("document.querySelector('[aria-label=\"搜尋跟蹤\"]').value"),long);
-  await click('清除條件');await until(async()=>JSON.stringify(await ids())===JSON.stringify(originalIds),'clear restores original rows');
-  assert.equal(await evaluate("document.querySelector('[aria-label=\"搜尋跟蹤\"]').value"),'');
-  assert.deepEqual(await qa.read(),before);assert.deepEqual(qa.metrics.slice(metricStart).filter(m=>/acquire|claim|renew|apply|save/.test(m.rpc)||['claim','submit','renew'].includes(m.action)),[],'search and clear never write business data');
-  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
- });
+ // Superseded half-width oracle: user now requires clear → urgent → long search above batch actions.
+ await (await import('./tracking-two-row-tools-browser-checks.mjs')).trackingTwoRowToolsChecks({qa,call,evaluate,click,fill,until,screen,check,output,audience});
  await check(`${audience}-compact-fixture-and-toolbar-real-saves`,async()=>{
   await click('＋ 新增／批量新增');
   for(let i=1;i<=4;i++){

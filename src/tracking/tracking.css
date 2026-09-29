@@ -9,14 +9,13 @@
 .tracking-create-context{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:6px 0;min-width:0;line-height:1.45}
 .tracking-create-context>strong,.tracking-create-context>span{min-width:0;overflow-wrap:anywhere}
 .tracking-export-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
-.tracking-search-actions{display:flex;align-items:center;gap:8px;margin:6px 0;min-width:0}
-.tracking-search{display:flex;flex:0 1 auto;align-items:center;gap:5px;min-width:0;--tracking-search-width:130px}
-.ship-tracking-portal .tracking-search{--tracking-search-width:135px}
-.tracking-search>input{width:var(--tracking-search-width);flex:0 1 var(--tracking-search-width);min-width:0}
+.tracking-search-actions{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;margin:6px 0;min-width:0}
+.tracking-search{display:flex;align-items:center;gap:5px;min-width:0}
+.tracking-search>input{width:0;flex:1;min-width:0}
 .tracking-search>.btn{flex:none;white-space:nowrap}
 .tracking-page .tracking-urgent-shortcut{flex:none;white-space:nowrap;color:#b42318;font-weight:700;background:var(--tracking-paper);border-color:#b42318}
 .tracking-page .tracking-urgent-shortcut[aria-pressed=true]{color:#fff;background:#b42318;border-color:#b42318}
-.tracking-search-actions>.tracking-toolbar{flex:1;min-width:0;margin:0;padding:4px 6px;gap:4px}
+.tracking-search-actions>.tracking-toolbar{min-width:0;margin:0;padding:4px 6px;gap:4px}
 .tracking-search-actions>.tracking-toolbar>b{white-space:nowrap}
 /* Prominent entry colors; preserve existing geometry, permissions and tab order. */
 .tracking-heading .btn.tracking-action-create{--tracking-entry-bg:#15803d;--tracking-entry-hover:#166534;--tracking-entry-ring:#166534}
@@ -63,7 +62,7 @@
 .tracking-progress-history article{padding:5px 0;border-top:1px solid var(--line)}
 .tracking-progress-history p{white-space:pre-wrap;overflow-wrap:anywhere;margin:3px 0}
 .tracking-progress-history small{display:block}
-@media(max-width:700px){.tracking-search-actions{flex-wrap:wrap}.tracking-search{flex:0 1 auto;min-width:0}.tracking-search-actions>.tracking-toolbar{flex-basis:100%}.tracking-filter-grid{grid-template-columns:minmax(0,1fr)}.tracking-options{column-gap:6px}}
+@media(max-width:700px){.tracking-filter-grid{grid-template-columns:minmax(0,1fr)}.tracking-options{column-gap:6px}}
 .tracking-request-fields{display:flex;flex-direction:column;gap:8px}
 .tracking-input-line{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;min-width:0;align-items:start}
 /* Eight half-columns keep urgency aligned with one field above. */

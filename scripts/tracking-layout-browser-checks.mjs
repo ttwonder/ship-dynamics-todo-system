@@ -39,7 +39,7 @@ export async function layoutChecks(c) {
     const g=geometry.wide,opened=geometry.expanded;
     const failures=[];
     if(!(g.exports.x>=g.import.right && Math.abs(g.exports.y-g.import.y)<8))failures.push('Exports/templates must follow import on the heading row');
-    if(!(g.batch.x>=g.search.right && g.search.width<=360 && g.search.y>=g.batch.y-2 && g.search.bottom<=g.batch.bottom+2))failures.push('Compact search must share the batch-action row');
+    if(!(g.batch.y>=g.search.bottom+3 && g.search.width>g.batch.width/2 && Math.abs(g.search.right-g.batch.right)<3))failures.push('Long search belongs above the full-width batch-action row');
     if(!(Math.abs(g.filter.y-g.preferences.y)<3 && g.preferences.x>=g.filter.right))failures.push('Filter and column-settings summaries must share a row');
     if(!(Math.abs(opened.filter.y-opened.preferences.y)<3))failures.push('Expanded panels must not displace their summary controls');
     if(!(new Set(opened.fields.map(r=>Math.round(r.x))).size>=6 && opened.inputs.every(r=>r.height<=30)))failures.push('Expanded filters must use compact cells and short controls');
