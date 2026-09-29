@@ -9,9 +9,10 @@ export function TrackingItemFields({ row, prefix, creating, onChange }: {
   const columns = trackingColumnsFor(row.kind);
   const field = (key: string) => {
     const column = columns.find(value => value.key === key)!;
-    return <label key={key}>{column.label}{column.required ? ' *' : ''}{column.type === 'date'
-      ? <input type="date" required={column.required} aria-label={prefix + column.label} value={column.value(row)} onChange={event => onChange({ [key]: event.target.value, ...(key === 'actualDeliveryDate' ? { deliveryStatus: event.target.value ? 'delivered' : 'not-delivered' } : {}) })}/>
-      : <textarea required={column.required} rows={1} aria-label={prefix + column.label} value={column.value(row)} onChange={event => onChange({ [key]: event.target.value })}/>}
+    const required = column.required || key === 'supplementalNotes' && row.urgency === 'urgent';
+    return <label key={key}>{column.label}{required ? ' *' : ''}{column.type === 'date'
+      ? <input type="date" required={required} aria-label={prefix + column.label} value={column.value(row)} onChange={event => onChange({ [key]: event.target.value, ...(key === 'actualDeliveryDate' ? { deliveryStatus: event.target.value ? 'delivered' : 'not-delivered' } : {}) })}/>
+      : <textarea required={required} rows={1} aria-label={prefix + column.label} value={column.value(row)} onChange={event => onChange({ [key]: event.target.value })}/>}
     </label>;
   };
   const changeType = (value: TrackingRequestType) => {

@@ -164,6 +164,8 @@ try{
   await (await import('./tracking-history-pdf-component-checks.mjs')).historyPdfComponentChecks({qa,call,evaluate,click,nodeClick,until,screen,check,output});
  }else if(process.argv.includes('--history-pdf')){
   await (await import('./tracking-history-pdf-browser-checks.mjs')).trackingHistoryPdfChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,output,audience:'shore',finish:finishEditor});
+ }else if(process.argv.includes('--urgency')){
+  await (await import('./tracking-urgency-browser-checks.mjs')).trackingUrgencyChecks({qa,call,evaluate,click,nodeClick,fill,until,screen,check,audience:'shore',finish:finishEditor});
  }else if(process.argv.includes('--progress-copy')){
   await (await import('./tracking-progress-copy-browser-checks.mjs')).trackingProgressCopyChecks({qa,evaluate,call,click,nodeClick,fill,until,screen,check,audience:'shore',finish:finishEditor,dialogs:evidence.dialogs,setCopyConfirmation:value=>{copyConfirmationAccept=value;}});
  }else if(process.argv.includes('--action-colors')){

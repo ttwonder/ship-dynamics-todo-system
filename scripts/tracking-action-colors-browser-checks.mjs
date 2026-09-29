@@ -4,7 +4,7 @@ import path from 'node:path';
 
 // Original shore/ship entries with synthetic data; no hosted writes.
 export async function trackingActionColorsChecks({qa,call,evaluate,click,nodeClick,until,screen,check,output,audience}) {
- const labels=['批量修正','修正分類','批量更新進度','同步到內控','查看歷史記錄'];
+ const labels=['批量修正','修改急迫度','修正分類','批量更新進度','同步到內控','查看歷史記錄'];
  const button=label=>`[...document.querySelectorAll('.tracking-toolbar button')].find(n=>n.innerText.trim()===${JSON.stringify(label)})`;
  const measure=()=>evaluate(`(()=>{const bar=document.querySelector('.tracking-toolbar');return {viewport:innerWidth,document:document.documentElement.scrollWidth,buttons:[...bar.querySelectorAll('button')].map(n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return {label:n.innerText.trim(),background:s.backgroundColor,color:s.color,opacity:Number(s.opacity),disabled:n.disabled,outline:s.outlineStyle,outlineWidth:parseFloat(s.outlineWidth),focusVisible:n.matches(':focus-visible'),geometry:{width:r.width,height:r.height,font:s.font,padding:s.padding,margin:s.margin,border:s.borderWidth,whiteSpace:s.whiteSpace},left:r.left,right:r.right};})};})()`);
  const lum=color=>{const v=color.match(/[\d.]+/g).slice(0,3).map(Number).map(x=>{x/=255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4;});return v[0]*.2126+v[1]*.7152+v[2]*.0722;};
@@ -24,14 +24,15 @@ export async function trackingActionColorsChecks({qa,call,evaluate,click,nodeCli
   const value=await measure();measurements.push({width,theme,...value});record();
   await screen(`${audience}-action-colors-${width}-${theme}`);
  }
- await check(`${audience}-five-distinct-action-colors-two-prominent-actions-readable-desktop-mobile`,async()=>{
+ await check(`${audience}-six-distinct-action-colors-three-prominent-actions-readable-desktop-mobile`,async()=>{
   const baseline=process.env.QA_ACTION_COLORS_BASELINE?JSON.parse(fs.readFileSync(process.env.QA_ACTION_COLORS_BASELINE,'utf8')):null;
   if(baseline)assert.equal(baseline.audience,audience);
   for(const m of measurements){
    const selected=labels.map(label=>{const b=m.buttons.find(n=>n.label===label);assert.ok(b,label);return b;});
-   assert.equal(new Set(selected.map(b=>b.background)).size,5,'five marked actions must not share one background');
+   assert.equal(new Set(selected.map(b=>b.background)).size,6,'six marked actions must not share one background');
    for(const b of selected){assert.equal(b.disabled,false);assert.equal(b.opacity,1);assert.ok(contrast(b)>=4.5,'text contrast '+b.label);assert.ok(b.left>=0&&b.right<=m.width+1,'button stays inside viewport');}
-   for(const label of ['批量更新進度','查看歷史記錄'])assert.equal(selected.find(b=>b.label===label).color,'rgb(255, 255, 255)','important actions use solid color / white text');
+   for(const label of ['修改急迫度','批量更新進度','查看歷史記錄'])assert.equal(selected.find(b=>b.label===label).color,'rgb(255, 255, 255)','important actions use solid color / white text');
+   assert.deepEqual(m.buttons.filter(b=>labels.includes(b.label)).map(b=>b.label),labels,'urgency is between edit and reclassify');
    assert.ok(m.document<=m.width+1,'no document overflow');
    if(baseline){const old=baseline.measurements.find(b=>b.width===m.width&&b.theme===m.theme);assert.deepEqual(m.buttons.map(b=>({label:b.label,geometry:b.geometry})),old.buttons.map(b=>({label:b.label,geometry:b.geometry})),'order, caption, density and geometry unchanged');for(const b of m.buttons.filter(b=>!labels.includes(b.label))){const a=old.buttons.find(a=>a.label===b.label);assert.equal(b.background,a.background);assert.equal(b.color,a.color);}}
   }

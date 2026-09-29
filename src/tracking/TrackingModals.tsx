@@ -1,5 +1,6 @@
 import type { AppData, InternalControlCase } from '../types';
 import { trackingItemLabel } from './trackingDisplay';
+import { trackingUrgentNotesError } from './trackingUrgency';
 import { todayDate, uid } from '../runtimeUtils';
 import { formatTaipeiDateTime } from '../taipeiTime';
 import { prepareInternalControlEditForSave, newInternalControlBatchRow, type InternalControlBatchDraft } from '../InternalControlModals';
@@ -25,6 +26,7 @@ export interface TrackingDraft {
   action: TrackingAction; rows: TrackingItem[]; originals: TrackingItem[];
   date: string; delivery: TrackingDeliveryStatus; outcome: 'completed' | 'cancelled';
   reclassification?: TrackingReclassificationDraft;
+  urgencyChange?: { urgency: TrackingItem['urgency'] | ''; notes: string };
   deletionReason?: string;
   deliveryNotes?: Record<string, string>;
   closeOnDelivery?: boolean;
@@ -38,6 +40,7 @@ export function makeTrackingDraft(action: TrackingAction, rows: TrackingItem[], 
   if (isTrackingDeletionAction(action)) draft.deletionReason = '';
   if (action === 'delivery') { draft.deliveryNotes = Object.fromEntries(rows.map(row => [row.id, ''])); draft.closeOnDelivery = false; }
   if (action === 'reclassify') draft.reclassification = { requestType: '', values: [], reviewed: false };
+  if (action === 'urgency') draft.urgencyChange = { urgency: '', notes: '' };
   if (action === 'sync') {
     const prefilled = rows.map(row => prefillTrackingCase(data, row, uid('internal')));
     draft.warnings = [...new Set(prefilled.flatMap(value => value.missingDepartments))].map(name => `缺少預設部門「${name}」，請從現有部門核對選擇；不會自動新增。`);
@@ -47,6 +50,12 @@ export function makeTrackingDraft(action: TrackingAction, rows: TrackingItem[], 
   return draft;
 }
 export function commandForTrackingDraft(draft: TrackingDraft, cases?: InternalControlCase[], projections: Record<string, InternalControlTaskProjection> = {}): TrackingUiCommand | null {
+  if (draft.action === 'create' || draft.action === 'edit') {
+    for (const row of draft.rows) {
+      const error = trackingUrgentNotesError(row);
+      if (error) throw new Error(`${trackingItemLabel(row)}：${error}`);
+    }
+  }
   const versions = draft.originals.map(row => ({ id: row.id, expectedUpdatedAt: row.updatedAt }));
   switch (draft.action) {
     case 'create': return { type: 'create', items: draft.rows };
@@ -57,6 +66,23 @@ export function commandForTrackingDraft(draft: TrackingDraft, cases?: InternalCo
       if (error) throw new Error(error);
       if (draft.rows.length !== versions.length || new Set(draft.rows.map(row => row.id)).size !== versions.length || draft.rows.some(row => !versions.some(version => version.id === row.id))) throw new Error('所選來源集合不一致，請重新核對。');
       return { type: draft.action, items: versions.map(version => ({ ...version, reason })) };
+    }
+    case 'urgency': {
+      const value = draft.urgencyChange;
+      if (!value || !['normal', 'urgent'].includes(value.urgency)) throw new Error('請選擇本批急迫度：普通或緊急。');
+      const notes = value.notes?.trim();
+      if (!notes || [...notes].length > 2000) throw new Error('請填寫本次補充說明（1 至 2000 字），不能只填空白。');
+      if (!versions.length || versions.length > 100 || new Set(versions.map(row => row.id)).size !== versions.length
+        || draft.rows.length !== versions.length || new Set(draft.rows.map(row => row.id)).size !== versions.length
+        || draft.rows.some(row => !versions.some(version => version.id === row.id))
+        || new Set(draft.originals.map(row => row.vesselId)).size !== 1) throw new Error('請精確選取同船 1 至 100 項；修改急迫度的來源集合不一致。');
+      if (draft.originals.some(row => row.isClosed)) throw new Error('已結案項目請先重開，未修改任何資料。');
+      const urgency = value.urgency as TrackingItem['urgency'];
+      return { type: 'edit', items: draft.originals.map(row => {
+        const supplementalNotes = [row.supplementalNotes, `急迫度改為${urgency === 'urgent' ? '緊急' : '普通'}：${notes}`].filter(Boolean).join('\n');
+        if ([...supplementalNotes].length > 10000) throw new Error(`${trackingItemLabel(row)}：追加後補充說明超過 10000 字，整批未提交。請先整理該項原說明。`);
+        return { id: row.id, expectedUpdatedAt: row.updatedAt, changes: { urgency, supplementalNotes } };
+      }) };
     }
     case 'reclassify': {
       const value = draft.reclassification;
@@ -109,8 +135,10 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, ca
   draft: TrackingDraft; busy: boolean; pending: boolean; readOnly?: boolean; canClose?: boolean; audience?: TrackingAudience; message: string; affected: string[]; vesselName: string;
   onChange: (draft: TrackingDraft) => void; onSave: () => void; onReconcile: () => void; onClose: () => void;
 }) {
-  const titles: Record<TrackingAction, string> = { delete: '刪除所選／批准申請', restore: '還原所選', 'request-delete': '申請刪除', 'reject-delete': '駁回刪除申請', create: '新增／批量新增跟蹤', edit: '編輯／批量修正跟蹤項目', reclassify: '修正分類', progress: '批量更新最新進度', completion: '工程完工／更正', delivery: '送達確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
-  const change = (patch: Partial<TrackingDraft>) => onChange({ ...draft, ...patch, dirty: true });
+  const titles: Record<TrackingAction, string> = { delete: '刪除所選／批准申請', restore: '還原所選', 'request-delete': '申請刪除', 'reject-delete': '駁回刪除申請', create: '新增／批量新增跟蹤', edit: '編輯／批量修正跟蹤項目', urgency: '修改急迫度', reclassify: '修正分類', progress: '批量更新最新進度', completion: '工程完工／更正', delivery: '送達確認／更正', close: '結案', reopen: '重開此案', 'correct-close-date': '修改結案日期', sync: '同步到內控' };
+  const urgencyFrozen = draft.action === 'urgency' && (busy || pending || readOnly);
+  const change = (patch: Partial<TrackingDraft>) => { if (!urgencyFrozen) onChange({ ...draft, ...patch, dirty: true }); };
+  const urgencyChange = draft.urgencyChange || { urgency: '', notes: '' };
   const update = (id: string, patch: Partial<TrackingItem>) => change({ rows: draft.rows.map(row => row.id === id ? { ...row, ...patch } : row) });
   const formFields = ['create', 'edit'].includes(draft.action);
   const firstProgress = draft.rows[0]?.progress || '';
@@ -121,7 +149,7 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, ca
     if (overwritesInput && !confirm('其他項目已有本次輸入的不同更新內容。要以第一個項目的內容覆蓋全部嗎？（尚未保存）')) return;
     change({ rows: draft.rows.map(row => ({ ...row, progress: firstProgress })) });
   };
-  return <div className="modal-backdrop"><form className={`modal tracking-modal${draft.action === 'progress' ? ' tracking-progress-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" noValidate={pending && (draft.action === 'reclassify' || isTrackingDeletionAction(draft.action))} onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
+  return <div className="modal-backdrop"><form className={`modal tracking-modal${draft.action === 'progress' ? ' tracking-progress-modal' : ''}`} role="dialog" aria-modal="true" aria-labelledby="tracking-modal-title" noValidate={pending && (formFields || draft.action === 'urgency' || draft.action === 'reclassify' || isTrackingDeletionAction(draft.action))} onSubmit={event => { event.preventDefault(); if (!busy) onSave(); }}>
     <div className="modal-head"><h2 id="tracking-modal-title">{titles[draft.action]}</h2><button type="button" className="btn ghost" onClick={onClose}>關閉</button></div>
     {draft.action === 'create' ? <div className="tracking-create-context" role="group" aria-label="新增跟蹤說明"><strong>船舶：{vesselName}</strong><span>{trackingHelp(audience).create}</span></div> : <>
       <p>{trackingHelp(audience)[draft.action]}</p><p>本次精確選取 {draft.rows.length} 項（每批上限 100 項）。只有伺服器確認後才算保存。</p>
@@ -130,10 +158,16 @@ export function TrackingBusinessModal({ draft, busy, pending, readOnly=false, ca
         <button type="button" className="btn small" disabled={copyProgressDisabled} title="先填寫第一項，再將其輸入框內容填入本批全部項目；不複製歷史記錄，不會自動保存。" onClick={copyFirstProgress}>複製第一項更新至全部</button>
       </div> : <label>本次固定船舶<input aria-label="本次固定船舶" value={vesselName} readOnly/></label>}
     </>}
-    <fieldset disabled={readOnly} style={{border:0,padding:0,margin:0,minWidth:0}}>
+    <fieldset disabled={readOnly || urgencyFrozen} style={{border:0,padding:0,margin:0,minWidth:0}}>
 
     {!formFields && <ul className="tracking-affected" aria-label="實際影響範圍">{affected.map((label, index) => <li key={draft.originals[index]?.id || index}>{label}</li>)}</ul>}
-    {isTrackingDeletionAction(draft.action) ? <TrackingDeletionFields draft={draft} onChange={deletionReason => change({ deletionReason })}/> : draft.action === 'reclassify' ? <TrackingReclassifyFields originals={draft.originals} value={draft.reclassification || { requestType: '', values: [], reviewed: false }} onChange={reclassification => change({ reclassification })}/> : draft.action === 'progress' ? draft.rows.map(row => {
+    {draft.action === 'urgency' ? <div className="tracking-urgency-fields">
+      <fieldset className="tracking-urgency-target"><legend>本批急迫度 *</legend>
+        {(['normal', 'urgent'] as const).map(value => <label key={value}><input type="radio" name="tracking-batch-urgency" required aria-label={value === 'urgent' ? '改為緊急' : '改為普通'} checked={urgencyChange.urgency === value} onChange={() => change({ urgencyChange: { ...urgencyChange, urgency: value } })}/>{value === 'urgent' ? '緊急' : '普通'}</label>)}
+      </fieldset>
+      <label>補充說明 *<textarea aria-label="本次急迫度補充說明" required rows={3} maxLength={2000} placeholder="請說明本次調整原因；會追加至各項原有補充說明。" value={urgencyChange.notes} onChange={event => change({ urgencyChange: { ...urgencyChange, notes: event.target.value } })}/></label>
+      <small>改為普通或緊急都必須填寫本次說明；原有說明保留，不更改最新進度或關聯內控的急迫度。</small>
+    </div> : isTrackingDeletionAction(draft.action) ? <TrackingDeletionFields draft={draft} onChange={deletionReason => change({ deletionReason })}/> : draft.action === 'reclassify' ? <TrackingReclassifyFields originals={draft.originals} value={draft.reclassification || { requestType: '', values: [], reviewed: false }} onChange={reclassification => change({ reclassification })}/> : draft.action === 'progress' ? draft.rows.map(row => {
       const original = draft.originals.find(value => value.id === row.id);
       const history = original?.statusLogs || [];
       return <div className="tracking-progress-row" key={row.id}>

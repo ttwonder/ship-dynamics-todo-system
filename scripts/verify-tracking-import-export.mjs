@@ -88,6 +88,8 @@ try {
   for(const value of [20260901,'2026/9/1',new Date('2026-09-01T00:00:00Z')])assert.equal(api.parseTrackingDate(value),'2026-09-01');
   for(const value of ['20260931','20260901/20260903','取消',60])assert.equal(api.parseTrackingDate(value),null);
   const row=structuredClone(parsed.sheets[0].rows[0]);row.acknowledgements=row.issues.map(i=>i.code);row.selected=true;
+  assert.throws(()=>api.selectImportBatch([row],[],[]),/整批未提交/,'urgent import requires a new nonblank explanation');
+  row.item.supplementalNotes='供應時程提前，需要緊急處理';
   assert.equal(api.selectImportBatch([row],[],[]).length,1);
   assert.throws(()=>api.selectImportBatch([{...row,selected:false}],[],[]),/1–100/);
   const duplicate={...structuredClone(row),key:'duplicate',item:{...row.item,id:'another'}};

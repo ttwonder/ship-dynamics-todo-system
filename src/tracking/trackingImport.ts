@@ -1,4 +1,5 @@
 import type ExcelJS from 'exceljs';
+import { trackingUrgentNotesError } from './trackingUrgency';
 import type { TrackingItem, TrackingKind } from './trackingTypes';
 import { isValidInternalControlDate } from '../internalControlWorkflow';
 import { TRACKING_LEGACY_EDIT_FIELDS, validateTrackingItem } from './trackingWorkflow';
@@ -136,8 +137,10 @@ export async function parseTrackingWorkbook(input: ArrayBuffer | Uint8Array, fil
   return result;
 }
 export function importRowErrors(row: ImportRow): string[] {
+  const urgentNotesError = trackingUrgentNotesError(row.item);
   const errors=row.issues.filter(issue=>!row.acknowledgements.includes(issue.code)).map(issue=>issue.message);
   try {validateTrackingItem(row.item);}catch(e){errors.push(e instanceof Error?e.message:String(e));}
+  if (urgentNotesError) errors.push(urgentNotesError);
   return errors;
 }
 export function importDuplicate(row: ImportRow, all: readonly ImportRow[], existing: readonly TrackingItem[]): {blocked:boolean; messages:string[]} {

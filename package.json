@@ -1,5 +1,7 @@
 {"name":"ship-dynamics-todo-system","private":true,"version":"0.1.0","type":"module","scripts":{"test:ship-portal-logos":"node scripts/verify-ship-itinerary-shortcut-browser.mjs --portal-logos",
     "test:ship-portal-logos:built":"node scripts/verify-ship-itinerary-shortcut-browser.mjs --portal-logos --built",
+    "test:tracking:urgency": "node scripts/verify-tracking-urgency.mjs",
+    "test:tracking:urgency:browser": "node scripts/verify-tracking-browser.mjs --urgency --current-tracking-sql && node scripts/verify-ship-tracking-browser.mjs --urgency --current-tracking-sql",
     "test:tracking:progress-copy":"node scripts/verify-tracking-progress-copy.mjs",
     "test:tracking:progress-copy:browser":"node scripts/verify-tracking-browser.mjs --progress-copy --current-tracking-sql && node scripts/verify-ship-tracking-browser.mjs --progress-copy --current-tracking-sql",
     "test:tracking:history-pdf": "node scripts/verify-tracking-history-pdf.mjs",
