@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import ShipPortalBrand from './ShipPortalBrand';
 import { BatchCreateModal, createInternalControlBatchDraft, type InternalControlBatchDraft } from './InternalControlModals';
 import { getSupabaseConfig } from './cloud';
-import { vesselDisplayName } from './vesselDisplay';
+import InternalControlPrintList from './InternalControlPrintList';
+import { downloadShipInternalControl, type ShipInternalControlDownload } from './shipInternalControlDownload';
+import { pdfVesselDisplayName, vesselDisplayName } from './vesselDisplay';
+import { formatTaipeiDateTime } from './taipeiTime';
 import {
   ShipInternalControlRepository, prepareShipInternalControlSubmission, readShipInternalControlDraft,
   saveShipInternalControlDraft, shipInternalControlDraftKey, shipInternalControlStoragePrefix, shipInternalControlErrorMessage,
@@ -27,6 +30,12 @@ export default function ShipInternalControlPortal() {
   const [open, setOpen] = useState(false);
   const [notice, setNotice] = useState(connection.error);
   const [saved, setSaved] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [downloadPassword, setDownloadPassword] = useState('');
+  const [printResult, setPrintResult] = useState<ShipInternalControlDownload | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState(false);
+  const downloadBusyRef = useRef(false);
+  const afterPrintCleanup = useRef<(() => void) | null>(null);
   const epoch = useRef(0);
   const durable = useRef(true);
   const setCurrent = (next: ShipInternalControlDraftRecord | null) => { recordRef.current = next; setRecord(next); };
@@ -40,13 +49,14 @@ export default function ShipInternalControlPortal() {
     try { localStorage.setItem(`${shipInternalControlStoragePrefix(backend.config)}selected`, id); } catch { /* Actual draft durability is checked before dispatch. */ }
   };
   const selectVessel = async (id: string) => {
-    if (!backend || busyRef.current) return;
+    if (!backend || busyRef.current || downloadBusyRef.current) return;
     if (!durable.current && recordRef.current) {
       setNotice('本機草稿尚未保存，暫不切換船舶；目前輸入仍保留，請先處理瀏覽器儲存空間。');
       return;
     }
     const generation = ++epoch.current;
     setSelected(id); rememberSelection(id); setSaved(false); setNotice(''); setCurrent(null); setOpen(false);
+    setDownloadOpen(false); setDownloadPassword(''); setPrintResult(null);
     if (!id) { setLoading(false); return; }
     let cached: ShipInternalControlDraftRecord | null = null;
     try { cached = readShipInternalControlDraft(localStorage, shipInternalControlDraftKey(backend.config, id)); }
@@ -82,7 +92,7 @@ export default function ShipInternalControlPortal() {
         .catch(error => { if (alive) setNotice(shipInternalControlErrorMessage(error)); })
         .finally(() => { if (alive) setLoading(false); });
     }
-    return () => { alive = false; epoch.current += 1; };
+    return () => { alive = false; epoch.current += 1; afterPrintCleanup.current?.(); };
   }, [backend]);
 
   useEffect(() => {
@@ -140,11 +150,41 @@ export default function ShipInternalControlPortal() {
     if (!durable.current && !window.confirm('本機草稿尚未保存，關閉視窗後仍會保留目前畫面資料；請勿離開或刷新此頁。是否關閉輸入視窗？')) return;
     setOpen(false);
   };
+  const download = async () => {
+    const vesselId = selected;
+    const password = downloadPassword;
+    if (!backend || !vesselId || !record || downloadBusyRef.current || busyRef.current || !password || printResult) return;
+    const generation = epoch.current;
+    downloadBusyRef.current = true; setDownloadBusy(true); setDownloadPassword(''); setNotice('正在雲端核對船舶密碼及取得最新未結清單…');
+    try {
+      const result = await downloadShipInternalControl(vesselId, password);
+      if (generation !== epoch.current || vesselId !== recordRef.current?.vessel.id) return;
+      setPrintResult(result);
+      setNotice(`雲端已提供 ${result.case_count} 件未結內控供列印（編號 ${result.receipt_id}）；請在列印視窗另存為 PDF。紀錄不代表已實際儲存 PDF。`);
+      document.body.classList.add('printing-ship-internal-control');
+      let timer: number;
+      const cleanup = () => {
+        window.clearTimeout(timer);
+        window.removeEventListener('afterprint', cleanup);
+        document.body.classList.remove('printing-ship-internal-control');
+        setPrintResult(null);
+        if (afterPrintCleanup.current === cleanup) afterPrintCleanup.current = null;
+      };
+      afterPrintCleanup.current = cleanup;
+      window.addEventListener('afterprint', cleanup);
+      timer = window.setTimeout(() => {
+        if (generation !== epoch.current) { cleanup(); return; }
+        try { window.print(); } catch { cleanup(); setNotice('瀏覽器無法啟動列印；雲端已留下提供清單的紀錄，但尚未產生 PDF。'); }
+      }, 120);
+    } catch (error) {
+      if (generation === epoch.current) setNotice(error instanceof Error ? error.message : '無法取得清單；未提供任何案件。');
+    } finally { downloadBusyRef.current = false; setDownloadBusy(false); }
+  };
   const options = record && !vessels.some(vessel => vessel.id === record.vessel.id) ? [record.vessel, ...vessels] : vessels;
   const hasDraft = record && (record.pending || record.draft.reporterNameAndRole?.trim() || record.draft.rows.some(row => row.description || row.status));
   return <main className="ship-portal-shell ship-internal-portal">
     <header className="ship-portal-header"><ShipPortalBrand><h1>船端內控/訴求</h1><p>免登入｜選擇船名後新增內控；雲端確認保存才會顯示成功。</p></ShipPortalBrand>
-      <div className="ship-vessel-picker"><label htmlFor="ship-internal-vessel">船名</label><select id="ship-internal-vessel" value={selected} disabled={!backend || loading || busy || open} onChange={event => void selectVessel(event.target.value)}><option value="">請選擇船舶</option>{options.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div>
+      <div className="ship-vessel-picker"><label htmlFor="ship-internal-vessel">船名</label><select id="ship-internal-vessel" value={selected} disabled={!backend || loading || busy || downloadBusy || Boolean(printResult) || open} onChange={event => void selectVessel(event.target.value)}><option value="">請選擇船舶</option>{options.map(vessel => <option key={vessel.id} value={vessel.id}>{vesselDisplayName(vessel)}</option>)}</select></div>
     </header>
     <section className="ship-state-card compact ship-internal-guidance" aria-label="填報說明"><h2>內控／訴求填報說明</h2><ul>
       <li>本頁供船舶提報內控事項，以不對外的異常情況、船上提議或訴求為主，例如：暫時無法解決、需要公司協助的高風險事項、物料／備件跟催，或對公司的建議。</li>
@@ -154,9 +194,17 @@ export default function ShipInternalControlPortal() {
     </ul></section>
     {notice && <div className={`ship-notice${saved ? ' ship-internal-success' : ''}`} role="status">{notice}</div>}
     <section className="ship-state-card compact ship-internal-actions"><div><b>{record ? vesselDisplayName(record.vessel) : loading ? '正在載入船舶…' : '先選擇船名'}</b><p>{record ? '可輸入單筆或多筆內控／訴求，由岸端跟進及結案。' : '僅列出目前啟用的船舶。'}</p></div>
-      <button type="button" className="btn green" disabled={!record || loading || busy || open} onClick={() => { setSaved(false); if (!record?.pending) setNotice(''); setOpen(true); }}>＋ 增加內控/訴求</button>
+      <button type="button" className="btn green" disabled={!record || loading || busy || downloadBusy || Boolean(printResult) || open} onClick={() => { setSaved(false); if (!record?.pending) setNotice(''); setOpen(true); }}>＋ 增加內控/訴求</button>
+      <button type="button" className="btn primary" disabled={!record || loading || busy || downloadBusy || Boolean(printResult) || open} onClick={() => { setDownloadPassword(''); setDownloadOpen(value => !value); setNotice(''); }}>下載未結內控清單</button>
       {hasDraft && !open && <small>已有{record.pending ? '待確認提交' : '本機草稿'}，按上方按鈕繼續。</small>}
     </section>
+    {downloadOpen && record && <section className="ship-state-card compact ship-internal-download no-print" aria-label="船端內控下載"><label htmlFor="ship-internal-download-password">{vesselDisplayName(record.vessel)}｜下載密碼</label><div><input id="ship-internal-download-password" type="password" value={downloadPassword} autoComplete="off" disabled={downloadBusy || Boolean(printResult)} onChange={event => setDownloadPassword(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void download(); }} placeholder="輸入岸端提供的該船下載密碼"/><button type="button" className="btn primary" disabled={!downloadPassword || downloadBusy || busy || Boolean(printResult)} onClick={() => void download()}>{downloadBusy ? '核對中…' : '核對並另存 PDF'}</button></div><small>每次重新向雲端讀取最新未結案件；雲端記錄清單已提供，不代表瀏覽器最後已儲存 PDF。</small></section>}
+    {printResult && <section className="internal-control-print print-only ship-internal-export-print" aria-label="船端內控 PDF">
+      <div className="ship-internal-watermark" aria-hidden="true">{pdfVesselDisplayName(printResult.vessel)}<br/>IP {printResult.ip_address}<br/>{formatTaipeiDateTime(printResult.issued_at)}<br/>{printResult.receipt_id}</div>
+      <h1>內控異常未完清單</h1><p>船舶 {pdfVesselDisplayName(printResult.vessel)}；日期 不限～不限；未完｜共 {printResult.case_count} 件｜匯出來源 船端｜{formatTaipeiDateTime(printResult.issued_at)}</p>
+      <InternalControlPrintList cases={printResult.cases} vessels={[printResult.vessel]}/>
+      <footer className="ship-internal-export-footer">船舶 {pdfVesselDisplayName(printResult.vessel)}｜IP {printResult.ip_address}｜{formatTaipeiDateTime(printResult.issued_at)}｜下載編號 {printResult.receipt_id}</footer>
+    </section>}
     {open && record && <BatchCreateModal user={{ id: `public-vessel:${record.vessel.id}` }} vessels={[record.vessel]} close={close} save={submit} shipSubmission={{ draft: record.draft, catalog: record.catalog, busy, pending: Boolean(record.pending), message: notice, onDraftChange: changeDraft }} />}
   </main>;
 }

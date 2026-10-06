@@ -11,10 +11,11 @@ import { formatTaipeiDateTime } from './taipeiTime';
 import { presentAuditLog } from './auditPresentation';
 import { useManagementDraft, confirmManagementDraftDiscard, type ManagementDraftReporter } from './managementDraft';
 import DataManagementPanel from './DataManagementPanel';
+import ShipInternalControlDownloadAdmin from './ShipInternalControlDownloadAdmin';
 import ManagementAssignmentExports from './ManagementAssignmentExports';
 import { vesselParticularDraft, type VesselParticularDraft } from './vesselParticulars';
 
-type Section = 'directory' | 'people' | 'vessels' | 'categories' | 'attention' | 'roles' | 'owner' | 'audit' | 'data';
+type Section = 'directory' | 'people' | 'vessels' | 'categories' | 'attention' | 'roles' | 'owner' | 'audit' | 'data' | 'downloads';
 type DirectoryKind = 'all' | 'user' | 'vessel';
 type UserDelegateVesselDraft = { vesselId: string; isActive: boolean };
 type UserDraft = Pick<UserAccount, 'department' | 'name' | 'username' | 'role' | 'isActive' | 'managedVesselIds'> & { password: string; delegateVessels: UserDelegateVesselDraft[] };
@@ -131,6 +132,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
     if (next === 'categories' && !canManageCategories) return alert('只有 Owner／管理員可以維護分類');
     if (next === 'audit' && !canViewAudit) return alert('目前角色未獲授權查看操作紀錄');
     if (next === 'data' && !canViewDataManagement) return alert('只有 Owner／管理員可以進入數據管理');
+    if (next === 'downloads' && !canViewDataManagement) return alert('只有 Owner／管理員可以管理船端內控下載');
     if (next === 'owner' && !canManageSystem) return alert('只有 Owner 可以進入敏感設定');
     if (next === section) return;
     if (section === 'categories' && !allowDiscard([...privateDrafts.current.values()].includes('categories'))) return;
@@ -373,6 +375,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
     ...(canManageSystem ? [{ id: 'owner' as const, icon: '🔐', label: 'Owner 與雲端' }] : []),
     ...(canViewAudit ? [{ id: 'audit' as const, icon: '▤', label: '操作紀錄' }] : []),
     ...(canViewDataManagement ? [{ id: 'data' as const, icon: '▥', label: '數據管理' }] : []),
+    ...(canViewDataManagement ? [{ id: 'downloads' as const, icon: '▣', label: '船端內控下載' }] : []),
   ];
 
   return <section className="management-view">
@@ -409,6 +412,7 @@ export default function ManagementView({ data, currentUser, commit, captureCommi
       {section === 'audit' && <><div className="management-master"><MasterHeader title="操作紀錄" count={data.auditLogs.length} query={query} setQuery={setQuery}/><div className="management-list">{filteredAuditLogs.slice(0,100).map(log => { const presented = presentAuditLog(log, data); return <button key={log.id} className={`management-list-item ${selectedAudit?.id === log.id ? 'active' : ''}`} onClick={() => setAuditId(log.id)}><span className="management-avatar audit">▤</span><span><b>{presented.operationText}</b><small>{log.actorName}｜{formatTaipeiDateTime(log.at)}｜IP {log.ipAddress || '未記錄'}</small></span></button>; })}</div></div><div className="management-detail">{selectedAudit && selectedAuditPresentation ? <div className="management-editor"><EditorHeading title={selectedAuditPresentation.actionLabel} subtitle="操作紀錄詳細資料"/><div className="management-summary-grid"><Summary label="操作者" value={selectedAudit.actorName}/><Summary label="角色" value={roleLabel(selectedAudit.actorRole)}/><Summary label="時間" value={formatTaipeiDateTime(selectedAudit.at)}/><Summary label="IP號碼" value={selectedAuditPresentation.ipAddressLabel}/><Summary label="IP歸屬地" value={selectedAuditPresentation.ipLocationLabel}/></div><EditorSection title="具體操作"><p><b>{selectedAuditPresentation.operationText}</b></p><p>{selectedAuditPresentation.detailText}</p></EditorSection><details className="audit-technical"><summary>技術識別資料</summary><p className="muted">{selectedAuditPresentation.technicalId}</p></details></div>:<EmptyDetail text="目前沒有操作紀錄"/>}</div></>}
 
       {section === 'data' && canViewDataManagement && <DataManagementPanel currentUser={currentUser}/>}
+      {section === 'downloads' && canViewDataManagement && <ShipInternalControlDownloadAdmin currentUser={currentUser} vessels={data.vessels}/>}
     </div>
     {saveNotice && <div className="management-save-toast" role="status" aria-live="polite">{saveNotice}</div>}
   </section>;

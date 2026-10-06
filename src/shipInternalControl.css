@@ -13,4 +13,24 @@
 .ship-internal-guidance li+li{margin-top:4px}
 .ship-ic-reporter{margin-bottom:10px}
 .ship-ic-reporter small{line-height:1.4}
+.ship-internal-download{display:grid;gap:7px;min-width:0}
+.ship-internal-download label{font-weight:850}
+.ship-internal-download>div{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ship-internal-download input{flex:1 1 280px;min-width:0;padding:9px 10px;border:1px solid var(--ship-line);border-radius:8px}
+.ship-internal-download small{color:var(--muted);line-height:1.4}
+.ship-internal-watermark,.ship-internal-export-footer{display:none}
+@media print{
+  body.printing-ship-internal-control .ship-internal-portal{display:block!important;max-width:none!important;width:100%!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;background:#fff!important;box-shadow:none!important}
+  body.printing-ship-internal-control .ship-internal-portal>:not(.ship-internal-export-print){display:none!important}
+  body.printing-ship-internal-control .ship-internal-export-print{display:block!important;position:relative;color:#000!important;margin:0!important;padding:0 0 15mm!important;border:0!important;box-shadow:none!important;page-break-inside:auto}
+  body.printing-ship-internal-control .ship-internal-export-print h1{margin:0 0 3mm;font-size:18px}
+  body.printing-ship-internal-control .ship-internal-export-print p{margin:0 0 4mm;font-size:10px}
+  body.printing-ship-internal-control .ship-internal-export-print table{width:100%;table-layout:fixed;border-collapse:collapse}
+  body.printing-ship-internal-control .ship-internal-export-print thead{display:table-header-group}
+  body.printing-ship-internal-control .ship-internal-export-print tr{break-inside:avoid}
+  body.printing-ship-internal-control .ship-internal-export-print th,body.printing-ship-internal-control .ship-internal-export-print td{border:1px solid #999;overflow-wrap:anywhere;vertical-align:top;font-size:9px}
+  body.printing-ship-internal-control .ship-internal-watermark{display:block;position:fixed;top:41%;left:16%;width:68%;z-index:2;pointer-events:none;transform:rotate(-19deg);text-align:center;line-height:1.65;font-size:18px;font-weight:800;color:rgba(80,42,93,.16);overflow-wrap:anywhere}
+  body.printing-ship-internal-control .ship-internal-export-footer{display:block;position:fixed;bottom:1mm;left:0;right:0;z-index:3;padding:1mm 0;border-top:1px solid #777;background:#fff;color:#333;font-size:8px;text-align:center;overflow-wrap:anywhere}
+}
+@media(max-width:600px){.ship-internal-download>div{display:grid;grid-template-columns:1fr}.ship-internal-download input{width:100%;flex-basis:auto}}
 @media(prefers-color-scheme:dark){.ship-internal-success{background:#163729;color:#b9edcd;border-color:#438966}}

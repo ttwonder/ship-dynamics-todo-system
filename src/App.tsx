@@ -6,6 +6,7 @@ import { createInitialData } from './data/seed';
 import type { AgendaReport, AppData, FilterState, InternalControlCase, MorningReportSnapshot, StatusLog, TaskItem, TaskPriority, TemporaryMeeting, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { CLOUD_CACHE_IDENTITY_KEY, CLOUD_CONFIRMED_BASE_KEY, CLOUD_REVISION_FLOORS_KEY, CURRENT_USER_KEY, SESSION_SITE_UNLOCK, STORAGE_KEY, daysDiff, loadLocal, nowIso, roleLabel, sanitizeAppDataForStorage, saveLocal, sha256, todayDate, uid, withAudit } from './utils';
 import { CloudBlockPatchRejectedError, CloudBlockPatchUnavailableError, CloudBlockPatchV2UnavailableError, CloudConflictError, applyCloudBlockPatch as applyCloudBlockPatchRpc, applyCloudBlockPatchV2, claimEditLock, cloudStoragePayloadFor, cloudRecordReadScopeFor, fetchCloudData as fetchCloudDataRpc, getCloudBlockPatchReceipt, getSupabaseConfig, releaseEditLock, renewEditLock, saveCloudData, saveSupabaseConfig, subscribeToCloudRevision, type ResolvedSupabaseConfig, type SupabaseConfig } from './cloud';
+import { clearInternalControlAdminSession, issueInternalControlAdminSession } from './shipInternalControlDownload';
 import { deferredView } from './deferredView';
 const TrackingPage=deferredView(()=>import('./tracking/TrackingPage'));
 import { runTrackingUiCommand } from './tracking/trackingUiCommands';
@@ -341,7 +342,7 @@ export default function App() {
   const [currentUserId, setCurrentUserIdState] = useState(() => localStorage.getItem(CURRENT_USER_KEY) || '');
   const liveCurrentUserId = useRef(currentUserId);
   const identitySessionGeneration=useRef(0);
-  const setCurrentUserId=(nextUserId:string)=>{identitySessionGeneration.current+=1;liveCurrentUserId.current=nextUserId;setCurrentUserIdState(nextUserId);};
+  const setCurrentUserId=(nextUserId:string)=>{clearInternalControlAdminSession();identitySessionGeneration.current+=1;liveCurrentUserId.current=nextUserId;setCurrentUserIdState(nextUserId);};
   const [tab, setTab] = useState<Tab>('dashboard');
   const [filters, setFilters] = useState<FilterState>(emptyFilters);
   const [closedFilters, setClosedFilters] = useState<FilterState>({...emptyFilters,closedMode:'closed'});
@@ -5500,7 +5501,7 @@ function Login({ data, setCurrentUserId }: { data: AppData; setCurrentUserId:(id
   useEffect(()=>{if(!people.some(user=>user.id===userId)){setUserId(people[0]?.id||'');setPw('');setErr('');}},[department,data.revision]);
   const selectedUser=activeUsers.find(user=>user.id===userId);
   const selectedNeedsPassword=Boolean(selectedUser&&(selectedUser.role==='owner'||selectedUser.role==='admin'||selectedUser.passwordHash));
-  const login=async()=>{ const user=activeUsers.find(item=>item.id===userId); if(!user) return setErr('請選擇登入人員'); const needsPassword=user.role==='owner'||user.role==='admin'||Boolean(user.passwordHash); if(!needsPassword){setCurrentUserId(user.id);return;} if(!user.passwordHash) return setErr('此 Owner／管理員帳號尚未設定密碼，請由 Owner 先設定密碼'); if(!pw) return setErr(user.role==='owner'||user.role==='admin'?'Owner／管理員請輸入密碼':'此人員已設定個人密碼，請輸入密碼'); if(await sha256(pw)!==user.passwordHash) return setErr('密碼錯誤'); setCurrentUserId(user.id); };
+  const login=async()=>{ const user=activeUsers.find(item=>item.id===userId); if(!user) return setErr('請選擇登入人員'); const needsPassword=user.role==='owner'||user.role==='admin'||Boolean(user.passwordHash); if(!needsPassword){setCurrentUserId(user.id);return;} if(!user.passwordHash) return setErr('此 Owner／管理員帳號尚未設定密碼，請由 Owner 先設定密碼'); if(!pw) return setErr(user.role==='owner'||user.role==='admin'?'Owner／管理員請輸入密碼':'此人員已設定個人密碼，請輸入密碼'); if(await sha256(pw)!==user.passwordHash) return setErr('密碼錯誤'); setCurrentUserId(user.id); if(user.role==='owner'||user.role==='admin')void issueInternalControlAdminSession(user.id,pw); };
   return <div className="login-page"><div className="login-card"><div className="login-card-heading"><img className="login-logo" src={fpmcLogo} alt="台塑 LOGO" /><h2>人員登入／切換</h2></div><p className="muted">請先選擇部門與人員；Owner／管理員或已設定個人密碼者需輸入密碼，其餘人員可直接登入。</p><div className="field"><label>部門</label><select aria-label="登入部門" value={department} onChange={e=>setDepartment(e.target.value)}>{departments.map(item=><option key={item}>{item}</option>)}</select></div><div className="field"><label>人員</label><select aria-label="登入人員" value={userId} onChange={e=>{setUserId(e.target.value);setPw('');setErr('');}}>{people.map(user=><option key={user.id} value={user.id}>{user.name}</option>)}</select></div><div className="field login-password-field"><label>密碼</label><input type="password" value={pw} placeholder={selectedNeedsPassword?'請輸入密碼':'無密碼帳號可空白直接登入'} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') login();}} /></div>{err&&<p className="warn">{err}</p>}<button className="btn primary" disabled={!selectedUser} onClick={login}>登入</button></div></div>;
 }
 
