@@ -47,7 +47,14 @@ try {
   );
   const { createAnalyticsFixture } = await server.ssrLoadModule('/scripts/fixtures/internal-control-analytics.ts');
   const { default: InternalControlPage } = await server.ssrLoadModule('/src/InternalControlPage.tsx');
+  const { default: InternalControlPrintList } = await server.ssrLoadModule('/src/InternalControlPrintList.tsx');
   const { default: VesselListFilter } = await server.ssrLoadModule('/src/VesselListFilter.tsx');
+  const shorePrint = renderToStaticMarkup(React.createElement(InternalControlPrintList, { cases: cases.slice(0, 1), vessels }));
+  const shipPrint = renderToStaticMarkup(React.createElement(InternalControlPrintList, { cases: cases.slice(0, 1), vessels, shipPdf: true }));
+  assert.equal((shorePrint.match(/<th>/g) || []).length, 8, 'shore PDF keeps all eight existing columns');
+  assert.ok(shorePrint.includes('<th>船舶</th>') && !shorePrint.includes('<colgroup>'), 'shore PDF must retain the original print table');
+  assert.equal((shipPrint.match(/<th>/g) || []).length, 7, 'ship PDF omits only the vessel column');
+  assert.ok(!shipPrint.includes('<th>船舶</th>') && shipPrint.includes('<colgroup>'), 'ship widths must not leak into shore PDF');
   const { vesselSelectionDisplayName } = await server.ssrLoadModule('/src/vesselDisplay.ts');
   const fixture = createAnalyticsFixture();
   fixture.vessels[2].name = 'QA-C'; // Valid English alias when the Chinese name is absent.

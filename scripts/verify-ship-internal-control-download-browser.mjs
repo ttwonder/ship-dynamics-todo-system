@@ -141,11 +141,17 @@ try {
   await until(()=>evaluate("document.querySelector('.ship-internal-actions button')?.disabled===false"),'own ship selected');
   await click('下載未結內控清單');
   // Only substitute the native dialog, not the product click, RPC, print tree, or print CSS.
-  await evaluate("void(window.__qaPrintCalls=0);window.print=()=>{window.__qaPrintCalls++}");
+  const originalTitle=await evaluate('document.title');
+  await evaluate("void(window.__qaPrintCalls=0);window.print=()=>{window.__qaPrintCalls++;window.__qaPrintTitle=document.title}");
   await fill('#ship-internal-download-password',secret);await click('核對並另存 PDF');
   await until(()=>evaluate("window.__qaPrintCalls===1&&!!document.querySelector('.ship-internal-export-print')"),'real print action');
-  const printable=await evaluate("(()=>{const n=document.querySelector('.ship-internal-export-print'),w=n.querySelector('.ship-internal-watermark'),f=n.querySelector('footer');return {text:n.innerText,watermark:w.innerText,footer:f.innerText,bodyMode:document.body.classList.contains('printing-ship-internal-control'),password:document.querySelector('#ship-internal-download-password')?.value}})()");
+  const printable=await evaluate("(()=>{const n=document.querySelector('.ship-internal-export-print'),w=n.querySelector('.ship-internal-watermark'),f=n.querySelector('footer'),t=n.querySelector('table');return {text:n.innerText,watermark:w.innerText,footer:f.innerText,bodyMode:document.body.classList.contains('printing-ship-internal-control'),password:document.querySelector('#ship-internal-download-password')?.value,headers:[...t.querySelectorAll('thead th')].map(c=>c.textContent.trim()),cells:t.querySelector('tbody tr')?.cells.length,title:window.__qaPrintTitle,printedAt:n.querySelector('p')?.textContent,watermarkCopies:w.querySelectorAll('[data-watermark-tile]').length}})()");
   assert.equal(printable.bodyMode,true);assert.ok(!printable.password,'print action clears the entered password');
+  assert.deepEqual(printable.headers,['報告日期／來源','關注','事項','分類／細項','部門','狀態','結案'],'ship PDF must omit duplicate vessel column');
+  assert.equal(printable.cells,7,'ship PDF must have seven data columns');
+  const printedDate=printable.printedAt.match(/\d{4}\/\d{2}\/\d{2}/)?.[0].replaceAll('/','-');
+  assert.equal(printable.title,`內控清單 - QA 船 1 QA SHIP 1 - ${printedDate}`,'native Save-as-PDF filename comes from document.title');
+  assert.ok(printable.watermarkCopies>=24,'watermark must tile across the page, not one center mark');
   for(const text of [own,'QA SHIP 1',ip])assert.ok(printable.text.includes(text),'print DOM missing expected marker');
   for(const text of [other,closed,secret,qa.password])assert.ok(!printable.text.includes(text),'print DOM leaked excluded marker');
   receipt=(await audit()).find(row=>row.action==='download'&&row.result==='success'&&row.vessel_id==='qa-v1');
@@ -156,6 +162,12 @@ try {
   const printCss=await evaluate("(()=>{const n=document.querySelector('.ship-internal-watermark'),f=document.querySelector('.ship-internal-export-footer');return {wm:getComputedStyle(n).position,footer:getComputedStyle(f).position,visible:getComputedStyle(n).display,printList:getComputedStyle(document.querySelector('.ship-internal-export-print')).display}})()");
   assert.equal(printCss.wm,'fixed');assert.equal(printCss.footer,'fixed');assert.notEqual(printCss.visible,'none');assert.notEqual(printCss.printList,'none');
   assert.ok(css.wm!=='fixed','watermark must be print-only');
+  const widths=await evaluate("[...document.querySelectorAll('.ship-internal-export-print thead th')].map(n=>n.getBoundingClientRect().width)");
+  assert.equal(widths.length,7);
+  for(const [index,weight] of [2/3,1/3,1,1/2,1/2,1,1/3].entries())
+   assert.ok(Math.abs(widths[index]/widths[2]-weight)<0.08,`ship PDF column ${index} width ratio differs from requested ${weight}`);
+  // Retain an isolated copy for pagination QA; the real print action must still clean up on afterprint.
+  await evaluate("window.__qaPrintDom=document.querySelector('.ship-internal-export-print').cloneNode(true)");
   const pdf=Buffer.from((await call('Page.printToPDF',{printBackground:true,preferCSSPageSize:true})).data,'base64');
   assert.ok(pdf.subarray(0,5).equals(Buffer.from('%PDF-'))&&pdf.length>6000,'nontrivial Chromium PDF');
   const pdfPath=path.join(run,'ship-internal-open.pdf');fs.writeFileSync(pdfPath,pdf);
@@ -166,9 +178,23 @@ try {
   const pages=(pdf.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;
   assert.ok(pages>=1,'Chromium PDF page objects');
   evidence.pdf={pages,bytes:pdf.length,sha256:createHash('sha256').update(pdf).digest('hex'),receiptMatched:true};
+  await until(()=>evaluate("!document.querySelector('.ship-internal-export-print')&&!document.body.classList.contains('printing-ship-internal-control')"),'native afterprint cleanup');
+  assert.equal(await evaluate('document.title'),originalTitle,'native print must restore page title');
+  // Only stretch a detached copy of the authenticated print tree: never alter server cases.
+  await evaluate("(()=>{document.querySelector('.ship-internal-portal').append(window.__qaPrintDom);document.body.classList.add('printing-ship-internal-control');const body=window.__qaPrintDom.querySelector('tbody'),row=body.querySelector('tr');for(let i=0;i<85;i++){const copy=row.cloneNode(true);copy.querySelectorAll('td')[2].textContent='PRINT_PAGE_QA_'+String(i).padStart(3,'0');body.append(copy)}})()");
+  const longPdf=Buffer.from((await call('Page.printToPDF',{printBackground:true,preferCSSPageSize:true})).data,'base64');
+  const longPath=path.join(run,'ship-internal-multipage.pdf');fs.writeFileSync(longPath,longPdf);
+  const longPages=(longPdf.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length;
+  assert.ok(longPages>=2,'need an actual multi-page PDF to prove repeated watermark');
+  for(let n=1;n<=longPages;n++){
+   const pageText=execFileSync('pdftotext',['-f',String(n),'-l',String(n),'-raw',longPath,'-'],{encoding:'utf8',timeout:15000});
+   assert.ok(pageText.split(ip).length-1>=12,`IP watermark did not repeat across PDF page ${n}`);
+   assert.ok(pageText.includes(receipt.receipt_id),`receipt footer/watermark missing on PDF page ${n}`);
+  }
+  evidence.multipagePdf={pages:longPages,bytes:longPdf.length,sha256:createHash('sha256').update(longPdf).digest('hex'),ipRepeatedOnEveryPage:true};
+  await evaluate("window.__qaPrintDom.remove();window.__qaPrintDom=null;document.body.classList.remove('printing-ship-internal-control')");
   await call('Emulation.setEmulatedMedia',{media:'screen'});
-  await evaluate("window.dispatchEvent(new Event('afterprint'))");
-  await until(()=>evaluate("!document.querySelector('.ship-internal-export-print')&&!document.body.classList.contains('printing-ship-internal-control')"),'print cleanup');
+  assert.equal(await evaluate('document.title'),originalTitle,'pagination QA must not change the page title');
  });
  session=admin;
  await check('UI05-admin-cloud-records-and-one-time-password-hiding',async()=>{

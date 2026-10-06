@@ -5,7 +5,7 @@ import { getSupabaseConfig } from './cloud';
 import InternalControlPrintList from './InternalControlPrintList';
 import { downloadShipInternalControl, type ShipInternalControlDownload } from './shipInternalControlDownload';
 import { pdfVesselDisplayName, vesselDisplayName } from './vesselDisplay';
-import { formatTaipeiDateTime } from './taipeiTime';
+import { formatTaipeiDateTime, taipeiDateKey } from './taipeiTime';
 import {
   ShipInternalControlRepository, prepareShipInternalControlSubmission, readShipInternalControlDraft,
   saveShipInternalControlDraft, shipInternalControlDraftKey, shipInternalControlStoragePrefix, shipInternalControlErrorMessage,
@@ -161,11 +161,18 @@ export default function ShipInternalControlPortal() {
       if (generation !== epoch.current || vesselId !== recordRef.current?.vessel.id) return;
       setPrintResult(result);
       setNotice(`雲端已提供 ${result.case_count} 件未結內控供列印（編號 ${result.receipt_id}）；請在列印視窗另存為 PDF。紀錄不代表已實際儲存 PDF。`);
+      const previousTitle = document.title;
+      const shipName = pdfVesselDisplayName(result.vessel).replace(/[<>:"\/\\|?*\x00-\x1f]/g, '-').replace(/[. ]+$/g, '').trim() || '未明船舶';
+      document.title = `內控清單 - ${shipName} - ${taipeiDateKey(result.issued_at)}`;
       document.body.classList.add('printing-ship-internal-control');
       let timer: number;
+      let cleaned = false;
       const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
         window.clearTimeout(timer);
         window.removeEventListener('afterprint', cleanup);
+        document.title = previousTitle;
         document.body.classList.remove('printing-ship-internal-control');
         setPrintResult(null);
         if (afterPrintCleanup.current === cleanup) afterPrintCleanup.current = null;
@@ -200,9 +207,16 @@ export default function ShipInternalControlPortal() {
     </section>
     {downloadOpen && record && <section className="ship-state-card compact ship-internal-download no-print" aria-label="船端內控下載"><label htmlFor="ship-internal-download-password">{vesselDisplayName(record.vessel)}｜下載密碼</label><div><input id="ship-internal-download-password" type="password" value={downloadPassword} autoComplete="off" disabled={downloadBusy || Boolean(printResult)} onChange={event => setDownloadPassword(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void download(); }} placeholder="輸入岸端提供的該船下載密碼"/><button type="button" className="btn primary" disabled={!downloadPassword || downloadBusy || busy || Boolean(printResult)} onClick={() => void download()}>{downloadBusy ? '核對中…' : '核對並另存 PDF'}</button></div><small>每次重新向雲端讀取最新未結案件；雲端記錄清單已提供，不代表瀏覽器最後已儲存 PDF。</small></section>}
     {printResult && <section className="internal-control-print print-only ship-internal-export-print" aria-label="船端內控 PDF">
-      <div className="ship-internal-watermark" aria-hidden="true">{pdfVesselDisplayName(printResult.vessel)}<br/>IP {printResult.ip_address}<br/>{formatTaipeiDateTime(printResult.issued_at)}<br/>{printResult.receipt_id}</div>
+      <div className="ship-internal-watermark" aria-hidden="true">
+        {Array.from({ length: 28 }, (_, index) => (
+          <span className="ship-internal-watermark-tile" data-watermark-tile key={index}>
+            {pdfVesselDisplayName(printResult.vessel)}<br/>IP {printResult.ip_address}<br/>
+            {formatTaipeiDateTime(printResult.issued_at)}<br/>{printResult.receipt_id}
+          </span>
+        ))}
+      </div>
       <h1>內控異常未完清單</h1><p>船舶 {pdfVesselDisplayName(printResult.vessel)}；日期 不限～不限；未完｜共 {printResult.case_count} 件｜匯出來源 船端｜{formatTaipeiDateTime(printResult.issued_at)}</p>
-      <InternalControlPrintList cases={printResult.cases} vessels={[printResult.vessel]}/>
+      <InternalControlPrintList cases={printResult.cases} vessels={[printResult.vessel]} shipPdf/>
       <footer className="ship-internal-export-footer">船舶 {pdfVesselDisplayName(printResult.vessel)}｜IP {printResult.ip_address}｜{formatTaipeiDateTime(printResult.issued_at)}｜下載編號 {printResult.receipt_id}</footer>
     </section>}
     {open && record && <BatchCreateModal user={{ id: `public-vessel:${record.vessel.id}` }} vessels={[record.vessel]} close={close} save={submit} shipSubmission={{ draft: record.draft, catalog: record.catalog, busy, pending: Boolean(record.pending), message: notice, onDraftChange: changeDraft }} />}
