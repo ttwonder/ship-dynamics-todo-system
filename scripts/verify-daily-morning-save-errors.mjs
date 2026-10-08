@@ -10,7 +10,7 @@ const ast=ts.createSourceFile('App.tsx',source,ts.ScriptTarget.Latest,true,ts.Sc
 const matches={};
 const walk=node=>{if(ts.isVariableDeclaration(node)&&['saveDailyMorningHistory','saveChanges'].includes(node.name.getText(ast))){const name=node.name.getText(ast);assert.ok(!matches[name]);matches[name]=node.initializer.getText(ast);}ts.forEachChild(node,walk);};
 walk(ast);assert.equal(Object.keys(matches).length,2);
-const code=ts.transpileModule(`globalThis.save=${matches.saveDailyMorningHistory.replaceAll('import.meta.env.DEV','false')};globalThis.headerSave=${matches.saveChanges};`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+const code=ts.transpileModule(`const saveDailyMorningHistory=${matches.saveDailyMorningHistory.replaceAll('import.meta.env.DEV','false')};globalThis.save=saveDailyMorningHistory;globalThis.headerSave=${matches.saveChanges};`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
 const server=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});
 const cases=[];
 try{
@@ -78,6 +78,26 @@ try{
   });
   await check('MSE09-late-timeout-after-actor-change-does-not-retain-successor-retry',async()=>{
     const x=setup({code:'57014',message:'canceling statement due to statement timeout'});x.events.beforeQueue=()=>{x.context.liveCurrentUserId.current='successor';};assert.equal(await x.run(),false);assert.equal(x.context.dailyMorningSaveRetry.current,null);assert.equal(x.events.alerts.length,0);assert.equal(x.events.publications.length,0);
+  });
+  await check('MSE10-preflight-timeout-identifies-read-stage-with-zero-write',async()=>{
+    const x=setup(null),error={code:'57014',message:'canceling statement due to statement timeout'};
+    x.context.loadRecordActionScope=async(_scope,_owner,_fresh,_prepared,onError)=>{if(onError)onError(error);else x.context.alert(error.message);return false;};
+    assert.equal(await x.run(),false);assert.equal(x.events.alerts.length,1);
+    assert.match(x.events.alerts[0],/保存前讀取/);assert.match(x.events.alerts[0],/57014/);
+    assert.equal(x.events.queued.length,0);assert.equal(x.events.publications.length,0);assert.equal(x.events.toasts.length,0);assert.ok(x.context.dailyMorningSaveRetry.current);
+  });
+  await check('MSE11-preflight-retry-reacquires-data-before-enqueue',async()=>{
+    const x=setup(null);x.context.confirmedCloudData.current=x.baseline;
+    x.context.loadRecordActionScope=async(_s,_o,_f,_p,onError)=>{if(onError)onError({code:'57014',message:'canceling statement due to statement timeout'});return false;};
+    assert.equal(await x.run(),false);assert.ok(x.context.dailyMorningSaveRetry.current);assert.equal(x.events.queued.length,0);
+    let reads=0;x.context.loadRecordActionScope=async()=>{reads++;return true;};await x.header();
+    assert.equal(reads,1);assert.equal(x.events.queued.length,1);assert.equal(x.events.publications.length,1);assert.equal(x.context.dailyMorningSaveRetry.current,null);assert.equal(x.events.toasts.length,1);
+  });
+  await check('MSE12-preflight-unknown-or-confirmed-flush-never-becomes-new-retry',async()=>{
+    for(const error of [new CloudBlockPatchOutcomeUnknownError('preflight-unknown'),new CloudBlockPatchConfirmedRefreshError({revision:2})]){
+      error.code='57014';const x=setup(null);x.context.loadRecordActionScope=async(_s,_o,_f,_p,onError)=>{onError(error);return false;};
+      assert.equal(await x.run(),false);assert.equal(x.context.dailyMorningSaveRetry.current,null);assert.equal(x.events.queued.length,0);assert.equal(x.events.publications.length,0);assert.equal(x.events.toasts.length,0);
+    }
   });
 }finally{await server.close();}
 console.log(JSON.stringify({status:cases.every(x=>x.status==='PASS')?'PASS':'FAIL',layer:'actual-App-callback-controlled-queue-IO',cases,caseCount:cases.length}));
