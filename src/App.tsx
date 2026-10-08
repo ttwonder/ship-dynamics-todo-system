@@ -427,6 +427,7 @@ export default function App() {
   liveCreatingTaskId.current=creatingTask?.id||'';
   const activeCloudIdentity = useRef('');
   const pendingCloudData = useRef(createCloudSaveIntentQueue<PendingCloudSaveIntent>());
+  const dailyMorningSaveRetry = useRef<{isCurrent:()=>boolean;run:()=>Promise<boolean>}|null>(null);
   const cloudSaveInFlight = useRef<Promise<void> | null>(null);
   const vesselAttentionPersistRef=useRef<(vesselId:string,desired:WeeklyAttentionKey[])=>Promise<void>>(async()=>{throw new Error('關注燈保存尚未就緒');});
   const vesselAttentionSaveQueue=useRef<ReturnType<typeof createVesselAttentionSaveQueue>|null>(null);
@@ -4372,6 +4373,11 @@ export default function App() {
   const saveDailyMorningHistory=async(at:string):Promise<boolean>=>{
     if(currentUser.role!=='owner'&&currentUser.role!=='admin')return alert('只有 Owner／管理員可以保存正式每日早會快照'),false;
     if(cloudSaveInFlight.current||pendingCloudData.current.size()>0)return alert('目前仍有雲端保存作業，請等頁首顯示已保存後再建立早會快照'),false;
+    const retained=dailyMorningSaveRetry.current;
+    if(retained?.isCurrent()){
+      if(cloudWriteBlocked)return alert('尚未確認前次保存結果；請先同步最新，再重新保存早會快照'),false;
+      return retained.run();
+    }
     const expectedAuthorizationEpoch=authorizationEpoch;
     const ownerIsCurrent=captureReportAction();
     if(!await loadRecordActionScope('full',ownerIsCurrent)||!ownerIsCurrent())return false;
@@ -4405,8 +4411,16 @@ export default function App() {
       return Boolean(ownerIsCurrent()&&latest&&sameCloudConfig(cfg,latest)&&cloudIdentity(latest)===expectedIdentity&&liveCurrentUserId.current===requestUserId);
     };
     if(saveTimer.current){clearTimeout(saveTimer.current);saveTimer.current=null;}
-    try{
-      await enqueueCloudSave(candidate,isCurrent,false);
+    // The unrendered report intent is not in `data`: a generic header save can
+    // otherwise report "already latest" after a definite SQL cancellation.
+    // Keep its original merge base and authority; never replay under a new actor.
+    const retryBase=confirmedCloudData.current?structuredClone(confirmedCloudData.current):null;
+    const retryAuthority=originalAuthority.current;
+    const retainedAtStart=dailyMorningSaveRetry.current;
+    const submitPrepared=async(retry=false):Promise<boolean>=>{
+      if(!isCurrent())return false;
+      try{
+      await enqueueCloudSave(candidate,isCurrent,false,isCurrent,undefined,retry&&retryBase&&retryAuthority?{binding:retryAuthority,base:retryBase}:undefined);
       if(!isCurrent())return false;
       const confirmed=confirmedCloudData.current;
       if(!confirmed)throw new Error('雲端未回傳可確認的最新資料');
@@ -4415,12 +4429,17 @@ export default function App() {
       const current=liveData.current;
       const next=mergeConfirmedCloudSnapshot({baseline,current,confirmed,actorUserId:actor.id,at:nowIso()});
       flushSync(()=>{liveData.current=next;setData(next);});
+      if(dailyMorningSaveRetry.current===retryEntry||dailyMorningSaveRetry.current===retainedAtStart)dailyMorningSaveRetry.current=null;
       saveLocal(next);showSaveToast('success','每日早會快照已保存','雲端回讀已確認本次工作日快照');
       return true;
     }catch(error){
-      if(isCurrent())alert(`每日早會快照未保存：${error instanceof Error?error.message:String(error)}`);
+      if(isCurrent()&&isCloudStatementTimeout(error)&&!(error instanceof CloudBlockPatchOutcomeUnknownError||error instanceof CloudBlockPatchConfirmedRefreshError))dailyMorningSaveRetry.current=retryEntry;
+      if(isCurrent())alert(`每日早會快照未保存：${cloudErrorMessage(error)}`);
       return false;
     }
+    };
+    const retryEntry={isCurrent,run:()=>submitPrepared(true)};
+    return submitPrepared();
   };
 
   const dismissFromMyWorkCenter = async (taskIds: string[], internalControlCaseIds: string[] = []) => {
@@ -4858,6 +4877,16 @@ export default function App() {
     }
     if (cloudSyncInFlight.current) { setCloudStatus('正在同步雲端，完成後才能保存');showSaveToast('info','正在同步雲端','同步完成後系統會繼續處理尚未保存的修改。');return; }
     if (cloudWriteBlocked) { hasUnsavedWork.current=true;setSavePhase('error');setCloudStatus('這些修改尚未保存到雲端：請先同步最新，再重新保存');showSaveToast('error','尚未保存到雲端','請先點擊「同步最新（安全合併）」；同步完成後，再點擊「重新保存」。直到畫面顯示「已保存到雲端」前，請不要關閉頁面。');return; }
+    const reportRetry=dailyMorningSaveRetry.current;
+    if(reportRetry){
+      if(cloudSaveInFlight.current)return;
+      if(!reportRetry.isCurrent()){
+        hasUnsavedWork.current=true;setSavePhase('error');setCloudStatus('早會快照尚未保存，原身份、工作區或頁面已變更；請回報告中心重新保存');
+        return;
+      }
+      await reportRetry.run();
+      return;
+    }
     if (confirmedCloudData.current&&appDataContentEqual(data,confirmedCloudData.current)) {
       if(retainPageDraftFeedback())return;
       hasUnsavedWork.current=false;
