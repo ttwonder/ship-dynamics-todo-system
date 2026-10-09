@@ -4380,7 +4380,7 @@ export default function App() {
     }
     const expectedAuthorizationEpoch=authorizationEpoch;
     const ownerIsCurrent=captureReportAction();
-    if(!await loadRecordActionScope('full',ownerIsCurrent,false,false,error=>{
+    if(!await loadRecordActionScope({morning:true,targets:[],morningSaveAt:at},ownerIsCurrent,false,false,error=>{
       // No report candidate exists yet. A definite cancellation can restart
       // preparation, but an unknown/confirmed earlier flush must not be replayed.
       if(isCloudStatementTimeout(error)&&!(error instanceof CloudBlockPatchOutcomeUnknownError||error instanceof CloudBlockPatchConfirmedRefreshError)){
@@ -4392,7 +4392,7 @@ export default function App() {
         dailyMorningSaveRetry.current=retryPreparation;
       }
       const message=`每日早會快照未建立（保存前讀取／同步準備失敗）：${cloudErrorMessage(error)}`;
-      setSavePhase('error');setCloudStatus(message);alert(message);
+      clearStaleSaveSuccessToast();setSavePhase('error');setCloudStatus(message);alert(message);
     })||!ownerIsCurrent())return false;
     let itineraryProjectionSnapshot:ItineraryProjectionSnapshot;
     try{

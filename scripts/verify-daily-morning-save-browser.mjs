@@ -10,7 +10,8 @@ const run=fs.mkdtempSync(path.join(root,'morning-save-browser-')),profile=path.j
 const migration='supabase/migrations/20261008090000_tracking_unrelated_patch_fast_path.sql';
 const readerMigration='supabase/migrations/20261009060000_record_reader_inline_bodies.sql';
 const evidence={label:'真實 UI＋測試資料；原 App＋本機原生 PostgreSQL，非正式環境',status:'RUNNING',cases:[],dialogs:[],errors:[],blockedExternal:[],productionContacted:false};
-evidence.inputHashes=Object.fromEntries(['src/App.tsx','src/morningHistory.ts','src/cloud.ts',migration,readerMigration,'scripts/verify-daily-morning-save-browser.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs'].map(p=>[p,createHash('sha256').update(fs.readFileSync(p)).digest('hex')]));
+evidence.inputHashes=Object.fromEntries(['src/App.tsx','src/morningHistory.ts','src/cloud.ts','src/cloudRecordScopes.ts','src/normalize.ts',migration,readerMigration,'scripts/verify-daily-morning-save-browser.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs'].map(p=>[p,createHash('sha256').update(fs.readFileSync(p)).digest('hex')]));
+evidence.productReads=[];
 let native,qa,browser,ws,sessionId,chromePort,failure,number=0,currentCase='setup',timeoutEnabled=false,readTimeoutEnabled=false,fullReadFaultPending=false,injected=0,readInjected=0;const pending=new Map();
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const until=async(fn,label,timeout=25000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(await fn())return;await wait(50);}throw Error('QA timeout: '+label);};
@@ -34,7 +35,18 @@ try{
   if(failRead){readInjected++;fullReadFaultPending=false;}else injected++;
   try{await native.a.query("set statement_timeout='50ms'");await native.a.query('select pg_sleep(0.15)');}finally{await native.a.query("set statement_timeout='8s'");}
  }});
- qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,tracking:true,taskMember:true,hmr:false,databaseFactory:async()=>native.adapter});
+ qa=await createRecordStorageLocalQa({internalControl:true,browserAuthority:true,scopedRead:true,shipInternalControl:true,tracking:true,taskMember:true,hmr:false,performanceTrace:true,databaseFactory:async()=>native.adapter,preparePerformanceFixture:async(initial,vite)=>{
+  for(const row of [...initial.tasks,...initial.internalControlCases,...initial.meetings]){
+    row.createdAt='2026-09-01T01:00:00.000Z';row.updatedAt=row.createdAt;
+    row.statusLogs=[...(row.statusLogs||[]),...[1,2,3,4].map(n=>({id:row.id+'-ui-deep-'+n,at:row.createdAt,by:'QA OWNER',byUserId:'qa-owner',text:'QA COMPLETE HISTORY '+n}))];
+  }
+  for(const row of initial.internalControlCases){const task=initial.tasks.find(t=>t.id===row.linkedTaskId);if(task)row.statusLogs=structuredClone(task.statusLogs);}
+  const {upsertDailyMorningReport}=await vite.ssrLoadModule('/src/morningHistory.ts');
+  for(const [at,source] of [['2026-09-07T01:00:00.000Z','manual'],['2026-09-08T01:00:00.000Z','scheduled'],['2026-09-09T01:00:00.000Z','manual']]){
+    const saved=upsertDailyMorningReport(initial,{at,actorUserId:'qa-owner',source});assert.equal(saved.status,'saved');
+    saved.report.snapshot.qaOpaque={keep:at};saved.report.snapshot.qaUnrelatedPadding='QA RETAINED OLD BODY'.repeat(4000);initial.agendaReports=saved.data.agendaReports;
+  }
+ }});
  await installTrackingBrowserMigrations(qa.db);await installTrackingFieldRevision(qa.db);
  for(const f of ['supabase/migrations/20260929120000_tracking_delivery_close.sql','supabase/migrations/20260929180000_tracking_completion_close.sql',migration,readerMigration])await qa.db.exec(fs.readFileSync(f,'utf8'));
  assert.equal((await qa.db.query(fs.readFileSync('supabase/verification/tracking-unrelated-patch-readback.sql','utf8'))).rows[0].status,'PASS');
@@ -72,21 +84,51 @@ try{
  await until(async()=>(await text()).includes('人員登入／切換'),'personnel login');await fillPassword();await click('登入');
  await until(async()=>(await text()).includes('QA OWNER')&&!(await text()).includes('人員登入／切換'),'original Owner');await click('早會工作台');
  await until(async()=>(await text()).includes('今日早會工作台'),'original morning workspace');
+ const {upsertDailyMorningReport}=await qa.loadModule('/src/morningHistory.ts'),{normalizeAppData}=await qa.loadModule('/src/normalize.ts');
+ const ledger=async()=>(await qa.db.query('select collection,entity_id,revision::text,value,xmin::text,ctid::text from public.ship_dynamics_records where workspace_key=$1 order by collection,entity_id',[qa.workspace])).rows;
+ const preserved=async(previous,reportId)=>{const current=await ledger(),byId=new Map(current.map(r=>[JSON.stringify([r.collection,r.entity_id]),r]));for(const row of previous)if(!(row.collection==='agendaReports'&&row.entity_id===reportId))assert.deepEqual(byId.get(JSON.stringify([row.collection,row.entity_id])),row,'pre-existing value/version/xmin/ctid must survive '+row.collection+':'+row.entity_id);};
+ const assertOriginalCapture=(baseline,report)=>{
+  // record-storage-local-qa seeds qa-v1 revision 7 and a nonprojected alternative;
+  // qa-v2 has no formal document. Derive this oracle from that fixture, not AFTER.
+  const full=normalizeAppData(baseline.payload),itineraryProjections={
+   'qa-v1':{source:'itinerary',revision:7,updatedAt:'2026-09-01T01:00:00Z',rowId:'formal-row',values:{previousPortName:'QA FORMAL BUSAN',portDockName:'QA FORMAL KAOHSIUNG',etaUtc:'2026-09-07T00:00:00Z',etaTimeZone:'UTC+8',etaSchedule:'2026-09-07T08:00',etbUtc:null,etbTimeZone:'UTC+8',etbSchedule:'',etdUtc:null,etdTimeZone:'UTC+8',etdSchedule:'',cargoQuantityText:'QA FORMAL CARGO 123 MT'}},
+   'qa-v2':{source:'legacy'},
+  };
+  assert.deepEqual(report.snapshot.itineraryProjections,itineraryProjections,'retain the exact formal revision and legacy fallback; never project alternatives');
+  const expected=upsertDailyMorningReport(full,{at:report.snapshot.capturedAt,actorUserId:actor.id,source:'manual',itineraryProjectionSnapshot:{schemaVersion:2,projectionCapturedAt:report.snapshot.projectionCapturedAt,itineraryProjections}});
+  assert.equal(expected.status,'saved');assert.deepEqual(report,JSON.parse(JSON.stringify(expected.report)),'BEFORE SQL oracle: original complete-data helper must produce exactly this report');
+ };
  let before=await read(),saved,failedIntent;let captured=null;
+ await check('MSB07-full-reader-unavailable-complete-save-and-history-preserved',async()=>{
+  const physicalBefore=await ledger(),initial=before,start=evidence.productReads.length;
+  readTimeoutEnabled=true;qa.setRecordFault({before:async({name,body})=>{
+    if(name==='read_ship_dynamics_record_scopes_v2'){evidence.productReads.push({caseId:currentCase,scope:body.p_scope,targetCount:body.p_targets?.length||0});if(body.p_scope==='full')fullReadFaultPending=true;}
+    if(name==='apply_ship_dynamics_record_patch_v1'){captured=structuredClone(body.p_operations.find(o=>o.kind==='entity'&&o.collection==='agendaReports')?.value);assertOriginalCapture(initial,captured);}
+  }});
+  await click('保存今日早會');await until(async()=>evidence.dialogs.some(d=>d.caseId===currentCase&&d.message.startsWith('每日早會快照未建立'))||(await read()).revision===initial.revision+1,'complete capture without unrelated full read');
+  assert.equal(evidence.dialogs.some(d=>d.caseId===currentCase&&d.message.startsWith('每日早會快照未建立')),false);
+  await until(()=>evaluate("Boolean(document.querySelector('.save-status-strip.saved'))"),'complete capture visible ACK');
+  saved=await read();assert.ok(captured);assert.deepEqual(saved.payload.agendaReports.find(r=>r.id===captured.id),captured);assert.deepEqual(withoutReports(saved),withoutReports(initial));
+  const scopes=evidence.productReads.slice(start).map(r=>r.scope);assert.ok(scopes.includes('home')&&scopes.includes('targets'));assert.ok(!scopes.includes('full'));assert.equal(readInjected,0);
+  await preserved(physicalBefore,captured.id);assert.ok(captured.snapshot.tasks.some(t=>t.statusLogs.length>2),'full histories must survive in the new frozen snapshot');
+  evidence.captureContract={originalFullHelperEqual:true,oldValueVersionXminCtidPreserved:true,completeCurrentHistories:true,noFullRead:true,oldReports:initial.payload.agendaReports.length};
+  await screen('complete-capture-no-full');before=saved;readTimeoutEnabled=false;qa.setRecordFault(null);
+ });
  await check('MSB05-preflight-57014-zero-report-write',async()=>{
-  readTimeoutEnabled=true;qa.setRecordFault({before:async({name,body})=>{if(name==='read_ship_dynamics_record_scopes_v2'&&body.p_scope==='full')fullReadFaultPending=true;}});
+  assert.equal(await evaluate("Boolean(document.querySelector('.save-toast.success'))"),true,'establish the preceding successful-save toast before the next failed attempt');
+  readTimeoutEnabled=true;let selected=false;qa.setRecordFault({before:async({name,body})=>{if(name==='read_ship_dynamics_record_scopes_v2'&&body.p_scope==='home'&&!selected){selected=true;fullReadFaultPending=true;}}});
   const writesBefore=(evidence.httpTransactions||[]).filter(r=>r.rpc==='apply_ship_dynamics_record_patch_v1').length;
   await click('保存今日早會');await until(()=>evidence.dialogs.some(d=>d.caseId===currentCase&&d.message.startsWith('每日早會快照未建立（保存前讀取')),'preflight failure');
   assert.equal(readInjected,1);assert.deepEqual(await read(),before);assert.equal((evidence.httpTransactions||[]).filter(r=>r.rpc==='apply_ship_dynamics_record_patch_v1').length,writesBefore);
-  await until(()=>evaluate("Boolean(document.querySelector('.save-status-strip.error'))"),'preflight visible error');await screen('preflight-timeout');readTimeoutEnabled=false;qa.setRecordFault(null);
+  await until(()=>evaluate("Boolean(document.querySelector('.save-status-strip.error'))"),'preflight visible error');assert.equal(await evaluate("Boolean(document.querySelector('.save-toast.success'))"),false,'failed preparation must remove the prior safe-close success toast');await screen('preflight-timeout');readTimeoutEnabled=false;qa.setRecordFault(null);
  });
  await check('MSB06-header-retry-prepares-and-confirms-real-report',async()=>{
-  qa.setRecordFault({before:async({name,body})=>{if(name==='apply_ship_dynamics_record_patch_v1')captured=structuredClone(body.p_operations.find(o=>o.kind==='entity'&&o.collection==='agendaReports')?.value);}});
+  qa.setRecordFault({before:async({name,body})=>{if(name==='apply_ship_dynamics_record_patch_v1'){captured=structuredClone(body.p_operations.find(o=>o.kind==='entity'&&o.collection==='agendaReports')?.value);assertOriginalCapture(before,captured);}}});
   await click('重新保存');await until(async()=>(await read()).revision===before.revision+1,'preflight retry committed');await until(()=>evaluate("Boolean(document.querySelector('.save-status-strip.saved'))"),'preflight retry visible confirmation');
   saved=await read();assert.ok(captured);assert.deepEqual(saved.payload.agendaReports.find(r=>r.id===captured.id),captured);assert.deepEqual(withoutReports(saved),withoutReports(before));before=saved;await screen('preflight-retry-confirmed');
  });
  await click('報告中心');await until(()=>evaluate("Boolean(document.querySelector('.morning-daily-history-panel'))"),'original report center');
- qa.setRecordFault({before:async({name,body})=>{if(name==='apply_ship_dynamics_record_patch_v1')captured=structuredClone(body.p_operations.find(o=>o.kind==='entity'&&o.collection==='agendaReports')?.value);}});
+ qa.setRecordFault({before:async({name,body})=>{if(name==='apply_ship_dynamics_record_patch_v1'){captured=structuredClone(body.p_operations.find(o=>o.kind==='entity'&&o.collection==='agendaReports')?.value);assertOriginalCapture(before,captured);}}});
  await check('MSB01-original-manual-save-exact-SQL-readback',async()=>{
   await click('手動保存今日早會');await until(()=>evidence.dialogs.some(d=>d.caseId===currentCase&&d.message==='今日早會快照已完成保存。'),'original save completion');assert.ok(captured);
   saved=await read();assert.equal(saved.revision,before.revision+1);assert.deepEqual(saved.payload.agendaReports.find(r=>r.id===captured.id),captured);assert.deepEqual(withoutReports(saved),withoutReports(before));assert.equal(saved.payload.trackingItems.length,1);await screen('manual-save-confirmed');
@@ -99,7 +141,7 @@ try{
  timeoutEnabled=false;qa.setRecordFault(null);
  await check('MSB03-original-manual-retry-exact-intent-one-revision',async()=>{
   await click('重新保存');await until(async()=>{const x=await read();return x.revision===saved.revision+1;},'retry committed');await until(()=>evaluate("Boolean(document.querySelector('.save-status-strip.saved'))"),'retry visible saved');
-  const after=await read();assert.deepEqual(after.payload.agendaReports.find(r=>r.id===failedIntent.id),failedIntent);assert.equal(after.payload.agendaReports.length,1);assert.deepEqual(withoutReports(after),withoutReports(saved));saved=after;await screen('retry-confirmed');
+  const after=await read();assert.deepEqual(after.payload.agendaReports.find(r=>r.id===failedIntent.id),failedIntent);assert.equal(after.payload.agendaReports.length,before.payload.agendaReports.length);assert.deepEqual(withoutReports(after),withoutReports(saved));saved=after;await screen('retry-confirmed');
  });
  await check('MSB04-new-document-history-retains-authoritative-report',async()=>{
   await call('Page.reload');await until(async()=>(await text()).includes('QA OWNER'),'reload identity');if(!await evaluate("Boolean(document.querySelector('.morning-daily-history-panel'))"))await click('報告中心');

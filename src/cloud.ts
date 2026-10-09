@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { AppData } from './types';
 import { isPlaceholder, sanitizeAppDataForStorage } from './utils';
-import { latestManualReport } from './morningHistory';
+import { dailyMorningSaveReadReports, latestManualReport } from './morningHistory';
 import { normalizeAppData } from './normalize';
 import { CloudBlockPatchConflictError, type CloudBlockPatchOperation } from './cloudBlockPatch';
 import type { CloudBlockCompactReceipt, CloudBlockReceiptStatus } from './cloudBlockReceipt';
@@ -253,7 +253,8 @@ async function fetchCloudRecordScope(cfg:ResolvedSupabaseConfig,supabase:Supabas
       if(!home)return null;
       if(home.agendaReports.some(report=>report.__recordSnapshotAvailable&&!report.__recordMorningTimes))throw new Error('morning-read-metadata-unavailable');
       const report=latestManualReport(home.agendaReports,new Date().toISOString());
-      const targets=[...(['tasks','internalControlCases','meetings'] as const).flatMap(collection=>home[collection].map(row=>({collection,id:row.id}))),...(report?[{collection:'agendaReports' as const,id:report.id}]:[]),...(typeof scope==='object'?scope.targets:[])];
+      const reports=typeof scope==='object'&&scope.morningSaveAt?dailyMorningSaveReadReports(home.agendaReports,scope.morningSaveAt):report?[report]:[];
+      const targets=[...(['tasks','internalControlCases','meetings'] as const).flatMap(collection=>home[collection].map(row=>({collection,id:row.id}))),...reports.map(report=>({collection:'agendaReports' as const,id:report.id})),...(typeof scope==='object'?scope.targets:[])];
       const unique=[...new Map(targets.map(t=>[JSON.stringify(t),t])).values()];
       const detail=await fetchCloudRecordScope(cfg,supabase,{targets:unique,...(typeof scope==='object'&&scope.trackingVesselIds?.length?{trackingVesselIds:scope.trackingVesselIds}:{})},signal);
       if(detail&&detail.revision===home.revision)return detail;

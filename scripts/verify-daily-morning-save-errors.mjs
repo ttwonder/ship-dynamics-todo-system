@@ -8,9 +8,9 @@ import {createServer} from 'vite';
 const source=fs.readFileSync('src/App.tsx','utf8');
 const ast=ts.createSourceFile('App.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 const matches={};
-const walk=node=>{if(ts.isVariableDeclaration(node)&&['saveDailyMorningHistory','saveChanges'].includes(node.name.getText(ast))){const name=node.name.getText(ast);assert.ok(!matches[name]);matches[name]=node.initializer.getText(ast);}ts.forEachChild(node,walk);};
-walk(ast);assert.equal(Object.keys(matches).length,2);
-const code=ts.transpileModule(`const saveDailyMorningHistory=${matches.saveDailyMorningHistory.replaceAll('import.meta.env.DEV','false')};globalThis.save=saveDailyMorningHistory;globalThis.headerSave=${matches.saveChanges};`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+const walk=node=>{if(ts.isVariableDeclaration(node)&&['saveDailyMorningHistory','saveChanges','dismissSaveToast','clearStaleSaveSuccessToast'].includes(node.name.getText(ast))){const name=node.name.getText(ast);assert.ok(!matches[name]);matches[name]=node.initializer.getText(ast);}ts.forEachChild(node,walk);};
+walk(ast);assert.equal(Object.keys(matches).length,4);
+const code=ts.transpileModule(`const dismissSaveToast=${matches.dismissSaveToast};const clearStaleSaveSuccessToast=${matches.clearStaleSaveSuccessToast};const saveDailyMorningHistory=${matches.saveDailyMorningHistory.replaceAll('import.meta.env.DEV','false')};globalThis.save=saveDailyMorningHistory;globalThis.headerSave=${matches.saveChanges};`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
 const server=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});
 const cases=[];
 try{
@@ -24,8 +24,9 @@ try{
     let queueError=error;
     const actor={id:'owner',role:'owner',name:'QA OWNER',isActive:true};
     const baseline={revision:1,users:[actor],vessels:[],tasks:[],meetings:[],internalControlCases:[],agendaReports:[],auditLogs:[]};
-    const events={alerts:[],toasts:[],publications:[],queued:[],queueArgs:[],phases:[],statuses:[]};
+    const events={alerts:[],toasts:[],publications:[],queued:[],queueArgs:[],phases:[],statuses:[],toastStates:[],cancelledToastTimers:[]};
     const context={console,structuredClone,currentUser:actor,data:baseline,cloudSaveInFlight:{current:null},cloudSyncInFlight:{current:false},cloudWriteBlocked:false,
+      window:{clearTimeout:id=>events.cancelledToastTimers.push(id)},saveToastRef:{current:null},saveToastTimer:{current:null},setSaveToast:value=>events.toastStates.push(value),
       pendingCloudData:{current:{size:()=>0}},dailyMorningSaveRetry:{current:null},originalAuthority:{current:{mode:'records-v1',epoch:1}},authorizationEpoch:'epoch',
       captureReportAction:()=>()=>current,loadRecordActionScope:async()=>true,
       requireFreshItineraryProjection:async()=>({schemaVersion:2,projectionCapturedAt:at,itineraryProjections:{}}),activeVessels:[],
@@ -98,6 +99,34 @@ try{
       error.code='57014';const x=setup(null);x.context.loadRecordActionScope=async(_s,_o,_f,_p,onError)=>{onError(error);return false;};
       assert.equal(await x.run(),false);assert.equal(x.context.dailyMorningSaveRetry.current,null);assert.equal(x.events.queued.length,0);assert.equal(x.events.publications.length,0);assert.equal(x.events.toasts.length,0);
     }
+  });
+  await check('MSE13-complete-daily-capture-does-not-depend-on-unrelated-full-read',async()=>{
+    const x=setup(null),scopes=[];
+    x.context.loadRecordActionScope=async(scope,_owner,_fresh,_prepared,onError)=>{
+      scopes.push(JSON.parse(JSON.stringify(scope)));
+      if(scope==='full'){onError({code:'57014',message:'canceling statement due to statement timeout'});return false;}
+      return true;
+    };
+    assert.equal(await x.run(),true,'an unavailable unrelated full read must not block complete daily capture');
+    assert.deepEqual(scopes,[{morning:true,targets:[],morningSaveAt:at}]);
+    assert.equal(x.events.queued.length,1);assert.equal(x.events.publications.length,1);assert.equal(x.events.toasts.length,1);
+    assert.equal(x.events.queued[0].agendaReports[0].snapshot.capturedAt,at);
+  });
+  await check('MSE14-preflight-error-clears-only-prior-success-feedback',async()=>{
+    for(const kind of ['success','warning','error']){
+      const x=setup(null),old={id:1,kind,title:'previous operation',detail:'retained fixture feedback'};
+      x.context.saveToastRef.current=old;x.context.saveToastTimer.current=42;
+      x.context.loadRecordActionScope=async(_s,_o,_f,_p,onError)=>{onError({code:'57014',message:'canceling statement due to statement timeout'});return false;};
+      assert.equal(await x.run(),false);assert.equal(x.events.queued.length,0);assert.equal(x.events.publications.length,0);
+      if(kind==='success'){
+        assert.equal(x.context.saveToastRef.current,null,'old safe-close success must not overlap a new failed capture');
+        assert.equal(x.context.saveToastTimer.current,null);assert.deepEqual(x.events.cancelledToastTimers,[42]);assert.deepEqual(x.events.toastStates,[null]);
+      }else{
+        assert.equal(x.context.saveToastRef.current,old);assert.equal(x.context.saveToastTimer.current,42);assert.deepEqual(x.events.toastStates,[]);assert.deepEqual(x.events.cancelledToastTimers,[]);
+      }
+    }
+    const stale=setup(null,{current:false}),success={kind:'success'};stale.context.saveToastRef.current=success;
+    assert.equal(await stale.run(),false);assert.equal(stale.context.saveToastRef.current,success,'stale actions must not clear successor feedback');
   });
 }finally{await server.close();}
 console.log(JSON.stringify({status:cases.every(x=>x.status==='PASS')?'PASS':'FAIL',layer:'actual-App-callback-controlled-queue-IO',cases,caseCount:cases.length}));

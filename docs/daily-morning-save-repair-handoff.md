@@ -1,6 +1,63 @@
 # 每日早會保存修復：本機交付與正式核驗
 
-## 目前修正：保存前完整讀取（2026-10-09）
+## 本次交付：解除早會保存的不必要全量讀取依賴
+
+**這一輪只有前端與測試修正，不需要新增 SQL，也不要重跑已 PASS 的 tracking／reader migration。本機通過仍不等於正式恢復。**
+
+### 已確認的失敗與 9/30 對照
+
+- 正式畫面已是第二版前置錯誤文案：`每日早會快照未建立（保存前讀取／同步準備失敗）`，錯誤為 `canceling statement due to statement timeout | code: 57014`。
+- 使用者已確認第二版 reader SQL 核驗 PASS。安裝 PASS 只證明函式／權限，不證明 runtime 可在時限內完成。
+- 暫停前的限定正式唯讀對照：authority／home 成功；相同 reader 的 home→full 與空 versions 冷 full 都為 HTTP 500／57014；相同 revision 的完整早會現況＋必要基準讀取為 HTTP 200。沒有正式寫入，沒有碰原瀏覽器或清草稿。
+- 唯讀快照中 `daily-morning-2026-09-30` 為 manual，完整 frozen snapshot 存在，`capturedAt=2026-09-30T00:33:57.866Z`。其中 1,102 筆 tracking 的 createdAt 有 263 筆在 9/30 或以前、839 筆在其後；這是資料時間分布，不是單凭它證明正式唯一根因。
+- 最後 9/30 前的本機版本 `17e32234abeb9e1a5edf8cf0050f4c2802c88f7a` 與修復前 `ba07a5a015a537355ed50437232feeba0ef1060e`，`src/cloud.ts`／`src/cloudRecordScopes.ts`／`src/morningHistory.ts` 的 Git blob SHA-256 相同；原 App 已在建立早會快照前要求 full。沒有證據把這次故障歸因於某個後續新增的 reader commit。資料增長暴露舊 full 瓶頸仍屬合理推論，沒有 hosted query plan 佐證。
+- 旁邊手動 Itinerary 保存由 `ManualItineraryReportSaveButton` → authority capture → `saveManualItineraryDailyReport` → 專用 Itinerary report RPC 執行，不走這個早會 full prerequisite。因此 Itinerary 正常不等於早會 full 可用。
+
+### 最小修正與保留契約
+
+1. 原早會保存前置改用既有 reader 的 `{morning:true,targets:[],morningSaveAt:at}`。home 發現 IDs／選擇 metadata 後，仍取得全部完整 tasks／internalControlCases／meetings、必要關聯、同日既有報告與符合原 cutoff 的前一份 manual baseline；不是拿兩筆摘要當完整資料保存。
+2. `dailyMorningSaveReadReports` 沿用原每日 upsert 的日期、manual cutoff、排除同日 report ID 和 previous-manual 規則；`morningSaveAt` 隨 scope union 保留。讀取需 home/detail revision 一致；原 bounded retry、完整 coverage／raw-cache guard、actor/session/config/authority fences 不變。
+3. 原 `upsertDailyMorningReport`、正式 Itinerary refresh、writer／CAS／receipt、matching report ID＋capturedAt 的權威回讀與成功發布不變。同日更新沿用原凍結內容，不重定義每日規則，不刪舊快照、不裁切業務歷史或備選行程。
+4. 前置失敗沿用既有 `clearStaleSaveSuccessToast`，只撤下上一次成功提醒；警告／錯誤不清除，stale action 不影響後任提示。避免新的紅色失败狀態與舊「已保存到雲端」同時呈現。
+5. 沒有新 RPC／SQL／grant／timeout 變更，UI／角色／保存按鈕與使用方式不變。這不是全站 full reader 性能已恢復的聲明。
+
+### 本次本機驗證（各層不加總成正式 E2E）
+
+| 層級 | 結果 | 範圍 |
+|---|---|---|
+| 原 App callbacks＋受控 queue I/O | 14/14 PASS | 前置不依賴 full、失敗零寫入、精確 retry、unknown／confirmed-result fence、撤舊 success 並保 warnings/errors/stale successor |
+| 真實 client adapter＋本機隔離 SQL/HTTP | 9/9 PASS | 完整 current histories／raw fields、同日＋前基準、隔日基準、指定 cutoff 非 wall clock、summary write guard；v1 相同 9 案另作相容 control，不計為 18 個不同案例 |
+| 原 UI＋本機原生 PostgreSQL＋測試資料 | 7/7 PASS | full 被設定逾時仍完整保存；BEFORE SQL 原完整 helper oracle 相同；3 份舊報告及原 value/revision/xmin/ctid 保留；正式 Itinerary revision 7＋legacy fallback、不投影備選；前置/寫入57014、header retry、重新開頁歷史 |
+
+- UI 故障注入為 private PostgreSQL 真實 SQLSTATE 57014，受控交易回滾，不冒充正式負載自然 timeout。頁面均標「真實 UI＋測試資料」。
+- 保留先前 callback／adapter RED、原 UI QA formal-document 預期錯誤的 FAIL，以及 success-toast overlap 的 RED；沒有放寬產品／資料 oracle 來獲得 PASS。
+- `test:daily-morning-save` 的錯誤分類、snapshot privacy、台北 09:00 排程，以及 typecheck／production build／diff check 通過。大 chunk 警告是既有警告，未擴張重構。
+- 收據 input hashes 已對執行 bytes 核對；原生 PG／HTTP／Chrome 及其 ports 停止。隔離 adapter 內含 SQL runtime，不能稱為 mounted UI／hosted 證據。
+- 本輪未另開全量獨立 review；完成最小 diff 自審與受影響測試，不宣稱獨立整體批准。敏感雲端資料／credentials／QA 產物均不進 repo。
+
+重跑（環境參數同本文件後段）：
+
+```bash
+npm run test:daily-morning-save
+QA_EVIDENCE_ROOT=<repo外絕對路徑> node scripts/verify-record-scope-cache.mjs
+QA_EVIDENCE_ROOT=<另一個repo外絕對路徑> node scripts/verify-record-scope-cache.mjs --v1
+npm run test:daily-morning-save:browser
+npm run typecheck
+npm run build
+```
+
+### 這次的使用者交接：Push 前端，不重跑 SQL
+
+1. 使用者自行 Push 本次已驗證本機 commit；助手未 Push／部署／正式 SQL，GitHub Pages 更新狀態與正式讀回另算。
+2. **保留原可能未保存的頁籤與草稿，不清 storage、不盲目刷新／同步舊頁。** Pages 版本核對後，用不覆蓋原草稿的新頁驗證原手動早會保存一次；這是正式資料寫入，仍由使用者決定。
+3. 當次成功須同時有當次 report ID／capturedAt 的權威回讀和原歷史頁確認，舊成功提醒、歷史總數或 SQL catalog PASS 不算。若錯誤或結果未知，保留訊息、版本與當次識別，先查結果，不連按重試。
+4. **不要把 full RPC 能否恢復作為這次修正已發布的判斷**：本次就是解除早會對無關全量歷史／跟蹤讀取的依賴；其他需要 full 的功能未在這裡聲稱恢復。
+
+---
+
+## 第二版歷史：保存前完整讀取 SQL 改善（581f734）
+
+以下為已交付第二版的歷史紀錄。其 reader SQL 已由使用者核驗 PASS，但正式 full runtime 仍逾時；**下面的安裝步驟已被本文件最上方「本次交付」取代，不能據此再跑 SQL。**
 
 **本機修正與驗證不等於正式恢復。** 第一版 tracking validator 修正已由使用者在正式端安裝並得到 PASS；不重跑它。其後的限定唯讀採樣顯示 browser authority RPC 正常回應，而 `read_ship_dynamics_record_scopes_v2` 的 full read 回傳 HTTP 500／SQLSTATE `57014`。這證明 reader 仍有逾時，不證明正式 query plan、work_mem 或所有保存當下的 authority／先行 flush 狀態。
 

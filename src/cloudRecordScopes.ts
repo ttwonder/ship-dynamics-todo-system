@@ -2,9 +2,10 @@ import { buildCloudBlockPatch, CLOUD_BLOCK_COLLECTIONS, CLOUD_RECORD_COLLECTIONS
 import type { AppData } from './types';
 import { normalizeAppData } from './normalize';
 import { appDataContentEqual } from './cloudRebase';
+import { dailyMorningSaveReadReports } from './morningHistory';
 
 export type RecordTarget = { collection: 'tasks' | 'internalControlCases' | 'meetings' | 'agendaReports' | 'trackingItems'; id: string };
-export type RecordReadScope = 'home' | 'full' | 'morning' | { targets: RecordTarget[]; morning?: true; trackingVesselIds?:string[] };
+export type RecordReadScope = 'home' | 'full' | 'morning' | { targets: RecordTarget[]; morning?: true; morningSaveAt?:string; trackingVesselIds?:string[] };
 export const isMorningRecordScope=(scope:RecordReadScope)=>scope==='morning'||(typeof scope==='object'&&scope.morning===true);
 type Row = { version: number; detail?: boolean; value: Record<string, unknown> };
 export const recordScopeKey=(scope:RecordReadScope)=>typeof scope==='string'?scope:JSON.stringify(scope);
@@ -12,14 +13,17 @@ export function unionRecordScopes(left:RecordReadScope,right:RecordReadScope):Re
   if(left==='full'||right==='full')return 'full';
   const targets=[...(typeof left==='object'?left.targets:[]),...(typeof right==='object'?right.targets:[])];
   const trackingVesselIds=[...new Set([...(typeof left==='object'?left.trackingVesselIds || []:[]),...(typeof right==='object'?right.trackingVesselIds || []:[])])].sort();
-  if(trackingVesselIds.length)return {targets:[...new Map(targets.map(t=>[JSON.stringify([t.collection,t.id]),t])).values()],trackingVesselIds,...(isMorningRecordScope(left)||isMorningRecordScope(right)?{morning:true as const}:{})};
-  if(isMorningRecordScope(left)||isMorningRecordScope(right))return {morning:true,targets};
+  const morningSaveAt=(typeof right==='object'&&right.morningSaveAt)||(typeof left==='object'&&left.morningSaveAt);
+  const capture=morningSaveAt?{morningSaveAt}:{};
+  if(trackingVesselIds.length)return {targets:[...new Map(targets.map(t=>[JSON.stringify([t.collection,t.id]),t])).values()],trackingVesselIds,...(isMorningRecordScope(left)||isMorningRecordScope(right)?{morning:true as const}:{}),...capture};
+  if(isMorningRecordScope(left)||isMorningRecordScope(right))return {morning:true,targets,...capture};
   return targets.length?{targets:[...new Map(targets.map(t=>[JSON.stringify([t.collection,t.id]),t])).values()].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)))}:'home';
 }
 export function recordScopeGraph(scope:RecordReadScope,raw:AppData):Set<string> {
   const key=(collection:string,id:string)=>JSON.stringify([collection,id]);
   const keys=new Set(typeof scope==='object'?scope.targets.map(t=>key(t.collection,t.id)):[]);
   if(isMorningRecordScope(scope))for(const name of ['tasks','internalControlCases','meetings'] as const)for(const row of raw[name])keys.add(key(name,row.id));
+  if(typeof scope==='object'&&scope.morningSaveAt)for(const report of dailyMorningSaveReadReports(raw.agendaReports,scope.morningSaveAt))keys.add(key('agendaReports',report.id));
   let changed=true;
   while(changed){changed=false;
   for(const source of raw.trackingItems || []){

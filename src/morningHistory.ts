@@ -51,6 +51,14 @@ export function latestManualReport(reports: AgendaReport[], endedAt: string, exc
   return candidates[candidates.length - 1]?.report;
 }
 
+export function dailyMorningSaveReadReports(reports:AgendaReport[],at:string):AgendaReport[] {
+  const capturedAt=instantIso(at);
+  const existing=reports.find(report=>report.kind==='daily-morning'&&report.businessDate===taipeiDateKey(capturedAt));
+  const endedAt=existing?.source==='manual'?reportCutoff(existing)||capturedAt:capturedAt;
+  const previous=latestManualReport(reports,endedAt,existing?.id);
+  return [...(existing?[existing]:[]),...(previous?[previous]:[])];
+}
+
 function latestManualCutoff(reports: AgendaReport[], endedAt: string, excludedReportId = ''): string | undefined {
   const report = latestManualReport(reports, endedAt, excludedReportId);
   return report ? reportCutoff(report) : undefined;
