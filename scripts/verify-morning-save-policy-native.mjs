@@ -28,6 +28,12 @@ try{
  const gateDefinition=()=>q('select pg_get_functiondef($1::regprocedure) r',[gateSignature]);const unguardedGate=await gateDefinition();
  // Final effective guard chain is installed, not a replacement/fabricated gate.
  for(const f of ['supabase/migrations/20260904161000_appdata_compact_ack_receipts.sql','supabase/migrations/20260817143000_data_management_storage.sql','supabase/migrations/20260818154500_data_management_prune_batch_limit.sql','supabase/normalized-legacy-cutover.sql','supabase/development/20260911_legacy_report_workspace_binding.sql','supabase/development/20260911_business_quiescence.sql','supabase/development/20260911_paused_record_legacy_transfer.sql','supabase/development/20260911_source_authority_publication.sql','supabase/migrations/20260916090000_itinerary_current_vessel_state.sql'])await db.query(fs.readFileSync(f,'utf8'));
+ const dependencySignatures=[signature,'public.build_ship_dynamics_record_daily_morning_v1(text,timestamptz)',gateSignature,'public.ship_dynamics_record_commit_validated_v1(text,jsonb,jsonb,jsonb,text,text,jsonb)'];
+ // Observed hosted predecessor has existing server grants. This fixture adds
+ // them BEFORE the upgrade; product SQL must preserve, never manufacture them.
+ if(upgrade)await db.query('grant execute on function '+dependencySignatures.join(',')+' to service_role');
+ const dependencyCatalog=()=>q("select jsonb_agg(jsonb_build_object('oid',oid,'owner',proowner,'acl',proacl::text,'definer',prosecdef,'settings',proconfig) order by oid) r from pg_catalog.pg_proc where oid=any($1::regprocedure[])",[dependencySignatures]);
+ const dependenciesBefore=await dependencyCatalog();
  const oldResult=await job('legacy-auto','2026-09-07T01:00:00Z'),oldAuto=(await read()).agendaReports[0];assert.equal(oldAuto.id,'daily-morning-2026-09-07');
  const before=await catalog(),builder=await q("select pg_get_functiondef('public.build_ship_dynamics_record_daily_morning_v1(text,timestamptz)'::regprocedure) r"),initial=await tables();
  if(upgrade){try{await db.query(fs.readFileSync(migration,'utf8'));await db.query(fs.readFileSync(migration,'utf8').replaceAll('\n','\r\n'));}catch(e){await db.query('rollback');evidence.failedInstallCatalog=await catalog();throw e;}const after=await catalog();for(const k of ['oid','acl','definer','settings'])assert.deepEqual(after[k],before[k]);assert.deepEqual(await tables(),initial);assert.equal(await q("select pg_get_functiondef('public.build_ship_dynamics_record_daily_morning_v1(text,timestamptz)'::regprocedure) r"),builder);assert.match(after.body,/business_pause_terminal_scheduler_v1/);evidence.install={dataUnchanged:true,oidAclSettingsPreserved:true,builderUnchanged:true,rerun:true};}
@@ -90,6 +96,30 @@ try{
    await db.query('create schema cron;create table cron.job(jobid bigint,jobname text,schedule text,active boolean,username text,database text,command text)');
    try{const checks=await db.query(fs.readFileSync(readbackFile,'utf8').replaceAll('__MORNING_WORKSPACE_KEY__',w).replaceAll('\n','\r\n'));const summary=checks.flatMap(r=>r.rows).find(r=>r.status);assert.equal(summary.status,'REQUIRES_INSTALL_OR_REVIEW');assert.equal(summary.checks.existing_pg_cron,false);assert.equal(summary.checks.one_exact_1000_owner_job,false);assert.deepEqual(await tables(),frozen);evidence.readbackNegative={...summary,layer:'empty-catalog-query-validation-NOT-pg-cron'};}finally{await db.query('rollback');await db.query('drop table cron.job;drop schema cron');}
    return {layer:'native-prerequisite-negatives-catalog-readback-only',actualCronRegistration:'NOT_VERIFIED'};
+ });
+ const cronSql=fs.readFileSync(cronFile,'utf8').replaceAll('\r\n','\n'),aclStart=cronSql.indexOf("  foreach role_name in array array['anon','authenticated','service_role'] loop"),aclEnd=cronSql.indexOf("  if to_regclass('public.ship_dynamics_record_workspaces')");
+ assert.ok(aclStart>0&&aclEnd>aclStart);
+ const actualAclGuard=cronSql.slice(aclStart,aclEnd);
+ const assertRunnerAcl=()=>db.query(`do $qa_acl$ declare runner regprocedure := '${signature}'::regprocedure;p pg_catalog.pg_proc%rowtype;runner_owner oid;role_name text;begin select * into strict p from pg_catalog.pg_proc where oid=runner;runner_owner:=p.proowner;\n${actualAclGuard}\nend;$qa_acl$;`);
+ const readbackSql=fs.readFileSync(readbackFile,'utf8').replaceAll('\r\n','\n'),policyStart=readbackSql.indexOf("union all select 'runner_invoker_"),policyEnd=readbackSql.indexOf("union all select 'pause_replay_coherent'");
+ assert.ok(policyStart>0&&policyEnd>policyStart);
+ const actualPolicyQuery=readbackSql.slice(policyStart,policyEnd).replace(/^union all /,'');
+ const runnerReadback=async()=>((await db.query(`with runner as (select * from pg_catalog.pg_proc where oid='${signature}'::regprocedure) select * from (${actualPolicyQuery}) policy(check_name,passed)`)).rows[0]);
+ await check('MSPN14-existing-server-grants-preserved-and-accepted-without-new-grants',async()=>{
+   assert.deepEqual(await dependencyCatalog(),dependenciesBefore);
+   assert.equal(await q("select has_function_privilege('service_role',$1::regprocedure,'EXECUTE') r",[signature]),true);
+   const cat=await catalog(),frozen=await tables();await assertRunnerAcl();assert.equal((await runnerReadback()).passed,true);
+   await isolated(async()=>{await db.query('revoke execute on function '+signature+' from service_role');await assertRunnerAcl();assert.equal((await runnerReadback()).passed,true);assert.equal(await q("select has_function_privilege('service_role',$1::regprocedure,'EXECUTE') r",[signature]),false);});
+   assert.deepEqual(await catalog(),cat);assert.deepEqual(await dependencyCatalog(),dependenciesBefore);assert.deepEqual(await tables(),frozen);
+   return {layer:'native-actual-install-ACL-fragment-and-readback-predicate',existingServiceRoleGrantPreserved:true,ownerOnlyPredecessorAlsoAccepted:true,grantNotManufactured:true};
+ });
+ await check('MSPN15-public-browser-unapproved-and-inherited-grants-still-rejected',async()=>{
+   const cat=await catalog(),frozen=await tables();
+   for(const role of ['public','anon','authenticated'])await isolated(async()=>{await db.query('grant execute on function '+signature+' to '+role);await rejectInTransaction(assertRunnerAcl,/morning-private-runner-prerequisite-failed|morning-existing-runner-unapproved-execute-grant/);assert.equal((await runnerReadback()).passed,false);});
+   await isolated(async()=>{await db.query('create role qa_morning_unapproved nologin;grant execute on function '+signature+' to qa_morning_unapproved');await rejectInTransaction(assertRunnerAcl,/morning-existing-runner-unapproved-execute-grant/);assert.equal((await runnerReadback()).passed,false);});
+   await isolated(async()=>{await db.query('grant service_role to authenticated');assert.equal(await q("select has_function_privilege('authenticated',$1::regprocedure,'EXECUTE') r",[signature]),true);await rejectInTransaction(assertRunnerAcl,/morning-private-runner-prerequisite-failed: authenticated/);assert.equal((await runnerReadback()).passed,false);});
+   assert.deepEqual(await catalog(),cat);assert.deepEqual(await dependencyCatalog(),dependenciesBefore);assert.deepEqual(await tables(),frozen);
+   return {layer:'native-actual-install-ACL-fragment-and-readback-predicate',rejected:['PUBLIC','anon','authenticated','unapproved-direct-role','inherited-service_role-for-browser']};
  });
  }
 }catch(e){failure??=e;evidence.error=e.stack;}

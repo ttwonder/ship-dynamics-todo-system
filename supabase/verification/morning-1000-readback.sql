@@ -30,9 +30,11 @@
 -- Once-per-day means while a qualifying frozen row remains in records. Deleting
 -- that row can permit a future new operation to regenerate; a deletion-proof
 -- tombstone/day-ledger is outside this minimal change. No history is deduplicated.
--- Owner-only excludes database administrators/superusers/roles allowed SET ROLE
--- to the owner. No new grants here; core preserves existing ACLs, cron install
--- fails on unexpected effective runner browser/service grants rather than changes.
+-- The NEW wrapper is owner-only (except database administrators/superusers/
+-- roles allowed SET ROLE to that owner). The existing runner may retain its
+-- existing service_role EXECUTE, as explicitly selected by the operator. Core
+-- and cron preserve all existing dependency ACLs; no grants are added. PUBLIC,
+-- effective browser access and other direct runner grants still fail closed.
 -- Unknown installed old legacy runner scope or extra eligible workspace demands
 -- a separate operator decision: do NOT broaden the automatic unschedule rule.
 begin transaction read only;
@@ -50,7 +52,9 @@ with signatures(signature) as (values
 )
 select f.signature,p.oid,p.oid is not null as present,
   pg_get_userbyid(p.proowner) as owner,not p.prosecdef as security_invoker,
-  l.lanname as language,p.provolatile,p.proconfig,p.proacl::text as acl,
+  l.lanname as language,p.provolatile,
+  array(select setting from unnest(p.proconfig) setting where setting like 'search_path=%') as search_path_settings,
+  p.proacl::text as acl,
   md5(replace(p.prosrc,chr(13)||chr(10),chr(10))) as lf_source_md5,
   case when f.signature like 'public.run_ship_dynamics_record_daily_morning_v1(%' then
     case md5(replace(p.prosrc,chr(13)||chr(10),chr(10)))
@@ -63,8 +67,11 @@ select f.signature,p.oid,p.oid is not null as present,
     not exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
       where a.grantee<>p.proowner and a.privilege_type='EXECUTE') end as acl_owner_only,
   case when p.oid is null then null else
-    not exists(select 1 from pg_catalog.pg_roles r where r.rolname in ('anon','authenticated','service_role')
-      and has_function_privilege(r.oid,p.oid,'EXECUTE')) end as no_effective_browser_or_service_execute,
+    not exists(select 1 from pg_catalog.pg_roles r where r.rolname in ('anon','authenticated')
+      and has_function_privilege(r.oid,p.oid,'EXECUTE')) end as no_effective_browser_execute,
+  case when p.oid is null then null else
+    exists(select 1 from pg_catalog.pg_roles r where r.rolname='service_role'
+      and has_function_privilege(r.oid,p.oid,'EXECUTE')) end as existing_service_role_execute,
   case when f.signature='public.ship_dynamics_record_writer_gate_v1(text,boolean)' then
     position('ship_dynamics_quiescence_private.assert_write_v1(p_workspace)' in p.prosrc)>0 end as installed_pause_gate,
   case when f.signature='public.ship_dynamics_record_writer_gate_v1(text,boolean)' then
@@ -139,9 +146,12 @@ union all select 'active_listed_records_owner',exists(
   where r.collection='users' and ids.id=r.entity_id and r.value->>'role'='owner' and r.value->'isActive'='true'::jsonb)
 union all select 'exact_forward_runner',exists(select 1 from runner where md5(replace(prosrc,chr(13)||chr(10),chr(10)))
   in ('1ae3124cbf78d0aa0528c1911156a254','fb2b887dfad04606fab02a3dc285d9c6'))
-union all select 'runner_invoker_owner_only',exists(select 1 from runner r where not r.prosecdef
-  and not exists(select 1 from aclexplode(coalesce(r.proacl,acldefault('f',r.proowner))) a where a.grantee<>r.proowner and a.privilege_type='EXECUTE')
-  and not exists(select 1 from pg_catalog.pg_roles b where b.rolname in ('anon','authenticated','service_role') and has_function_privilege(b.oid,r.oid,'EXECUTE')))
+union all select 'runner_invoker_existing_server_acl',exists(select 1 from runner r where not r.prosecdef
+  and (select count(*)=3 from pg_catalog.pg_roles where rolname in ('anon','authenticated','service_role'))
+  and not exists(select 1 from aclexplode(coalesce(r.proacl,acldefault('f',r.proowner))) a
+    where a.privilege_type='EXECUTE' and a.grantee<>r.proowner
+      and a.grantee<>(select oid from pg_catalog.pg_roles where rolname='service_role'))
+  and not exists(select 1 from pg_catalog.pg_roles b where b.rolname in ('anon','authenticated') and has_function_privilege(b.oid,r.oid,'EXECUTE')))
 union all select 'pause_replay_coherent',exists(
   select 1 from runner r join pg_catalog.pg_proc g on g.oid=to_regprocedure('public.ship_dynamics_record_writer_gate_v1(text,boolean)')
   where position('ship_dynamics_quiescence_private.assert_write_v1(p_workspace)' in g.prosrc)=0

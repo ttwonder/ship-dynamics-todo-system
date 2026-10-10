@@ -12,6 +12,16 @@
 - 保留所有舊報告、source、opaque 欄位、完整必要 current histories、cutoff baseline、formal Itinerary、角色／scope／authority、CAS、ACK 和 matching ID＋capturedAt 回讀；不裁切業務資料／歷史、不加 grants 或全域 timeout。
 - 自動沿 records server runner，不借 normalized 排程或 Owner 瀏覽器身份，不需瀏覽器常開。每天一份以仍存在的 scheduled current row 為判斷；若使用者明確刪除此 row，之後新操作可以再生成，本輪不加 deletion-proof day ledger。
 
+### 安裝前補查與既有後端權限決定
+
+使用者原始唯讀 CSV 已確認舊 runner 為已知含 pause predecessor、security invoker、由目前 SQL reader／資料庫 Owner 持有；PUBLIC／anon／authenticated 無執行權，而 runner／builder／writer gate／materializer 保留既有 `service_role` 權限。新 wrapper 尚缺屬安裝前預期，不代表舊函式漏裝。
+
+- 使用者明確選擇：**保留既有 service_role，不改原 grant；新增 10:00 入口仍僅限資料庫 Owner。** 原安裝前核驗和 catalog 補查已完成，不為取得新版標籤重跑第一步。
+- 修正只涉及 cron installer 與 readback 的既有 runner ACL 前提：允許 Owner 與既有 service_role；不增加／撤除 runner 或共享依賴權限。PUBLIC、anon／authenticated 的有效權限（含繼承）及其他直接 grantees 仍拒絕。新 wrapper 的 Owner-only ACL、current_user guard 及 service_role 拒絕不變。
+- 原 installer 在真實 native metadata 上重現 `morning-private-runner-prerequisite-failed: service_role`；修正後新增 MSPN14／15 GREEN。四個依賴的 OID／Owner／ACL／security/config 均精確保留，Owner-only 的舊環境也接受，但不為它製造 service_role grant。
+- 核驗欄位改為 `runner_invoker_existing_server_acl`；catalog 的 `acl_owner_only=false` 可以是原後端 grant 的資訊，不再把它獨立當失敗。新 wrapper 仍須 `wrapper_owner_only_acl=true`。設定輸出僅限 search_path，不能輸出任意 GUC。
+- 核心 migration、App／UI／手動保存與 Itinerary 檔案未變；不重跑已完成且輸入未變的 UI／build，只重跑受影響 native SQL policy 全組及 MJS syntax／diff gates。以前各層證據保留，不能稱這次重新執行了所有 UI／build。
+
 ### 本機證據（不同層不加總成正式 E2E）
 
 | 層級 | 結果 | 範圍 |
@@ -20,13 +30,13 @@
 | 原 App callback／受控 queue I/O | 14/14 PASS | scope、前置失敗、exact retry、unknown/confirmed fence、matching ACK 回讀及提示 |
 | 原 UI＋native PostgreSQL＋測試資料 | 8/8 PASS | 正式按鈕與讀回、57014 回滾／重試、同日來源／多份定位／凍結預覽、舊值／物理 tuples 保留 |
 | 真實 adapter＋隔離 SQL/HTTP | 9/9 PASS | 完整 histories／raw fields與基準；v1 相同 9 案另作相容 control，不計為 18 個不同案例 |
-| native PostgreSQL policy／SQL gates | 13/13 PASS | 六日、自動重跑、舊 manual/auto、兩 backend 鎖等待→一份、一個 revision、角色、pause/retired replay、晚 receipt 回滾、ID conflict、無 Owner、未知 body及LF/CRLF 升級／冪等 |
+| native PostgreSQL policy／SQL gates | 15/15 PASS | 原 13 案加既有 server grant 精確保留／接受、未加新 grant、PUBLIC／browser／其他 grantee／繼承拒絕；六日、凍結、並發、pause/retired replay、晚 receipt 回滾、ID conflict、無 Owner、未知 body及LF/CRLF 升級／冪等 |
 
 - Core 升級保留 OID／ACL／security/config、exact paused receipt replay、writer authority guard、builder 與後續 Itinerary splice，不改業務 rows。
 - 舊 policy native RED 實際得到週末 not-business-day、同日 auto/manual 覆寫及兩個 revision；negative/control 仍 PASS。SQL 草稿 LF/CRLF 的兩次 FAIL 收據保留，修正後才 GREEN，沒有放寬 oracle／grants。
 - MSPN12 只執行安裝 SQL 的真實私有 wrapper fragment及records writer，不註冊 cron；MSPN13 驗本機實際缺 pg_cron 時零寫入拒絕。完整 readback 負例只用空 catalog relation 供查詢規劃，沒有假 extension/job/成功 scheduler 回應，須回 REQUIRES_INSTALL_OR_REVIEW。
 - **本機沒有真 pg_cron daemon。** 正向 cron registration、其他 workspace 的 hosted scope、正式 timezone／角色／實際每日 tick 未驗證，不能用上述 PASS 取代正式讀回。
-- Aggregate、cutoff、privacy、pagination、typecheck、production build及diff check通過；原大 chunk 警告保留。各層 receipts 綁定當前 bytes，QA 停止自己的 PG／Chrome／HTTP 及 ports；沒有另外啟動全量獨立 review。
+- 先前 c6e0f79 的 Aggregate、cutoff、privacy、pagination、typecheck、production build PASS 保留；這次對應 App／helpers／核心 migration bytes 未變，沒有再執行 UI／build。當次 native SQL 15/15、MJS syntax及diff check PASS；各 receipt 綁定其實際輸入 bytes，QA 停止自己的 PG／HTTP 及 ports；沒有另外啟動全量獨立 review。
 
 ### 速度：先保留確認流程
 
@@ -35,7 +45,7 @@
 ### 正式交接（使用者自行决定／執行）
 
 1. 確認正式專案仍是 ship-dynamics-todo-system production。Preview 的全文經 commit blob 核對；cron/readback 僅以當前公開 runtime 的精確 workspace key 取代 placeholder，不含憑證、不自動執行、不用 clipboard API。
-2. 先自行複製 `supabase/verification/morning-1000-readback.sql` 做唯讀核驗。未安裝時 wrapper／新 job／exact forward 為 false 可預期；須核對原 runner 已知 predecessor、原排程、UTC/GMT、角色／workspace 條件。任何未知／缺 extension或表／其他不符先停，不盲重跑或擅自啟用服務。REQUIRES_INSTALL_OR_REVIEW 是待檢查，不是安裝成功。
+2. 原安裝前唯讀核驗與補查已完成，直接沿新版 Preview 第二步開始，不重跑第一步。對全新或改變的環境仍須先做 `supabase/verification/morning-1000-readback.sql`：新 wrapper／job／exact forward 未安裝時 false 可預期，但原 runner predecessor、原排程、UTC/GMT、角色／workspace 未知或不符仍需停。既有 service_role 是使用者明確保留的後端權限，不以此放行 PUBLIC／browser 或其他 grantee；REQUIRES_INSTALL_OR_REVIEW 不是安裝成功。
 3. 使用者確認安裝後，分開執行兩份正式寫入，每份確定無錯誤才繼續：`supabase/migrations/20261010100000_morning_snapshot_policy.sql` 是 guarded core（不註冊 cron）；`supabase/deployment/morning-1000-cron-install.sql` 是 owner-only wrapper及每天 `0 2 * * *` 新 job。只移除精確已知舊 morning job；未知 scope／其他 eligible workspace／job／timezone／Itinerary 不符會全交易 rollback，需另作決定。Itinerary `0 1 * * *` 不動。
 4. 再獨立做唯讀 readback，最後須 `PASS_INSTALL_ONLY` 且 checks 全 true；它只證安裝，不代表排程已跑或手動成功。錯誤或不明結果停止，不強制重放。
 5. 使用者 Push 本機 commit 並核對 Pages 版本。保存原草稿頁、不清 storage、不盲目刷新／同步；切換期間先不使用仍為舊版的頁籤保存早會。另開新頁驗明版本，再由使用者決定手動保存一次。

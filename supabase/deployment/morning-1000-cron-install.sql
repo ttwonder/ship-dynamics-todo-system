@@ -56,11 +56,20 @@ begin
     if not exists(select 1 from pg_catalog.pg_roles where rolname=role_name) then
       raise exception 'morning-existing-Supabase-role-required: %',role_name;
     end if;
-    if has_function_privilege(role_name,runner::oid,'EXECUTE') then
-      -- Preserve runner ACL: an unexpected existing grant needs a separate decision.
+    if role_name in ('anon','authenticated') and has_function_privilege(role_name,runner::oid,'EXECUTE') then
       raise exception 'morning-private-runner-prerequisite-failed: %',role_name;
     end if;
   end loop;
+  -- Preserve the existing server caller selected by the operator. Do NOT
+  -- grant/revoke anything on this runner or its shared dependencies. Only its
+  -- owner and existing service_role EXECUTE are permitted; browser inheritance,
+  -- PUBLIC and other direct grantees still fail closed. The NEW wrapper below
+  -- remains owner-only, including an effective service_role denial.
+  if exists(select 1 from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+    where a.privilege_type='EXECUTE' and a.grantee<>runner_owner
+      and a.grantee<>(select oid from pg_catalog.pg_roles where rolname='service_role')) then
+    raise exception 'morning-existing-runner-unapproved-execute-grant';
+  end if;
   if to_regclass('public.ship_dynamics_record_workspaces') is null
     or to_regclass('public.ship_dynamics_records') is null
     or to_regclass('public.ship_dynamics_record_collections') is null
