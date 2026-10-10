@@ -1,6 +1,64 @@
 # 每日早會保存修復：本機交付與正式核驗
 
-## 本次交付：解除早會保存的不必要全量讀取依賴
+## 本次交付：手動每次獨立保存、每天 10:00 自動凍結一份
+
+**本機實作與驗證完成；尚未 Push、部署或執行正式 SQL。這次是新的保存規則，需新的 forward SQL；已 PASS 的 tracking／reader SQL 不重跑。正式排程及當次保存讀回仍待部署後核驗。**
+
+### 新規則
+
+- 手動不限星期或時段；每次新 report ID、當次時間／完整資料的獨立快照。原 writer 明確取消後重送仍沿用同一候選／ID／capturedAt／基線；未知或已提交結果不盲重試。
+- 自動每天台北 10:00（含六日），新 ID 為 `daily-morning-YYYY-MM-DD-scheduled`。同日已有 scheduled 凍結資料（包含舊 unsuffixed ID）時，只記新 operation receipt，不重建、改時間／排序／audit／business revision，不覆寫手動。
+- 原歷史顯示「自動保存／手動保存」、同日多份、保存時間；分頁以「份」計算，日期定位及凍結開啟沿原入口。Itinerary 每天 09:00 作業、資料、UI 不變。
+- 保留所有舊報告、source、opaque 欄位、完整必要 current histories、cutoff baseline、formal Itinerary、角色／scope／authority、CAS、ACK 和 matching ID＋capturedAt 回讀；不裁切業務資料／歷史、不加 grants 或全域 timeout。
+- 自動沿 records server runner，不借 normalized 排程或 Owner 瀏覽器身份，不需瀏覽器常開。每天一份以仍存在的 scheduled current row 為判斷；若使用者明確刪除此 row，之後新操作可以再生成，本輪不加 deletion-proof day ledger。
+
+### 本機證據（不同層不加總成正式 E2E）
+
+| 層級 | 結果 | 範圍 |
+|---|---|---|
+| 真實 helpers／Vite SSR | 5/5 PASS | 週末多次 append、角色／形狀 guards、最新 eligible baseline、自動 immutable、来源與份數 |
+| 原 App callback／受控 queue I/O | 14/14 PASS | scope、前置失敗、exact retry、unknown/confirmed fence、matching ACK 回讀及提示 |
+| 原 UI＋native PostgreSQL＋測試資料 | 8/8 PASS | 正式按鈕與讀回、57014 回滾／重試、同日來源／多份定位／凍結預覽、舊值／物理 tuples 保留 |
+| 真實 adapter＋隔離 SQL/HTTP | 9/9 PASS | 完整 histories／raw fields與基準；v1 相同 9 案另作相容 control，不計為 18 個不同案例 |
+| native PostgreSQL policy／SQL gates | 13/13 PASS | 六日、自動重跑、舊 manual/auto、兩 backend 鎖等待→一份、一個 revision、角色、pause/retired replay、晚 receipt 回滾、ID conflict、無 Owner、未知 body及LF/CRLF 升級／冪等 |
+
+- Core 升級保留 OID／ACL／security/config、exact paused receipt replay、writer authority guard、builder 與後續 Itinerary splice，不改業務 rows。
+- 舊 policy native RED 實際得到週末 not-business-day、同日 auto/manual 覆寫及兩個 revision；negative/control 仍 PASS。SQL 草稿 LF/CRLF 的兩次 FAIL 收據保留，修正後才 GREEN，沒有放寬 oracle／grants。
+- MSPN12 只執行安裝 SQL 的真實私有 wrapper fragment及records writer，不註冊 cron；MSPN13 驗本機實際缺 pg_cron 時零寫入拒絕。完整 readback 負例只用空 catalog relation 供查詢規劃，沒有假 extension/job/成功 scheduler 回應，須回 REQUIRES_INSTALL_OR_REVIEW。
+- **本機沒有真 pg_cron daemon。** 正向 cron registration、其他 workspace 的 hosted scope、正式 timezone／角色／實際每日 tick 未驗證，不能用上述 PASS 取代正式讀回。
+- Aggregate、cutoff、privacy、pagination、typecheck、production build及diff check通過；原大 chunk 警告保留。各層 receipts 綁定當前 bytes，QA 停止自己的 PG／Chrome／HTTP 及 ports；沒有另外啟動全量獨立 review。
+
+### 速度：先保留確認流程
+
+已部署 e520c96 的正式 HTTP 唯讀採樣：authority 約 0.99 秒；home 冷讀 4.74 秒／1.76 MB，detail 首次 4.56 秒／0.998 MB；三組暖讀 home 1.55–2.92 秒、detail 1.74–3.64 秒，每組合計 4.61–6.01 秒，同 revision、全部成功。沒有按正式保存或碰原草稿頁；不是完整按鈕／writer 時間，不把成本全歸因 DB 或電腦。本輪不做效能重構、不裁切完整快照或省略權威確認。
+
+### 正式交接（使用者自行决定／執行）
+
+1. 確認正式專案仍是 ship-dynamics-todo-system production。Preview 的全文經 commit blob 核對；cron/readback 僅以當前公開 runtime 的精確 workspace key 取代 placeholder，不含憑證、不自動執行、不用 clipboard API。
+2. 先自行複製 `supabase/verification/morning-1000-readback.sql` 做唯讀核驗。未安裝時 wrapper／新 job／exact forward 為 false 可預期；須核對原 runner 已知 predecessor、原排程、UTC/GMT、角色／workspace 條件。任何未知／缺 extension或表／其他不符先停，不盲重跑或擅自啟用服務。REQUIRES_INSTALL_OR_REVIEW 是待檢查，不是安裝成功。
+3. 使用者確認安裝後，分開執行兩份正式寫入，每份確定無錯誤才繼續：`supabase/migrations/20261010100000_morning_snapshot_policy.sql` 是 guarded core（不註冊 cron）；`supabase/deployment/morning-1000-cron-install.sql` 是 owner-only wrapper及每天 `0 2 * * *` 新 job。只移除精確已知舊 morning job；未知 scope／其他 eligible workspace／job／timezone／Itinerary 不符會全交易 rollback，需另作決定。Itinerary `0 1 * * *` 不動。
+4. 再獨立做唯讀 readback，最後須 `PASS_INSTALL_ONLY` 且 checks 全 true；它只證安裝，不代表排程已跑或手動成功。錯誤或不明結果停止，不強制重放。
+5. 使用者 Push 本機 commit 並核對 Pages 版本。保存原草稿頁、不清 storage、不盲目刷新／同步；切換期間先不使用仍為舊版的頁籤保存早會。另開新頁驗明版本，再由使用者決定手動保存一次。
+6. 正式驗收分兩件：手動當次 ID／capturedAt 權威讀回及歷史一致；下一次正常 10:00 job 的 scheduled ID、實際 capturedAt及凍結內容讀回。不要直接 Run wrapper 製造非 10:00 自動報告；unknown 不連按重試。
+
+本次重跑（native/browser 使用下方三個顯式 QA 參數）：
+
+```bash
+npm run test:daily-morning-save
+npm run test:daily-morning-save:policy-native
+npm run test:daily-morning-save:policy-native -- --before-upgrade # 預期 policy RED
+npm run test:daily-morning-save:browser
+QA_EVIDENCE_ROOT=<repo外絕對路徑> node scripts/verify-record-scope-cache.mjs
+QA_EVIDENCE_ROOT=<另一repo外絕對路徑> node scripts/verify-record-scope-cache.mjs --v1
+node scripts/verify-morning-cutoff-window.mjs
+node scripts/verify-morning-history-pagination.mjs
+npm run typecheck
+npm run build
+```
+
+---
+
+## 第三版歷史：解除早會保存的不必要全量讀取依賴（e520c96）
 
 **這一輪只有前端與測試修正，不需要新增 SQL，也不要重跑已 PASS 的 tracking／reader migration。本機通過仍不等於正式恢復。**
 

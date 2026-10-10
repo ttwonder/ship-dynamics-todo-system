@@ -100,23 +100,28 @@ try {
     internalControlCases: manual.data.internalControlCases.map(item => item.id === 'linked-case' ? { ...item, description: '第一次切點後的內控修改，不得回灌今天', updatedAt: '2026-08-04T02:00:00.000Z' } : item),
   };
   const secondManual = upsertDailyMorningReport(secondInput, { at: secondManualAt, actorUserId: 'owner', source: 'manual' });
-  assert.equal(secondManual.report.snapshot.windowEndedAt, firstManualAt, '同日後續保存不得移動首次成功保存切點');
+  assert.equal(secondManual.report.snapshot.windowEndedAt, secondManualAt, '每次人工保存以當次時間建立獨立切點');
+  assert.equal(secondManual.report.snapshot.windowStartedAt, firstManualAt);
+  assert.notEqual(secondManual.report.id,manual.report.id);
+  assert.deepEqual(secondManual.data.agendaReports.find(r=>r.id===manual.report.id),manual.report,'前一份完整凍結內容不可改寫');
   assert.equal(secondManual.report.updatedAt, secondManualAt, '同日後續保存仍須更新快照保存時間');
   assert.equal(secondManual.report.snapshot.capturedAt, secondManualAt, '同日後續保存須更新 snapshot capturedAt');
   assert.equal(secondManual.report.snapshot.vessels[0].position.location, '第二次保存更新的船位', '同日後續保存可刷新船舶動態快照');
-  assert.deepEqual(secondManual.report.snapshot.tasks, manual.report.snapshot.tasks, '同日後續保存不得把第一次切點後的新建或修改要事回灌今天');
-  assert.deepEqual(secondManual.report.snapshot.internalControlCases, manual.report.snapshot.internalControlCases, '同日後續保存不得把第一次切點後的內控修改回灌今天');
+  assert.equal(secondManual.report.snapshot.tasks.find(t=>t.id==='changed-open').description,'第一次切點後的修改，不得回灌今天');
+  assert.ok(secondManual.report.snapshot.tasks.find(t=>t.id==='post-cutoff-new'));
+  assert.equal(secondManual.report.snapshot.internalControlCases.find(t=>t.id==='linked-case').description,'第一次切點後的內控修改，不得回灌今天');
   assert.deepEqual(secondManual.report.snapshot.meetings, manual.report.snapshot.meetings, '同日後續保存不得改寫第一次切點的會議議題');
-  assert.deepEqual(secondManual.report.snapshot.todayTaskIds, manual.report.snapshot.todayTaskIds, '同日後續保存須保留第一次切點的本期要事集合');
-  assert.deepEqual(secondManual.report.snapshot.todayInternalControlCaseIds, manual.report.snapshot.todayInternalControlCaseIds, '同日後續保存須保留第一次切點的本期內控集合');
+  assert.deepEqual([...secondManual.report.snapshot.todayTaskIds].sort(),['changed-open','post-cutoff-new']);
+  assert.deepEqual(secondManual.report.snapshot.todayInternalControlCaseIds,['linked-case']);
 
   const scheduledAfterManual = upsertDailyMorningReport(secondManual.data, { at: '2026-08-04T02:45:00.000Z', actorUserId: 'owner', source: 'scheduled' });
-  assert.equal(scheduledAfterManual.report.source, 'manual', '同日人工報告不得被後到排程降級為排程報告');
-  assert.equal(scheduledAfterManual.report.snapshot.windowEndedAt, firstManualAt, '後到排程不得清除或移動人工首次保存切點');
-  assert.deepEqual(scheduledAfterManual.report.snapshot.todayTaskIds, manual.report.snapshot.todayTaskIds, '後到排程不得清除人工快照的本期要事集合');
+  assert.equal(scheduledAfterManual.report.source, 'scheduled');
+  assert.deepEqual(scheduledAfterManual.report,scheduled.report,'後到排程必須維持當日第一份自動快照');
+  assert.deepEqual(scheduledAfterManual.data.agendaReports.find(r=>r.id===manual.report.id),manual.report);
+  assert.deepEqual(scheduledAfterManual.data.agendaReports.find(r=>r.id===secondManual.report.id),secondManual.report);
 
   const live = liveMorningWindow(scheduledAfterManual.data.agendaReports, '2026-08-04T03:00:00.000Z');
-  assert.equal(live.startedAt, firstManualAt, '下一場早會的即時區間必須從最近一次人工切點開始');
+  assert.equal(live.startedAt, secondManualAt, '下一場早會的即時區間必須從最近一次人工切點開始');
   assert.equal(live.endedAt, '2026-08-04T03:00:00.000Z');
   assert.equal(morningWindowIsAccumulatingNextMeeting(live), true, '同一台北日首次保存後的區間必須標示為下一場早會累積');
   const nextBusinessDayWindow = liveMorningWindow(secondManual.data.agendaReports, '2026-08-05T03:00:00.000Z');

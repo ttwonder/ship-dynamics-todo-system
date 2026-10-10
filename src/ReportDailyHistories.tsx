@@ -27,11 +27,11 @@ function businessDateLabel(value: string): string {
   return `${year}年${month}月${day}日`;
 }
 
-function HistoryPager({ page, pageCount, pageStart, pageSize, total, onPage }: { page:number; pageCount:number; pageStart:number; pageSize:number; total:number; onPage:(page:number)=>void }) {
+function HistoryPager({ page, pageCount, pageStart, pageSize, total, onPage, unit = '天' }: { page:number; pageCount:number; pageStart:number; pageSize:number; total:number; onPage:(page:number)=>void; unit?:string }) {
   return <div className="daily-report-pagination">
     <button className="btn small ghost" disabled={page <= 1} onClick={() => onPage(page - 1)}>← 上一頁</button>
     <span>{`第 ${page}／${pageCount} 頁`}</span>
-    <em>{`顯示 ${total ? pageStart + 1 : 0}–${Math.min(pageStart + pageSize, total)}／共 ${total} 天`}</em>
+    <em>{`顯示 ${total ? pageStart + 1 : 0}–${Math.min(pageStart + pageSize, total)}／共 ${total} ${unit}`}</em>
     <button className="btn small ghost" disabled={page >= pageCount} onClick={() => onPage(page + 1)}>下一頁 →</button>
   </div>;
 }
@@ -77,12 +77,12 @@ export function MorningDailyHistoryPanel({ reports, onOpen }: { reports:AgendaRe
   const current = useMemo(() => paginateDailyReportHistory(dailyReports, page), [dailyReports, page]);
   useEffect(() => { if (current.page !== page) setPage(current.page); }, [current.page, page]);
   return <div className="panel daily-report-history-panel morning-daily-history-panel">
-    <div className="daily-report-history-heading"><div><h2>每日早會歷史</h2><small>每頁最多 30 天</small></div><DateLocator reports={dailyReports} label="每日早會歷史日期" onPage={setPage}/></div>
+    <div className="daily-report-history-heading"><div><h2>每日早會歷史</h2><small>10:00 自動保存＋手動保存｜每頁最多 30 份</small></div><DateLocator reports={dailyReports} label="每日早會歷史日期" onPage={setPage}/></div>
     {current.items.length ? <div className="daily-report-history-list">{current.items.map(report => <div className="saved-report" key={report.id}>
-      <div><b>{report.title}</b><small>{report.businessDate}｜更新 {formatTaipeiDateTime(report.updatedAt || report.createdAt, false)}｜{report.source === 'scheduled' ? '09:00自動' : '手動'}｜{report.vesselIds.length} 艘｜{report.taskCount} 件</small></div>
+      <div><b>{report.title}</b><small>{report.businessDate}｜保存 {formatTaipeiDateTime(report.updatedAt || report.createdAt, false)}｜{report.source === 'scheduled' ? '自動保存' : '手動保存'}｜{report.vesselIds.length} 艘｜{report.taskCount} 件</small></div>
       <button className="btn small ghost" onClick={() => onOpen(report)}>檢視當日快照</button>
     </div>)}</div> : <div className="empty-state compact">尚無每日早會歷史</div>}
-    <HistoryPager page={current.page} pageCount={current.pageCount} pageStart={current.pageStart} pageSize={current.items.length} total={current.total} onPage={setPage}/>
+    <HistoryPager page={current.page} pageCount={current.pageCount} pageStart={current.pageStart} pageSize={current.items.length} total={current.total} onPage={setPage} unit="份"/>
   </div>;
 }
 

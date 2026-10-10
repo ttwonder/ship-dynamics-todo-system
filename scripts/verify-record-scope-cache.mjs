@@ -83,10 +83,11 @@ try{
  const {normalizeAppData}=await qa.loadModule('/src/normalize.ts');
  const {unionRecordScopes}=await qa.loadModule('/src/cloudRecordScopes.ts');
  for(const scenario of [
-  {id:'daily-capture-same-day-complete-baselines',at:'2026-09-08T01:30:00.000Z',reports:['daily-morning-2026-09-08','daily-morning-2026-09-07']},
-  {id:'daily-capture-next-day-complete-baseline',at:'2026-09-09T01:30:00.000Z',reports:['daily-morning-2026-09-08']},
-  {id:'daily-capture-original-cutoff-not-wall-clock',at:'2026-09-07T01:30:00.000Z',reports:['daily-morning-2026-09-07']},
+  {id:'daily-capture-same-day-complete-baseline',at:'2026-09-08T01:30:00.000Z',date:'2026-09-08'},
+  {id:'daily-capture-next-day-complete-baseline',at:'2026-09-09T01:30:00.000Z',date:'2026-09-08'},
+  {id:'daily-capture-original-cutoff-not-wall-clock',at:'2026-09-07T01:30:00.000Z',date:'2026-09-07'},
  ]){
+  scenario.reports=baseline.payload.agendaReports.filter(r=>r.businessDate===scenario.date).map(r=>r.id);
   const captureScope={morning:true,targets:[],morningSaveAt:scenario.at},start=receipt.requests.length;
   const capture=await fetchCloudData(cfg,undefined,undefined,captureScope),raw=cloudStoragePayloadFor(capture);
   for(const id of scenario.reports)assert.ok(capture.agendaReports.find(r=>r.id===id)?.snapshot,'capture requires the complete existing/previous snapshot '+id);
@@ -95,7 +96,8 @@ try{
   for(const name of ['tasks','internalControlCases','meetings'])assert.deepEqual(raw[name],baseline.payload[name],'capture requires every complete current '+name);
   const expected=upsertDailyMorningReport(normalizeAppData(baseline.payload),{at:scenario.at,actorUserId:'qa-owner',source:'manual'});
   const candidate=upsertDailyMorningReport(capture,{at:scenario.at,actorUserId:'qa-owner',source:'manual'});
-  assert.deepEqual(candidate.report,expected.report,'narrow transport must preserve the original full-data snapshot exactly');
+  assert.notEqual(candidate.report.id,expected.report.id,'independent capture intents allocate independent identities');
+  assert.deepEqual({...candidate.report,id:expected.report.id},expected.report,'narrow transport must preserve every report field except independent intent identity');
   assertRecordScopePatch(captureScope,[{kind:'entity',collection:'agendaReports',entityId:candidate.report.id,expected:raw.agendaReports.find(r=>r.id===candidate.report.id)||null,value:candidate.report}],raw);
   const composed=unionRecordScopes(captureScope,{targets:[{collection:'tasks',id:'qa-unrelated-task'}],trackingVesselIds:['qa-v1']});
   assert.equal(composed.morningSaveAt,scenario.at,'retain the capture cutoff through composed scope requests');

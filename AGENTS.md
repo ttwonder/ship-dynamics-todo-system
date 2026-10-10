@@ -8,6 +8,12 @@
 - 有歷史快照的停用船仍須保留入口。若船舶已不在名冊，只保留已知的歷史船名，不猜造中文或英文名。
 - 此規則適用後續同類需求，不構成未經要求全面重寫其他既有頁面的授權。
 
+## 每日早會凍結歷史
+
+- 手動保存不限台北工作日／時段，每次新增完整獨立快照；writer 重試沿用當次 ID／capturedAt／基線，未知 ACK 不重建。歷史以「份」計數，明示自動保存／手動保存，舊 ID／source／內容保留。
+- 自動每天台北 10:00 一份，沿 records server runner；同日既有 scheduled（含舊 unsuffixed ID）不重建或改時間，也不覆寫手動。Itinerary 每天 09:00 的排程、資料與 UI 不變。不得以瀏覽器常開或未掛載 normalized scheduler 冒充雲端排程。
+- 升級使用 guarded forward SQL，保留 OID／ACL／pause／authority／receipt 與後續 builder splice；cron install 和唯讀 readback 分開，明確 workspace、不加 browser grants。本機驗證不等於真 cron／正式部署；詳見 `docs/daily-morning-save-repair-handoff.md`。
+
 ## 配件／物料／工程跟蹤
 
 - 雙端批量工具列三組操作採實色白字：「批量修正」深藍灰；物料「批量送達／更正」與工程「批量完工／更正」共用橙色；「同步到內控」紫色。維持各自業務文案、尺寸、順序、停用權限與原功能，保留其他按鈕配色；懸停、鍵盤焦點與未選項停用狀態仍須可辨。

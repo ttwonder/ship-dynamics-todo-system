@@ -14,7 +14,7 @@ try{
   const base={agendaReports:[],vessels:[vessel],tasks:[task('ordinary'),task('internal',{isInternalControl:true}),task('closed',{isClosed:true}),task('meeting',{sourceType:'temporary',sourceMeetingId:'m1'})],meetings:[meeting]};
   const scheduled=upsertDailyMorningReport(base,{at:'2026-08-03T01:00:00+08:00',actorUserId:'owner',source:'scheduled'});
   assert.equal(scheduled.status,'saved');
-  assert.equal(scheduled.report.id,'daily-morning-2026-08-03');
+  assert.equal(scheduled.report.id,'daily-morning-2026-08-03-scheduled');
   assert.equal(scheduled.report.taskCount,2);
   assert.deepEqual(scheduled.report.snapshot.tasks.map(item=>item.id).sort(),['meeting','ordinary']);
   assert.equal(scheduled.report.snapshot.tasks.some(item=>item.isInternalControl),false);
@@ -22,13 +22,14 @@ try{
   const manual=upsertDailyMorningReport(scheduled.data,{at:'2026-08-03T08:30:00+08:00',actorUserId:'owner',source:'manual',itineraryProjectionSnapshot:projectionSnapshot});
   assert.equal(manual.report.snapshot.schemaVersion,2);
   assert.equal(manual.report.snapshot.itineraryProjections.v1.source,'legacy');
-  assert.equal(manual.data.agendaReports.length,1);
-  assert.equal(manual.report.id,scheduled.report.id);
-  assert.equal(manual.report.createdAt,scheduled.report.createdAt);
+  assert.equal(manual.data.agendaReports.length,2);
+  assert.notEqual(manual.report.id,scheduled.report.id);
+  assert.equal(manual.report.createdAt,'2026-08-03T00:30:00.000Z');
+  assert.deepEqual(manual.data.agendaReports.find(r=>r.id===scheduled.report.id),scheduled.report);
   assert.equal(manual.report.source,'manual');
   assert.equal(dailyMorningReports(manual.data.agendaReports)[0].businessDate,'2026-08-03');
   const weekend=upsertDailyMorningReport(base,{at:'2026-08-08T09:00:00+08:00',actorUserId:'owner',source:'scheduled'});
-  assert.equal(weekend.status,'not-business-day');
+  assert.equal(weekend.status,'saved');
 }finally{await server.close();}
 
 const app=fs.readFileSync('src/App.tsx','utf8');
@@ -81,4 +82,4 @@ assert.match(sql,/revoke all on function public\.sd_publish_daily_morning_to_leg
 assert.match(sql,/perform public\.sd_publish_daily_morning_to_legacy_read_model\(/,'the 09:00 runner must invoke the compatibility projection in the same transaction');
 assert.match(sql,/revoke all on function public\.sd_build_daily_morning_snapshot\(uuid,timestamptz\) from public,anon,authenticated/,'the security-definer snapshot builder must not be callable as a public data-exfiltration RPC');
 assert.match(sql,/revoke all on function public\.command_ship_dynamics_save_report\(uuid,uuid,text,jsonb\) from public,anon[\s\S]*grant execute on function public\.command_ship_dynamics_save_report\(uuid,uuid,text,jsonb\) to authenticated/,'the report command must expose only its authenticated authorization boundary');
-console.log('Daily morning history, snapshot privacy and Taipei 09:00 schedule contracts passed.');
+console.log('Daily morning append/history/privacy passed; unchanged legacy 09:00 SQL is only a historical source oracle, not current 10:00 cron evidence.');

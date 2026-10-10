@@ -10,7 +10,7 @@ const run=fs.mkdtempSync(path.join(root,'morning-save-browser-')),profile=path.j
 const migration='supabase/migrations/20261008090000_tracking_unrelated_patch_fast_path.sql';
 const readerMigration='supabase/migrations/20261009060000_record_reader_inline_bodies.sql';
 const evidence={label:'真實 UI＋測試資料；原 App＋本機原生 PostgreSQL，非正式環境',status:'RUNNING',cases:[],dialogs:[],errors:[],blockedExternal:[],productionContacted:false};
-evidence.inputHashes=Object.fromEntries(['src/App.tsx','src/morningHistory.ts','src/cloud.ts','src/cloudRecordScopes.ts','src/normalize.ts',migration,readerMigration,'scripts/verify-daily-morning-save-browser.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs'].map(p=>[p,createHash('sha256').update(fs.readFileSync(p)).digest('hex')]));
+evidence.inputHashes=Object.fromEntries(['src/App.tsx','src/morningHistory.ts','src/cloudAuthorization.ts','src/ReportDailyHistories.tsx','src/cloud.ts','src/cloudRecordScopes.ts','src/normalize.ts',migration,readerMigration,'scripts/verify-daily-morning-save-browser.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs'].map(p=>[p,createHash('sha256').update(fs.readFileSync(p)).digest('hex')]));
 evidence.productReads=[];
 let native,qa,browser,ws,sessionId,chromePort,failure,number=0,currentCase='setup',timeoutEnabled=false,readTimeoutEnabled=false,fullReadFaultPending=false,injected=0,readInjected=0;const pending=new Map();
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
@@ -46,6 +46,7 @@ try{
     const saved=upsertDailyMorningReport(initial,{at,actorUserId:'qa-owner',source});assert.equal(saved.status,'saved');
     saved.report.snapshot.qaOpaque={keep:at};saved.report.snapshot.qaUnrelatedPadding='QA RETAINED OLD BODY'.repeat(4000);initial.agendaReports=saved.data.agendaReports;
   }
+  const auto=upsertDailyMorningReport(initial,{at:new Date().toISOString(),actorUserId:'qa-owner',source:'scheduled'});assert.equal(auto.status,'saved');initial.agendaReports=auto.data.agendaReports;
  }});
  await installTrackingBrowserMigrations(qa.db);await installTrackingFieldRevision(qa.db);
  for(const f of ['supabase/migrations/20260929120000_tracking_delivery_close.sql','supabase/migrations/20260929180000_tracking_completion_close.sql',migration,readerMigration])await qa.db.exec(fs.readFileSync(f,'utf8'));
@@ -96,7 +97,9 @@ try{
   };
   assert.deepEqual(report.snapshot.itineraryProjections,itineraryProjections,'retain the exact formal revision and legacy fallback; never project alternatives');
   const expected=upsertDailyMorningReport(full,{at:report.snapshot.capturedAt,actorUserId:actor.id,source:'manual',itineraryProjectionSnapshot:{schemaVersion:2,projectionCapturedAt:report.snapshot.projectionCapturedAt,itineraryProjections}});
-  assert.equal(expected.status,'saved');assert.deepEqual(report,JSON.parse(JSON.stringify(expected.report)),'BEFORE SQL oracle: original complete-data helper must produce exactly this report');
+  assert.equal(expected.status,'saved');assert.match(report.id,new RegExp('^daily-morning-'+report.businessDate+'-manual_'));
+  assert.notEqual(report.id,expected.report.id);
+  assert.deepEqual(report,JSON.parse(JSON.stringify({...expected.report,id:report.id})),'BEFORE SQL oracle: complete-data helper must preserve all non-identity fields');
  };
  let before=await read(),saved,failedIntent;let captured=null;
  await check('MSB07-full-reader-unavailable-complete-save-and-history-preserved',async()=>{
@@ -141,11 +144,20 @@ try{
  timeoutEnabled=false;qa.setRecordFault(null);
  await check('MSB03-original-manual-retry-exact-intent-one-revision',async()=>{
   await click('重新保存');await until(async()=>{const x=await read();return x.revision===saved.revision+1;},'retry committed');await until(()=>evaluate("Boolean(document.querySelector('.save-status-strip.saved'))"),'retry visible saved');
-  const after=await read();assert.deepEqual(after.payload.agendaReports.find(r=>r.id===failedIntent.id),failedIntent);assert.equal(after.payload.agendaReports.length,before.payload.agendaReports.length);assert.deepEqual(withoutReports(after),withoutReports(saved));saved=after;await screen('retry-confirmed');
+  const after=await read();assert.deepEqual(after.payload.agendaReports.find(r=>r.id===failedIntent.id),failedIntent);assert.equal(after.payload.agendaReports.length,saved.payload.agendaReports.length+1);assert.deepEqual(withoutReports(after),withoutReports(saved));saved=after;await screen('retry-confirmed');
  });
  await check('MSB04-new-document-history-retains-authoritative-report',async()=>{
   await call('Page.reload');await until(async()=>(await text()).includes('QA OWNER'),'reload identity');if(!await evaluate("Boolean(document.querySelector('.morning-daily-history-panel'))"))await click('報告中心');
   await until(async()=>(await text()).includes(failedIntent.businessDate),'reload history date');await click('檢視當日快照');await until(()=>evaluate("Boolean(document.querySelector('#report-preview-title'))"),'saved preview');assert.ok((await text()).includes('QA VESSEL 1'));await screen('reloaded-history');await click('關閉');assert.deepEqual(await read(),saved);
+ });
+ await check('MSB08-same-day-auto-and-manual-labels-locator-frozen-open',async()=>{
+  const html=await text();assert.ok(html.includes('每日早會每天台北時間 10:00 自動保存一份'));assert.ok(!html.includes('每日早會於台北工作日 09:00'));assert.ok(html.includes('10:00 自動保存＋手動保存'));assert.ok(html.includes('自動保存')&&html.includes('手動保存'));
+  assert.ok(html.includes('共 '+saved.payload.agendaReports.length+' 份'));
+  const sameDay=saved.payload.agendaReports.filter(r=>r.businessDate===failedIntent.businessDate);assert.equal(sameDay.filter(r=>r.source==='scheduled').length,1);assert.ok(sameDay.filter(r=>r.source==='manual').length>=4);
+  const dateInput="document.querySelector('input[aria-label=\"每日早會歷史日期\"]')";
+  await evaluate(`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(${dateInput},${JSON.stringify(failedIntent.businessDate)});${dateInput}.dispatchEvent(new Event('input',{bubbles:true}));${dateInput}.dispatchEvent(new Event('change',{bubbles:true}))`);
+  await evaluate("document.querySelector('.morning-daily-history-panel .daily-report-date-locator button').focus()");await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await until(async()=>(await text()).includes('已定位 '+failedIntent.businessDate),'locate same-day records');
+  await click('檢視當日快照');await until(()=>evaluate("Boolean(document.querySelector('#report-preview-title'))"),'distinct frozen history opening');await screen('same-day-sources-and-frozen-preview');await click('關閉');assert.deepEqual(await read(),saved);
  });
  assert.deepEqual(evidence.errors,[]);assert.deepEqual(evidence.blockedExternal,[]);evidence.status='PASS';
 }catch(e){failure=e;evidence.status='FAIL';evidence.failure={caseId:currentCase,message:e.message,stack:e.stack};try{evidence.failureText=(await text()).slice(0,8000);await screen('failure');}catch{}}

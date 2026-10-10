@@ -1,9 +1,10 @@
 import type { ItineraryProjectionSnapshot } from './itinerary/itineraryOperationalProjection';
 import type { AgendaReport, AppData, InternalControlCase, MorningReportSnapshot, TaskItem, TemporaryMeeting, Vessel } from './types';
-import { isTaipeiBusinessDay, taipeiBusinessDateLabel, taipeiDateKey } from './taipeiTime';
+import { taipeiBusinessDateLabel, taipeiDateKey } from './taipeiTime';
 import { morningDiscussionTasks } from './morningTaskScope';
 import { taskVesselIds } from './taskVesselScope';
 import { taskIsClosedForScope } from './taskVesselProgress';
+import { uid } from './runtimeUtils';
 
 export type MorningHistoryData = Pick<AppData, 'agendaReports' | 'vessels' | 'tasks' | 'meetings'> & {
   internalControlCases?: InternalControlCase[];
@@ -22,6 +23,7 @@ export interface DailyMorningSaveInput {
 }
 
 export type DailyMorningSaveResult<T extends MorningHistoryData> =
+  // Retain the legacy result variant for existing unmounted consumers.
   | { status: 'not-business-day'; data: T; report?: undefined }
   | { status: 'saved'; data: T; report: AgendaReport };
 
@@ -52,11 +54,8 @@ export function latestManualReport(reports: AgendaReport[], endedAt: string, exc
 }
 
 export function dailyMorningSaveReadReports(reports:AgendaReport[],at:string):AgendaReport[] {
-  const capturedAt=instantIso(at);
-  const existing=reports.find(report=>report.kind==='daily-morning'&&report.businessDate===taipeiDateKey(capturedAt));
-  const endedAt=existing?.source==='manual'?reportCutoff(existing)||capturedAt:capturedAt;
-  const previous=latestManualReport(reports,endedAt,existing?.id);
-  return [...(existing?[existing]:[]),...(previous?[previous]:[])];
+  const previous=latestManualReport(reports,instantIso(at));
+  return previous?[previous]:[];
 }
 
 function latestManualCutoff(reports: AgendaReport[], endedAt: string, excludedReportId = ''): string | undefined {
@@ -182,32 +181,21 @@ function morningSnapshotContent(
 
 export function upsertDailyMorningReport<T extends MorningHistoryData>(data: T, input: DailyMorningSaveInput): DailyMorningSaveResult<T> {
   const capturedAt = instantIso(input.at);
-  if (!isTaipeiBusinessDay(capturedAt)) return { status: 'not-business-day', data };
-
   const businessDate = taipeiDateKey(capturedAt);
+  // Scheduled retries keep the first frozen report, including legacy IDs.
+  // A manual click is always a new report; writer retries retain that ID.
+  const existing = input.source === 'scheduled' ? data.agendaReports.find(report => report.kind === 'daily-morning' && report.businessDate === businessDate && report.source === 'scheduled') : undefined;
+  if (existing) return { status: 'saved', data, report: existing };
   const vessels = data.vessels.filter(vessel => vessel.isActive !== false);
   const vesselIds = vessels.map(vessel => vessel.id);
-  const existingIndex = data.agendaReports.findIndex(report => report.kind === 'daily-morning' && report.businessDate === businessDate);
-  const existing = existingIndex >= 0 ? data.agendaReports[existingIndex] : undefined;
-  const existingManualCutoff = existing?.source === 'manual' ? reportCutoff(existing) : undefined;
-  const manualCutoff = input.source === 'manual' || existing?.source === 'manual';
-  const windowEndedAt = manualCutoff ? existingManualCutoff || capturedAt : capturedAt;
-  const refreshingExistingManual = Boolean(existingManualCutoff && existing?.source === 'manual' && existing.snapshot);
-  const previousManualReport = latestManualReport(data.agendaReports, windowEndedAt, existing?.id);
+  const manualCutoff = input.source === 'manual';
+  const previousManualReport = latestManualReport(data.agendaReports, capturedAt);
   const previousManualCutoff = previousManualReport ? reportCutoff(previousManualReport) : undefined;
   const window: MorningWindow = {
-    startedAt: refreshingExistingManual
-      ? validInstant(existing?.snapshot?.windowStartedAt) || previousManualCutoff
-      : previousManualCutoff,
-    endedAt: windowEndedAt,
+    startedAt: previousManualCutoff,
+    endedAt: capturedAt,
   };
-  const content = refreshingExistingManual ? {
-    tasks: structuredClone(existing!.snapshot!.tasks),
-    internalControlCases: structuredClone(existing!.snapshot!.internalControlCases || []),
-    meetings: structuredClone(existing!.snapshot!.meetings),
-    todayTaskIds: [...(existing!.snapshot!.todayTaskIds || [])],
-    todayInternalControlCaseIds: [...(existing!.snapshot!.todayInternalControlCaseIds || [])],
-  } : morningSnapshotContent(
+  const content = morningSnapshotContent(
     data.tasks,
     data.internalControlCases || [],
     data.meetings,
@@ -229,21 +217,19 @@ export function upsertDailyMorningReport<T extends MorningHistoryData>(data: T, 
     input.itineraryProjectionSnapshot,
   );
   const report: AgendaReport = {
-    id: existing?.id || `daily-morning-${businessDate}`,
+    id: input.source === 'manual' ? uid(`daily-morning-${businessDate}-manual`) : `daily-morning-${businessDate}-scheduled`,
     title: `${taipeiBusinessDateLabel(capturedAt)}早會內容`,
     vesselIds,
-    createdBy: existing?.createdBy || input.actorUserId,
-    createdAt: existing?.createdAt || capturedAt,
+    createdBy: input.actorUserId,
+    createdAt: capturedAt,
     taskCount: content.tasks.length + content.internalControlCases.length,
     kind: 'daily-morning',
     businessDate,
-    source: input.source === 'manual' || existing?.source !== 'manual' ? input.source : 'manual',
+    source: input.source,
     updatedAt: capturedAt,
     snapshot,
   };
-  const agendaReports = [...data.agendaReports];
-  if (existingIndex >= 0) agendaReports[existingIndex] = report;
-  else agendaReports.unshift(report);
+  const agendaReports = [report, ...data.agendaReports];
   return { status: 'saved', data: { ...data, agendaReports } as T, report };
 }
 

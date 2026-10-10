@@ -3,7 +3,7 @@ import { canAccessAllVessels, hasPermission, normalizeRolePermissions } from './
 import { hasActiveVesselDelegation } from './vesselDelegation';
 import { buildCloudBlockPatch, type CloudBlockCollection, type CloudBlockPatchOperation } from './cloudBlockPatch';
 import { taskBelongsToUserWorkCenter } from './workCenterScope';
-import { isTaipeiBusinessDay, taipeiDateKey } from './taipeiTime';
+import { taipeiDateKey } from './taipeiTime';
 import { isMeetingTaskSource } from './taskCategories';
 import { trackingProgressEndpointKeys } from './tracking/trackingAuthorization';
 import { isCanonicalTrackingDeletionChange } from './tracking/trackingDeletion';
@@ -178,10 +178,9 @@ function assertDailyMorningReportAuthorization(actor:UserAccount,expected:Record
   if(value.kind!=='daily-morning'
     || value.source!=='manual'
     || !/^\d{4}-\d{2}-\d{2}$/.test(businessDate)
-    || value.id!==`daily-morning-${businessDate}`
+    || !(value.id===`daily-morning-${businessDate}` || new RegExp(`^daily-morning-${businessDate}-manual_[0-9]+_[a-z0-9]+_[a-z0-9-]+$`).test(String(value.id||'')))
     || !capturedAt
     || taipeiDateKey(capturedAt)!==businessDate
-    || !isTaipeiBusinessDay(capturedAt)
     || !sameVesselScope
     || snapshotVesselIds.some(id=>!id)
     || !validInternalControlScope
