@@ -8,6 +8,7 @@ import { validateItineraryDocument } from './itineraryValidation';
 import type { ItineraryLease, ItineraryLeaseRenewResult, ItinerarySavePreparationResult, ItinerarySaveResult } from './itineraryCollaboration';
 import UtcOffsetSelect from './UtcOffsetSelect';
 import ItineraryOperationOptions from './ItineraryOperationOptions';
+import ItineraryCurrentVesselStateInput from './ItineraryCurrentVesselStateInput';
 import ItineraryDateInput from './ItineraryDateInput';
 import ItineraryTimeInput from './ItineraryTimeInput';
 import ItineraryNumericInput from './ItineraryNumericInput';
@@ -192,7 +193,7 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
     // an await. Component lifetime alone does not identify actor/config scope.
     const isSaveCurrent = () => isCurrent(generation) && (!isSaveContextCurrent || isSaveContextCurrent());
     if (!isSaveCurrent()) return;
-    const candidate = { ...draft, rows: preserveItineraryCurrentVesselState(resequenceItineraryRows(draft.rows), document.rows) };
+    const candidate = { ...draft, rows: resequenceItineraryRows(draft.rows) };
     const validation = validateItineraryDocument(candidate);
     if (validation.ok === false) {
       setMessage(validation.errors.slice(0, 3).map(error => error.message).join('；'));
@@ -291,10 +292,11 @@ export default function ItineraryEditor({ document, initialDocument, initialPend
   return <div className="modal-backdrop itinerary-editor-backdrop" role="presentation">
     <section className="modal itinerary-editor-modal" role="dialog" aria-modal="true" aria-labelledby="itinerary-editor-title" onPointerDown={touch} onKeyDown={touch}>
       <header className="itinerary-editor-head">
-        <div><h2 id="itinerary-editor-title">手動修改｜{document.vesselName}</h2><p>Revision {document.revision}｜辦公室只修改主要資料欄；日期及時間以各港 UTC Offset 輸入。</p></div>
+        <div><h2 id="itinerary-editor-title">手動修改｜{document.vesselName}</h2><p>Revision {document.revision}｜目前船舶資料及主要行程欄位可修改；日期及時間以各港 UTC Offset 輸入。</p></div>
         <div className="itinerary-editor-head-actions">{readOnly&&dirty&&<button type="button" className="btn small red" onClick={cancel}>丟棄草稿</button>}<button type="button" className="btn ghost" onClick={readOnly&&dirty?closePreservingDraft:cancel}>{readOnly&&dirty?'關閉（保留草稿）':'取消編輯'}</button><button type="button" className="btn primary" disabled={readOnly||saving} onClick={submit}>{saving?'保存中…':'保存並同步'}</button></div>
       </header>
       {(message||idleWarning)&&<div className={`itinerary-editor-message ${readOnly?'error':idleWarning?'warning':''}`} role="status">{message||'已閒置 8 分鐘；再無操作將於 10 分鐘時退出可寫狀態並保留草稿。'}</div>}
+      {draft.rows[0] && <ItineraryCurrentVesselStateInput row={draft.rows[0]} className="itinerary-current-vessel-state-input" disabled={readOnly || saving} onPatch={patch=>updateRow(draft.rows[0].rowId,patch)} />}
       <div className="itinerary-editor-table-wrap">
         <table className="itinerary-editor-table" style={{ width: ITINERARY_EDITOR_MAIN_TABLE_WIDTH }}><colgroup><col style={{ width: ITINERARY_EDITOR_ROW_NUMBER_WIDTH }} />{ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS.map((width,index)=><col key={`main-${index}`} style={{ width }} />)}<col style={{ width: ITINERARY_EDITOR_ACTION_WIDTH }} /></colgroup><thead><tr><th>#</th>{ITINERARY_MAIN_FIELD_LABELS.map(label=><th className={label.includes('\n')?'itinerary-field-heading-multiline':undefined} key={label}>{label}</th>)}<th>操作</th></tr></thead>
           <tbody>{draft.rows.map((row,index)=><tr key={row.rowId}>

@@ -12,7 +12,7 @@ export const ITINERARY_MAX_ROWS = 100;
 export const ITINERARY_MAX_ALTERNATIVE_PLANS = 5;
 
 export type ItineraryOperation = string;
-export type ItineraryOperationChoice = 'load' | 'unload' | 'docking' | 'waiting-order' | 'repair' | 'inspection';
+export type ItineraryOperationChoice = 'load' | 'unload' | 'docking' | 'waiting-order' | 'repair' | 'inspection' | 'bunker';
 export type ItineraryTimeMode = 'auto' | 'manual';
 
 export const ITINERARY_PURPOSE_OPTIONS: ReadonlyArray<{ choice: ItineraryOperationChoice; label: string }> = [
@@ -22,6 +22,7 @@ export const ITINERARY_PURPOSE_OPTIONS: ReadonlyArray<{ choice: ItineraryOperati
   { choice: 'waiting-order', label: 'waiting order' },
   { choice: 'repair', label: 'repair' },
   { choice: 'inspection', label: 'inspection' },
+  { choice: 'bunker', label: 'bunker' },
 ];
 
 const purposeAliases: Record<string, ItineraryOperationChoice> = {
@@ -31,6 +32,7 @@ const purposeAliases: Record<string, ItineraryOperationChoice> = {
   'waiting order': 'waiting-order', 'waiting orders': 'waiting-order', 'waiting for order': 'waiting-order', 'waiting for orders': 'waiting-order',
   repair: 'repair', repairs: 'repair',
   inspection: 'inspection', inspections: 'inspection',
+  bunker: 'bunker',
 };
 
 function itineraryOperationChoices(value: unknown): Set<ItineraryOperationChoice> | null {

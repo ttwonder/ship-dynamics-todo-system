@@ -81,7 +81,7 @@ try {
   assert.equal(workbook.worksheets[0].getCell('A4').value, 'V001');
   assert.equal(workbook.worksheets[0].getCell('B3').value, 'Next Port & Dock Name');
   assert.equal(workbook.worksheets[0].getCell('C3').value, 'Purpose');
-  assert.equal(workbook.worksheets[0].getCell('D3').value, 'B/F or I/F Qty (MT/BBLS)');
+  assert.equal(workbook.worksheets[0].getCell('D3').value, 'B/F or I/F Qty(Cargo Name + MT/BBLS/M3)');
   assert.equal(workbook.worksheets[0].getCell('G3').value, '預計L/D rate (MT/h)');
   assert.equal(workbook.worksheets[0].getCell('L3').value, 'Arr ROB');
   assert.equal(workbook.worksheets[0].getCell('M3').value, 'Dep ROB');

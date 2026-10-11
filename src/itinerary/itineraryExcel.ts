@@ -305,7 +305,7 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
   worksheet.getCell('L2').numFmt = 'yyyy-mm-dd hh:mm';
 
   const headers = [
-    'Voy No.', 'Next Port & Dock Name', 'Purpose', 'B/F or I/F Qty (MT/BBLS)', 'ETA (LT)', 'ETB (LT)', '預計L/D rate (MT/h)',
+    'Voy No.', 'Next Port & Dock Name', 'Purpose', 'B/F or I/F Qty(Cargo Name + MT/BBLS/M3)', 'ETA (LT)', 'ETB (LT)', '預計L/D rate (MT/h)',
     'ETC (LT)', 'ETD (LT)', 'Arr Draft', 'Dep Draft', 'Arr ROB', 'Dep ROB', '備註信息', 'UTC Offset', 'DTG(NM)', '預估航速(kn)',
     '剩餘航行時間(h)', '預估等待時間(靠泊前)(h)', '預計航道航行時間(h)', '作業艙號', '裝卸貨量(MT)', '預計L/D rate (MT/h)',
     '預計作業時間(h)', '預估等待/延誤時間(完貨前)(h)', '預估等待/延誤時間(完貨後)(h)', 'ETA UTC Offset', 'ETB UTC Offset',
@@ -324,7 +324,7 @@ function fillDocumentSheet(worksheet: ExcelJS.Worksheet, document: ItineraryDocu
     worksheet.getCell(primary, 3).value = formatItineraryOperation(row.operation);
     worksheet.getCell(primary, 3).dataValidation = {
       type: 'list', allowBlank: true, showErrorMessage: false,
-      formulae: ['"To Load,To Unload,docking,waiting order,repair,inspection,To Load / To Unload"'],
+      formulae: ['"To Load,To Unload,docking,waiting order,repair,inspection,bunker,To Load / To Unload"'],
     };
     worksheet.getCell(primary, 4).value = row.cargoQuantityText;
     worksheet.getCell(primary, 7).value = row.ldRateText;

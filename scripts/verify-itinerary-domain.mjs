@@ -20,7 +20,7 @@ try {
   assert.equal(types.setItineraryOperationSelected('To Load / To Unload', 'load', false), 'To Unload');
   assert.equal(types.itineraryOperationSelected('To Load / docking / inspection', 'load'), true);
   assert.equal(types.itineraryOperationSelected('To Load / docking / inspection', 'inspection'), true);
-  assert.deepEqual(types.ITINERARY_PURPOSE_OPTIONS.map(option => option.label), ['To Load','To Unload','docking','waiting order','repair','inspection']);
+  assert.deepEqual(types.ITINERARY_PURPOSE_OPTIONS.map(option => option.label), ['To Load','To Unload','docking','waiting order','repair','inspection','bunker']);
 
   const first = types.createBlankItineraryRow('row-1', 0);
   Object.assign(first, {

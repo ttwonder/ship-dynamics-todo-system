@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
+import {installShipInternalControlFixture} from './ship-internal-control-local-fixture.mjs';
 import {seedItineraryExcelFixture,excelBusinessSnapshot,assertOnlyFormalWrites} from './record-itinerary-excel-local-fixture.mjs';
 
 const output=fs.mkdtempSync(path.join(process.env.QA_EVIDENCE_ROOT||os.tmpdir(),'record-itinerary-excel-'));
@@ -59,7 +60,11 @@ const uncheckSecond=async()=>{await toggle("document.querySelectorAll('.itinerar
 const release=async()=>{const item=held;held=null;hold=null;if(item)await call('Fetch.continueRequest',{requestId:item.requestId});};
 const assertPending=async()=>{assert.match(await modalText(),/覆蓋中…/);assert.equal(await evaluate("document.querySelector('.itinerary-import-results')===null"),true);assert.equal(await evaluate("document.querySelector('.itinerary-import-head button').disabled"),true);assert.deepEqual(await evaluate("[...document.querySelectorAll('.itinerary-import-sheet-group input')].map(n=>n.disabled)"),[true,true]);};
 try{
- qa=await createRecordStorageLocalQa();await seedItineraryExcelFixture(qa);assert.equal((await fetch(qa.origin+'/__qa/health')).status,200);
+ qa=await createRecordStorageLocalQa({browserAuthority:true,scopedRead:true,tracking:true,shipInternalControl:true,shipInternalControlDownload:true,hmr:false});await seedItineraryExcelFixture(qa);
+ // Use the current real original-App bootstrap; do not bypass authority gates.
+ await installShipInternalControlFixture(qa.db,qa.workspace);
+ for(const file of ['20261006090000_ship_internal_control_download.sql','20260924160000_tracking_records.sql','20260916090000_itinerary_current_vessel_state.sql','20260917090000_itinerary_bunker_status.sql','20261011090000_itinerary_purpose_bunker_shore_state.sql'])await qa.db.exec(fs.readFileSync('supabase/migrations/'+file,'utf8'));
+ assert.equal((await fetch(qa.origin+'/__qa/health')).status,200);
  const baseline=await snapshot('baseline'),beforeDocuments=await documents(),appBefore=await qa.read();
  const chrome='C:/Program Files/Google/Chrome/Application/chrome.exe';assert.ok(fs.existsSync(chrome));browser=spawn(chrome,['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
  let port,socketPath;await until(()=>{try{[port,socketPath]=fs.readFileSync(path.join(profile,'DevToolsActivePort'),'utf8').trim().split(/\r?\n/);return /^\d+$/.test(port)&&socketPath?.startsWith('/devtools/browser/');}catch(e){if(['ENOENT','EBUSY','EPERM'].includes(e.code))return false;throw e;}},'Chrome readable handshake');
@@ -95,7 +100,7 @@ try{
  const selectedExport=await exportFile('original-selected-export');
  await check('excel-export-selected-formal',async()=>{
   const {book}=selectedExport;const sheet=book.worksheets[0],meta=book.getWorksheet('_Itinerary_Meta');
-  assert.equal(sheet.getCell('A2').value,'Vsl name: '+vesselNames[0]);assert.equal(sheet.getCell('B3').value,'Next Port & Dock Name');assert.equal(sheet.getCell('C3').value,'Purpose');assert.equal(sheet.getCell('D3').value,'B/F or I/F Qty (MT/BBLS)');assert.equal(sheet.getCell('O3').value,'UTC Offset');assert.equal(sheet.getCell('AA3').value,'ETA UTC Offset');
+  assert.equal(sheet.getCell('A2').value,'Vsl name: '+vesselNames[0]);assert.equal(sheet.getCell('B3').value,'Next Port & Dock Name');assert.equal(sheet.getCell('C3').value,'Purpose');assert.equal(sheet.getCell('D3').value,'B/F or I/F Qty(Cargo Name + MT/BBLS/M3)');assert.equal(sheet.getCell('O3').value,'UTC Offset');assert.equal(sheet.getCell('AA3').value,'ETA UTC Offset');
   assert.equal(sheet.getCell('B4').value,'QA FORMAL KAOHSIUNG');assert.equal(sheet.getCell('C4').value,'To Load / To Unload');assert.equal(sheet.getCell('D4').value,'QA FORMAL CARGO 123 MT');assert.equal(sheet.getCell('O4').value,'UTC+8');assert.equal(sheet.getCell('AA4').value,'UTC+5:45');assert.equal(sheet.getCell('E4').value.toISOString(),'2026-09-07T05:45:00.000Z');assert.equal(meta.getCell('J2').value,'QA FORMAL BUSAN');assert.equal(meta.getCell('E2').value,7);assert.equal(meta.getCell('B2').value,'qa-v1');assert.equal(meta.getCell('B3').value,'qa-v2');
   assert.ok(!JSON.stringify(book.model).includes('QA ALTERNATIVE MUST NOT PROJECT'));assert.ok(!JSON.stringify(book.model).includes('qa-v3'));assert.deepEqual(await snapshot('after-export'),baseline);await screen('selected-export');
  });

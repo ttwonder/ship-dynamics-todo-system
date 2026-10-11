@@ -68,7 +68,7 @@ export function buildItineraryCalendarEventTitle(vesselName: string, row: Itiner
     `港口：${compactTooltipText(row.portDockName)} ｜ 預計作業類型：${formatItineraryOperation(row.operation) || '—'} ｜ 目的地時區：${formatDestinationTimeZone(row)}`,
     `ETA：${formatTooltipTime(row, 'etaUtc')} ｜ ETB：${formatTooltipTime(row, 'etbUtc')}`,
     `ETC：${formatTooltipTime(row, 'etcUtc')} ｜ ETD：${formatTooltipTime(row, 'etdUtc')}`,
-    `B/F or I/F Qty (MT/BBLS)：${compactTooltipText(row.cargoQuantityText)} ｜ 預計裝卸速度：${compactTooltipText(row.ldRateText)}`,
+    `B/F or I/F Qty(Cargo Name + MT/BBLS/M3)：${compactTooltipText(row.cargoQuantityText)} ｜ 預計裝卸速度：${compactTooltipText(row.ldRateText)}`,
     `到港吃水：${compactTooltipText(row.arrivalDraftText)} ｜ 離港吃水：${compactTooltipText(row.departureDraftText)}`,
   ].join('\n');
 }

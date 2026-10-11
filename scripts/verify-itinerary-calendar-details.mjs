@@ -72,7 +72,7 @@ try {
     '港口：KAOHSIUNG NO. 72 ｜ 預計作業類型：To Load ｜ 目的地時區：UTC+8',
     `ETA：${expectedTime('etaUtc')} ｜ ETB：${expectedTime('etbUtc')}`,
     `ETC：${expectedTime('etcUtc')} ｜ ETD：${expectedTime('etdUtc')}`,
-    'B/F or I/F Qty (MT/BBLS)：Crude Oil | 12,500 MT；Fuel Oil | 2,500 MT ｜ 預計裝卸速度：500 MT/h',
+    'B/F or I/F Qty(Cargo Name + MT/BBLS/M3)：Crude Oil | 12,500 MT；Fuel Oil | 2,500 MT ｜ 預計裝卸速度：500 MT/h',
     '到港吃水：A: 6.5 m；F: 6.8 m ｜ 離港吃水：A: 7.1 m；F: 7.3 m',
   ].join('\n');
   assert.equal(decodeHtmlAttribute(titleMatch[1]).split('\n').length, 6, 'Itinerary hover must use no more than six grouped lines');

@@ -18,7 +18,7 @@ try {
   const layoutPath = 'src/itinerary/itineraryFieldLayout.ts';
   assert.equal(fs.existsSync(layoutPath), true, 'main and ship editors need one shared field layout authority');
   const layout = await server.ssrLoadModule(`/${layoutPath}`);
-  assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Next Port & Dock Name','Destination\nUTC Offset','Purpose','B/F or I/F Qty\n(MT/BBLS/M3)','ETA (LT)','ETB (LT)','預計L/D rate (MT/h)','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','Arr ROB\n(Cargo/Fuel/FW)','Dep ROB\n(Cargo/Fuel/FW)','備註信息']);
+  assert.deepEqual(layout.ITINERARY_MAIN_FIELD_LABELS, ['Voy No.','Next Port & Dock Name','Destination\nUTC Offset','Purpose','B/F or I/F Qty\n(Cargo Name + MT/BBLS/M3)','ETA (LT)','ETB (LT)','預計L/D rate (MT/h)','ETC (LT)','ETD (LT)','Arr Draft','Dep Draft','Arr ROB\n(Cargo/Fuel/FW)','Dep ROB\n(Cargo/Fuel/FW)','備註信息']);
   assert.deepEqual(layout.ITINERARY_PARAMETER_FIELD_LABELS, ['DTG(NM)','預估航速(kn)','剩餘航行時間(h)','預估等待時間(靠泊前)(h)','預計航道航行時間(h)','作業艙號','裝卸貨量(MT)','預計L/D rate (MT/h)','預計作業時間(h)','預估等待/延誤時間(完貨前)(h)','預估等待/延誤時間(完貨後)(h)']);
   assert.deepEqual(layout.ITINERARY_EDITOR_MAIN_COLUMN_WIDTHS, [70,175,96,155,155,246,246,80,246,246,98,98,147,147,175]);
   assert.deepEqual(layout.ITINERARY_EDITOR_PARAMETER_COLUMN_WIDTHS, [82,82,82,82,82,135,100,82,82,82,82]);
@@ -200,7 +200,7 @@ try {
   }));
   assert.match(allowedSaveMarkup, /<button class="btn primary small">保存並同步<\/button>/, 'a nonblank previous port must unblock an otherwise valid ship draft');
   const shipMainHeaderTexts = firstRenderedHeaderTexts(shipEditorMarkup);
-  assert.equal(shipMainHeaderTexts[5], 'B/F or I/F Qty\n(MT/BBLS/M3)', 'ship editor quantity heading must use the requested two-line unit label');
+  assert.equal(shipMainHeaderTexts[5], 'B/F or I/F Qty\n(Cargo Name + MT/BBLS/M3)', 'ship editor quantity heading must use the requested two-line unit label');
   assert.equal(shipMainHeaderTexts.length, 17, 'ship main editor must retain # + 15 fields + action');
   assert.equal(shipMainHeaderTexts[3], 'Destination\nUTC Offset', 'ship editor third data column must render the shared Destination UTC Offset heading');
   const panel = fs.readFileSync('src/itinerary/ItineraryPanel.tsx', 'utf8');
@@ -235,7 +235,7 @@ try {
   const collapsedBrowseHeaderTexts = firstRenderedHeaderTexts(collapsedBrowse);
   assert.equal(collapsedBrowseHeaderTexts.length, 15, 'shared browse table must retain its 15 main columns');
   assert.equal(collapsedBrowseHeaderTexts[2], 'Destination\nUTC Offset', 'main and ship browse third column must render the shared Destination UTC Offset heading');
-  assert.equal(collapsedBrowseHeaderTexts[4], 'B/F or I/F Qty\n(MT/BBLS/M3)', 'main and ship browse quantity heading must use the requested two-line unit label');
+  assert.equal(collapsedBrowseHeaderTexts[4], 'B/F or I/F Qty\n(Cargo Name + MT/BBLS/M3)', 'main and ship browse quantity heading must use the requested two-line unit label');
   assert.match(collapsedBrowse, /Arr ROB\n\(Cargo\/Fuel\/FW\)/, 'shared Owner and ship browse header must render Arr ROB on two lines');
   assert.match(collapsedBrowse, /Dep ROB\n\(Cargo\/Fuel\/FW\)/, 'shared Owner and ship browse header must render Dep ROB on two lines');
   assert.match(collapsedBrowse, /備註信息/);
@@ -335,7 +335,7 @@ try {
   assert.match(purposeInput, /ITINERARY_PURPOSE_OPTIONS\.map/);
   const purposeModule = await server.ssrLoadModule('/src/itinerary/ItineraryOperationOptions.tsx');
   const purposeHtml = renderToStaticMarkup(createElement(purposeModule.default, { value: 'To Load / To Unload', onChange() {} }));
-  for (const label of ['to load','to unload','docking','waiting order','repair','inspection']) assert.ok(purposeHtml.includes(`>${label}</span>`), `Purpose option must display ${label} in lowercase`);
+  for (const label of ['to load','to unload','docking','waiting order','repair','inspection','bunker']) assert.ok(purposeHtml.includes(`>${label}</span>`), `Purpose option must display ${label} in lowercase`);
   assert.match(purposeHtml, /<summary[^>]*title="to load \/ to unload"[^>]*>to load \/ to unload<\/summary>/, 'selected Purpose summary must display lowercase labels');
   assert.doesNotMatch(purposeHtml, />To Load</, 'canonical stored values must not leak capitalized labels into the editor UI');
   assert.doesNotMatch(purposeHtml, />To Unload</, 'canonical stored values must not leak capitalized labels into the editor UI');
