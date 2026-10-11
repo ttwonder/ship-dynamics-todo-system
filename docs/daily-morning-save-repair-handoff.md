@@ -1,6 +1,42 @@
 # 每日早會保存修復：本機交付與正式核驗
 
-## 本次交付：手動每次獨立保存、每天 10:00 自動凍結一份
+## 本次修正：自動早會快照完整內容與件數
+
+**本機修正已驗證；正式 SQL、下一次正常 10:00 tick／完整 report 權威回讀仍待使用者套用後核驗。原 10:00／Owner-only wrapper 安裝的 15 true 與 5777297 Pages 交付已完成，不重跑舊 SQL、不要求重新發布舊版本。**
+
+### 實際缺漏與修正邊界
+
+- 正式唯讀證據：10/11 scheduled 的 `taskCount=23`、`snapshot.tasks` 23 筆，`internalControlCases` 整個欄位缺失；10/9 manual 196＝32 要事＋164 內控；9/30 manual 167＝27＋140。10/9 的 164 個內控 ID 仍在目前來源集合，沒有這批原始資料被刪的證據。不同日期的已結案／window 差異不能當作精確漏失數或今天應有數。
+- 自動舊 SQL builder 沒收內控且 runner 只計要事。前版 MSPN01 與同一 builder 自比，只證 caller 沒再改資料，不證 builder 完整；本次由實際 `src/morningHistory.ts` 獨立比對每個集合、完整欄位及順序。
+- 新 forward 只改 **已存在**的 builder 內容與 runner 件數：有效船舶、早會可見要事、完整內控、實際納入要事相關會議；相同最新 eligible manual cutoff／結案變動規則。scheduled 不推進 manual cutoff；技術時間、revision 或 status-log id／at 變動不冒充業務變動。
+- 完整 hydration 的逐船／父項狀態歷史、已移出範圍的結案成員、內控／會議歷史、明示 null、字串編碼與 opaque 欄位保留。正式 Itinerary 的現行 helper／revision／rowId／fallback 投影保持原樣，備選不投影。
+- 原 UI／按鈕／角色、每天 10:00 與 Itinerary 09:00 不變；沒有新 function／RPC／grant／helper、cron 寫入、來源切換或 pause bypass。
+- **10/11 不完整凍結歷史原樣保留**：不以現在資料回填成當時 10:00 的內容，不刪除／重跑 wrapper。若使用者要當下完整內容，沿原手動保存新增一份，時間明示當下，不能冒充舊快照修復。
+
+### 本機驗證與限制
+
+- `verify-morning-content-native.mjs`：13/13 PASS；先有原 missing-collection behavioral RED，再有修正 GREEN。
+- 用真實 PostgreSQL＋合成資料及有效 predecessor／pause／authority migration chain。實際 TS helper 與自動 SQL 比對 tasks／internalControlCases／meetings／vessels 全內容、順序與總件數；manual cutoff、結案業務變動／純技術改動、逐船 missing progress／scope、完整歷史、formal 投影、舊凍結／receipt、同日新 freeze/replay、ACL/wrapper、pause/retired、未知 body、晚 receipt 全回滾、兩個 backend 並發均通過。
+- 200 個合成內控，每個 12 筆狀態歷史全部保留，無 truncation；這是本機完整性驗證，不是正式預期件數／負載保證。
+- 新升級保留完整 pg_proc metadata（含 OID／Owner／ACL／config）及既有依賴；LF/CRLF 升級、同版 no-write rerun、先改 builder 後 runner 拒絕的 DDL atomic rollback 均實際驗證。
+- 新唯讀 readback 的 17 checks 用 native 空 cron catalog 驗證查詢及真正 body drift 負例；**沒有偽造 pg_cron extension/jobs/daemon**，本機 aggregate 正確返回 `REQUIRES_INSTALL_OR_REVIEW`。不能把 wrapper fragment／metadata 測試稱 hosted 安裝或真 tick PASS。
+- `npm run test:daily-morning-save`（14 callbacks、5 helpers及原分類／privacy契約）、cutoff-window、typecheck、production build PASS；原 UI/TypeScript 沒改，本輪不重跑 mounted UI。既有 large-chunk 警告不擴張重構；未另啟動獨立全量 review。
+- 收據及 baseline RED／fixture importer拒絕／JS replacement dollar-token harness 失敗保留 repo 外。fixture 修正只使用 owned native admin seed／真 progress materializer，不改產品 importer或放寬 guard。所有 owned PG/HTTP ports 已停止；不碰原瀏覽器／草稿。
+
+### 新的完整兩步 SQL（使用者自行 Run；不重跑下方舊版四步）
+
+1. **第一步／修正**：`supabase/migrations/20261011130000_morning_snapshot_content.sql`。已安裝 freeze-once runner及現行 Itinerary helper 才接受；未知 predecessor／Owner／config／grant 會拒絕並整交易回滾。只改函式，不寫來源資料或凍結歷史，不動 cron。無 error／timeout 才繼續；頂層 advisory lock 的 void result 不是內容或安裝成功證據。
+2. **第二步／獨立唯讀回讀**：`supabase/verification/morning-content-readback.sql`。與已確認 runtime workspace 綁定；最後單列 `PASS_INSTALL_ONLY`，**17 checks 全部 true**。回讀只查安裝、權限、精確 wrapper/target及原兩個 job；不執行 builder／runner、不暴露業務 payload、函式 body 或任意 GUC。
+3. Preview 必須由新的 commit blobs 生成／核 bytes，兩個 SQL 為各自 fresh query 的獨立提交。使用者 Ctrl+A／Ctrl+C 手動複製，助手不操作 clipboard、不代貼／Run。任何錯誤、逾時、結果不明或 unexpected warning 都停在該步，不盲重試、不繼續。
+4. 安裝成功後，讀下一次正常 10:00 scheduled 的精確 ID／capturedAt／完整內容，才關閉正式自動完整性 gate。不要手動 Run wrapper 提前製造自動報告。新本機 commit 可由使用者 Push 留存源碼；本次不是前端功能更動，Push 不能替代正式 SQL，也不用刷新有草稿的舊頁。
+
+重跑：設定原生 QA 的三個 repo 外／loopback 環境參數後，執行 `npm run test:daily-morning-save:content-native`；`-- --before-content-upgrade` 為原 missing-collection RED（預期 FAIL）。不得傳正式 connection string／host。
+
+---
+
+## 前版歷史：手動每次獨立保存、每天 10:00 自動凍結一份
+
+下列為前版交付紀錄。正式安裝的第四步已經由原 CSV 全部通過，舊安裝與 Push 步驟不再作為本次操作；本次僅沿上方新的兩步 forward content 修正。
 
 **本機實作與驗證完成；尚未 Push、部署或執行正式 SQL。這次是新的保存規則，需新的 forward SQL；已 PASS 的 tracking／reader SQL 不重跑。正式排程及當次保存讀回仍待部署後核驗。**
 

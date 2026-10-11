@@ -13,6 +13,7 @@
 - 手動保存不限台北工作日／時段，每次新增完整獨立快照；writer 重試沿用當次 ID／capturedAt／基線，未知 ACK 不重建。歷史以「份」計數，明示自動保存／手動保存，舊 ID／source／內容保留。
 - 自動每天台北 10:00 一份，沿 records server runner；同日既有 scheduled（含舊 unsuffixed ID）不重建或改時間，也不覆寫手動。Itinerary 每天 09:00 的排程、資料與 UI 不變。不得以瀏覽器常開或未掛載 normalized scheduler 冒充雲端排程。
 - 升級使用 guarded forward SQL，保留 OID／ACL／pause／authority／receipt 與後續 builder splice；cron install 和唯讀 readback 分開，明確 workspace、不加 browser grants。本機驗證不等於真 cron／正式部署；詳見 `docs/daily-morning-save-repair-handoff.md`。
+- 自動、手動的內容／取樣窗一致，快照須含完整 `tasks`、`internalControlCases`、相關 `meetings` 及有效 `vessels`；件數＝要事＋內控，不重複加同步鏡像。保留全部納入項目的逐船／狀態／會議歷史與 opaque 欄位，以實際 TS helper 作獨立 native SQL oracle，不以同一 SQL builder 的自比證完整性。最新 eligible manual 決定 cutoff，scheduled 不推進；不回填或覆寫缺內容的舊凍結報告。已套用的舊安裝 SQL 不重跑，內容修正沿新 forward migration＋獨立 readback。
 
 ## 配件／物料／工程跟蹤
 
