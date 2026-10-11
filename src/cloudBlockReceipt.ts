@@ -1,3 +1,5 @@
+import { cloudErrorMessage } from './cloudSyncError';
+
 export const CLOUD_BLOCK_RECEIPT_RECONCILE_AFTER_MS = 8_500;
 
 export type CloudBlockCompactReceipt = {
@@ -23,11 +25,13 @@ export class CloudBlockPatchOutcomeUnknownError extends Error {
 
 export class CloudBlockPatchConfirmedRefreshError extends Error {
   readonly receipt: CloudBlockCompactReceipt;
+  readonly cause: unknown;
 
-  constructor(receipt: CloudBlockCompactReceipt) {
-    super(`雲端已確認保存 revision ${receipt.revision}，但尚未安全讀回完整權威資料；已停止後續寫入並保留本機畫面。`);
+  constructor(receipt: CloudBlockCompactReceipt, cause?: unknown) {
+    super(`雲端已確認保存 revision ${receipt.revision}，但尚未安全讀回完整權威資料；已停止後續寫入並保留本機畫面。${cause == null ? '' : `｜讀回原因：${cloudErrorMessage(cause)}`}`);
     this.name = 'CloudBlockPatchConfirmedRefreshError';
     this.receipt = receipt;
+    this.cause = cause;
   }
 }
 

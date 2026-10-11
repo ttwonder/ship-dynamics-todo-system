@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import ts from 'typescript';
+import { createServer } from 'vite';
 
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const saveStart = appSource.indexOf('const enqueueCloudSave =');
@@ -47,3 +49,21 @@ console.log('cloud_block_receipt_app_wiring=PASS');
 assert.ok(saveSource.includes('assertAuthorityAdmission(token.config,pending.authority)'), 'new submissions validate admission independently');
 assert.ok(saveSource.includes('fetchCloudDataRpc(commandConfig,signal,undefined,commandReadScope)') && saveSource.includes("const commandReadScope:RecordReadScope=authorityTransition?'full':recordReadScope.current;"), 'historical receipt readback stays on its original command source and preserves full cross-source coverage');
 assert.ok(saveSource.includes('pending.authorityOwner!==originalAuthority.current'), 'queued snapshots cannot be transplanted across authority adoption');
+
+// Execute the actual App deadline selectors, not a duplicate proposed budget.
+const ast=ts.createSourceFile('App.tsx',appSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),deadlineExpressions=new Map();
+const visit=node=>{if(ts.isCallExpression(node)&&node.expression.getText(ast)==='runCloudSaveQueueRpc'&&node.arguments.length>=3&&ts.isStringLiteral(node.arguments[0]))deadlineExpressions.set(node.arguments[0].text,node.arguments[2].getText(ast));ts.forEachChild(node,visit);};visit(ast);
+const readExpression=deadlineExpressions.get('原子保存後權威資料讀回');assert.ok(readExpression);
+// Reviewed local App AST only: no network, browser input or fixture value is
+// interpolated as code. This QA file is never shipped in the client bundle.
+const readBudget=new Function('commandConfig','commandReadScope','isMorningRecordScope',`return ${readExpression};`);
+const server=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});
+try{
+const {isMorningRecordScope:isMorning}=await server.ssrLoadModule('/src/cloudRecordScopes.ts');
+for(const scope of ['morning',{morning:true,targets:[],morningSaveAt:'2026-10-11T06:00:00Z'},{morning:true,targets:[{collection:'tasks',id:'task'}],trackingVesselIds:['vessel']}])assert.equal(readBudget({readMode:'scoped-v1'},scope,isMorning),30000);
+for(const scope of ['home','full',{targets:[]}])assert.equal(readBudget({readMode:'scoped-v1'},scope,isMorning),12000);
+for(const readMode of ['snapshot','delta-v1',undefined])assert.equal(readBudget({readMode},'morning',isMorning),12000);
+assert.equal(Number(deadlineExpressions.get('compact 原子區塊保存').replaceAll('_','')),12000,'writer deadline remains unchanged');
+assert.equal(Number(deadlineExpressions.get('原子保存 receipt 確認').replaceAll('_','')),8000,'receipt deadline remains unchanged');
+console.log('cloud_block_post_ack_scoped_deadline_contract=PASS');
+}finally{await server.close();}

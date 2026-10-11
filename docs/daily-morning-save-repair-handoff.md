@@ -1,6 +1,29 @@
 # 每日早會保存修復：本機交付與正式核驗
 
-## 本次修正：自動早會快照完整內容與件數
+## 最新修正：手動早會已提交後的完整讀回與成功提示
+
+**本次只改前端確認流程，無新 SQL。沿既有本機資料夾、`main`，驗證後建立本機 commit，由使用者 Push；正式部署與真實保存驗收另核。下面自動內容修正的 SQL／正常 10:00 驗收仍是獨立 checkpoint，不因本次前端修復而視為完成。**
+
+### 原因與最小改動
+
+- 先前正式唯讀已核實兩個不同手動報告：保存 revision 10164／10165，台北時間 2026-10-11 14:04:15／14:05:51，各含 23 要事＋152 內控。不是未寫入，無需補按保存。
+- 正式 cold／空 version-vector 支援路徑的 HOME 5.595 秒＋TARGETS 8.870 秒，整段 14.47 秒超過共用 12 秒期限。這是可支持的逾時風險，不能倒推原瀏覽器當次唯一 cause；舊包裝已丟棄原例外。
+- 本機原 UI＋真 PostgreSQL behavioral RED：writer 已 COMMITTED；HOME、TARGETS 每段延遲 7 秒且各自 SQL 成功，整段仍被 12 秒 client deadline 截斷，誤顯「每日早會快照未保存」。
+- 僅 `scoped-v1`＋`isMorningRecordScope(commandReadScope)` 的 post-ACK **完整串行讀回**使用有界 30 秒預算。非 morning 讀回 12 秒、writer 12 秒、receipt 查詢 8 秒及全域 SQL timeout 不變。仍讀完整必要內容，不改 exact report、capturedAt、durable history、revision／authority、角色或 scope 驗證，不發布局部未確認資料。
+- `CloudBlockPatchConfirmedRefreshError` 保留同一 committed receipt 與原 cause，提示保留原訊息／錯誤碼。手動 callback 對 committed-refresh failure 明示「已保存，但畫面同步未完成」，不能稱未保存、盲重送或顯示綠色成功。
+- 正常確認完成沿原對話框「今日早會快照已完成保存。」及共用綠色「已保存到雲端」提示／已安全保存列；不重設計 UI／按鈕／歷史，不改自動排程、Itinerary 或資料。30 秒是最大等待預算，不代表每次必須等 30 秒，也不是 SQL／整按鈕提速保證。
+
+### 本機驗證與重跑
+
+- 原 UI＋本機測試資料／真 native PostgreSQL：原 8＋新增 3，去重後 **11/11 PASS**。新增模式兩段各 7 秒，整段 14.291 秒正常完成完整讀回、一次 writer、一份精確新報告、成功對話與綠色保存；也驗真 SQL 57014 的已提交警告／無綠色誤報／不重送，以及唯讀安全同步零 writer 恢復既有報告後新的獨立手動保存一次。
+- 15/15 原 callback 執行契約、早會 helper／分類／privacy／保存規則 aggregate PASS。lost-ACK client、adapter、App wiring、實際 App deadline selector＋真正 scope helper、共用 save feedback、typecheck 及正式 Pages subpath build PASS。writer／receipt 舊期限與非 morning 範圍均有契約檢查。
+- 收據綁定當次產品／QA raw-byte input hashes；合成來源／旧凍結報告／Itinerary 值、revision、xmin、ctid 保留。owned HTTP／Chrome／PostgreSQL 全部停止，ports 已閉；保留 repo 外 RED、harness 失敗及 GREEN 收據。不接觸正式 DB、不操作使用者瀏覽器／草稿，不啟動新獨立全量 review。
+- 設定原有 loopback native QA 環境後執行 `npm run test:daily-morning-save:confirmation-browser`；原 UI 回歸沿 `npm run test:daily-morning-save:browser`。測試資料不等於正式業務數量或 hosted 保存 PASS。
+- 本次前端修復不要求重跑任何舊 SQL、不補存那兩個已提交報告。使用者 Push 後，另核 remote／Pages exact version，再於安全的正式操作時驗當次新 report ID／capturedAt、完整內容、畫面整合及成功提示；不可為核版本刷新有草稿的原頁籤。
+
+---
+
+## 前輪修正：自動早會快照完整內容與件數
 
 **本機修正已驗證；正式 SQL、下一次正常 10:00 tick／完整 report 權威回讀仍待使用者套用後核驗。原 10:00／Owner-only wrapper 安裝的 15 true 與 5777297 Pages 交付已完成，不重跑舊 SQL、不要求重新發布舊版本。**
 

@@ -9,8 +9,9 @@ const root=process.env.QA_EVIDENCE_ROOT;assert.ok(root&&path.isAbsolute(root));a
 const run=fs.mkdtempSync(path.join(root,'morning-save-browser-')),profile=path.join(run,'chrome');
 const migration='supabase/migrations/20261008090000_tracking_unrelated_patch_fast_path.sql';
 const readerMigration='supabase/migrations/20261009060000_record_reader_inline_bodies.sql';
+const confirmationOnly=process.argv.includes('--confirmation-readback');
 const evidence={label:'真實 UI＋測試資料；原 App＋本機原生 PostgreSQL，非正式環境',status:'RUNNING',cases:[],dialogs:[],errors:[],blockedExternal:[],productionContacted:false};
-evidence.inputHashes=Object.fromEntries(['src/App.tsx','src/morningHistory.ts','src/cloudAuthorization.ts','src/ReportDailyHistories.tsx','src/cloud.ts','src/cloudRecordScopes.ts','src/normalize.ts',migration,readerMigration,'scripts/verify-daily-morning-save-browser.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs'].map(p=>[p,createHash('sha256').update(fs.readFileSync(p)).digest('hex')]));
+evidence.inputHashes=Object.fromEntries(['src/App.tsx','src/morningHistory.ts','src/cloudAuthorization.ts','src/ReportDailyHistories.tsx','src/cloud.ts','src/cloudRecordScopes.ts','src/cloudBlockReceipt.ts','src/cloudSaveQueue.ts','src/cloudSyncError.ts','src/normalize.ts',migration,readerMigration,'scripts/verify-daily-morning-save-browser.mjs','scripts/record-storage-native-qa.mjs','scripts/record-storage-local-qa.mjs'].map(p=>[p,createHash('sha256').update(fs.readFileSync(p)).digest('hex')]));
 evidence.productReads=[];
 let native,qa,browser,ws,sessionId,chromePort,failure,number=0,currentCase='setup',timeoutEnabled=false,readTimeoutEnabled=false,fullReadFaultPending=false,injected=0,readInjected=0;const pending=new Map();
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
@@ -68,7 +69,7 @@ try{
    if(m.method==='Runtime.exceptionThrown')evidence.errors.push(m.params.exceptionDetails.exception?.description||m.params.exceptionDetails.text);
    if(m.method==='Page.javascriptDialogOpening'){
     const {type,message}=m.params;evidence.dialogs.push({caseId:currentCase,type,message});
-    const expected=type==='beforeunload'||type==='alert'&&(message==='今日早會快照已完成保存。'||currentCase==='MSB02-controlled-57014-no-false-success'&&message.startsWith('每日早會快照未保存：')&&message.includes('57014')||currentCase==='MSB05-preflight-57014-zero-report-write'&&message.startsWith('每日早會快照未建立（保存前讀取')&&message.includes('57014'))||type==='confirm'&&message.startsWith('同步最新會保留本機修改');
+    const expected=type==='beforeunload'||type==='alert'&&(message==='今日早會快照已完成保存。'||currentCase==='MSB09-two-healthy-serial-reads-over-12s-confirm-once'&&message.includes('雲端已確認保存 revision')||currentCase==='MSB10-real-readback-57014-committed-warning-no-replay'&&message.startsWith('每日早會快照已保存，但畫面同步未完成：')&&message.includes('57014')||currentCase==='MSB02-controlled-57014-no-false-success'&&message.startsWith('每日早會快照未保存：')&&message.includes('57014')||currentCase==='MSB05-preflight-57014-zero-report-write'&&message.startsWith('每日早會快照未建立（保存前讀取')&&message.includes('57014'))||type==='confirm'&&message.startsWith('同步最新會保留本機修改');
     if(!expected)evidence.errors.push('Unexpected dialog: '+message);await call('Page.handleJavaScriptDialog',{accept:expected},m.sessionId);
    }
    if(m.method==='Fetch.requestPaused'){
@@ -102,6 +103,7 @@ try{
   assert.deepEqual(report,JSON.parse(JSON.stringify({...expected.report,id:report.id})),'BEFORE SQL oracle: complete-data helper must preserve all non-identity fields');
  };
  let before=await read(),saved,failedIntent;let captured=null;
+ if(!confirmationOnly){
  await check('MSB07-full-reader-unavailable-complete-save-and-history-preserved',async()=>{
   const physicalBefore=await ledger(),initial=before,start=evidence.productReads.length;
   readTimeoutEnabled=true;qa.setRecordFault({before:async({name,body})=>{
@@ -158,6 +160,63 @@ try{
   await evaluate(`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(${dateInput},${JSON.stringify(failedIntent.businessDate)});${dateInput}.dispatchEvent(new Event('input',{bubbles:true}));${dateInput}.dispatchEvent(new Event('change',{bubbles:true}))`);
   await evaluate("document.querySelector('.morning-daily-history-panel .daily-report-date-locator button').focus()");await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});await until(async()=>(await text()).includes('已定位 '+failedIntent.businessDate),'locate same-day records');
   await click('檢視當日快照');await until(()=>evaluate("Boolean(document.querySelector('#report-preview-title'))"),'distinct frozen history opening');await screen('same-day-sources-and-frozen-preview');await click('關閉');assert.deepEqual(await read(),saved);
+ });
+ }else{
+  await click('報告中心');await until(()=>evaluate("Boolean(document.querySelector('.morning-daily-history-panel'))"),'original report center');
+ }
+ if(confirmationOnly)await check('MSB09-two-healthy-serial-reads-over-12s-confirm-once',async()=>{
+  before=await read();const physicalBefore=await ledger(),writesBefore=(evidence.httpTransactions||[]).filter(r=>r.rpc==='apply_ship_dynamics_record_patch_v1').length;
+  let committed=false,completed=0;const delayed=[],delayedBodies=new WeakMap();
+  qa.setRecordFault({
+   before:async({name,body})=>{
+    if(name==='apply_ship_dynamics_record_patch_v1'){captured=structuredClone(body.p_operations.find(o=>o.kind==='entity'&&o.collection==='agendaReports')?.value);assertOriginalCapture(before,captured);}
+    if(committed&&name==='read_ship_dynamics_record_scopes_v2'&&['home','targets'].includes(body.p_scope)&&!delayed.some(r=>r.scope===body.p_scope)){
+     const sample={scope:body.p_scope,delayMs:7000,startedAt:Date.now()};delayed.push(sample);delayedBodies.set(body,sample);await wait(7000);
+    }
+   },
+   after:async({name,body,value})=>{
+    if(name==='apply_ship_dynamics_record_patch_v1'&&value?.ok&&value?.status==='committed')committed=true;
+    const sample=delayedBodies.get(body);if(sample&&!sample.finishedAt){completed++;sample.finishedAt=Date.now();}
+   },
+  });
+  const startedAt=Date.now();await click('手動保存今日早會');
+  await until(()=>evidence.dialogs.some(d=>d.caseId===currentCase&&d.type==='alert'),'post-ACK terminal feedback',40000);
+  await until(()=>completed===2,'both unchanged SQL readers completed successfully',15000);
+  evidence.delayedConfirmation={delayed,elapsedMs:Date.now()-startedAt,sqlCommitted:committed};
+  saved=await read();assert.equal(saved.revision,before.revision+1);assert.deepEqual(saved.payload.agendaReports.find(r=>r.id===captured.id),captured);
+  assert.equal((evidence.httpTransactions||[]).filter(r=>r.rpc==='apply_ship_dynamics_record_patch_v1').length-writesBefore,1,'post-commit read delay must never resubmit the writer');
+  assert.equal(delayed.length,2);assert.ok(delayed.every(r=>r.finishedAt-r.startedAt<12000),'each healthy read remains below the old per-operation budget');
+  assert.ok(evidence.dialogs.some(d=>d.caseId===currentCase&&d.message==='今日早會快照已完成保存。'),'two successful serial reads taking over 12 seconds must finish confirmation, not report a failed save');
+  await until(()=>evaluate("Boolean(document.querySelector('.save-status-strip.saved')&&document.querySelector('.save-toast.success'))"),'global status and success toast');
+  assert.ok((await text()).includes('已保存到雲端'),'retain the original shared queue success prompt');assert.deepEqual(withoutReports(saved),withoutReports(before));await preserved(physicalBefore,captured.id);
+  await screen('delayed-readback-confirmed');qa.setRecordFault(null);
+ });
+ if(confirmationOnly)await check('MSB10-real-readback-57014-committed-warning-no-replay',async()=>{
+  before=await read();const physicalBefore=await ledger(),writesBefore=(evidence.httpTransactions||[]).filter(r=>r.rpc==='apply_ship_dynamics_record_patch_v1').length;
+  let committed=false,selected=false;readTimeoutEnabled=true;
+  qa.setRecordFault({
+   before:async({name,body})=>{
+    if(name==='apply_ship_dynamics_record_patch_v1'){captured=structuredClone(body.p_operations.find(o=>o.kind==='entity'&&o.collection==='agendaReports')?.value);assertOriginalCapture(before,captured);}
+    if(committed&&!selected&&name==='read_ship_dynamics_record_scopes_v2'){selected=true;fullReadFaultPending=true;}
+   },
+   after:async({name,value})=>{if(name==='apply_ship_dynamics_record_patch_v1'&&value?.ok&&value?.status==='committed')committed=true;},
+  });
+  await click('手動保存今日早會');await until(()=>evidence.dialogs.some(d=>d.caseId===currentCase&&d.message.startsWith('每日早會快照已保存，但畫面同步未完成：')),'truthful post-commit error');
+  saved=await read();assert.ok(committed&&selected);assert.equal(readInjected,1);assert.equal(saved.revision,before.revision+1);assert.deepEqual(saved.payload.agendaReports.find(r=>r.id===captured.id),captured);
+  const dialogs=evidence.dialogs.filter(d=>d.caseId===currentCase);assert.ok(dialogs.some(d=>d.message.includes('57014')&&d.message.includes('讀回原因')));assert.ok(dialogs.every(d=>!d.message.includes('快照未保存')&&d.message!=='今日早會快照已完成保存。'));
+  await until(()=>evaluate("Boolean(document.querySelector('.save-status-strip.error')&&document.querySelector('.save-toast.warning'))"),'committed warning without unsafe saved status');assert.equal(await evaluate("Boolean(document.querySelector('.save-toast.success'))"),false);
+  assert.equal((evidence.httpTransactions||[]).filter(r=>r.rpc==='apply_ship_dynamics_record_patch_v1').length-writesBefore,1);await preserved(physicalBefore,captured.id);assert.deepEqual(withoutReports(saved),withoutReports(before));
+  await screen('committed-readback-error');readTimeoutEnabled=false;qa.setRecordFault(null);
+ });
+ if(confirmationOnly)await check('MSB11-readonly-sync-recovers-existing-report-then-new-save-once',async()=>{
+  const writesBefore=(evidence.httpTransactions||[]).filter(r=>r.rpc==='apply_ship_dynamics_record_patch_v1').length;
+  await click('同步最新（安全合併）');await until(()=>evaluate("Boolean(document.querySelector('.save-status-strip.saved'))"),'read-only recovery confirms existing saved report');
+  assert.deepEqual(await read(),saved);assert.equal((evidence.httpTransactions||[]).filter(r=>r.rpc==='apply_ship_dynamics_record_patch_v1').length,writesBefore,'sync recovery must not replay the committed report');
+  before=saved;const previousId=captured.id;
+  qa.setRecordFault({before:async({name,body})=>{if(name==='apply_ship_dynamics_record_patch_v1'){captured=structuredClone(body.p_operations.find(o=>o.kind==='entity'&&o.collection==='agendaReports')?.value);assertOriginalCapture(before,captured);}}});
+  await click('手動保存今日早會');await until(()=>evidence.dialogs.some(d=>d.caseId===currentCase&&d.message==='今日早會快照已完成保存。'),'new independent normal save prompt');await until(()=>evaluate("Boolean(document.querySelector('.save-status-strip.saved')&&document.querySelector('.save-toast.success'))"),'normal saved strip and toast');
+  saved=await read();assert.notEqual(captured.id,previousId);assert.equal(saved.revision,before.revision+1);assert.deepEqual(saved.payload.agendaReports.find(r=>r.id===captured.id),captured);assert.equal((evidence.httpTransactions||[]).filter(r=>r.rpc==='apply_ship_dynamics_record_patch_v1').length-writesBefore,1);assert.deepEqual(withoutReports(saved),withoutReports(before));
+  await screen('normal-save-after-readonly-recovery');qa.setRecordFault(null);
  });
  assert.deepEqual(evidence.errors,[]);assert.deepEqual(evidence.blockedExternal,[]);evidence.status='PASS';
 }catch(e){failure=e;evidence.status='FAIL';evidence.failure={caseId:currentCase,message:e.message,stack:e.stack};try{evidence.failureText=(await text()).slice(0,8000);await screen('failure');}catch{}}

@@ -128,6 +128,17 @@ try{
     const stale=setup(null,{current:false}),success={kind:'success'};stale.context.saveToastRef.current=success;
     assert.equal(await stale.run(),false);assert.equal(stale.context.saveToastRef.current,success,'stale actions must not clear successor feedback');
   });
+  await check('MSE15-committed-refresh-retains-cause-and-never-says-unsaved',async()=>{
+    const cause={code:'57014',message:'canceling statement due to statement timeout'};
+    const receipt={ok:true,status:'committed',operationId:'confirmed-operation',revision:2,updatedAt:at,replayed:false};
+    const error=new CloudBlockPatchConfirmedRefreshError(receipt,cause),x=setup(error);
+    assert.equal(await x.run(),false);assert.equal(x.events.alerts.length,1);
+    assert.match(x.events.alerts[0],/^每日早會快照已保存，但畫面同步未完成：/);
+    assert.doesNotMatch(x.events.alerts[0],/快照未保存/);assert.match(x.events.alerts[0],/57014/);
+    assert.equal(error.cause,cause);assert.equal(error.receipt,receipt);
+    assert.equal(x.events.queued.length,1);assert.equal(x.context.dailyMorningSaveRetry.current,null);
+    assert.equal(x.events.publications.length,0);assert.equal(x.events.toasts.length,0);
+  });
 }finally{await server.close();}
 console.log(JSON.stringify({status:cases.every(x=>x.status==='PASS')?'PASS':'FAIL',layer:'actual-App-callback-controlled-queue-IO',cases,caseCount:cases.length}));
 if(cases.some(x=>x.status==='FAIL'))process.exitCode=1;

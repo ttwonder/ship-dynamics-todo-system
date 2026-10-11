@@ -1004,14 +1004,17 @@ export default function App() {
                           const authoritative=await configIoCoordinator.current.run(token,getSupabaseConfig,config=>runCloudSaveQueueRpc(
                             '原子保存後權威資料讀回',
                             signal=>fetchCloudDataRpc(commandConfig,signal,undefined,commandReadScope),
-                            12_000,
+                            // Morning is a coherent HOME -> TARGETS read, not one RPC.
+                            // Keep a bounded whole-read budget; never alter SQL timeouts
+                            // or publish a partial model to satisfy the deadline.
+                            commandConfig.readMode==='scoped-v1'&&isMorningRecordScope(commandReadScope)?30_000:12_000,
                           ));
                           if(!authoritative||authoritative.revision<receipt.revision)throw new CloudBlockPatchConfirmedRefreshError(receipt);
                           assertRemoteExtendsDurableHistory(activeCloudIdentity.current,remote,authoritative,pending.authority);
                           return authoritative;
                         }catch(error){
                           if(error instanceof StaleAsyncConfigError||error instanceof CloudBlockPatchConfirmedRefreshError)throw error;
-                          throw new CloudBlockPatchConfirmedRefreshError(receipt);
+                          throw new CloudBlockPatchConfirmedRefreshError(receipt,error);
                         }
                       }catch(error){
                         if(!(error instanceof CloudBlockPatchV2UnavailableError))throw error;
@@ -4448,7 +4451,7 @@ export default function App() {
       return true;
     }catch(error){
       if(isCurrent()&&isCloudStatementTimeout(error)&&!(error instanceof CloudBlockPatchOutcomeUnknownError||error instanceof CloudBlockPatchConfirmedRefreshError))dailyMorningSaveRetry.current=retryEntry;
-      if(isCurrent())alert(`每日早會快照未保存：${cloudErrorMessage(error)}`);
+      if(isCurrent())alert(`${error instanceof CloudBlockPatchConfirmedRefreshError?'每日早會快照已保存，但畫面同步未完成':'每日早會快照未保存'}：${cloudErrorMessage(error)}`);
       return false;
     }
     };
