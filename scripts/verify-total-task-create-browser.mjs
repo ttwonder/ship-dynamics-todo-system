@@ -6,7 +6,7 @@ import {spawn,spawnSync,execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {createNativeRecordQa} from './record-storage-native-qa.mjs';
 import {createRecordStorageLocalQa} from './record-storage-local-qa.mjs';
-import {installTrackingBrowserMigrations} from './tracking-browser-fixture.mjs';
+import {installTrackingBrowserMigrations,installTrackingFieldRevision} from './tracking-browser-fixture.mjs';
 
 // QA-only: original main.tsx -> App, native input, synthetic identities.
 // No setters, write helpers, fabricated responses, external hosts or user profile.
@@ -22,6 +22,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const until=async(fn,label,timeout=25000)=>{const end=Date.now()+timeout;while(Date.now()<end){const v=await fn();if(v)return v;await wait(30);}throw new Error('QA timeout: '+label);};
 const field="[...document.querySelectorAll('[role=dialog] .field')].find(n=>n.querySelector('label')?.innerText==='近期／後續動態')?.querySelector('textarea')";
 const patchRpc='apply_ship_dynamics_record_patch_v1';
+const saveRepair=process.argv.includes('--save-repair');
 let native,qa,browser,ws,failure,chromePort,releaseCommit,barrier=null,currentCase='setup',next=0;
 const pending=new Map(),actors=[],netRows=new Map(),paused=[];
 let rendezvous=false,releaseHeldRead;
@@ -71,7 +72,7 @@ let a;
 async function select(p,expr,value){const index=await p.eval(`(()=>{const n=${expr};if(!n||n.disabled)throw new Error('enabled select required');n.focus();return [...n.options].findIndex(o=>o.value===${JSON.stringify(value)});})()`);assert.ok(index>=0,'option exists '+value);await p.key('Home');for(let i=0;i<index;i++)await p.key('ArrowDown');await p.key('Enter');await until(()=>p.eval(`(${expr}).value===${JSON.stringify(value)}`),'select '+value);}
 async function create(p,id){await p.click('新增要事');await until(()=>p.eval("Boolean(document.querySelector('.task-create-picker')?.open)"),'picker');await select(p,"document.querySelector('[aria-label=新增要事船舶]')",id);await p.click('下一步：填寫要事');await until(()=>p.eval(`Boolean(${taskDialog})&&!document.querySelector('.task-create-picker')?.open`),'original creation editor');assert.equal(await p.eval(`(${taskField('船舶')}).value`),id);assert.equal(await p.eval(`(${taskField('船舶')}).disabled`),true);}
 async function content(p,description,category='維修'){await p.fill("document.querySelector('[contenteditable=true][aria-label=事項內容]')",description);await p.eval(`(()=>{for(const label of ${JSON.stringify([category,'海務'])}){const n=[...document.querySelectorAll('.edit-modal .checkbox-multi-picker label')].find(n=>n.querySelector('b')?.textContent===label)?.querySelector('input');if(!n)throw new Error('missing checkbox '+label);if(!n.checked)n.click();}})()`);}
-async function check(id,fn){currentCase=id;await fn();receipt.cases.push({caseId:id,status:'PASS'});save();}
+async function check(id,fn){if(process.argv.includes('--outcome-only')&&!id.startsWith('native-sql-save-and-receipt-failure'))return;currentCase=id;await fn();receipt.cases.push({caseId:id,status:'PASS'});save();}
 try {
  native=await createNativeRecordQa(run,receipt,{httpTransactions:true,initTimeoutMs:120000});
  qa=await createRecordStorageLocalQa({browserAuthority:true,internalControl:true,taskMember:true,scopedRead:true,performanceTrace:true,databaseFactory:async()=>native.adapter,preparePerformanceFixture:async initial=>{
@@ -81,8 +82,25 @@ try {
    initial.users=[owner,...[['qa-operator','QA OPERATOR','督導'],['qa-marine','QA MARINE','海務'],['qa-engineer','QA ENGINEER','船工']].map(([id,name,department])=>({...owner,id,name,username:id,department,role:'operator',managedVesselIds:['qa-v2']})),{...owner,id:'qa-other',name:'QA OTHER MARINE',username:'qa-other',department:'海務',role:'operator',managedVesselIds:[]}];
    initial.vessels.forEach((v,i)=>{delete v.nameEn;v.name=v.fullName=v.shortName=`QA VESSEL ${i+1}`;v.assignedUserIds=i===1?['qa-operator','qa-marine','qa-engineer']:[];v.weeklyAttention=i===1?['materials-parts']:[];v.manualAttentionLevel=i===1?'特別關注':'';});
    initial.vessels.push({...structuredClone(initial.vessels[0]),id:'qa-inactive',name:'QA INACTIVE',fullName:'QA INACTIVE',shortName:'QA INACTIVE',isActive:false});
+   if(process.argv.includes('--retention-cap')||saveRepair){
+     initial.notifications=Array.from({length:1000},(_,i)=>({id:`qa-retained-notice-${i}`,userId:'qa-other',vesselId:'qa-v1',taskId:'qa-old-task',kind:'task_created',title:'QA retained notice',message:'Neutral retained notification',actorId:'qa-owner',createdAt:initial.updatedAt}));
+     initial.auditLogs=Array.from({length:500},(_,i)=>({id:`qa-retained-audit-${i}`,at:initial.updatedAt,actorId:'qa-owner',actorName:'QA OWNER',actorRole:'owner',action:'update-vessel',entityType:'vessel',entityId:'qa-v1',detail:'Neutral retained audit'}));
+     receipt.fixtureRetentionCounts={notifications:1000,auditLogs:500};
+   }
  }});
  await installTrackingBrowserMigrations(native.adapter);
+ if(saveRepair){
+   await installTrackingFieldRevision(native.adapter);
+   for(const f of ['20260929120000_tracking_delivery_close.sql','20260929180000_tracking_completion_close.sql','20261008090000_tracking_unrelated_patch_fast_path.sql','20261013110000_task_unrelated_tracking_fast_path.sql'])await native.adapter.exec(fs.readFileSync('supabase/migrations/'+f,'utf8'));
+   const rows=Array.from({length:1102},(_,i)=>({id:`qa-load-tracking-${i}`,vesselId:i%2?'qa-v1':'qa-v2',kind:'engineering',requestType:'repair',referenceNo:`QA-LOAD-${i}`,description:'Neutral unrelated tracking source',applicationDate:'2026-09-01',linkState:'none',isClosed:false,events:[],statusLogs:[]}));
+   await native.adapter.transaction(async tx=>{
+     await tx.query('select public.ship_dynamics_record_writer_gate_v1($1,true)',[qa.workspace]);
+     await tx.query("insert into public.ship_dynamics_record_collections(workspace_key,collection,ids) values($1,'trackingItems',$2::jsonb)",[qa.workspace,JSON.stringify(rows.map(r=>r.id))]);
+     await tx.query("insert into public.ship_dynamics_records(workspace_key,collection,entity_id,value,revision) select $1,'trackingItems',r->>'id',r,1 from jsonb_array_elements($2::jsonb) r",[qa.workspace,JSON.stringify(rows)]);
+   });
+   receipt.fixtureTrackingSources=rows.length;
+   receipt.repairSqlSha256=hash(fs.readFileSync('supabase/migrations/20261013110000_task_unrelated_tracking_fast_path.sql','utf8'));
+ }
  receipt.origin=qa.origin;receipt.layer='真實原始 App UI＋測試資料＋本機 PostgreSQL；非正式 Supabase';
  receipt.inputs=Object.fromEntries(['src/App.tsx','src/EditModals.tsx','src/newTaskOwnerDefaults.ts','src/TaskCreateEntry.tsx','src/taskCreateEntry.css','scripts/verify-total-task-create-browser.mjs'].map(p=>[p,hash(fs.readFileSync(p,'utf8'))]));
  browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-background-networking','--disable-component-update','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
@@ -93,7 +111,18 @@ try {
   const handle=async()=>{
    if(m.method==='Runtime.exceptionThrown')receipt.errors.push(m.params.exceptionDetails.exception?.description||m.params.exceptionDetails.text);
    if(m.method==='Page.javascriptDialogOpening'){const {type,message}=m.params;receipt.dialogs??=[];receipt.dialogs.push({caseId:currentCase,type,message});await call('Page.handleJavaScriptDialog',{accept:type==='confirm'||type==='beforeunload'},m.sessionId);}
-   if(m.method==='Fetch.requestPaused'){const u=new URL(m.params.request.url),allowed=u.origin===qa.origin||['data:','blob:'].includes(u.protocol);if(!allowed)receipt.blockedExternal.push(u.origin);await call(allowed?'Fetch.continueRequest':'Fetch.failRequest',allowed?{requestId:m.params.requestId}:{requestId:m.params.requestId,errorReason:'BlockedByClient'},m.sessionId);}
+   if(m.method==='Fetch.requestPaused'){
+    const u=new URL(m.params.request.url),allowed=u.origin===qa.origin||['data:','blob:'].includes(u.protocol);
+    if(!allowed)receipt.blockedExternal.push(u.origin);
+    try{await call(allowed?'Fetch.continueRequest':'Fetch.failRequest',allowed?{requestId:m.params.requestId}:{requestId:m.params.requestId,errorReason:'BlockedByClient'},m.sessionId);}
+    catch(error){
+     // Chromium can invalidate a paused request at document replacement/abort.
+     // Keep that CDP notice separately; never suppress page exceptions or an
+     // external-origin interception failure. SQL/DOM assertions remain required.
+     if(u.origin!==qa.origin||error.message!=='Invalid InterceptionId.')throw error;
+     receipt.staleCdpInterceptions??=[];receipt.staleCdpInterceptions.push({caseId:currentCase,networkId:m.params.networkId,code:error.message});
+    }
+   }
    if(m.method==='Network.requestWillBeSent'&&m.params.request.url.startsWith(qa.origin+'/rest/v1/rpc/')){const b=JSON.parse(m.params.request.postData||'{}'),row={caseId:currentCase,actor:actors.find(p=>p.s===m.sessionId)?.actor,rpc:m.params.request.url.split('/').at(-1),operationId:b.p_operation_id,readScope:b.p_scope,started:m.params.wallTime*1000};netRows.set(m.sessionId+':'+m.params.requestId,row);receipt.network.push(row);}
    const row=netRows.get(m.sessionId+':'+m.params.requestId);if(m.method==='Network.loadingFinished'&&row){row.finished=Date.now();save();}
   };void handle().catch(e=>receipt.errors.push(e.message));
@@ -168,6 +197,33 @@ try {
  await check('desktop-mobile-layout-and-reload-durability',async()=>{
    for(const width of [1280,390]){await call('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile:false},a.s);await a.eval('document.fonts.ready');if(await a.eval("Boolean(document.querySelector('.save-toast button'))"))await a.activate("document.querySelector('.save-toast button')");await a.eval("document.querySelector('.selected-task-list-panel').scrollIntoView({block:'start'});");await a.eval("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))");const entryGeometry=await a.eval("(()=>{const n=document.querySelector('button[aria-label=新增要事]'),s=getComputedStyle(n),r=n.getBoundingClientRect();return {width:innerWidth,left:r.left,right:r.right,top:r.top,height:r.height,display:s.display,visibility:s.visibility,overflow:n.scrollWidth>n.clientWidth};})()");assert.ok(entryGeometry.height>0&&entryGeometry.top>=0&&entryGeometry.top+entryGeometry.height<=1000&&entryGeometry.left>=0&&entryGeometry.right<=width);assert.notEqual(entryGeometry.display,'none');assert.equal(entryGeometry.visibility,'visible');assert.equal(entryGeometry.overflow,false);receipt.entryGeometry??=[];receipt.entryGeometry.push(entryGeometry);await a.screen('total-'+width);await a.click('新增要事');await until(()=>a.eval("Boolean(document.querySelector('.task-create-picker')?.open)"),'responsive picker');const geometry=await a.eval("(()=>{const r=document.querySelector('.task-create-picker').getBoundingClientRect();return {width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth,left:r.left,right:r.right,height:r.height};})()");assert.equal(geometry.overflow,false);assert.ok(geometry.left>=0&&geometry.right<=width&&geometry.height>0);receipt.geometry??=[];receipt.geometry.push(geometry);await a.screen('picker-'+width);await a.click('取消');}
    const before=await read();await call('Page.reload',{},a.s);await until(()=>a.eval("Boolean(document.querySelector('article.ship-card'))"),'same-session fresh document');await a.sync();await a.click('待辦總表');await a.click('清除篩選');await until(()=>a.eval("document.querySelectorAll('.selected-task-list-panel .batch-task-table tbody tr').length===3"),'durable fresh-document rows');assert.equal((await read()).payload.tasks.length,3);assert.deepEqual((await read()).payload.vessels,before.payload.vessels);assert.match(await a.text(),/QA hidden by filter/);
+ });
+ if(saveRepair)await check('native-sql-save-and-receipt-failure-same-draft-no-replay-consistent-guidance',async()=>{
+   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},a.s);
+   await create(a,'qa-v1');await content(a,'QA unknown SQL outcome');
+   await a.eval("void(window.__qaUnknownEditor=document.querySelector('.edit-modal'))");
+   const before=await read(),start=receipt.network.length;
+   const receiptSignature='public.get_ship_dynamics_record_receipt_v1(text,text,jsonb,text,text,jsonb,jsonb,jsonb)';
+   const originalReceipt=(await native.adapter.query('select pg_get_functiondef($1::regprocedure) d',[receiptSignature])).rows[0].d;
+   assert.ok(originalReceipt.includes('begin\n'));
+   // Controlled native SQLSTATE injection, not a claimed performance timeout.
+   await native.adapter.exec("create function public.qa_task_save_timeout() returns trigger language plpgsql as $qa$ begin if new.collection='tasks' and new.value->>'description' like '%QA unknown SQL outcome%' then raise exception 'canceling statement due to statement timeout' using errcode='57014';end if;return new;end $qa$;create trigger qa_task_save_timeout before insert on public.ship_dynamics_records for each row execute function public.qa_task_save_timeout();");
+   await native.adapter.exec(originalReceipt.replace('begin\n',"begin\n if strpos(current_query(),'apply_ship_dynamics_record_patch_v1')=0 then raise exception 'QA receipt SQL unavailable' using errcode='57014';end if;\n"));
+   await a.click('保存並關閉');
+   await until(()=>a.eval("document.querySelector('.unsaved-work-guidance')?.textContent.includes('保存結果尚未確認')"),'unknown outcome persistent guidance',30000);
+   await until(()=>a.eval("Boolean(document.querySelector('.edit-modal'))&&!document.querySelector('.edit-modal').textContent.includes('正在確認雲端')"),'failed submission settled without closing the original draft');
+   assert.equal(await a.eval("window.__qaUnknownEditor===document.querySelector('.edit-modal')"),true);
+   assert.match(await a.eval("document.querySelector('[aria-label=事項內容]').textContent"),/QA unknown SQL outcome/);
+   const guidance=await a.eval("document.querySelector('.unsaved-work-guidance').textContent");
+   assert.match(guidance,/保存原因.*57014/);assert.match(guidance,/回執確認原因.*QA receipt SQL unavailable/);
+   assert.doesNotMatch(guidance,/同步完成後，再點擊|這些修改還沒有保存到雲端/);
+   assert.deepEqual(await read(),before,'actual failing writer rolled back task, lights, audit and notifications');
+   const requests=receipt.network.slice(start).filter(r=>r.actor==='qa-owner'&&r.rpc===patchRpc);assert.equal(requests.length,1,'unreadable receipt must stop resubmission');
+   await a.screen('unknown-native-sql-outcome');
+   if(await a.eval("Boolean(document.querySelector('.save-toast button'))"))await a.activate("document.querySelector('.save-toast button')");
+   assert.match(await a.eval("document.querySelector('.unsaved-work-guidance').textContent"),/保存結果尚未確認/,'guidance survives dismissing the temporary toast');
+   await native.adapter.exec(originalReceipt);
+   await native.adapter.exec('drop trigger qa_task_save_timeout on public.ship_dynamics_records;drop function public.qa_task_save_timeout();');
  });
  assert.equal(receipt.errors.length,0,JSON.stringify(receipt.errors));assert.equal(receipt.blockedExternal.length,0);receipt.status='PASS';
 } catch(error){failure=error;receipt.status='FAIL';receipt.failure=String(error.stack||error);for(const p of actors)try{fs.writeFileSync(path.join(run,'failure-'+p.actor+'.txt'),await p.text());}catch{}if(a)try{await a.screen('failure');fs.writeFileSync(path.join(run,'failure-ui.txt'),await a.text());fs.writeFileSync(path.join(run,'failure-sql.json'),JSON.stringify(scrub(await read()),null,2));fs.writeFileSync(path.join(run,'failure-list.json'),JSON.stringify(await a.eval("(()=>{const n=document.querySelector('.selected-task-list-panel');if(!n)return null;let f=n[Object.keys(n).find(k=>k.startsWith('__reactFiber'))];while(f&&f.type?.name!=='ListPanel')f=f.return;return [f,f?.alternate].map(f=>f?{tasks:f.memoizedProps?.tasks,filters:f.memoizedProps?.filters,canEdit:f.memoizedProps?.canEdit,vessels:f.memoizedProps?.visibleVessels.map(v=>({id:v.id,active:v.isActive})),dataTaskIds:f.memoizedProps?.data?.tasks?.map(t=>t.id)}:null);})()"),null,2));fs.writeFileSync(path.join(run,'failure-react.json'),JSON.stringify(await a.eval("(()=>{const n=document.querySelector('.app');if(!n)return null;let f=n[Object.keys(n).find(k=>k.startsWith('__reactFiber'))];while(f&&f.type?.name!=='App')f=f.return;const out=[];for(let h=f?.memoizedState;h;h=h.next){const v=h.memoizedState;if(v&&Array.isArray(v.tasks))out.push({revision:v.revision,tasks:v.tasks,vessels:v.vessels,scope:v._cloudRecordCoverage});}return out;})()"),null,2));}catch{};}

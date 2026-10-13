@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { createServer } from 'vite';
+import { loadReceiptTestModule } from './receipt-test-module-loader.mjs';
 
-const server = await createServer({ root: process.cwd(), server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
-try {
-  const receiptModule = await server.ssrLoadModule('/src/cloudBlockReceipt.ts');
+{
+  const receiptModule = loadReceiptTestModule('src/cloudBlockReceipt.ts');
   const operationId = 'block-op-client-1';
   let now = 0;
   const submitted = [];
@@ -75,6 +74,30 @@ try {
   assert.equal(unknownSubmitCount, 1, 'failed receipt lookup must never trigger a blind replay');
   assert.equal(unknownLookupCount, 1);
 
+  // A failed save plus failed read-only receipt lookup must retain both actual
+  // causes. Otherwise the UI cannot distinguish a database timeout from a
+  // network failure, and the incident is impossible to diagnose afterwards.
+  const submitCause = { code: '57014', message: 'canceling statement due to statement timeout' };
+  const receiptCause = new Error('receipt network unavailable');
+  let causeSubmitCount = 0;
+  await assert.rejects(receiptModule.runCloudBlockPatchWithReceipt({
+    operationId,
+    submit: async () => { causeSubmitCount += 1; throw submitCause; },
+    lookup: async () => { throw receiptCause; },
+    shouldReconcile: () => true,
+    assertCurrent: () => undefined,
+    now: () => 0,
+    sleep: async () => undefined,
+  }), error => {
+    assert.ok(error instanceof receiptModule.CloudBlockPatchOutcomeUnknownError);
+    assert.equal(error.cause, submitCause, 'unknown outcome must preserve the original save error');
+    assert.equal(error.receiptCause, receiptCause, 'receipt error must remain separate from the save error');
+    assert.match(error.message, /57014/, 'the original database error must reach the UI');
+    assert.match(error.message, /receipt network unavailable/);
+    return true;
+  });
+  assert.equal(causeSubmitCount, 1, 'diagnostic preservation must not add a replay');
+
   const deterministic = new Error('lock-conflict');
   let deterministicLookupCount = 0;
   await assert.rejects(
@@ -121,6 +144,4 @@ try {
   assert.equal(staleLookupCount, 0, 'a stale actor/session must not query or replay an old operation');
 
   console.log('cloud_block_receipt_client_lost_ack=PASS');
-} finally {
-  await server.close();
 }

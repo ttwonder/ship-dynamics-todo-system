@@ -15,11 +15,15 @@ export type CloudBlockReceiptStatus = CloudBlockCompactReceipt | { status: 'miss
 
 export class CloudBlockPatchOutcomeUnknownError extends Error {
   readonly operationId: string;
+  readonly cause: unknown;
+  readonly receiptCause: unknown;
 
-  constructor(operationId: string) {
-    super('雲端可能已完成保存，但目前無法讀取 operation receipt；已停止重送並保留本機修改。');
+  constructor(operationId: string, cause?: unknown, receiptCause?: unknown) {
+    super(`雲端可能已完成保存，但目前無法讀取 operation receipt；已停止重送並保留本機修改。${cause == null ? '' : `｜保存原因：${cloudErrorMessage(cause)}`}${receiptCause == null ? '' : `｜回執確認原因：${cloudErrorMessage(receiptCause)}`}`);
     this.name = 'CloudBlockPatchOutcomeUnknownError';
     this.operationId = operationId;
+    this.cause = cause;
+    this.receiptCause = receiptCause;
   }
 }
 
@@ -78,8 +82,8 @@ export async function runCloudBlockPatchWithReceipt(options: CloudBlockReceiptOp
       let receipt: CloudBlockCompactReceipt | null;
       try {
         receipt = validateCommittedReceipt(await options.lookup(options.operationId), options.operationId);
-      } catch {
-        throw new CloudBlockPatchOutcomeUnknownError(options.operationId);
+      } catch (receiptError) {
+        throw new CloudBlockPatchOutcomeUnknownError(options.operationId, error, receiptError);
       }
       if (receipt) return receipt;
       if (attempt === 1) throw error;
