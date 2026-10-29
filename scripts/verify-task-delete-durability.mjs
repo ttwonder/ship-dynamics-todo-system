@@ -39,7 +39,7 @@ try{
       currentUser:{id:'owner',name:'Owner'},authorizationEpoch:'auth',
       identitySessionGeneration:{current:1},liveCurrentUserId:{current:'owner'},liveAuthorizationEpoch:{current:'auth'},
       activeEditLock:lock,activeEditLockRef:{current:lock},creationHandoffInFlight:{current:null},relatedMutationHandoffInFlight:{current:null},
-      relatedMutationAdmissionInFlight:{current:false},
+      relatedMutationAdmissionInFlight:{current:false},originalAuthority:{current:null},
       confirmedCloudData:{current:structuredClone(initial)},liveData:{current:structuredClone(initial)},lastCloudRevision:{current:1},
       leaseCloudConfigs:{current:new Map([['lease-A',{sectionKey:lock.sectionKey,config}]])},
       saveTimer:{current:null},transientCloudBlockLockGuards:{current:new Map()},authorizedEditLockKeys:new Set([lock.sectionKey]),authorizedEditLockKey:lock.sectionKey,relatedMutationHandoffVersion:0,

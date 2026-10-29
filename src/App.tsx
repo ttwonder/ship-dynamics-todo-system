@@ -145,7 +145,7 @@ type CreationDraftRecord={leaseOwnerId:string;task:TaskItem};
 type SavePhase='saved'|'dirty'|'queued'|'saving'|'error';
 type SaveToast={id:number;kind:'success'|'info'|'warning'|'error';title:string;detail:string};
 type CloudBlockLockGuard={section_key:string;locked_by:string};
-type RelatedMutationEditorHandoff=DurableRelatedMutationHandoff&{discardRejected?:()=>Promise<boolean>};
+type RelatedMutationEditorHandoff=DurableRelatedMutationHandoff&{discardRejected?:()=>Promise<boolean>;reconcile?:()=>Promise<void>;recovered?:boolean};
 import { BrowserAuthorityError, readBrowserAuthority, sameAuthority, authorityConfig, authorityFloorIdentity, readBoundCloudData, assertAuthorityAdmission, assertAuthorityBridge, type BrowserAuthority } from './cloudSourceAuthority';
 
 type PendingCloudSaveIntent={onRecordPrepared?:(attempt:TrackingRecordAttempt)=>void;authority?:BrowserAuthority;authorityOwner:BrowserAuthority|null;handoverReadRevision?:number;snapshot:AppData;baseSnapshot:AppData|null;token:ReturnType<ReturnType<typeof createAsyncConfigCoordinator>['begin']>;savedBy:string;actorUserId:string;identityGeneration:number;lockGuards:CloudBlockLockGuard[];isCurrent:()=>boolean;canSubmit:()=>boolean;renderRebase:boolean;visibleBaseline:AppData|null};
@@ -1383,7 +1383,7 @@ export default function App() {
   };
   const relatedMutationHandoffMatchesCurrent=(lock:ActiveEditLock|null)=>{
     const handoff=relatedMutationHandoffInFlight.current;
-    return Boolean(handoff&&!handoff.confirmed&&relatedMutationLeaseMatches(handoff.lease,lock)&&handoff.isCurrent());
+    return Boolean(handoff&&(!handoff.confirmed||handoff.recovered)&&relatedMutationLeaseMatches(handoff.lease,lock)&&handoff.isCurrent());
   };
   // Continuity keeps the exact handoff identity; error/TTL revokes writes, not the draft.
   const freezeRelatedMutationDraft=(lock:ActiveEditLock|null)=>{
@@ -1402,7 +1402,7 @@ export default function App() {
     const relatedHandoff=candidateHandoff&&relatedMutationLeaseMatches(candidateHandoff.lease,lock)?candidateHandoff:null;
     if(relatedHandoff){
       const releaseAllowed=await relatedHandoff.promise;
-      if(!releaseAllowed&&relatedHandoff.isCurrent())return false;
+      if(!releaseAllowed&&!relatedHandoff.confirmed&&relatedHandoff.isCurrent())return false;
     }
     if(!relatedMutationLeaseMatches(lock,activeEditLockRef.current))return false;
     if(lockCoordinator.current.isCurrent(lock.generation))lockCoordinator.current.invalidate();
@@ -2886,7 +2886,34 @@ export default function App() {
     let applied=false;
     let durableConfirmed=false;
     const mutationHandoff:RelatedMutationEditorHandoff=createDurableRelatedMutationHandoff(expectedLease,identityIsCurrent,label);
+    let preparedRecord:TrackingRecordAttempt|undefined;
+    const captureRecord=(record:TrackingRecordAttempt)=>{preparedRecord=clone(record);onRecordPrepared?.(record);};
+    const authorityOwner=originalAuthority.current;
     relatedMutationHandoffInFlight.current=mutationHandoff;
+    const enableRejectedDiscard=()=>{
+      const rejectedSnapshot=liveData.current;
+      mutationHandoff.discardRejected=async()=>{
+        if(!identityIsCurrent()||!appDataContentEqual(liveData.current,rejectedSnapshot))return false;
+        if(sectionKey.startsWith('task:')&&!confirm('這次提交未保存，關閉會放棄此表單的未保存修改並讀取最新雲端內容。確定繼續？'))return false;
+        const remote=await fetchCloudData(config);
+        if(!remote||!identityIsCurrent()||!appDataContentEqual(liveData.current,rejectedSnapshot))return false;
+        assertRemoteExtendsDurableHistory(cloudIdentity(config),confirmedCloudData.current!,remote);
+        await releaseRelated();
+        if(!identityIsCurrent())return false;
+        if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
+        lastCloudRevision.current=remote.revision;
+        confirmCloudSnapshot(cloudIdentity(config),remote);
+        liveData.current=remote;
+        flushSync(()=>setData(remote));
+        relatedMutationHandoffInFlight.current=null;
+        hasUnsavedWork.current=false;
+        setCloudWriteBlocked(false);
+        setSavePhase('saved');
+        setCloudStatus('已放棄未保存的提交並讀取最新雲端內容');
+        dismissSaveToast();
+        return true;
+      };
+    };
     try{
       const base=confirmedCloudData.current;
       const remote=await fetchCloudData(config);
@@ -2908,7 +2935,7 @@ export default function App() {
       if(!applied){await releaseRelated();return false;}
       if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
       assertBundleActive();
-      await enqueueCloudSave(liveData.current,identityIsCurrent,true,sessionIsCurrent,undefined,undefined,onRecordPrepared);
+      await enqueueCloudSave(liveData.current,identityIsCurrent,true,sessionIsCurrent,undefined,undefined,captureRecord);
       if(!identityIsCurrent())throw new StaleAsyncConfigError();
       if(!confirmedCloudData.current||!appDataContentEqual(liveData.current,confirmedCloudData.current))throw new Error('雲端尚未確認最新關聯修改');
       durableConfirmed=true;
@@ -2924,22 +2951,64 @@ export default function App() {
     }catch(error:any){
       // Cancel/Close may dispose a proven rejected operation, never an unknown one.
       if(applied&&identityIsCurrent()&&error instanceof CloudBlockPatchRejectedError){
-        const rejectedSnapshot=liveData.current;
-        mutationHandoff.discardRejected=async()=>{
-          if(!identityIsCurrent()||!appDataContentEqual(liveData.current,rejectedSnapshot))return false;
-          const remote=await fetchCloudData(config);
-          if(!remote||!identityIsCurrent()||!appDataContentEqual(liveData.current,rejectedSnapshot))return false;
-          assertRemoteExtendsDurableHistory(cloudIdentity(config),confirmedCloudData.current!,remote);
-          await releaseRelated();
-          if(!identityIsCurrent())return false;
+        enableRejectedDiscard();
+      }
+      if(applied&&identityIsCurrent()&&sectionKey.startsWith('task:')&&preparedRecord){
+        // The settled attempt survives lease expiry. Receipt reads need the exact
+        // identity, not write authority; a retry needs every original guard again.
+        const record=preparedRecord;
+        mutationHandoff.reconcile=async()=>{
+          if(mutationHandoff.pending||cloudSyncInFlight.current||cloudSaveInFlight.current)return;
+          const current=()=>identityIsCurrent()&&relatedMutationHandoffInFlight.current===mutationHandoff&&originalAuthority.current===authorityOwner;
+          const check=()=>{if(!current())throw new StaleAsyncConfigError();};
+          if(!current())return;
+          const commandConfig=record.authority?authorityConfig(config,record.authority):config;
+          const lookup=(id:string)=>runCloudSaveQueueRpc('確認原要事提交',signal=>getCloudBlockPatchReceipt(id,record.operations,record.savedBy,record.actorId,record.actorGuard,record.authorizationGuard,record.guards,commandConfig,signal),8_000);
+          cloudSyncInFlight.current=true;setCloudSyncing(true);setCloudWriteBlocked(true);setSavePhase('saving');
           if(saveTimer.current){window.clearTimeout(saveTimer.current);saveTimer.current=null;}
-          lastCloudRevision.current=remote.revision;
-          confirmCloudSnapshot(cloudIdentity(config),remote);
-          liveData.current=remote;
-          flushSync(()=>setData(remote));
-          relatedMutationHandoffInFlight.current=null;
-          setCloudWriteBlocked(false);
-          return true;
+          freezeRelatedMutationDraft(activeEditLockRef.current);
+          setCloudStatus('正在核對原要事提交；尚未確認前不會建立另一筆保存…');
+          try{
+            if(record.authority){const live=await readBrowserAuthority(config);check();if(!sameAuthority(record.authority,live))throw new BrowserAuthorityError('browser-authority-recovery-stale');}
+            let receipt=await lookup(record.operationId);check();
+            if(receipt.status==='missing'){
+              if(mutationHandoff.discardRejected)throw new Error('原提交已被拒絕；請關閉並確認放棄未保存修改，再從最新資料重新開啟');
+              if(record.authority)await assertAuthorityAdmission(config,record.authority);check();
+              const requests=record.guards.map(guard=>({sectionKey:guard.section_key,leaseOwnerId:guard.locked_by,label:guard.section_key})).sort((a,b)=>a.sectionKey.localeCompare(b.sectionKey));
+              const reclaimed=await acquireEditLockBundle(requests,request=>runCloudSaveQueueRpc('重新取得原要事提交鎖',signal=>claimEditLock(request.sectionKey,request.leaseOwnerId,actorName,75,config,signal),8_000),releaseRequest,current);
+              if(reclaimed.status==='blocked')throw new CloudSaveRecoveryLockConflictError(reclaimed.sectionKey,reclaimed.lockedByName,reclaimed.cleanupFailed);
+              if(reclaimed.status==='unavailable')throw reclaimed.error;
+              if(reclaimed.status!=='owned')throw new StaleAsyncConfigError();
+              try{
+                receipt=await runCloudBlockPatchWithReceipt({operationId:record.operationId,assertCurrent:check,lookup,
+                  shouldReconcile:cause=>!(cause instanceof CloudBlockPatchRejectedError||cause instanceof CloudBlockPatchConflictError||cause instanceof StaleAsyncConfigError),
+                  submit:async id=>{check();if(record.authority)await assertAuthorityAdmission(config,record.authority);check();return runCloudSaveQueueRpc('重試原要事提交',signal=>applyCloudBlockPatchV2(id,record.operations,record.savedBy,record.actorId,record.actorGuard,record.authorizationGuard,record.guards,commandConfig,signal),12_000);},
+                });
+              }finally{await Promise.allSettled(reclaimed.leases.map(releaseRequest));}
+            }
+            check();
+            const remote=await runCloudSaveQueueRpc('原要事提交權威讀回',signal=>fetchCloudDataRpc(commandConfig,signal,undefined,record.scope),12_000);check();
+            if(!remote||remote.revision<receipt.revision)throw new CloudBlockPatchConfirmedRefreshError(receipt);
+            assertRemoteExtendsDurableHistory(cloudIdentity(config),confirmedCloudData.current,remote,record.authority);
+            const visible=appDataContentEqual(liveData.current,record.visibleSnapshot)?remote:rebaseDisjointAppData(record.visibleSnapshot,liveData.current,remote,nowIso(),record.actorId);
+            check();recordReadScope.current=record.scope;lastCloudRevision.current=remote.revision;confirmCloudSnapshot(cloudIdentity(config),remote);
+            // Keep the original component/draft read-only until explicit Close;
+            // refreshing its CAS baseline in place could bless newer private edits.
+            mutationHandoff.recovered=true;mutationHandoff.confirmed=true;
+            liveData.current=visible;flushSync(()=>setData(visible));
+            const same=appDataContentEqual(visible,remote);hasUnsavedWork.current=!same;
+            setCloudWriteBlocked(false);setSavePhase(same?'saved':'dirty');
+            setTaskReadOnlyReason('原提交已由雲端確認；關閉後重新開啟，即可繼續更新。提交後另外輸入的文字仍留在本表單，未自動提交');
+            setCloudStatus(same?'原要事提交已保存到雲端並完成核對；請關閉表單後重新開啟以繼續更新':'原要事提交已確認；另有本機修改尚未保存');
+            showSaveToast(same?'success':'warning',same?'原要事提交已保存到雲端':'原提交已確認，仍有修改待保存','原提交只保存一次。表單仍保留供核對；關閉再開啟可繼續更新。');
+            await releaseRelated();
+          }catch(cause){
+            if(!current())return;
+            if(cause instanceof CloudBlockPatchRejectedError||cause instanceof CloudBlockPatchConflictError)enableRejectedDiscard();
+            setCloudWriteBlocked(true);setSavePhase('error');
+            const message=`原要事提交尚未安全完成；內容仍保留。${cloudErrorMessage(cause)}`;
+            setCloudStatus(message);showSaveToast('error','原提交尚未完成',message);
+          }finally{cloudSyncInFlight.current=false;setCloudSyncing(false);}
         };
       }
       const failureMessage=relatedMutationFailureMessage({
@@ -4757,6 +4826,11 @@ export default function App() {
     if(!durableRevisionFloorRegistryIsValid())return setCloudStatus('durable revision floor registry損壞，已禁止同步；本機內容仍保留');
     if (!confirm('同步最新會保留本機修改並嘗試與雲端安全合併；只有本機沒有修改時才直接採用雲端資料。確定繼續？')) return;
     if (cloudSyncInFlight.current) return setCloudStatus('正在同步雲端，請稍候');
+    const retained=relatedMutationHandoffInFlight.current;
+    if(retained?.reconcile&&!retained.confirmed){
+      if(!relatedMutationHandoffMatchesCurrent(activeEditLockRef.current))return setCloudStatus('原要事提交的身份或工作區已變更；已保留修改，不能在另一工作階段重送');
+      await retained.reconcile();return;
+    }
 
     const syncActor=liveCurrentUserId.current,syncSession=identitySessionGeneration.current,syncEpoch=liveAuthorizationEpoch.current;
     const syncOwnerIsCurrent=()=>syncActor===liveCurrentUserId.current&&syncSession===identitySessionGeneration.current&&syncEpoch===liveAuthorizationEpoch.current&&sameCloudConfig(syncConfig,getSupabaseConfig());

@@ -83,7 +83,8 @@ assert.equal(await closeReleased('internal-control:c1'),true,'explicit Case clos
 const closeWrong=evaluate(initializer(app,'releaseExclusiveItemLease'),{activeEditLockRef:{current:{sectionKey:'internal-control:other'}}});
 assert.equal(await closeWrong('internal-control:c1'),false,'wrong entity still cannot release');
 function property(text,name){const f=parse(text),found=[];function visit(n){if(ts.isPropertyAssignment(n)&&n.name.getText(f)===name)found.push(n.initializer.getText(f));ts.forEachChild(n,visit);}visit(f);assert.equal(found.length,1,name);return found[0];}
-const receipts={};new Function('exports',transpile(source('src/cloudBlockReceipt.ts')))(receipts);
+const errors={};new Function('exports',transpile(source('src/cloudSyncError.ts')))(errors);
+const receipts={};new Function('exports','require',transpile(source('src/cloudBlockReceipt.ts')))(receipts,id=>{assert.equal(id,'./cloudSyncError');return errors;});
 for(const status of ['committed','missing']){
  let writable=true,submits=0,lookups=0,clock=0;
  const context={pending:{authority:null},commandConfig:{qa:true},assertOperationCurrent:()=>{},canSubmit:()=>writable,StaleAsyncConfigError:class extends Error{},token:{},getSupabaseConfig:()=>({qa:true}),configIoCoordinator:{current:{run:async(_t,_g,fn)=>fn({qa:true})}},runCloudSaveQueueRpc:async(_label,fn)=>fn(),operations:[{id:'same-envelope'}],savedBy:'actor',actorUserId:'actor',actorGuard:{id:'actor'},strictAuthorizationGuard:null,guards:[{section_key:'task:t1',locked_by:'opaque'}],applyCloudBlockPatchV2:async id=>{assert.equal(id,'original-operation');submits++;writable=false;throw new Error('lost ACK');},getCloudBlockPatchReceipt:async id=>{assert.equal(id,'original-operation');lookups++;return status==='missing'?{status}:{ok:true,status,operationId:id,revision:2,updatedAt:'2026-09-06',replayed:true};}};

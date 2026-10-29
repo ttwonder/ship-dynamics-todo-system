@@ -51,7 +51,7 @@ try {
     const env={
       requireMutationLease:()=>true,getSupabaseConfig:()=>config,
       relatedMutationHandoffInFlight:handoff,
-      relatedMutationAdmissionInFlight:{current:false},
+      relatedMutationAdmissionInFlight:{current:false},originalAuthority:{current:null},
       relatedMutationHandoffMatchesCurrent:()=>Boolean(handoff.current&&!handoff.current.confirmed),
       activeEditLockRef:{current:lease},identitySessionGeneration:{current:1},currentUser:actor,
       authorizationEpoch:'qa',liveAuthorizationEpoch:{current:'qa'},liveCurrentUserId:{current:actor.id},
