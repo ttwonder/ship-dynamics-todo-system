@@ -20,8 +20,8 @@ try {
     assert.equal(/<span[^>]*>Itinerary<\/span>/.test(markup), false, 'Ready ship card must not display the redundant Itinerary source badge');
     assert.match(markup, /查看 TEST 單船詳情/);
     assert.match(markup, /自動：低關注/);
-    assert.match(markup, /切換顯示Itinerary信息/);
-    assert.match(markup, /切換行事曆顯示/);
+    assert.match(markup, /顯示Itinerary/);
+    assert.match(markup, /顯示行事曆/);
     assert.equal(/<select disabled="" class="priority-pill/.test(markup), !canEdit, 'Attention editing authority is unchanged');
     assert.equal(markup.includes('>快速更新</button>'), canEdit, 'Quick update authority is unchanged');
     cases.push(canEdit ? 'READY-EDITOR-NO-BADGE' : 'READY-READONLY-NO-BADGE');

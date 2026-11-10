@@ -6,6 +6,7 @@ import { dashboardVesselDisplayName } from './vesselDisplay';
 import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention, manualVesselAttentionAllowed, VESSEL_ATTENTION_LEVELS, vesselAttentionClass, vesselAttentionPriorityCount } from './vesselAttention';
 import QuickMorningPicker from './QuickMorningPicker';
+import FleetRiskEntry from './fleetRisk/FleetRiskEntry';
 import { vesselAttentionTasks } from './taskAttention';
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
 import { automaticScheduleKind, formatCompleteScheduleDisplay, nextScheduleKind } from './scheduleTime';
@@ -146,7 +147,7 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
   return <section className="dashboard-view">
     <div className="page-heading">
       <div><h1>船舶看板</h1><p>集中查看上下港、位置、載況、時間、貨物、未來一週關注與重要要事。</p></div>
-      <div className="heading-actions no-print"><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='calendar'} onClick={()=>{if(dashboardMode==='calendar')setDashboardMode('cards');else changeItineraryView('calendar');}}>{dashboardMode==='calendar'?'返回船舶卡片':'切換行事曆顯示'}</button><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='itinerary'} onClick={()=>setDashboardMode(mode=>mode==='itinerary'?'cards':'itinerary')}>{dashboardMode==='itinerary'?'返回船舶卡片':'切換顯示Itinerary信息'}</button>{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新船舶（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>
+      <div className="heading-actions no-print"><FleetRiskEntry vessels={vessels}/><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='calendar'} onClick={()=>{if(dashboardMode==='calendar')setDashboardMode('cards');else changeItineraryView('calendar');}}>{dashboardMode==='calendar'?'返回船舶卡片':'顯示行事曆'}</button><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='itinerary'} onClick={()=>setDashboardMode(mode=>mode==='itinerary'?'cards':'itinerary')}>{dashboardMode==='itinerary'?'返回船舶卡片':'顯示Itinerary'}</button>{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>
     </div>
     <div className="metric-grid">
       <div className="metric-card blue"><small>今日船舶</small><b>{vessels.length}</b><span>艘</span></div>

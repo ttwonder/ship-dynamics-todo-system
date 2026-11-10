@@ -62,7 +62,7 @@ const edit=async(index,label,value)=>{await evaluate(`(()=>{const n=${field(inde
 const open=async()=>{
  const start=qa.metrics.length;
  for(const name of ['QA VESSEL 1','QA VESSEL 2'])await nodeClick(`[...document.querySelectorAll('article.ship-card')].filter(n=>n.innerText.includes(${JSON.stringify(name)})).flatMap(n=>[...n.querySelectorAll('button')]).find(n=>n.innerText==='批量選取')`);
- await click('批量更新船舶（已選 2）');await until(modal,'original batch modal');
+ await click('批量更新（已選 2）');await until(modal,'original batch modal');
  assert.equal(await evaluate("document.querySelectorAll('.batch-managed-card').length"),2);
  assert.deepEqual((await locks()).map(l=>l.section_key),['vessel:qa-v1','vessel:qa-v2']);
  assert.equal(await evaluate("document.querySelector('.batch-managed-modal').innerText.includes('QA VESSEL 3')"),false);

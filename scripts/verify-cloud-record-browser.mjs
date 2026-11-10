@@ -107,7 +107,7 @@ try{
  // Original Itinerary editor: all interactions below use visible controls, never props/helpers.
  await qa.db.exec("update sd_itinerary_leases set expires_at=now()-interval '1 second' where vessel_id='qa-v1'");
  const itineraryBefore=await qa.itinerarySnapshot(),appBefore=await qa.read();
- await click('切換顯示Itinerary信息');await until(async()=> (await text()).includes('Itinerary 看板'),'original Itinerary dashboard');
+ await click('顯示Itinerary');await until(async()=> (await text()).includes('Itinerary 看板'),'original Itinerary dashboard');
  const formalRead=async()=> (await qa.db.query("select sd_itinerary_document_for_vessel(workspace_id,$1,vessel_id) as doc from sd_itinerary_documents where vessel_id='qa-v1'",['isolated-record-ui-qa'])).rows[0].doc;
  for(const lostAck of [false,true]){
   const before=await formalRead(),at=qa.metrics.length,marker=lostAck?'QA ITINERARY RECOVERED':'QA ITINERARY SAVED';

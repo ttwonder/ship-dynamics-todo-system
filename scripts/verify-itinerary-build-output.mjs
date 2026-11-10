@@ -30,7 +30,7 @@ assert.ok(!builtJs.includes('Vessel 主頁始終不開放'), 'production JavaScr
 assert.ok(!builtJs.includes('Admin／Operator／Vessel 的主頁權限始終保持關閉'), 'production JavaScript must not retain the Owner-only pilot copy');
 assert.ok(builtJs.includes('目前只在本機 Itinerary demo 模式顯示'), 'production JavaScript must use the shared demo label');
 assert.ok(!builtJs.includes('Owner demo 模式'), 'production JavaScript must not retain the Owner-only demo label');
-assert.ok(builtJs.includes('切換顯示Itinerary信息'), 'production JavaScript must include the exact universal-entry label');
+assert.ok(builtJs.includes('顯示Itinerary'), 'production JavaScript must include the exact universal-entry label');
 assert.ok(!builtJs.includes('切換為Itinerary信息'), 'production JavaScript must not retain the superseded label');
 assert.ok(!builtJs.includes('驗證 Itinerary 身份'), 'production JavaScript must not retain the second Itinerary login trigger');
 assert.ok(!builtJs.includes('設定並驗證 Itinerary'), 'production JavaScript must not retain the second Itinerary login dialog copy');

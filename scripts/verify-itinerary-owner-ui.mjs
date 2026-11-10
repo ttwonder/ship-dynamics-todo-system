@@ -44,13 +44,13 @@ try {
       canUseMeetings: false,
       canUseReports: false,
     }));
-    assert.match(html, /切換顯示Itinerary信息/, `${role} must see the direct Itinerary switch immediately after normal login`);
+    assert.match(html, /顯示Itinerary/, `${role} must see the direct Itinerary switch immediately after normal login`);
     assert.doesNotMatch(html, /Itinerary 開放設定|驗證 Itinerary 身份/, `${role} must not see a historical access control`);
   }
 
   assert.match(dashboardSource, /lazy\(\(\)\s*=>\s*import\('\.\/itinerary\/ItineraryDashboard'\)\)/);
   assert.doesNotMatch(dashboardSource, /itineraryRollout|ItineraryOwnerRolloutDialog|user\.role\s*[!=]==?\s*['"]vessel['"]/, 'all logged-in roles must share one ungated path');
-  assert.match(dashboardSource, /切換顯示Itinerary信息/);
+  assert.match(dashboardSource, /顯示Itinerary/);
   assert.match(dashboardSource, /返回船舶卡片/);
   assert.match(dashboardSource, /<ItineraryDashboard[\s\S]*actor=\{itineraryActor\}[\s\S]*vessels=\{visible\}/);
   assert.match(itineraryDashboardSource, /const UNRESTRICTED_ITINERARY_PERMISSIONS[\s\S]*view:\s*true[\s\S]*edit:\s*true[\s\S]*import:\s*true[\s\S]*export:\s*true[\s\S]*calendar:\s*true/);

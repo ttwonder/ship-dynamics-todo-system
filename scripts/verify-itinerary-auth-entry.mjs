@@ -11,7 +11,7 @@ assert.match(app, /itineraryActor=\{\{\s*userId:\s*currentUser\.id\s*\}\}/, 'leg
 assert.match(normalizedApp, /itineraryActor=\{\{\s*userId:\s*user\.id\s*\}\}/, 'normalized main login must pass only the active user id');
 assert.doesNotMatch(dashboard, /ItineraryOfficeAuthDialog|itineraryAuthOpen|驗證 Itinerary 身份|設定並驗證 Itinerary/, 'the dashboard must not mount or advertise a second Itinerary login');
 assert.doesNotMatch(dashboard, /itineraryRollout|ItineraryOwnerRolloutDialog|Itinerary 開放設定/, 'the historical rollout and Owner controls must not gate the dashboard');
-assert.match(dashboard, /切換顯示Itinerary信息/, 'the direct-entry button label must match the latest approved wording exactly');
+assert.match(dashboard, /顯示Itinerary/, 'the direct-entry button label must match the latest approved wording exactly');
 assert.doesNotMatch(cloudAdapter, /p_actor_guard|guard:\s*unknown|updateOwnerItineraryRollout/, 'main-site Itinerary must not retain a separate guard or Owner rollout API');
 assert.match(cloudAdapter, /export interface ItineraryMainActor\s*\{\s*userId:\s*string;\s*\}/, 'the office actor must be the already active main-site user id only');
 

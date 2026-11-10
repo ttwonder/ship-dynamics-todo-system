@@ -10,7 +10,7 @@ const vesselSummary = fs.readFileSync('src/VesselImportantSummary.tsx', 'utf8');
 const batch = fs.existsSync('src/BatchManagedVesselModal.tsx') ? fs.readFileSync('src/BatchManagedVesselModal.tsx', 'utf8') : '';
 const styles = fs.readFileSync('src/styles.css', 'utf8');
 
-assert.ok(dashboard.includes('批量更新船舶'), '船舶看板頁首需有「批量更新船舶」按鈕');
+assert.ok(dashboard.includes('批量更新（已選'), '船舶看板頁首需有「批量更新（已選…）」按鈕');
 assert.ok(dashboard.includes('onOpenBatchManagedVessels'), 'Dashboard 需把批量更新按鈕接到 App 層');
 assert.ok(dashboard.includes('batchSelected') && dashboard.includes('setBatchSelected'), '批量更新必須有獨立的人工多選狀態，不得借用涉會船舶選取');
 assert.ok(dashboard.includes('批量選取') && dashboard.includes('已選'), '船舶看板需提供清楚的批量選取操作與數量');
