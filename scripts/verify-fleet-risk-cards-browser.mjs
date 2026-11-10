@@ -24,13 +24,16 @@ async function activate(expression){await evaluate(`(()=>{const n=${expression};
 const click=label=>activate(`[...document.querySelectorAll('button')].find(n=>(n.getAttribute('aria-label')||n.textContent.trim())===${JSON.stringify(label)}&&n.getClientRects().length)`);
 const screen=async name=>fs.writeFileSync(path.join(output,name+'.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png'})).data,'base64'));
 const visibleNames=()=>evaluate("[...document.querySelectorAll('.ship-name-link')].map(n=>n.textContent.trim())");
+const metadataGeometry=()=>evaluate("[...document.querySelectorAll('.ship-card')].map(card=>{const rect=s=>{const n=card.querySelector(s),r=n.getBoundingClientRect();return{left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height,width:r.width,scrollWidth:n.scrollWidth,clientWidth:n.clientWidth};};return{badge:rect('.fleet-risk-card-badge'),type:rect('.ship-type-supervisor>span:first-of-type'),names:rect('.ship-manager-names'),header:rect('.ship-card-head'),operation:rect('.ship-operation-grid')};})");
+function checkMetadata(rows){for(const row of rows){assert.ok(row.badge.right<=row.type.left,'Risk badge must sit left of ship type, not on a separate row');assert.ok(row.badge.top<row.type.bottom&&row.type.top<row.badge.bottom,'Risk badge and ship type must share the same line');assert.ok(row.names.scrollWidth<=row.names.clientWidth+1,'Long manager names wrap inside the right-hand region');}}
 const reserve=()=>new Promise(resolve=>{const s=net.createServer();s.listen(0,'127.0.0.1',()=>{const port=s.address().port;s.close(()=>resolve(port));});});
 const entry=`import React from'react';import{createRoot}from'react-dom/client';import Dashboard from'/src/Dashboard.tsx';import{createInitialData}from'/src/data/seed.ts';import'/src/styles.css';
 window.SHIP_DYNAMICS_SUPABASE_CONFIG={supabaseUrl:location.origin,supabaseAnonKey:'synthetic-public-key',workspaceKey:'qa'};
 const noop=()=>{},data=createInitialData(),names=['FPMC B 105','FPMC B 201','FPMC S AMBER','FPMC 25','FPMC 26'];
-const vessels=names.map((name,index)=>{const original=data.vessels.find(v=>v.fullName===name);if(!original)throw new Error('Fixture missing '+name);return {...original,assignedUserIds:index===0?['qa']:[],delegateManagers:[],shipType:index===0?'測試散貨':'測試油輪',manualAttentionLevel:'',weeklyAttention:[],note:{...original.note,statusList:[],statusSupplement:''}};});
+const fixtureManagers=['測試主管甲','測試主管乙','測試主管丙','測試主管丁','測試副理戊','測試經理己','測試經理庚'].map((name,i)=>({id:'qa-manager-'+i,name,username:'qa-manager-'+i,department:'督導',role:'operator',isActive:true,managedVesselIds:[]}));
+const vessels=names.map((name,index)=>{const original=data.vessels.find(v=>v.fullName===name);if(!original)throw new Error('Fixture missing '+name);return {...original,assignedUserIds:index===0?['qa',...fixtureManagers.map(u=>u.id)]:index===1?fixtureManagers.slice(0,2).map(u=>u.id):[],delegateManagers:[],shipType:index===0?'測試散貨':'測試油輪',manualAttentionLevel:'',weeklyAttention:[],note:{...original.note,statusList:[],statusSupplement:''}};});
 const user={id:'qa',name:'測試督導',username:'qa',department:'督導',role:'operator',isActive:true,managedVesselIds:[]};window.__qaVessels=vessels;window.__qaVesselsBefore=JSON.stringify(vessels);
-function Harness(){const[selected,setSelected]=React.useState([]),[batchSelected,setBatchSelected]=React.useState([]);return React.createElement(Dashboard,{user,itineraryActor:{userId:'qa'},users:[user],vessels,tasks:[],calendarTasks:[],internalControlCases:[],meetings:[],selected,setSelected,batchSelected,setBatchSelected,onOpenVessel:noop,onEdit:noop,onAddTask:noop,onToggleAttention:noop,onAdjustAttention:noop,onStartMeeting:noop,onOpenReport:noop,onTaskMetric:noop,onOpenBatchManagedVessels:noop,canEdit:true,canCreateTasks:true,canUseMeetings:true,canUseReports:true});}createRoot(document.getElementById('root')).render(React.createElement(Harness));`;
+function Harness(){const[selected,setSelected]=React.useState([]),[batchSelected,setBatchSelected]=React.useState([]);return React.createElement(Dashboard,{user,itineraryActor:{userId:'qa'},users:[user,...fixtureManagers],vessels,tasks:[],calendarTasks:[],internalControlCases:[],meetings:[],selected,setSelected,batchSelected,setBatchSelected,onOpenVessel:noop,onEdit:noop,onAddTask:noop,onToggleAttention:noop,onAdjustAttention:noop,onStartMeeting:noop,onOpenReport:noop,onTaskMetric:noop,onOpenBatchManagedVessels:noop,canEdit:true,canCreateTasks:true,canUseMeetings:true,canUseReports:true});}createRoot(document.getElementById('root')).render(React.createElement(Harness));`;
 try{
   server=await createServer({root:process.cwd(),base:'/',server:{host:'127.0.0.1',port:await reserve(),strictPort:true},logLevel:'silent',plugins:[{name:'isolated-fleet-risk-cards-qa',configureServer(vite){vite.middlewares.use(async(req,res,next)=>{
     res.setHeader('Content-Security-Policy',"connect-src 'self' ws://127.0.0.1:*");
@@ -59,6 +62,7 @@ try{
   assert.equal(await evaluate("document.querySelectorAll('.ship-card .fleet-risk-card-badge').length"),5,'Every original ship card must expose the compact Tokyo risk badge');
   await until(()=>evaluate("[...document.querySelectorAll('.fleet-risk-card-badge')].map(n=>n.textContent).join(',')==='HRS,HRS,SRS,LRS,—'"),'matched risk grades and unknown');
   await screen('desktop-all');
+  evidence.desktopMetadata=await metadataGeometry();checkMetadata(evidence.desktopMetadata);
   const styles=()=>evaluate("[...document.querySelectorAll('.fleet-risk-card-badge,.filter-pill-hrs')].map(n=>({text:n.textContent,fg:getComputedStyle(n).color,bg:getComputedStyle(n).backgroundColor,height:n.getBoundingClientRect().height,width:n.getBoundingClientRect().width}))");
   evidence.idleStyles=await styles();
   const lum=rgb=>{const c=rgb.match(/[\d.]+/g).slice(0,3).map(Number).map(n=>n/255).map(n=>n<=0.04045?n/12.92:((n+0.055)/1.055)**2.4);return c[0]*.2126+c[1]*.7152+c[2]*.0722;};
@@ -90,6 +94,9 @@ try{
   assert.ok(evidence.mobile.documentWidth<=390);
   for(const card of evidence.mobile.cards)assert.ok(card.left>=0&&card.right<=390);
   assert.ok(evidence.mobile.filter.left>=0&&evidence.mobile.filter.right<=390);
+  evidence.mobileMetadata=await metadataGeometry();checkMetadata(evidence.mobileMetadata);
+  assert.ok(evidence.mobileMetadata[0].names.height>evidence.mobileMetadata[1].names.height,'Long manager list wraps without moving the badge into its own row');
+  evidence.cases.push('metadata layout: compact risk at left, ship type/managers at right; long names wrap on desktop and phone');
   await click('HRS船舶');await until(async()=>(await visibleNames()).length===2,'mobile HRS filter');await evaluate("document.querySelector('.dashboard-toolbar').scrollIntoView({block:'start'})");await screen('mobile-hrs');
   const firstBadge="document.querySelector('.fleet-risk-card-badge')";
   await activate(firstBadge);await until(()=>evaluate('Boolean(document.querySelector("dialog[open]"))'),'touch-accessible risk details');

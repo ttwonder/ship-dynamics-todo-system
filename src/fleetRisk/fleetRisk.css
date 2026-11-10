@@ -1,5 +1,6 @@
 .btn.fleet-risk-trigger{background:#fff0d9;border:1px solid #e6ba72;color:#804514;font-weight:700}
-.ship-card-head>.ship-psc-risk{grid-column:1/-1;display:flex;align-items:center;gap:6px;min-width:0}
+.dashboard-view .ship-card-head>.ship-type-supervisor{grid-template-columns:max-content max-content max-content max-content minmax(0,1fr)}
+.ship-type-supervisor>.ship-psc-risk{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
 .ship-psc-risk>.fleet-risk-card-badge{display:inline-flex;align-items:center;justify-content:center;min-width:43px;min-height:24px;padding:2px 8px;border:1px solid currentColor;border-radius:5px;font-size:12px;font-weight:900;line-height:1.25;letter-spacing:.3px;cursor:pointer}
 .ship-psc-risk>.fleet-risk-card-badge:hover{filter:brightness(.96)}
 .ship-psc-risk>.fleet-risk-card-badge:focus-visible{outline:3px solid #7154af;outline-offset:2px}
