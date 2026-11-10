@@ -401,7 +401,9 @@ function parseCompany(raw: string): Company {
   const rows = clickRows(html, "company");
   if (rows.length !== 1) fail("COMPANY_IDENTITY_MISMATCH");
   const values = rows[0].values;
-  if (values.length !== 6 || values[2] !== "0882415" || values[1] !== "FORMOSA PLASTICS MARINE CORPORATION") {
+  // Both names were observed on official responses for this exact company IMO.
+  const verifiedNames = ["FORMOSA PLASTICS MARINE CORPORATION", "Formosa Plastics Marine Corp (FPMC)"];
+  if (values.length !== 6 || values[2] !== "0882415" || !verifiedNames.includes(values[1])) {
     fail("COMPANY_IDENTITY_MISMATCH");
   }
   if (!["High", "Medium", "Low", "Very Low", "Unknown"].includes(values[5])) fail();

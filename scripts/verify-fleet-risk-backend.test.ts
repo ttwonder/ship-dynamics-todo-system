@@ -131,6 +131,49 @@ Deno.test("roster handler replays public entry + company + both pages, returns i
   ]);
 });
 
+Deno.test("official company name alias keeps the exact IMO and complete roster", async () => {
+  // Controlled single-field reproduction of the currently observed official name.
+  const original = await fixture("autonomous-company-search.html");
+  const currentName = "Formosa Plastics Marine Corp (FPMC)";
+  assert(original.includes("FORMOSA PLASTICS MARINE CORPORATION"));
+  const transport = await replay({
+    getcompanies: original.replace("FORMOSA PLASTICS MARINE CORPORATION", currentName),
+  });
+  const response = await createFleetRiskHandler({ fetchImpl: transport.fetchImpl })(
+    request({ action: "roster", queryId }),
+  );
+  equal(response.status, 200);
+  const result = await response.json();
+  equal(result.company, { name: currentName, imo: "0882415", performance: "Medium" });
+  equal(result.declaredTotal, 39);
+  equal(result.ships.length, 39);
+  equal(result.coverage.missingReferenceImos, []);
+});
+
+Deno.test("official company alias never accepts a wrong IMO, unknown name or duplicate company row", async () => {
+  const currentName = "Formosa Plastics Marine Corp (FPMC)";
+  const current = (await fixture("autonomous-company-search.html")).replace(
+    "FORMOSA PLASTICS MARINE CORPORATION", currentName,
+  );
+  const row = current.match(/<tr\b[^>]*onclick="onclick_company\(this\)"[^>]*>[\s\S]*?<\/tr>/i)?.[0];
+  assert(row, "exact clickable company row exists in the fixture");
+  const invalid = [
+    current.replace("<td>0882415</td>", "<td>882415</td>"),
+    current.replace(currentName, "UNVERIFIED COMPANY NAME"),
+    current.replace(row, row + row),
+  ];
+  for (const body of invalid) {
+    assert(body !== current, "negative control actually changes the company response");
+    const transport = await replay({ getcompanies: body });
+    const response = await createFleetRiskHandler({ fetchImpl: transport.fetchImpl })(
+      request({ action: "roster", queryId }),
+    );
+    equal(response.status, 502);
+    equal(await response.json(), { ok: false, error: "COMPANY_IDENTITY_MISMATCH" });
+    equal(transport.calls.map((call) => call.action), ["entry", "login", "getcompanies"]);
+  }
+});
+
 Deno.test("CORS rejects missing/unlisted origin; allowed OPTIONS has exact public API headers without fetching", async () => {
   let reads = 0;
   const handler = createFleetRiskHandler({
