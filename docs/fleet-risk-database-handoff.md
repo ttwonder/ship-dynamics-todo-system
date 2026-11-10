@@ -1,8 +1,10 @@
-# Fleet risk database candidate — local only
+# Fleet risk database and scheduler handoff
 
 ## Scope and evidence
 
-The SQL and Edge handler have been integrated and verified locally. No hosted database migration, deployment or Push has been performed. Verification uses only isolated local databases and synthetic credentials; the already-declared `@electric-sql/pglite` dev dependency is reused without an installation or symlink.
+The SQL and Edge handler have been integrated and verified locally. The cache/RPC migration is present in the approved hosted project `cyzpcvvhmoiihsqvjspp`. The deployed `fleet-risk` source was downloaded and matched byte-for-byte to the single-file bundle from commit `01c8888de423ad3dbe2d80ceee990624469bfb7a`; one authorized manual invocation was read back successfully with 39 unique vessels, including all four outsourced vessels, at Taipei 2026-11-11 01:41:54. The recorded run is `2a83f94b-5e48-4193-b1ea-d526db0177aa` (HRS 5 / SRS 30 / LRS 4). This proves that manual hosted path, not Vault/cron configuration or a natural 07:00 tick. Scheduler setup and verification are now authorized, but SQL Run and GitHub Push remain user-owned and are not claimed complete.
+
+The local SQL suite uses isolated databases and synthetic credentials; the already-declared `@electric-sql/pglite` dev dependency is reused without an installation or symlink. Its later readback-output checks must not be confused with the independent hosted manual run.
 
 Run from the repository root, using an external evidence directory:
 
@@ -18,7 +20,7 @@ Evidence files retain initial missing-feature REDs and later GREENs. The RPC sui
 
 1. `supabase/migrations/20261110070000_ship_fleet_risk.sql` — one new singleton table and four frozen RPCs. No business table references, broad application locks, extensions, schedules, or secrets. This is a one-time forward migration, not a reset/reinstall script; an already-existing object fails instead of resetting cached data.
 2. `supabase/deployment/fleet-risk-0700-cron-install.sql` — separate opt-in installation; only job `ship-fleet-risk-taipei-0700-v1` may be replaced. No HTTP is sent during install.
-3. `supabase/verification/fleet-risk-readback.sql` — explicit READ ONLY transaction; boolean checks, names, schedule and redacted URL only; never invokes the scheduler/writers.
+3. `supabase/verification/fleet-risk-readback.sql` — explicit READ ONLY transaction; boolean checks, names, schedule and redacted URL only; never invokes the scheduler/writers. Its final `fleet_risk_readback` JSON includes all 70 named boolean checks, exact/unique counts, failed installation checks and `PASS_INSTALL_ONLY` / `CHECK_REQUIRED`; exporting only the last SQL Editor result is sufficient. The earlier seven grids are retained unchanged. Empty snapshot/attempt observations do not fail installation, and the verdict never proves a natural scheduled run.
 4. `scripts/verify-fleet-risk-database.mjs` — finite isolated tests and JSON evidence.
 
 ## Edge integration contract (parent-owned)
@@ -35,11 +37,11 @@ Evidence files retain initial missing-feature REDs and later GREENs. The RPC sui
 - Durable request-to-run mappings are retained inside the singleton row, not an extra history table. This is intentional to preserve idempotency after later runs. They are not exposed by the read RPC; no pruning policy is silently applied. Long-term map growth is an operational consideration, not a hosted capacity claim.
 - Manual confirmation, public-source fetching, scheduling-token verification, HTTP method/action validation, immediate UI display, and frozen PDF are implemented in the UI/handler and locally verified; see `fleet-risk-handoff.md` for the real Deno source run. SQL alone cannot prove a fetched fleet was complete; the generator separately reconciles the authoritative reference roster before publishing.
 
-## Operator-only deployment prerequisites (NOT performed)
+## Operator-only deployment prerequisites and remaining scheduler steps
 
-The Edge handler is locally verified. Do not run the cron installer until deployment is explicitly authorized and the handler is actually deployed to the selected project.
+For project `cyzpcvvhmoiihsqvjspp`, the handler deployment and one complete manual hosted update have already been verified. Do not redeploy it, rotate its token, or repeat the cache/RPC migration to complete scheduling. The following configuration/readback actions retain the user-owned Run boundary.
 
-1. Confirm the target project and apply the migration with a privileged migration owner. Existing Supabase roles `anon`, `authenticated`, and `service_role` must exist. Do not grant table access or browser writer execution.
+1. Confirm the target project. The cache/RPC migration is already present in this approved project: do not run it again. For a separately authorized new environment only, apply the migration with a privileged migration owner. Existing Supabase roles `anon`, `authenticated`, and `service_role` must exist. Do not grant table access or browser writer execution.
 2. Independently enable/verify `pg_cron`, `pg_net`, and `supabase_vault` in that project through the approved operator workflow. The installer does not install extensions. It checks exact prerequisite API signatures and refuses missing prerequisites. Both database session timezone and `cron.timezone` must explicitly be UTC/GMT/Etc/UTC. An older pg_cron without an observable timezone is rejected; do not remove the check to guess.
 3. Parent Edge configuration checklist (placeholders, not commands or actual values):
    - `SUPABASE_URL=<the selected project URL>`
@@ -52,7 +54,7 @@ The Edge handler is locally verified. Do not run the cron installer until deploy
    - `ship_fleet_risk_scheduler_token` → the exact same private scheduler token the Edge handler checks.
    The URL must have the exact HTTPS Supabase host and fixed path, no query, userinfo, port, or trailing slash. Key/token values must contain no whitespace. This candidate neither creates nor reads production secrets.
 5. Run the separate cron installer only after these prerequisites. The named job uses `0 23 * * *` in UTC = Taipei 07:00, invokes the private wrapper, and POSTs `{"action":"scheduled"}` with explicit headers. The pg_net request timeout is 210000 ms; the worker still has its own fixed four-minute SQL lease. A network timeout does not imply that a worker did or did not finish: read the cache state before deciding next action.
-6. Run the separate readback. After full install, expect the four cache RPCs plus one scheduler wrapper (five ACL rows), three valid Vault configuration rows, one active matching cron job, and all structural/ACL/schedule checks true. `has_last_good_snapshot` and `has_attempt` may be false initially. Before scheduler install, the first migration checks can be used independently; the full file intentionally stops at missing scheduler prerequisites. Do not treat a missing install as authorization to run SQL.
-7. Hosted acceptance remains separate: observe the actual scheduled invocation and a complete successful snapshot through the real deployed handler, then verify UI/PDF snapshot identity. Redacted catalog readback, a queued request ID, local test GREEN, or local shims do not establish this. No production success is claimed.
+6. Run the separate readback. Export the single final `fleet_risk_readback` result: require `verdict = PASS_INSTALL_ONLY`, `expected_check_count = check_count = unique_check_count = 70` and an empty `failed_install_checks`. This covers five function ACL rows, three Vault entries and exactly one active matching cron job. Both snapshot observations may be false only before any successful refresh; this approved project already has a verified manual snapshot, so they should be true. Before scheduler install, the extension/timezone query may be used independently and `scheduler_wrapper_exists` may legitimately be false. The full file intentionally stops at missing scheduler prerequisites.
+7. The manually invoked hosted path has succeeded as recorded above. Scheduled acceptance remains separate: observe a natural scheduled invocation and a complete successful `trigger: scheduled` snapshot through the real deployed handler, then verify UI/PDF snapshot identity after the user-owned Push. Redacted catalog readback, a queued request ID, local test GREEN or local shims do not establish that scheduled path. No natural 07:00 success is claimed.
 
 API references consulted: Supabase pg_net documentation (`https://supabase.com/docs/guides/database/extensions/pg_net`) and pg_cron (`https://github.com/citusdata/pg_cron`). Installed extension versions/signatures are still checked at install rather than assumed.

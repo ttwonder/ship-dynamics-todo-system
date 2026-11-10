@@ -451,6 +451,49 @@ try {
       assert.deepEqual(await physical(cronDb), physicalBefore);
       assert.equal(await q('SELECT count(*)::integer AS value FROM net.calls'), 1, 'readback MUST NOT enqueue HTTP');
       assert.deepEqual(await q("SELECT to_jsonb(j) AS value FROM cron.job j WHERE jobname='unrelated-preserved-job'"), unrelated);
+      const consolidated = resultRows.find(r => Object.hasOwn(r, 'fleet_risk_readback'))?.fleet_risk_readback;
+      assert.ok(consolidated, 'one final exportable verdict must include all catalog/Vault/cron checks, not only the last snapshot grid');
+      const expectedChecks = {};
+      for (const row of resultRows.filter(r => !Object.hasOwn(r, 'fleet_risk_readback'))) {
+        const prefix = row.function_name ? `function.${row.function_name}` : row.vault_entry ? `vault.${row.vault_entry}`
+          : Object.hasOwn(row, 'cache_table_exists') ? 'objects' : Object.hasOwn(row, 'rls_enabled') ? 'table'
+          : Object.hasOwn(row, 'pg_cron_present') ? 'extension' : Object.hasOwn(row, 'exactly_one_target_job') ? 'job' : 'snapshot';
+        for (const [key, value] of Object.entries(row)) if (typeof value === 'boolean') expectedChecks[`${prefix}.${key}`] = value;
+      }
+      assert.equal(Object.keys(expectedChecks).length, 70);
+      assert.equal(consolidated.expected_check_count, 70);
+      assert.equal(consolidated.check_count, 70);
+      assert.equal(consolidated.unique_check_count, 70);
+      assert.deepEqual(consolidated.checks, expectedChecks, 'final export must preserve every earlier boolean, including false');
+      assert.equal(consolidated.verdict, 'CHECK_REQUIRED', 'local shims must not pass hosted extension checks');
+      assert.deepEqual(consolidated.failed_install_checks, ['extension.pg_cron_present', 'extension.pg_net_present', 'extension.vault_present']);
+      // Explicit test-only catalog predicates; never use this modified SQL for the operator handoff.
+      let syntheticCatalogReadback = readback;
+      for (const extension of ['pg_cron', 'pg_net', 'supabase_vault']) {
+        const predicate = `EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname = '${extension}')`;
+        assert.equal(syntheticCatalogReadback.split(predicate).length - 1, 2);
+        syntheticCatalogReadback = syntheticCatalogReadback.replaceAll(predicate, 'true /* TEST-ONLY extension availability */');
+      }
+      const summaryRead = async () => (await cronDb.exec(syntheticCatalogReadback)).flatMap(r => r.rows ?? [])
+        .find(r => Object.hasOwn(r, 'fleet_risk_readback')).fleet_risk_readback;
+      assert.equal((await summaryRead()).verdict, 'PASS_INSTALL_ONLY', 'positive logical control is catalog-only, not hosted proof');
+      for (const [change, restore, failedKey] of [
+        ["UPDATE cron.job SET active=false WHERE jobname='ship-fleet-risk-taipei-0700-v1'", "UPDATE cron.job SET active=true WHERE jobname='ship-fleet-risk-taipei-0700-v1'", 'job.job_active'],
+        ["UPDATE vault.decrypted_secrets SET decrypted_secret='' WHERE name='ship_fleet_risk_scheduler_token'", "UPDATE vault.decrypted_secrets SET decrypted_secret='SYNTHETIC-SCHEDULER-TOKEN-NOT-A-CREDENTIAL' WHERE name='ship_fleet_risk_scheduler_token'", 'vault.ship_fleet_risk_scheduler_token.nonempty_no_whitespace'],
+        ['GRANT EXECUTE ON FUNCTION public.invoke_ship_fleet_risk_schedule_v1(boolean) TO anon', 'REVOKE EXECUTE ON FUNCTION public.invoke_ship_fleet_risk_schedule_v1(boolean) FROM anon', 'function.invoke_ship_fleet_risk_schedule_v1.anon_acl_ok'],
+      ]) {
+        await cronDb.exec(change);
+        try {
+          const failed = await summaryRead();
+          assert.equal(failed.verdict, 'CHECK_REQUIRED');
+          assert.deepEqual(failed.failed_install_checks, [failedKey]);
+          assert.equal(failed.checks[failedKey], false);
+        } finally { await cronDb.exec(restore); }
+      }
+      assert.equal((await summaryRead()).verdict, 'PASS_INSTALL_ONLY');
+      assert.deepEqual(await physical(cronDb), physicalBefore);
+      assert.equal(await q('SELECT count(*)::integer AS value FROM net.calls'), 1, 'consolidated readbacks must not enqueue HTTP');
+      assert.deepEqual(await q("SELECT to_jsonb(j) AS value FROM cron.job j WHERE jobname='unrelated-preserved-job'"), unrelated);
       // Extension flags correctly remain false: a shim MUST NOT masquerade as a real extension.
       const prereq = resultRows.find(r => Object.hasOwn(r, 'pg_cron_present'));
       assert.equal(prereq.pg_cron_present, false); assert.equal(prereq.pg_net_present, false); assert.equal(prereq.vault_present, false);
