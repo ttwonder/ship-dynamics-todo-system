@@ -1,4 +1,13 @@
 .btn.fleet-risk-trigger{background:#fff0d9;border:1px solid #e6ba72;color:#804514;font-weight:700}
+.ship-card-head>.ship-psc-risk{grid-column:1/-1;display:flex;align-items:center;gap:6px;min-width:0}
+.ship-psc-risk>.fleet-risk-card-badge{display:inline-flex;align-items:center;justify-content:center;min-width:43px;min-height:24px;padding:2px 8px;border:1px solid currentColor;border-radius:5px;font-size:12px;font-weight:900;line-height:1.25;letter-spacing:.3px;cursor:pointer}
+.ship-psc-risk>.fleet-risk-card-badge:hover{filter:brightness(.96)}
+.ship-psc-risk>.fleet-risk-card-badge:focus-visible{outline:3px solid #7154af;outline-offset:2px}
+.fleet-risk-card-notice{color:#805300;font-size:11px;line-height:1.25}
+.dashboard-view .filter-pill.filter-pill-hrs{border-color:#d65465;background:#fff0f2;color:#a51d31;font-weight:900;box-shadow:0 2px 8px #a51d3114}
+.dashboard-view .filter-pill.filter-pill-hrs:hover{border-color:#b32339;background:#ffe0e5;color:#861329}
+.dashboard-view .filter-pill.filter-pill-hrs.active{border-color:#b32339;background:#b32339;color:#fff;box-shadow:0 3px 10px #b3233933}
+.dashboard-view .filter-pill.filter-pill-hrs:focus-visible{outline:3px solid #7154af;outline-offset:3px}
 .fleet-risk-dialog{padding:0;border:1px solid #d6cce1;border-radius:16px;width:min(1220px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);color:#433b50;background:#fff;box-shadow:0 16px 60px #30243c33}
 .fleet-risk-dialog::backdrop{background:#30243c77}
 .fleet-risk-dialog .fr-shell{display:flex;flex-direction:column;max-height:calc(100dvh - 28px)}

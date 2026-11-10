@@ -11,11 +11,12 @@ interface Props {
   showPills?: boolean;
   showSupervisors?: boolean;
   showMeeting?: boolean;
+  showTokyoRisk?: boolean;
   supervisorOrder?: string[];
   onSaveSupervisorOrder?: (ids: string[], expected: string[] | undefined) => Promise<boolean>;
 }
 
-export default function VesselFilterControls({ filters, shipTypes, supervisors, onChange, showPills = true, showSupervisors = true, showMeeting = true, supervisorOrder, onSaveSupervisorOrder }: Props) {
+export default function VesselFilterControls({ filters, shipTypes, supervisors, onChange, showPills = true, showSupervisors = true, showMeeting = true, showTokyoRisk = false, supervisorOrder, onSaveSupervisorOrder }: Props) {
   const [supervisorQuery, setSupervisorQuery] = useState('');
   const [orderDraft, setOrderDraft] = useState<{ options: VesselSupervisorOption[]; expected: string[] | undefined; saving: boolean; error: string } | null>(null);
   const moveSupervisor = (index: number, delta: number) => setOrderDraft(previous => {
@@ -72,6 +73,7 @@ export default function VesselFilterControls({ filters, shipTypes, supervisors, 
       <button type="button" aria-pressed={filters.attentionGroups.includes('urgent-high')} className={`filter-pill filter-pill-high ${filters.attentionGroups.includes('urgent-high') ? 'active' : ''}`} onClick={() => onChange({ ...filters, attentionGroups: toggleFilterValue(filters.attentionGroups, 'urgent-high') })}>急／高關注</button>
       <button type="button" aria-pressed={filters.attentionGroups.includes('medium')} className={`filter-pill filter-pill-medium ${filters.attentionGroups.includes('medium') ? 'active' : ''}`} onClick={() => onChange({ ...filters, attentionGroups: toggleFilterValue(filters.attentionGroups, 'medium') })}>中關注</button>
       {showMeeting && <button type="button" aria-pressed={filters.meetingOnly} className={`filter-pill filter-pill-meeting ${filters.meetingOnly ? 'active' : ''}`} onClick={() => onChange({ ...filters, meetingOnly: !filters.meetingOnly })}>選入會議</button>}
+      {showTokyoRisk && <button type="button" aria-pressed={Boolean(filters.tokyoHrsOnly)} className={`filter-pill filter-pill-hrs ${filters.tokyoHrsOnly ? 'active' : ''}`} title="只顯示最近成功清單中 Tokyo MOU 為 HRS 的船舶；與其他條件交叉篩選，未取得不視為低風險。再點一次取消。" onClick={() => onChange({ ...filters, tokyoHrsOnly: !filters.tokyoHrsOnly })}>HRS船舶</button>}
     </div>}
   </div>;
 }

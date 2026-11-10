@@ -10,6 +10,7 @@ export interface VesselFilterState {
   attentionGroups: VesselAttentionFilterGroup[];
   meetingOnly: boolean;
   supervisorIds: string[];
+  tokyoHrsOnly?: boolean;
 }
 
 export interface VesselFilterFacts {
@@ -19,6 +20,7 @@ export interface VesselFilterFacts {
   attentionGroup: VesselAttentionGroup;
   selectedForMeeting: boolean;
   supervisorIds: string[];
+  tokyoRisk?: 'HRS' | 'SRS' | 'LRS' | null;
 }
 
 export interface VesselSupervisorOption {
@@ -44,6 +46,7 @@ export function emptyVesselFilterState(): VesselFilterState {
     attentionGroups: [],
     meetingOnly: false,
     supervisorIds: [],
+    tokyoHrsOnly: false,
   };
 }
 
@@ -56,6 +59,7 @@ export function hasActiveVesselFilters(filters: VesselFilterState): boolean {
     || filters.shipTypes.length > 0
     || filters.attentionGroups.length > 0
     || filters.meetingOnly
+    || Boolean(filters.tokyoHrsOnly)
     || filters.supervisorIds.length > 0;
 }
 
@@ -93,6 +97,7 @@ export function vesselSupervisorOptions(vessels: Array<Pick<Vessel, 'id' | 'assi
 }
 
 export function matchesVesselFilterGroups(vessel: VesselFilterFacts, filters: VesselFilterState): boolean {
+  if (filters.tokyoHrsOnly && vessel.tokyoRisk !== 'HRS') return false;
   if (filters.selfManagedOnly && !vessel.selfManaged) return false;
   if (filters.shipTypes.length > 0 && !filters.shipTypes.includes(vessel.shipType)) return false;
   if (filters.attentionGroups.length > 0 && !filters.attentionGroups.includes(vessel.attentionGroup as VesselAttentionFilterGroup)) return false;

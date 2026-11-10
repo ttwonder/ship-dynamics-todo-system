@@ -50,7 +50,9 @@ try{
   await call('Runtime.enable');await call('Page.enable');await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
   await call('Page.navigate',{url:origin+'/__qa_fleet_risk'});
   await until(()=>evaluate("Boolean(document.querySelector('[aria-label=船隊風險清單]'))"),'original Dashboard button');
-  assert.equal(evidence.requests.length,0,'no risk auto-crawl/read before opening');
+  await until(()=>Promise.resolve(evidence.requests.length===1),'one shared dashboard snapshot read');
+  assert.equal(evidence.requests[0].path,'/rest/v1/rpc/read_ship_fleet_risk_v1','dashboard reads once without crawling');
+  assert.equal(forceCount,0);
   await click('船隊風險清單');await until(async()=>await readSnapshot()===first.id,'cached shared snapshot');
   assert.equal(forceCount,0);assert.match(await text(),/Paris MoU/);assert.match(await text(),/USCG/);
   await screen('desktop-scheduled');

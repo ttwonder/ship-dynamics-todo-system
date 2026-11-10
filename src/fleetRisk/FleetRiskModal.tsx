@@ -1,9 +1,8 @@
-import {useCallback,useEffect,useRef,useState} from 'react';
+import {useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
-import {getSupabaseConfig} from '../cloud';
 import type {VesselNameSource} from '../vesselDisplay';
-import {createFleetRiskClient} from './client';
-import {formatRiskTime,mostRecentScheduledAt,type FleetRiskSnapshot,type FleetRiskState} from './model';
+import type {FleetRiskController} from './useFleetRisk';
+import {formatRiskTime,mostRecentScheduledAt,type FleetRiskSnapshot} from './model';
 import FleetRiskReport from './FleetRiskReport';
 
 function PrintSnapshot({snapshot,vessels,done}:{snapshot:FleetRiskSnapshot;vessels:VesselNameSource[];done:()=>void}){
@@ -28,42 +27,20 @@ function PrintSnapshot({snapshot,vessels,done}:{snapshot:FleetRiskSnapshot;vesse
   return createPortal(<div className="fr-print-root"><FleetRiskReport snapshot={snapshot} vessels={vessels}/></div>,document.body);
 }
 
-export default function FleetRiskModal({vessels,close}:{vessels:VesselNameSource[];close:()=>void}){
-  const [client]=useState(()=>createFleetRiskClient(getSupabaseConfig()));
-  const [state,setState]=useState<FleetRiskState|null>(null);
-  const [loading,setLoading]=useState(false),[submitting,setSubmitting]=useState(false);
-  const [confirm,setConfirm]=useState(false),[error,setError]=useState(''),[unknown,setUnknown]=useState(false);
+export default function FleetRiskModal({vessels,risk,close}:{vessels:VesselNameSource[];risk:FleetRiskController;close:()=>void}){
+  const {state,loading,submitting,error,unknown,read}=risk;
+  const [confirm,setConfirm]=useState(false);
   const [printing,setPrinting]=useState<{snapshot:FleetRiskSnapshot;vessels:VesselNameSource[]}|null>(null);
-  const dialog=useRef<HTMLDialogElement>(null),alive=useRef(false),epoch=useRef(0),controller=useRef<AbortController|null>(null);
+  const dialog=useRef<HTMLDialogElement>(null);
   const closeRef=useRef(close);closeRef.current=close;
-  const begin=()=>{controller.current?.abort();controller.current=new AbortController();return{signal:controller.current.signal,id:++epoch.current};};
-  const read=useCallback(async()=>{
-    const task=begin();setLoading(true);setError('');
-    try{const next=await client.read(task.signal);if(alive.current&&epoch.current===task.id){setState(next);setUnknown(false);}}
-    catch(e){if(alive.current&&!task.signal.aborted)setError(e instanceof Error?e.message:'無法讀取風險清單，原清單未變更。');}
-    finally{if(alive.current&&epoch.current===task.id)setLoading(false);}
-  },[client]);
   useEffect(()=>{
-    alive.current=true;
     const previous=document.activeElement as HTMLElement;
     dialog.current?.showModal();
     void read();
-    return()=>{alive.current=false;++epoch.current;controller.current?.abort();dialog.current?.close();previous?.focus();};
+    return()=>{dialog.current?.close();previous?.focus();};
   },[read]);
-  useEffect(()=>{
-    if(state?.attempt?.status!=='running'||error||submitting)return;
-    const timer=setTimeout(()=>void read(),2500);
-    return()=>clearTimeout(timer);
-  },[state,error,submitting,read]);
   const refresh=async()=>{
-    if(submitting||state?.attempt?.status==='running'||unknown)return;
-    setConfirm(false);setSubmitting(true);setError('');
-    const task=begin();
-    try{
-      const result=await client.refresh(crypto.randomUUID(),task.signal);
-      if(alive.current&&epoch.current===task.id){setState(result.state);setUnknown(false);}
-    }catch(e){if(alive.current&&!task.signal.aborted){setUnknown(true);setError(e instanceof Error?e.message:'更新請求結果未確認，請讀取更新狀態。');}}
-    finally{if(alive.current&&epoch.current===task.id)setSubmitting(false);}
+    setConfirm(false);await risk.refresh();
   };
   const snapshot=state?.snapshot,attempt=state?.attempt;
   const running=attempt?.status==='running';

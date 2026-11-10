@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { InternalControlCase, ScheduleKind, TaskItem, UserAccount, Vessel, VesselAttentionLevel, WeeklyAttentionKey } from './types';
 import { daysDiff, todayDate } from './runtimeUtils';
 import { taipeiDateKey } from './taipeiTime';
@@ -7,6 +7,8 @@ import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention, manualVesselAttentionAllowed, VESSEL_ATTENTION_LEVELS, vesselAttentionClass, vesselAttentionPriorityCount } from './vesselAttention';
 import QuickMorningPicker from './QuickMorningPicker';
 import FleetRiskEntry from './fleetRisk/FleetRiskEntry';
+import {useFleetRisk} from './fleetRisk/useFleetRisk';
+import {fleetRiskRowsByVessel,fleetRiskCardNotice,fleetRiskCardDescription} from './fleetRisk/cardRisk';
 import { vesselAttentionTasks } from './taskAttention';
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
 import { automaticScheduleKind, formatCompleteScheduleDisplay, nextScheduleKind } from './scheduleTime';
@@ -65,6 +67,10 @@ interface DashboardProps {
 export default function Dashboard({ user, itineraryActor, itineraryOperationalFeed, users, supervisorOrder, onSaveSupervisorOrder, vessels, tasks, calendarTasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [vesselFilters, setVesselFilters] = useState(emptyVesselFilterState);
   const [keyword, setKeyword] = useState('');
+  const risk=useFleetRisk();
+  const [riskOpen,setRiskOpen]=useState(false);
+  const riskRows=useMemo(()=>fleetRiskRowsByVessel(vessels,risk.state?.snapshot||null),[vessels,risk.state?.snapshot]);
+  const riskNotice=fleetRiskCardNotice(risk.state,risk.error,risk.loading);
   const [scheduleByVessel, setScheduleByVessel] = useState<Record<string, ScheduleKind>>({});
   const [scheduleNow, setScheduleNow] = useState(() => new Date());
   const [dashboardMode, setDashboardMode] = useState<'cards' | 'itinerary' | 'calendar'>('cards');
@@ -94,6 +100,7 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
       shipType: vessel.shipType.trim(),
       attentionGroup: attentionFilterGroup(attention),
       selectedForMeeting: selected.includes(vessel.id),
+      tokyoRisk: riskRows.get(vessel.id)?.risk || null,
       supervisorIds: supervisorIdsForVessel(vessel, users),
     }] as const;
   }));
@@ -147,7 +154,7 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
   return <section className="dashboard-view">
     <div className="page-heading">
       <div><h1>船舶看板</h1><p>集中查看上下港、位置、載況、時間、貨物、未來一週關注與重要要事。</p></div>
-      <div className="heading-actions no-print"><FleetRiskEntry vessels={vessels}/><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='calendar'} onClick={()=>{if(dashboardMode==='calendar')setDashboardMode('cards');else changeItineraryView('calendar');}}>{dashboardMode==='calendar'?'返回船舶卡片':'顯示行事曆'}</button><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='itinerary'} onClick={()=>setDashboardMode(mode=>mode==='itinerary'?'cards':'itinerary')}>{dashboardMode==='itinerary'?'返回船舶卡片':'顯示Itinerary'}</button>{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>
+      <div className="heading-actions no-print"><FleetRiskEntry vessels={vessels} risk={risk} open={riskOpen} onOpen={()=>setRiskOpen(true)} close={()=>setRiskOpen(false)}/><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='calendar'} onClick={()=>{if(dashboardMode==='calendar')setDashboardMode('cards');else changeItineraryView('calendar');}}>{dashboardMode==='calendar'?'返回船舶卡片':'顯示行事曆'}</button><button type="button" className="btn itinerary-view-toggle" aria-pressed={dashboardMode==='itinerary'} onClick={()=>setDashboardMode(mode=>mode==='itinerary'?'cards':'itinerary')}>{dashboardMode==='itinerary'?'返回船舶卡片':'顯示Itinerary'}</button>{canEdit&&<button className="btn green" onClick={onOpenBatchManagedVessels}>批量更新（已選 {batchSelected.length}）</button>}{canUseMeetings&&<QuickMorningPicker vessels={vessels} selectedIds={selected} onChange={setSelected} onEnter={onStartMeeting}/>} {canUseMeetings&&<button className="btn pink" onClick={() => onStartMeeting()}>開始今日早會</button>}{canUseReports&&<button className="btn primary" onClick={onOpenReport}>建立 PDF 報告</button>}</div>
     </div>
     <div className="metric-grid">
       <div className="metric-card blue"><small>今日船舶</small><b>{vessels.length}</b><span>艘</span></div>
@@ -159,7 +166,7 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
     </div>
     <div className="dashboard-toolbar no-print">
       <input className="dashboard-search" value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜尋船名、港口、貨物、動態..." />
-      <VesselFilterControls key={user.id} filters={vesselFilters} shipTypes={shipTypes} supervisors={supervisors} onChange={setVesselFilters} showMeeting={canUseMeetings} supervisorOrder={supervisorOrder} onSaveSupervisorOrder={user.isActive && (user.role==='owner'||user.role==='admin') ? onSaveSupervisorOrder : undefined}/>
+      <VesselFilterControls showTokyoRisk key={user.id} filters={vesselFilters} shipTypes={shipTypes} supervisors={supervisors} onChange={setVesselFilters} showMeeting={canUseMeetings} supervisorOrder={supervisorOrder} onSaveSupervisorOrder={user.isActive && (user.role==='owner'||user.role==='admin') ? onSaveSupervisorOrder : undefined}/>
     </div>
     {dashboardMode!=='cards'?<Suspense fallback={<div className="itinerary-empty">正在載入 Itinerary 視圖…</div>}><ItineraryDashboard user={user} actor={itineraryActor} operationalFeed={itineraryOperationalFeed} vessels={visible} calendarTaskVessels={vessels} calendarTasks={calendarTasks} displayMode={dashboardMode==='calendar'?'calendar':'table'} onDisplayModeChange={changeItineraryView} selectedVesselIds={dashboardMode==='calendar'?calendarSelected:itinerarySelected} setSelectedVesselIds={dashboardMode==='calendar'?setCalendarSelected:setItinerarySelected}/></Suspense>:<div className="fleet-card-grid">{visible.map(vessel => {
       const vesselTasks = tasks.filter(task => taskHasVessel(task, vessel.id) && !taskIsClosedForVessel(task,vessel.id));
@@ -181,6 +188,8 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
       const attentionSaveState = attentionSaveStates[vessel.id];
       const managerNames = effectiveVesselManagerNames(vessel, users);
       const itineraryFeedRecord=itineraryOperationalFeed?.records[vessel.id];
+      const riskRow=riskRows.get(vessel.id);
+      const riskDescription=fleetRiskCardDescription(riskRow,riskNotice);
       const statusSupplement = [
         vessel.note.statusList.map(status => status === 'drydock/repiar' ? 'drydock/repair' : status).join('、'),
         vessel.note.statusSupplement.trim(),
@@ -190,6 +199,7 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
           <div className="ship-identity"><button type="button" className="ship-name-link" onClick={() => onOpenVessel(vessel.id)} aria-label={`查看 ${dashboardVesselDisplayName(vessel)} 單船詳情`}>{dashboardVesselDisplayName(vessel)}</button></div>
           <div className="ship-head-badges">{abnormal && <span className="abnormal-badge"><i />異常存在</span>}{itineraryOperationalFeed&&itineraryFeedRecord?.status!=='ready'&&<span className={`itinerary-source-badge ${itineraryFeedRecord?.status||'loading'}`} title="上一港、下一港、ETA／ETB／ETD 與貨名貨量的資料來源">{itineraryOperationalSourceLabel(itineraryFeedRecord)}</span>}<select disabled={!canEdit} className={`priority-pill attention-adjust attention-adjust-select ${level}`} aria-label={`${dashboardVesselDisplayName(vessel)} 關注程度`} title={canEdit?'直接選擇自動或不低於目前自動下限的手動關注度':'目前關注度'} value={selectedManualAttention} onChange={event=>onAdjustAttention(vessel.id,event.target.value as VesselAttentionLevel|'')}><option className={`attention-option ${vesselAttentionClass(attentionResult.automatic)}`} value="">自動：{automaticAttentionLevelLabel(attentionResult.automatic, attentionResult.hasPscWindow)}</option>{VESSEL_ATTENTION_LEVELS.map(option=><option className={`attention-option ${vesselAttentionClass(option)}`} key={option} value={option} disabled={!manualVesselAttentionAllowed(option,attentionResult.automatic)}>手動：{attentionLevelLabel(option)}</option>)}</select></div>
           <div className="ship-type-supervisor"><span>{vessel.shipType || '-'}</span><i aria-hidden="true">｜</i><span className="ship-manager-label">分管：</span><span className="ship-manager-names">{managerNames.length ? managerNames.map((name,index)=><span className="ship-manager-name" key={`${name}-${index}`}>{index>0&&<>、<wbr/></>}{name}</span>) : '-'}</span></div>
+          <div className="ship-psc-risk"><button type="button" className={`fleet-risk-card-badge fr-${riskRow?.risk||'unknown'}`} data-risk={riskRow?.risk||'unknown'} data-imo={riskRow?.imo} data-snapshot-id={risk.state?.snapshot?.id} title={riskDescription} aria-label={`${dashboardVesselDisplayName(vessel)}：${riskDescription}`} onClick={()=>setRiskOpen(true)}>{riskRow?.risk||'—'}</button>{riskNotice&&<small className="fleet-risk-card-notice">{riskNotice}</small>}</div>
         </div>
         <div className="ship-operation-grid">
           <div className="ship-route"><b>{vessel.position.lastPort || '未設定'}</b><span>→</span><b>{vessel.position.nextPort || '未設定'}</b></div>
@@ -208,6 +218,6 @@ export default function Dashboard({ user, itineraryActor, itineraryOperationalFe
         <div className="ship-card-foot"><span className="task-mini"><i className="urgent">急 {urgent}</i><i className="high">高 {high}</i><i className="mid">中 {mid}</i><i className="low">低 {low}</i></span><div className="card-buttons no-print">{canEdit&&<button type="button" className={`btn small ${batchSelected.includes(vessel.id)?'green':'ghost'}`} aria-pressed={batchSelected.includes(vessel.id)} onClick={()=>setBatchSelected(batchSelected.includes(vessel.id)?batchSelected.filter(id=>id!==vessel.id):[...batchSelected,vessel.id])}>{batchSelected.includes(vessel.id)?'取消批量選取':'批量選取'}</button>}{canEdit && <button className="btn small" onClick={() => onEdit(vessel.id)}>快速更新</button>}{canCreateTasks && <button className="btn small ghost" onClick={() => onAddTask(vessel.id)}>新增要事</button>}{canUseMeetings&&<button className={`btn small ${selectedForMeeting ? 'pink' : 'ghost'}`} onClick={() => toggleMeeting(vessel.id)}>{selectedForMeeting ? '已選入會議' : '選入會議'}</button>}</div></div>
       </article>;
     })}</div>}
-    {dashboardMode==='cards'&&!visible.length && <div className="empty-state">沒有符合條件的船舶</div>}
+    {dashboardMode==='cards'&&!visible.length && <div className="empty-state">{vesselFilters.tokyoHrsOnly?(risk.loading&&!risk.state?.snapshot?'正在讀取 Tokyo MOU 風險清單…':'沒有符合條件且已確認為 HRS 的船舶；未取得等級不代表低風險。'):'沒有符合條件的船舶'}</div>}
   </section>;
 }
