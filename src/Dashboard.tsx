@@ -7,7 +7,7 @@ import { taskHasVessel, taskVesselIds } from './taskVesselScope';
 import { deriveVesselAttention, manualVesselAttentionAllowed, VESSEL_ATTENTION_LEVELS, vesselAttentionClass, vesselAttentionPriorityCount } from './vesselAttention';
 import QuickMorningPicker from './QuickMorningPicker';
 import FleetRiskEntry from './fleetRisk/FleetRiskEntry';
-import {useFleetRisk} from './fleetRisk/useFleetRisk';
+import {useFleetRisk,type FleetRiskController} from './fleetRisk/useFleetRisk';
 import {fleetRiskRowsByVessel,fleetRiskCardNotice,fleetRiskCardDescription} from './fleetRisk/cardRisk';
 import { vesselAttentionTasks } from './taskAttention';
 import { taskIsClosedForScope, taskIsClosedForVessel } from './taskVesselProgress';
@@ -32,6 +32,7 @@ const automaticAttentionLevelLabel = (level: VesselAttentionLevel, hasPscWindow:
   `${attentionLevelLabel(level)}${level === '高' && hasPscWindow ? '-PSC' : ''}`;
 
 interface DashboardProps {
+  fleetRisk?: FleetRiskController;
   user: UserAccount;
   itineraryActor: ItineraryMainActor;
   itineraryOperationalFeed?: ItineraryOperationalFeed;
@@ -64,10 +65,11 @@ interface DashboardProps {
   canUseReports: boolean;
 }
 
-export default function Dashboard({ user, itineraryActor, itineraryOperationalFeed, users, supervisorOrder, onSaveSupervisorOrder, vessels, tasks, calendarTasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
+export default function Dashboard({ fleetRisk, user, itineraryActor, itineraryOperationalFeed, users, supervisorOrder, onSaveSupervisorOrder, vessels, tasks, calendarTasks, internalControlCases, meetings, selected, setSelected, batchSelected, setBatchSelected, onOpenVessel, onEdit, onAddTask, onToggleAttention, attentionSaveStates = {}, onRetryAttentionSave = () => undefined, onAdjustAttention, onStartMeeting, onOpenReport, onTaskMetric, onOpenBatchManagedVessels, canEdit, canCreateTasks, canUseMeetings, canUseReports }: DashboardProps) {
   const [vesselFilters, setVesselFilters] = useState(emptyVesselFilterState);
   const [keyword, setKeyword] = useState('');
-  const risk=useFleetRisk();
+  const localRisk=useFleetRisk({enabled:!fleetRisk});
+  const risk=fleetRisk||localRisk;
   const [riskOpen,setRiskOpen]=useState(false);
   const riskRows=useMemo(()=>fleetRiskRowsByVessel(vessels,risk.state?.snapshot||null),[vessels,risk.state?.snapshot]);
   const riskNotice=fleetRiskCardNotice(risk.state,risk.error,risk.loading);

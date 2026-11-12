@@ -26,7 +26,7 @@ export function fleetRiskCardNotice(state:FleetRiskState|null,error:string,loadi
   if(state?.snapshot&&Date.parse(state.snapshot.queryStartedAt)<Date.parse(mostRecentScheduledAt(state.serverTime)))return '待更新';
   return !state&&loading?'讀取中':'';
 }
-export function fleetRiskCardDescription(row:FleetRiskRow|undefined,notice:string):string {
+export function fleetRiskCardDescription(row:FleetRiskRow|undefined,notice:string,interactive=true):string {
   const value=row?`Tokyo MOU：${riskLabels[row.risk]}｜IMO ${row.imo}｜取得：${formatRiskTime(row.retrievedAt)}（台北）`:'Tokyo MOU：未取得或無法唯一確認船舶對應；不代表低風險';
-  return `${value}${notice?`｜${notice}${row?'，保留上次成功資料':''}`:''}。點擊查看船隊風險清單。`;
+  return `${value}${notice?`｜${notice}${row?'，保留上次成功資料':''}`:''}。${interactive?'點擊查看船隊風險清單。':''}`;
 }

@@ -1,4 +1,7 @@
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
+import {useFleetRisk,type FleetRiskController} from './fleetRisk/useFleetRisk';
+import {fleetRiskRowsByVessel,fleetRiskCardNotice} from './fleetRisk/cardRisk';
+import VesselRiskBadge from './fleetRisk/VesselRiskBadge';
 import type { AppData, TaskPriority, UserAccount, Vessel } from './types';
 import { itineraryOperationalSourceLabel, type ItineraryOperationalFeedRecord } from './itinerary/itineraryOperationalProjection';
 import { selectVesselDetailTasks, type VesselTaskClosedMode, type VesselTaskSort } from './vesselDetail';
@@ -26,6 +29,7 @@ const priorityClass = (priority: TaskPriority) => priority === '急' ? 'urgent' 
 const priorityRank: Record<TaskPriority, number> = { 急: 0, 高: 1, 中: 2, 低: 3 };
 
 interface VesselDetailPageProps {
+  fleetRisk?: FleetRiskController;
   vessel: Vessel;
   data: AppData;
   currentUser: UserAccount;
@@ -41,7 +45,14 @@ interface VesselDetailPageProps {
   canViewInternalControl: boolean;
 }
 
-export default function VesselDetailPage({ vessel, data, currentUser, itineraryFeedRecord, onBack, onEditVessel, onAddTask, onEditTask, onOpenInternalControl, canEditVessel, canCreateTasks, canEditTasks, canViewInternalControl }: VesselDetailPageProps) {
+const FleetRiskModal=lazy(()=>import('./fleetRisk/FleetRiskModal'));
+
+export default function VesselDetailPage({ fleetRisk, vessel, data, currentUser, itineraryFeedRecord, onBack, onEditVessel, onAddTask, onEditTask, onOpenInternalControl, canEditVessel, canCreateTasks, canEditTasks, canViewInternalControl }: VesselDetailPageProps) {
+  const localRisk=useFleetRisk({enabled:!fleetRisk});
+  const risk=fleetRisk||localRisk;
+  const [riskOpen,setRiskOpen]=useState(false);
+  const riskRow=useMemo(()=>fleetRiskRowsByVessel(data.vessels,risk.state?.snapshot||null).get(vessel.id),[data.vessels,vessel.id,risk.state?.snapshot]);
+  const riskNotice=fleetRiskCardNotice(risk.state,risk.error,risk.loading);
   const [query, setQuery] = useState('');
   const [closedMode, setClosedMode] = useState<VesselTaskClosedMode>('all');
   const [priority, setPriority] = useState<'all' | TaskPriority>('all');
@@ -72,7 +83,8 @@ export default function VesselDetailPage({ vessel, data, currentUser, itineraryF
         {canCreateTasks && <button type="button" className="btn primary" onClick={onAddTask}>＋ 新增待辦</button>}
       </div>
     </div>
-    <div className="page-heading vessel-detail-heading"><div><h1>{vesselDisplayName(vessel)}</h1><p>{vessel.shipType || '未設定船種'}｜{vessel.fullName || vessel.name}</p></div><span className={`priority-pill ${vesselAttentionClass(attention.effective)}`}>{vesselAttentionLabel(attention, attentionTaskItems)}</span></div>
+    <div className="page-heading vessel-detail-heading"><div><h1>{vesselDisplayName(vessel)}</h1><p>{vessel.shipType || '未設定船種'}｜{vessel.fullName || vessel.name}</p></div><div className="vessel-detail-statuses"><VesselRiskBadge row={riskRow} snapshotId={risk.state?.snapshot?.id} notice={riskNotice} onClick={()=>setRiskOpen(true)}/><span className={`priority-pill ${vesselAttentionClass(attention.effective)}`}>{vesselAttentionLabel(attention, attentionTaskItems)}</span></div></div>
+    {riskOpen&&<Suspense fallback={<span role="status">開啟風險清單…</span>}><FleetRiskModal vessels={data.vessels} risk={risk} close={()=>setRiskOpen(false)}/></Suspense>}
     <div className="vessel-detail-metrics">
       <div><small>未結待辦／內控</small><b>{openCount}</b></div><div><small>已結案待辦／內控</small><b>{closedCount}</b></div><div><small>目前位置</small><b>{value(vessel.position.location)}</b></div><div><small>航行狀態</small><b>{value(vessel.position.navigationStatus)}</b></div>
     </div>

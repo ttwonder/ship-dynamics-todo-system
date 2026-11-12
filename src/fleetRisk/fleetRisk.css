@@ -25,6 +25,15 @@
 .fr-table .fr-name{font-weight:700}.fr-table small{display:block;font-size:12px;color:#655b70}.fr-table .fr-high-row .fr-name{color:#a11725}
 .fr-notes{margin-top:9px;padding:8px 10px;background:#f6f3f8;font-size:13px;line-height:1.6}.fr-notes p{font-size:13px}.fr-notes a{color:#3b5795;text-decoration:underline}
 .fr-print-root{display:none}.fr-empty{padding:24px 12px;text-align:center;color:#655b70}
+.fleet-risk-code{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;max-width:100%}
+.fleet-risk-code-badge{display:inline-flex;align-items:center;justify-content:center;min-width:38px;border:1px solid currentColor;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:900;line-height:1.35;white-space:nowrap}
+button.fleet-risk-code-badge{cursor:pointer}
+button.fleet-risk-code-badge:focus-visible{outline:3px solid #9170d7;outline-offset:2px}
+.vessel-detail-statuses{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.report-vessel-risk{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:7px;font-size:9.5px;break-inside:avoid;page-break-inside:avoid}
+.report-vessel-risk .fleet-risk-code-badge{font-size:9.5px;min-width:33px;padding:1px 6px}
+.report-paper header .report-fleet-risk-source{font-size:9px;line-height:1.4;margin-top:4px}
+@media print{.fleet-risk-code-badge{print-color-adjust:exact;-webkit-print-color-adjust:exact}.report-paper .report-vessel-name-cell{break-inside:avoid;page-break-inside:avoid}}
 @media(max-width:650px){.fleet-risk-dialog{width:calc(100vw - 12px);max-width:calc(100vw - 12px);max-height:calc(100dvh - 12px);border-radius:10px}.fleet-risk-dialog .fr-shell{max-height:calc(100dvh - 16px)}.fr-toolbar{padding:9px}.fr-toolbar h2{width:100%;font-size:18px}.fr-scroll{padding:8px}.fr-status{padding:7px 9px}.fr-toolbar .btn{font-size:13px;padding:7px 8px}.fr-report h1{font-size:18px}}
 @media print{
  body.printing-fleet-risk> :not(.fr-print-root){display:none!important}
