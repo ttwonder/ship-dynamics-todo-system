@@ -11,7 +11,7 @@ try {
   handler = createSnapshotHandler({
     rpc: createSnapshotRpc(url, key), allowedOrigins, schedulerToken,
     waitUntil: job => EdgeRuntime.waitUntil(job),
-    onFailure: (runId, code) => console.warn("FLEET_RISK_RUN_FAILED", { runId, code }),
+    onFailure: (runId, code, diagnostic) => console.warn("FLEET_RISK_RUN_FAILED", { runId, code, ...diagnostic }),
   });
 } catch {
   console.error("FLEET_RISK_CONFIGURATION_REQUIRED");

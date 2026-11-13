@@ -30,7 +30,7 @@ export async function collectFleetRisk(options: {
   const abort = () => stop.abort(options.signal.reason);
   options.signal.addEventListener("abort", abort, { once: true });
   if (options.signal.aborted) abort();
-  const budget = abortScope(stop.signal, 120000, "REQUEST_TIMEOUT", 504);
+  const budget = abortScope(stop.signal, 125000, "REQUEST_TIMEOUT", 504);
   // Stagger request starts across lanes as well as pacing each session. This
   // retains overlapping reads without sending a burst to the public service.
   let turn = Promise.resolve(), firstRequest = true;
@@ -100,6 +100,11 @@ export function sourceFailureCode(error: unknown): string {
   return error instanceof SourceError ? error.code : "SOURCE_UNAVAILABLE";
 }
 
+/** Allowlisted metadata only; never return cookies, bodies or raw fetch errors. */
+export function sourceFailureDetails(error: unknown) {
+  return { reason: sourceFailureCode(error), action: error instanceof SourceError ? error.action ?? null : null };
+}
+
 export function createFleetRiskHandler(options?: { allowedOrigins?: string[]; fetchImpl?: typeof fetch }) {
   const fetchImpl = options?.fetchImpl ?? fetch;
   const origins = new Set(
@@ -135,7 +140,7 @@ export function createFleetRiskHandler(options?: { allowedOrigins?: string[]; fe
       return deny(429, "BUSY");
     }
     inFlight++;
-    const budget = abortScope(request.signal, 105000, "REQUEST_TIMEOUT", 504);
+    const budget = abortScope(request.signal, 125000, "REQUEST_TIMEOUT", 504);
     let session: PublicSession | undefined;
     try {
       const incoming = abortScope(budget.signal, 5000, "REQUEST_BODY_TIMEOUT", 408);
@@ -264,7 +269,7 @@ function validateRequest(raw: unknown): FleetRiskRequest {
 }
 
 class SourceError extends Error {
-  constructor(readonly code: string, readonly status = 502) {
+  constructor(readonly code: string, readonly status = 502, readonly action?: Action | "entry") {
     super(code);
   }
 }
@@ -273,7 +278,9 @@ function fail(code = "SOURCE_FORMAT_CHANGED"): never {
 }
 
 function abortReason(signal: AbortSignal): SourceError {
-  return signal.reason instanceof SourceError ? signal.reason : new SourceError("REQUEST_ABORTED", 499);
+  if (signal.reason instanceof SourceError) return signal.reason;
+  return signal.reason instanceof Error && signal.reason.name === "TimeoutError"
+    ? new SourceError("REQUEST_TIMEOUT", 504) : new SourceError("REQUEST_ABORTED", 499);
 }
 function abortScope(parent: AbortSignal, milliseconds: number, code: string, status: number) {
   const controller = new AbortController();
@@ -523,7 +530,7 @@ class PublicSession {
       headers.set("x-requested-with", "XMLHttpRequest");
     }
     const url = SOURCE_URL + (action ? `?action=${action}` : "");
-    const timeout = abortScope(this.signal, 15000, "SOURCE_TIMEOUT", 504);
+    const timeout = abortScope(this.signal, 45000, "SOURCE_TIMEOUT", 504);
     let response: Response | undefined;
     try {
       response = await abortable(
@@ -548,6 +555,10 @@ class PublicSession {
       }
       this.storeCookies(response.headers);
       return await readBounded(response, 1024 * 1024, timeout.signal, "SOURCE_BODY_TOO_LARGE", 502);
+    } catch (error) {
+      const known = timeout.signal.aborted ? abortReason(timeout.signal)
+        : error instanceof SourceError ? error : new SourceError("SOURCE_UNAVAILABLE");
+      throw new SourceError(known.code, known.status, action ?? "entry");
     } finally {
       if (response?.body && !response.bodyUsed) void response.body.cancel().catch(() => {});
       timeout.close();

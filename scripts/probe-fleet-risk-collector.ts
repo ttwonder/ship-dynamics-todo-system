@@ -1,4 +1,4 @@
-import {collectFleetRisk} from '../supabase/functions/fleet-risk/service.ts';
+import {collectFleetRisk,sourceFailureDetails} from '../supabase/functions/fleet-risk/service.ts';
 // Explicit opt-in real official reads; never used by offline tests or application startup.
 const output=Deno.args[0];
 if(!output||!Deno.args.includes('--live'))throw new Error('Usage: <external evidence directory> --live');
@@ -20,4 +20,4 @@ try{
   await Deno.writeTextFile(new URL('live-collected-snapshot.json',root),JSON.stringify(snapshot,null,2));
   const receipt={layer:'Real official Tokyo source via production collector; no Supabase/cron contacted',status:'PASS',count:snapshot.count,counts,maxConcurrent,requests,elapsedSeconds:Math.round((performance.now()-clock)/100)/10,startedAt:started,completedAt:snapshot.queryCompletedAt,snapshotFile:new URL('live-collected-snapshot.json',root).href};
   await Deno.writeTextFile(new URL('live-collector-receipt.json',root),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));
-}catch(error){const receipt={status:'FAIL',error:error instanceof Error?error.message:String(error),http,startedAt:started,elapsedSeconds:Math.round((performance.now()-clock)/100)/10};await Deno.mkdir(root,{recursive:true});await Deno.writeTextFile(new URL('live-collector-failure.json',root),JSON.stringify(receipt,null,2));console.error(JSON.stringify(receipt,null,2));throw error;}
+}catch(error){const receipt={status:'FAIL',diagnostic:sourceFailureDetails(error),error:error instanceof Error?error.message:String(error),http,startedAt:started,elapsedSeconds:Math.round((performance.now()-clock)/100)/10};await Deno.mkdir(root,{recursive:true});await Deno.writeTextFile(new URL('live-collector-failure.json',root),JSON.stringify(receipt,null,2));console.error(JSON.stringify(receipt,null,2));throw error;}

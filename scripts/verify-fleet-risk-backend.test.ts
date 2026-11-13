@@ -335,13 +335,13 @@ Deno.test("user request abort cancels source read with 499, never leaks the supp
   }
 });
 
-Deno.test("15-second source timeout and under-110-second request budget are installed and cleaned up", async () => {
+Deno.test("45-second source timeout and 125-second request budget are installed and cleaned up", async () => {
   const original = globalThis.setTimeout;
   const durations: number[] = [];
   globalThis.setTimeout =
     ((handler: Parameters<typeof setTimeout>[0], timeout?: number, ...args: unknown[]) => {
       durations.push(timeout ?? 0);
-      return original(handler, timeout === 15000 ? 10 : timeout, ...args);
+      return original(handler, timeout === 45000 ? 10 : timeout, ...args);
     }) as typeof setTimeout;
   let timer: number | undefined;
   const fetchImpl: typeof fetch = (_input, init) =>
@@ -359,8 +359,8 @@ Deno.test("15-second source timeout and under-110-second request budget are inst
     const response = await createFleetRiskHandler({ fetchImpl })(request({ action: "roster", queryId }));
     equal(response.status, 504);
     equal((await response.json()).error, "SOURCE_TIMEOUT");
-    assert(durations.includes(15000));
-    assert(durations.some((ms) => ms > 90000 && ms < 110000));
+    assert(durations.includes(45000));
+    assert(durations.includes(125000));
   } finally {
     globalThis.setTimeout = original;
     clearTimeout(timer);
@@ -567,7 +567,7 @@ Deno.test("whole request budget actually aborts an in-progress source call", asy
   const original = globalThis.setTimeout;
   globalThis.setTimeout =
     ((callback: Parameters<typeof setTimeout>[0], ms?: number, ...args: unknown[]) =>
-      original(callback, ms === 105000 ? 10 : ms, ...args)) as typeof setTimeout;
+      original(callback, ms === 125000 ? 10 : ms, ...args)) as typeof setTimeout;
   try {
     const fetchImpl: typeof fetch = (_url, init) =>
       new Promise((_resolve, reject) =>
