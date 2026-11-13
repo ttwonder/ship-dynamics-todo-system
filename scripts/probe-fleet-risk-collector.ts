@@ -1,4 +1,5 @@
 import {collectFleetRisk,sourceFailureDetails} from '../supabase/functions/fleet-risk/service.ts';
+import {sourceFetch} from '../supabase/functions/fleet-risk/sourceFetch.ts';
 // Explicit opt-in real official reads; never used by offline tests or application startup.
 const output=Deno.args[0];
 if(!output||!Deno.args.includes('--live'))throw new Error('Usage: <external evidence directory> --live');
@@ -10,7 +11,7 @@ const http:{action:string;status:number;contentType:string|null}[]=[];
 const fetchImpl:typeof fetch=async(input,init)=>{
   const url=new URL(String(input));if(url.origin!=='https://apcis.tmou.org')throw new Error('Unexpected source host');
   active++;requests++;maxConcurrent=Math.max(active,maxConcurrent);
-  try{const response=await fetch(input,init);http.push({action:url.searchParams.get('action')||'entry',status:response.status,contentType:response.headers.get('content-type')});return response;}finally{active--;}
+  try{const response=await sourceFetch(input,init);http.push({action:url.searchParams.get('action')||'entry',status:response.status,contentType:response.headers.get('content-type')});return response;}finally{active--;}
 };
 try{
   const collected=await collectFleetRisk({signal:controller.signal,fetchImpl,concurrency:3,onProgress:(done,total)=>{if(done===0||done%10===0||done===total)console.log(`Official source progress ${done}/${total}`);}});

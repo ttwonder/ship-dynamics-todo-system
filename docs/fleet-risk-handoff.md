@@ -1,6 +1,6 @@
 # 船隊 PSC 風險清單：本機實作／正式交接
 
-> 目前超時調整與未解決的來源問題，見 [風險抓取超時修正狀態](fleet-risk-timeout-status.md)。下列歷史成功記錄不代表本輪或下一次自然排程成功。
+> 目前狀態見 [風險抓取修正狀態](fleet-risk-timeout-status.md)：`53af7ee` 已部署但正式來源逾時；新的 native HTTPS／gzip 修正版已在本機完整取得 39／39 艘並通過回歸，尚待新部署與正式驗收。下列歷史成功不代表本輪或下一次自然排程成功。
 
 ## 已採用的操作規則
 
@@ -99,7 +99,7 @@ deno lint supabase/functions/fleet-risk/
 - Entry：`supabase/functions/fleet-risk/index.ts`；共享 handler：`handler.ts`；`EdgeRuntime.waitUntil` 維持背景工作，發起 HTTP 不等候全船查詢。
 - `supabase/config.toml` 明確 `functions.fleet-risk.verify_jwt = true`。瀏覽器及 cron 使用既有 anon JWT；service-role key 只在 Edge 自動提供的環境中使用。
 - 另需私下設定 `FLEET_RISK_SCHEDULER_TOKEN`，並與 Vault scheduler token 相同。可選 `FLEET_RISK_ALLOWED_ORIGINS`，預設只有 `https://ttwonder.github.io`。
-- 本機候選：官網單次 45 秒、collector 125 秒；worker 自請求進入起 135 秒，失敗收尾另限 8 秒；資料庫 RPC 每次 12 秒。SQL 固定租約仍 4 分鐘、Cron HTTP 仍 210 秒，前端單次讀取／接受回覆仍 20 秒且不等待全批完成。任何超時保留舊清單，不發布部分結果；尚未部署，不表示正式限制已改。
+- 已部署的 `53af7ee`：官網單次 45 秒、collector 125 秒；worker 自請求進入起 135 秒，失敗收尾另限 8 秒；資料庫 RPC 每次 12 秒。SQL 固定租約仍 4 分鐘、Cron HTTP 仍 210 秒，前端單次讀取／接受回覆仍 20 秒且不等待全批完成。新的 native HTTPS／gzip 修正保留這些期限；本機真查成功，但新版尚未部署／正式驗收。任何超時保留舊清單，不發布部分結果。
 - Supabase 官方限制列 Free worker wall clock 150 秒、Paid 400 秒、CPU 2 秒（不含 async I/O）：`https://supabase.com/docs/guides/functions/limits`。本機 83.22 秒不是 hosted wall-clock／CPU 驗收；部署後必須確認實際 log 與完整讀回。
 - migration、cron installer、唯讀 readback 的完整次序／Vault 名稱見 `docs/fleet-risk-database-handoff.md`。未對既有業務表、行程排程或早會排程作修改。
 

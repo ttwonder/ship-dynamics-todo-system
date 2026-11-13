@@ -11,6 +11,7 @@ import type {
   ShipRisk,
 } from "./types.ts";
 import { REFERENCE_FLEET } from "./referenceFleet.ts";
+import { sourceFetch, SourceTransportError } from "./sourceFetch.ts";
 
 const SOURCE_URL = "https://apcis.tmou.org/public/";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -42,7 +43,7 @@ export async function collectFleetRisk(options: {
     turn = slot.catch(() => {});
     await slot;
     if (budget.signal.aborted) throw abortReason(budget.signal);
-    return (options.fetchImpl ?? fetch)(input, init);
+    return (options.fetchImpl ?? sourceFetch)(input, init);
   };
   const session = new PublicSession(fetchImpl, budget.signal);
   const sessions = [session];
@@ -106,7 +107,7 @@ export function sourceFailureDetails(error: unknown) {
 }
 
 export function createFleetRiskHandler(options?: { allowedOrigins?: string[]; fetchImpl?: typeof fetch }) {
-  const fetchImpl = options?.fetchImpl ?? fetch;
+  const fetchImpl = options?.fetchImpl ?? sourceFetch;
   const origins = new Set(
     (options?.allowedOrigins ?? ["https://ttwonder.github.io"]).map((s) => s.trim()).filter(Boolean),
   );
@@ -557,7 +558,9 @@ class PublicSession {
       return await readBounded(response, 1024 * 1024, timeout.signal, "SOURCE_BODY_TOO_LARGE", 502);
     } catch (error) {
       const known = timeout.signal.aborted ? abortReason(timeout.signal)
-        : error instanceof SourceError ? error : new SourceError("SOURCE_UNAVAILABLE");
+        : error instanceof SourceError ? error
+        : error instanceof SourceTransportError ? new SourceError(error.code)
+        : new SourceError("SOURCE_UNAVAILABLE");
       throw new SourceError(known.code, known.status, action ?? "entry");
     } finally {
       if (response?.body && !response.bodyUsed) void response.body.cancel().catch(() => {});
