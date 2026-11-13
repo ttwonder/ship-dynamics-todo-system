@@ -941,8 +941,25 @@ export default function App() {
               const commandConfig=pending.authority?authorityConfig(token.config,pending.authority):token.config;
               const authorityTransition=Boolean(pending.authority&&pending.authorityOwner&&!sameAuthority(pending.authority,pending.authorityOwner));
               // A cross-source intent was prepared against complete snapshots.
-              const commandReadScope:RecordReadScope=authorityTransition?'full':recordReadScope.current;
-              const readCommandBase=(config:ResolvedSupabaseConfig)=>pending.authority?readBoundCloudData(config,pending.authority,undefined,undefined,commandReadScope):fetchCloudData(config,undefined,undefined,commandReadScope);
+              let commandReadScope:RecordReadScope=authorityTransition?'full':recordReadScope.current;
+              const readCommandBase=async(config:ResolvedSupabaseConfig)=>{
+                const read=()=>pending.authority?readBoundCloudData(config,pending.authority,undefined,undefined,commandReadScope):fetchCloudData(config,undefined,undefined,commandReadScope);
+                let snapshot=await read();
+                if(!base||commandConfig.readMode!=='scoped-v1'||commandReadScope==='full'||isMorningRecordScope(commandReadScope))return snapshot;
+                // Home keeps only two status logs. A peer append can move a
+                // trusted old log outside that preview without deleting it.
+                // Hydrate changed targets before the unchanged B/L/R guard;
+                // never merge a summary as though it were a complete history.
+                for(let attempt=0;snapshot;attempt++){
+                  const expanded=unionRecordScopes(commandReadScope,recordRecoveryReadScope(base,snapshot));
+                  if(recordScopeKey(expanded)===recordScopeKey(commandReadScope))return snapshot;
+                  if(attempt>=3)throw new CloudRebaseConflictError(['相關項目在讀取完整歷程期間持續變動，請稍後再試']);
+                  if(!isCurrent()||identitySessionGeneration.current!==identityGeneration||liveCurrentUserId.current!==actorUserId||!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
+                  commandReadScope=expanded;
+                  snapshot=await read();
+                }
+                return snapshot;
+              };
               const pendingActorIsCurrent=()=>identitySessionGeneration.current===identityGeneration&&liveCurrentUserId.current===actorUserId;
               if(!isCurrent()||!pendingActorIsCurrent())throw new StaleAsyncConfigError();
               if(!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
@@ -1074,7 +1091,7 @@ export default function App() {
               rebaseAttempts=0;
               if(pending.authorityOwner!==originalAuthority.current)throw new BrowserAuthorityError('browser-authority-confirmation-stale');
               if(pending.authority)originalAuthority.current=pending.authority;
-              if(authorityTransition)recordReadScope.current=commandReadScope;
+              if(authorityTransition||commandConfig.readMode==='scoped-v1')recordReadScope.current=commandReadScope;
               lastCloudRevision.current = persisted.revision;
               confirmCloudSnapshot(activeCloudIdentity.current,persisted);
               setStaleBrowserRecoveryOffered(false);

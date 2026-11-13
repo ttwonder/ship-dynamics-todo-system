@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import {createHash,randomUUID} from 'node:crypto';
+import {createServer} from 'vite';
+
+const scopeLoader=await createServer({server:{middlewareMode:true},appType:'custom',logLevel:'silent'});
+let recordScopeFunctions;
+try{recordScopeFunctions=await scopeLoader.ssrLoadModule('/src/cloudRecordScopes.ts');}finally{await scopeLoader.close();}
 
 // Actual original-App action bodies and authority reader; controlled I/O only.
 const source=fs.readFileSync('src/App.tsx','utf8');
@@ -109,6 +114,7 @@ for(const target of ['records-v1','legacy'])await check(`MR-S04-bridge-complete-
 });
 for(const bridge of [false,true])await check(`MR-S05-save-read-coverage-${bridge?'bridge':'same-authority'}`,async()=>{
  const x=setup(),e=x.env;e.token={config:x.state.config};e.pending={authority:x.state.binding,authorityOwner:bridge?{...x.state.binding,source:'legacy',epoch:1}:x.state.binding};
+ Object.assign(e,recordScopeFunctions,{base:x.base});
  const start=source.indexOf('              const commandConfig='),end=source.indexOf('              const pendingActorIsCurrent=',start);assert.ok(start>=0&&end>start);
  vm.runInContext(compile(`${source.slice(start,end)}globalThis.commandRead=readCommandBase;`),e);
  await e.commandRead(x.state.config);assert.equal(x.state.reads[0].scope,bridge?'full':'home','a full bridge baseline must not rebase against a home summary');

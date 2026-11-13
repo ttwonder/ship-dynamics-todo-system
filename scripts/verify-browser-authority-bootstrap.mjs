@@ -53,7 +53,7 @@ try{
    readBrowserAuthority:async()=>{state.reads.push('authority');if(options.authority) return options.authority();return selectedBinding;},
    readBoundCloudData:async(c,b,signal,confirmed,scope)=>{state.reads.push('bound-business');assert.equal(b,selectedBinding);const effective=authority.authorityConfig(c,b);assert.equal(effective.storageMode,selectedBinding.source);state.businessReads.push({readMode:effective.readMode,scope});if(options.business)return options.business(scope,state);return remote;},
    ...scopes,prepareCloudSyncSnapshot,CloudRebaseConflictError,confirm:()=>true,window:{clearTimeout:()=>{}},
-   liveCurrentUserId:{current:'fixture-actor'},identitySessionGeneration:{current:1},liveAuthorizationEpoch:{current:'fixture-authorization'},currentUser:{id:'fixture-actor'},liveData:{current:local},cloudSyncInFlight:{current:false},cloudSaveInFlight:{current:null},saveTimer:{current:null},pendingCloudData:{current:{rejectAll:()=>{}}},
+   liveCurrentUserId:{current:'fixture-actor'},identitySessionGeneration:{current:1},liveAuthorizationEpoch:{current:'fixture-authorization'},currentUser:{id:'fixture-actor'},liveData:{current:local},cloudSyncInFlight:{current:false},cloudSaveInFlight:{current:null},saveTimer:{current:null},pendingCloudData:{current:{rejectAll:()=>{}}},relatedMutationHandoffInFlight:{current:null},
    setCloudSyncing:()=>{},nowIso:()=> '2026-09-13T00:01:00.000Z',enqueueCloudSave:async data=>state.submissions.push(data),retainPageDraftFeedback:()=>false,setStaleBrowserRecoveryOffered:()=>{},showSaveToast:()=>{},classifyCloudSyncFailure:e=>({kind:'controlled',message:e.message}),shouldOfferStaleBrowserRecovery:()=>false,
    fetchCloudDataRpc:async()=>{state.fallbackReads++;return remote;},
   };

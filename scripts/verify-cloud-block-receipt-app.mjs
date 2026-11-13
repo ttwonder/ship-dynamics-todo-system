@@ -47,7 +47,7 @@ assert.equal((saveSource.match(/await acquireLegacyCloudSaveTurn\(\);/g) || []).
 
 console.log('cloud_block_receipt_app_wiring=PASS');
 assert.ok(saveSource.includes('assertAuthorityAdmission(token.config,pending.authority)'), 'new submissions validate admission independently');
-assert.ok(saveSource.includes('fetchCloudDataRpc(commandConfig,signal,undefined,commandReadScope)') && saveSource.includes("const commandReadScope:RecordReadScope=authorityTransition?'full':recordReadScope.current;"), 'historical receipt readback stays on its original command source and preserves full cross-source coverage');
+assert.ok(saveSource.includes('fetchCloudDataRpc(commandConfig,signal,undefined,commandReadScope)') && saveSource.includes("let commandReadScope:RecordReadScope=authorityTransition?'full':recordReadScope.current;"), 'historical receipt readback stays on its original command source and preserves full cross-source coverage');
 assert.ok(saveSource.includes('pending.authorityOwner!==originalAuthority.current'), 'queued snapshots cannot be transplanted across authority adoption');
 
 // Execute the actual App deadline selectors, not a duplicate proposed budget.
