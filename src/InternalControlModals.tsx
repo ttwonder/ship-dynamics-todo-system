@@ -190,12 +190,13 @@ export function prepareInternalControlEditForSave(draft:InternalControlCase,pend
   return next;
 }
 
-export function InternalControlCloseDateDialog({count,minDate,busy,readOnly=false,onCancel,onConfirm,effect}:{count:number;minDate:string;busy:boolean;readOnly?:boolean;effect?:string;onCancel:()=>void;onConfirm:(date:string)=>void}) {
+export function InternalControlCloseDateDialog({count,minDate,busy,readOnly=false,onCancel,onConfirm,effect}:{count:number;minDate:string;busy:boolean;readOnly?:boolean;effect?:(date:string)=>string;onCancel:()=>void;onConfirm:(date:string)=>void}) {
   const [date,setDate]=useState('');
   const [error,setError]=useState('');
   return <div className="modal-backdrop"><form className="modal ic-close-date-modal" role="dialog" aria-modal="true" aria-labelledby="ic-close-date-title" onSubmit={event=>{event.preventDefault();if(busy||readOnly)return;if(!isValidInternalControlDate(date)||date<minDate){setError('請選擇有效的結案日期，且不得早於報告日期。');return;}onConfirm(date);}}>
     <div className="modal-head"><h2 id="ic-close-date-title">確認結案{count>1?`（${count} 筆）`:''}</h2></div>
-    <p>選擇實際結案日期後確認；期望完成日期/DL 不會因此改動。雲端確認成功後才算完成。</p>{effect&&<p>{effect}</p>}
+    <p>選擇實際結案日期後確認；期望完成日期/DL 不會因此改動。雲端確認成功後才算完成。</p>
+    <TrackingLifecycleHint text={effect?.(date) || ''}/>
     <div className="field"><label htmlFor="ic-close-date">結案日期 *</label><input id="ic-close-date" aria-label="結案日期" type="date" autoFocus required min={minDate} value={date} disabled={busy||readOnly} onChange={event=>{setDate(event.target.value);setError('');}}/></div>
     {error&&<p role="alert">{error}</p>}
     <div className="modal-actions"><button type="button" className="btn ghost" disabled={busy} onClick={onCancel}>取消結案</button><button type="submit" className="btn green" disabled={busy||readOnly}>{busy?'保存中…':'確認結案'}</button></div>
@@ -203,9 +204,10 @@ export function InternalControlCloseDateDialog({count,minDate,busy,readOnly=fals
 }
 
 export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelete, showWithdrawSync, canWithdrawSync, withdrawSyncReason, close, save, onWithdrawSync, onDelete }: { item: InternalControlCase; data: AppData; vessels: Vessel[]; canEdit: boolean; canClose: boolean; canDelete: boolean; showWithdrawSync: boolean; canWithdrawSync: boolean; withdrawSyncReason: string; close: () => void; save: (item: InternalControlCase, projection?: InternalControlTaskProjection) => boolean | Promise<boolean>; onWithdrawSync: (item: InternalControlCase) => boolean | Promise<boolean>; onDelete: (item: InternalControlCase) => boolean | Promise<boolean> }) {
-  const trackingEffect=trackingLifecycleExplanation(data,item.id);
   const linkedTask: TaskItem | undefined = item.linkedTaskId ? data.tasks.find(task => task.id === item.linkedTaskId) : undefined;
   const [draft, setDraft] = useState(item);
+  const explainLifecycle = (date?: string) => trackingLifecycleExplanation(data,item.id,{date,createTask:!item.syncToTask && draft.syncToTask});
+  const trackingEffect = explainLifecycle();
   const [projection, setProjection] = useState<InternalControlTaskProjection>({
     categories: linkedTask?.categories?.length ? [...linkedTask.categories] : (item.category ? [item.category] : []),
     equipmentSubcategory: linkedTask?.equipmentSubcategory || item.equipmentSubcategory,
@@ -241,8 +243,8 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
   const saveClosedState=()=>{
     if(!canClose||savingRef.current||withdrawing)return;
     if(!item.isClosed){setChoosingClosedDate(true);return;}
-    const confirmation=`確定將此內控案件改為未結案？${item.linkedTaskId?'關聯要事也會同步改為未結案。':''}\n\n既有內容、歷程及期望完成日期/DL 均保留。雲端確認後才算完成。`;
-    void submit({...draft,isClosed:false,closedDate:undefined},confirmation+(trackingEffect?'\n\n'+trackingEffect:''));
+    const confirmation=trackingEffect ? `確定將此內控案件改為未結案？\n${trackingEffect}\n雲端確認後才算完成。` : `確定將此內控案件改為未結案？${item.linkedTaskId?'關聯要事也會同步改為未結案。':''}\n\n既有內容、歷程及期望完成日期/DL 均保留。雲端確認後才算完成。`;
+    void submit({...draft,isClosed:false,closedDate:undefined},confirmation);
   };
   const withdrawSync=async()=>{
     if(!canWithdrawSync||withdrawing||savingRef.current)return;
@@ -267,7 +269,7 @@ export function CaseEditModal({ item, data, vessels, canEdit, canClose, canDelet
       {item.isClosed&&<p className="muted">已結案｜結案日期：{item.closedDate||'未記錄'}；如需修改，請先改為未結案。</p>}
     </fieldset>
     <section className="status-history"><h3>狀態歷程</h3>{draft.statusLogs.length ? draft.statusLogs.map(log => <article key={log.id}><b>{log.text}</b><small>{log.at ? formatTaipeiDateTime(log.at) : '尚未保存'}｜{log.by || '目前使用者'}</small></article>) : <p className="muted">尚無狀態紀錄</p>}</section>
-    <div className="modal-actions ic-edit-actions">{showWithdrawSync && <button type="button" className="btn red" disabled={!canWithdrawSync||withdrawing||saving||choosingClosedDate} title={!canWithdrawSync?withdrawSyncReason:undefined} onClick={()=>void withdrawSync()}>{withdrawing?'撤回中…':'撤回同步要事'}</button>}{canDelete && <button className="btn danger" disabled={saving||withdrawing||choosingClosedDate} onClick={async () => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`) && await onDelete(item)) close(); }}>刪除案件</button>}<span/><button className="btn ghost" disabled={saving||withdrawing||choosingClosedDate} onClick={close}>取消</button>{canEdit&&canClose&&<button type="button" className="btn green ic-close-save" title={trackingEffect || undefined} disabled={saving||withdrawing||choosingClosedDate} onClick={saveClosedState}>{item.isClosed?'改為未結案':'結案並保存'}</button>}{canEdit && <button className="btn primary" disabled={saving||withdrawing||choosingClosedDate} onClick={()=>void submit()}>{saving?'保存中…':'保存更新'}</button>}</div>
-    {choosingClosedDate&&<InternalControlCloseDateDialog effect={trackingEffect} count={1} minDate={draft.reportDate} busy={saving} onCancel={()=>setChoosingClosedDate(false)} onConfirm={date=>{if(canClose)void submit({...draft,isClosed:true,closedDate:date});}}/>}
+    <div className="modal-actions ic-edit-actions">{showWithdrawSync && <button type="button" className="btn red" disabled={!canWithdrawSync||withdrawing||saving||choosingClosedDate} title={!canWithdrawSync?withdrawSyncReason:undefined} onClick={()=>void withdrawSync()}>{withdrawing?'撤回中…':'撤回同步要事'}</button>}{canDelete && <button className="btn danger" disabled={saving||withdrawing||choosingClosedDate} onClick={async () => { if (confirm(`確定刪除此內控案件${item.linkedTaskId ? '及其關聯要事' : ''}？此操作不可復原。`) && await onDelete(item)) close(); }}>刪除案件</button>}<span/><button className="btn ghost" disabled={saving||withdrawing||choosingClosedDate} onClick={close}>取消</button>{canEdit&&canClose&&<button type="button" className="btn green ic-close-save" disabled={saving||withdrawing||choosingClosedDate} onClick={saveClosedState}>{item.isClosed?'改為未結案':'結案並保存'}</button>}{canEdit && <button className="btn primary" disabled={saving||withdrawing||choosingClosedDate} onClick={()=>void submit()}>{saving?'保存中…':'保存更新'}</button>}</div>
+    {choosingClosedDate&&<InternalControlCloseDateDialog effect={explainLifecycle} count={1} minDate={draft.reportDate} busy={saving} onCancel={()=>setChoosingClosedDate(false)} onConfirm={date=>{if(canClose)void submit({...draft,isClosed:true,closedDate:date});}}/>}
   </div></div>;
 }

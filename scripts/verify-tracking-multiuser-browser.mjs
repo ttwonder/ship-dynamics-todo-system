@@ -86,7 +86,7 @@ try{
    if(m.method==='Fetch.requestPaused'){const u=new URL(m.params.request.url),allowed=u.origin===qa.origin||['data:','blob:'].includes(u.protocol);if(!allowed)evidence.external.push(u.origin);await call(allowed?'Fetch.continueRequest':'Fetch.failRequest',allowed?{requestId:m.params.requestId}:{requestId:m.params.requestId,errorReason:'BlockedByClient'},m.sessionId);}
    if(m.method==='Page.javascriptDialogOpening'){
     const {type,message}=m.params,abnormal=type==='confirm'&&message.startsWith('是否將這筆關聯要事');
-    const expected=abnormal||type==='beforeunload'||(type==='prompt'&&message==='請選擇完成日期（YYYY-MM-DD）')||(type==='confirm'&&/^(重新核對|確認保存本次結案|確定將此內控案件改為未結案|確定刪除此內控案件|確定刪除待辦|同步最新會保留本機修改)/.test(message))||(type==='alert'&&/^(tracking-stale-source|跟蹤保存結果尚未確認|跟蹤保存｜internal-control:|此項目正在由|請務必在FLOW系統中申報)/.test(message));
+    const expected=abnormal||type==='beforeunload'||(type==='prompt'&&message==='請選擇完成日期（YYYY-MM-DD）')||(type==='confirm'&&/^(重新核對|確認保存本次(?:結案日期更正|結案|重開)？|確定將此內控案件改為未結案|確定刪除此內控案件|確定刪除待辦|同步最新會保留本機修改)/.test(message))||(type==='alert'&&/^(tracking-stale-source|跟蹤保存結果尚未確認|跟蹤保存｜internal-control:|此項目正在由|請務必在FLOW系統中申報)/.test(message));
     (evidence.dialogs??=[]).push({caseId:currentCase,actor:pages.find(p=>p.s===m.sessionId)?.actor,type,message});if(!expected)evidence.errors.push('Unexpected dialog: '+message);
     await call('Page.handleJavaScriptDialog',{accept:expected&&!abnormal,...(type==='prompt'?{promptText:'2026-09-26'}:{})},m.sessionId);
    }

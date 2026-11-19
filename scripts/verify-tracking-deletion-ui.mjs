@@ -68,8 +68,8 @@ try {
   for(const text of ['來源已刪除','已批准','申請理由','確認重複','保留完整內容','原補充','原進度','2026-10-01'])assert.ok(history.includes(text),'retained details/history: '+text);
   assert.ok(!history.includes('byUserId'));assert.ok(!history.includes('要事'));
   const {trackingLifecycleExplanation}=await vite.ssrLoadModule('/src/tracking/TrackingLifecycleHint.tsx');
-  const linked={...deleted,linkState:'active',linkedCaseId:'case-1'};const linkedData={...data,trackingItems:[linked],internalControlCases:[{id:'case-1',trackingItemId:linked.id,linkedTaskId:'task-1'}],tasks:[{id:'task-1',internalControlCaseId:'case-1'}]};
-  const explanation=trackingLifecycleExplanation(linkedData,'case-1');assert.ok(explanation.includes('來源已刪除'));assert.ok(explanation.includes('重複申請'));assert.ok(explanation.includes('不會還原'));assert.ok(explanation.includes('task-1'));
+  const linked={...deleted,linkState:'active',linkedCaseId:'case-1'};const linkedData={...data,trackingItems:[linked],internalControlCases:[{id:'case-1',vesselId:row.vesselId,isClosed:false,trackingItemId:linked.id,syncToTask:true,linkedTaskId:'task-1'}],tasks:[{id:'task-1',vesselId:row.vesselId,isClosed:false,isInternalControl:true,description:'查核重複申請',internalControlCaseId:'case-1'}]};
+  const explanation=trackingLifecycleExplanation(linkedData,'case-1');assert.ok(explanation.includes('來源已刪除'));assert.ok(explanation.includes('重複申請'));assert.ok(explanation.includes('不會還原'));assert.ok(explanation.includes('要事：查核重複申請'));assert.ok(!explanation.includes('task-1'));
   cases.push('UI-DEL-04-readable-history-retained-details-and-source-deleted-linked-hint');
   console.log(JSON.stringify({gate:'tracking-deletion-ui',status:'PASS',caseCount:cases.length,cases}));
 } finally {await vite.close();}

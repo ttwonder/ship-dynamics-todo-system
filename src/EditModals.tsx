@@ -222,7 +222,13 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const lifecycleReadOnly=readOnly||!canClose||(perVesselMode&&!editingSingleVessel);
   const globalReadOnly=readOnly||saving||editingSingleVessel||(perVesselMode&&!canEditOverall);
   const change = (fn: (target: TaskItem) => void) => {if(saving&&!onProgressScopeChange)return;draftEditVersion.current++;setDraft(previous => { if (!previous) return previous; const next=clone(previous); fn(next); next.updatedAt=nowIso(); next.updatedBy=currentUser.id; if(creating)onDraftChange?.(clone(next)); return next; });};
-  const trackingEffect=currentUser.role!=='vessel'?trackingLifecycleExplanation(data,task.internalControlCaseId):'';
+  const trackingEffectFor = (next: TaskItem) => {
+    if (currentUser.role === 'vessel' || editingSingleVessel || !task) return '';
+    const correcting = task.isClosed && next.isClosed && task.closedDate !== next.closedDate;
+    const action = correcting ? 'correct-close-date' : (task.isClosed ? 'reopen' : 'close');
+    return trackingLifecycleExplanation(data, task.internalControlCaseId, {taskId:task.id,action,date:next.isClosed ? next.closedDate : undefined});
+  };
+  const trackingEffect = trackingEffectFor(draft);
   const selectedProgress=editingSingleVessel?taskProgressForVessel(draft,progressScope):{vesselId:'overall',status:draft.status,isClosed:draft.isClosed,closedDate:draft.closedDate,closedBy:draft.closedBy,updatedAt:draft.updatedAt,updatedBy:draft.updatedBy,statusLogs:draft.statusLogs};
   const changeProgress=(fn:(progress:ReturnType<typeof taskProgressForVessel>)=>void)=>change(target=>{
     if(progressScope==='overall'){
@@ -283,7 +289,14 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
     if (saved.isClosed) { saved.closedDate ||= todayDate(); saved.closedBy ||= currentUser.id; }
     else { delete saved.closedDate; delete saved.closedBy; }
     setSaving(true);
-    try{if(trackingEffect&&(saved.isClosed!==task.isClosed||saved.closedDate!==task.closedDate)&&!confirm(`確認保存本次結案／重開變更？\n${trackingEffect}`))return;if (await onSave(saved, creating, expectedUpdatedAtRef.current, expectedRevisionRef.current)) close();}
+    try{
+      if (saved.isClosed!==task.isClosed || saved.closedDate!==task.closedDate) {
+        const effect = trackingEffectFor(saved);
+        const action = !saved.isClosed ? '重開' : task.isClosed ? '結案日期更正' : '結案';
+        if (effect && !confirm(`確認保存本次${action}？\n${effect}`)) return;
+      }
+      if (await onSave(saved, creating, expectedUpdatedAtRef.current, expectedRevisionRef.current)) close();
+    }
     finally{setSaving(false);}
   };
   const remove = async () => {
@@ -316,7 +329,7 @@ export function TaskEditModal({ task, creating = false, data, visibleVessels, cu
   const plannedSchedule=parsedPlannedDuration.ok&&parsedPlannedDuration.value!==undefined
     ?buildPlannedTaskSchedule(draft.plannedStartDate,parsedPlannedDuration.value,'UTC')
     :null;
-  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" disabled={saving} onClick={()=>void remove()}>刪除待辦</button>}{!readOnly&&!creating&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} title={trackingEffect || undefined} disabled={saving||lifecycleReadOnly} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" disabled={saving} onClick={close}>{readOnly?'關閉':creating?'取消並關閉':'取消'}</button>{!readOnly&&<button className="btn primary" disabled={saving} onClick={save}>{saving?'正在確認雲端…':creating?'保存並關閉':'保存變更'}</button>}</div></div>
+  return <div className="modal-backdrop"><div className="modal edit-modal" role="dialog" aria-modal="true" aria-labelledby="task-edit-title"><div className="modal-header"><div><h2 id="task-edit-title">{editorTitle}</h2><small>{editingSingleVessel?`${vesselDisplayName(selectedVessel!)} 單船進度`:'總體進度'}｜{selectedProgress.isClosed?'已結案':'未結'}｜{readOnly?'只讀檢視':'按保存才會寫入資料'}</small></div><div className="heading-actions">{!readOnly&&!creating&&!editingSingleVessel&&canDelete&&<button className="btn red" disabled={saving} onClick={()=>void remove()}>刪除待辦</button>}{!readOnly&&!creating&&canClose&&<button className={`btn ${selectedProgress.isClosed?'green':'red'}`} disabled={saving||lifecycleReadOnly} onClick={toggleClosed}>{selectedProgress.isClosed?'重新開啟':'標記結案'}</button>}<button className="btn ghost" disabled={saving} onClick={close}>{readOnly?'關閉':creating?'取消並關閉':'取消'}</button>{!readOnly&&<button className="btn primary" disabled={saving} onClick={save}>{saving?'正在確認雲端…':creating?'保存並關閉':'保存變更'}</button>}</div></div>
     <TrackingLifecycleHint text={trackingEffect}/>
     {readOnly&&readOnlyReason&&<div className="callout info read-only-server-note" role="status"><b>只讀詳情</b><span>{readOnlyReason}；此頁不可修改或保存。</span></div>}
     <div className={readOnly?'read-only-body':''} aria-readonly={readOnly}>

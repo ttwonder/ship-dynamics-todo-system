@@ -63,6 +63,23 @@ export function recordRecoveryReadScope(base:AppData,local:AppData):RecordReadSc
   const trackingVesselIds=[...new Set([...(base.trackingItems || []),...(local.trackingItems || [])].map(row=>row.vesselId))].sort();
   return unionRecordScopes('home',{targets,trackingVesselIds});
 }
+/** In a live save we already know the editor's read coverage. Hydrate only
+ * changed previews from a newer revision. A linked tracking row is NOT proof
+ * that the editor loaded every tracking item for that vessel. */
+export function expandChangedRecordHistoryScope(scope:RecordReadScope,base:AppData,remote:AppData):RecordReadScope {
+  if(scope==='full'||remote.revision<=base.revision)return scope;
+  const targets:RecordTarget[]=[];
+  const explicit=new Set(typeof scope==='object'?scope.targets.map(t=>JSON.stringify([t.collection,t.id])):[]);
+  for(const collection of ['tasks','internalControlCases','meetings','agendaReports'] as const){
+    if(isMorningRecordScope(scope)&&collection!=='agendaReports')continue;
+    const before=new Map((base[collection] || []).map(row=>[row.id,row] as const));
+    for(const row of remote[collection] || []){
+      if(!explicit.has(JSON.stringify([collection,row.id]))&&JSON.stringify(before.get(row.id))!==JSON.stringify(row))targets.push({collection,id:row.id});
+    }
+  }
+  return targets.length?unionRecordScopes(scope,{targets}):scope;
+}
+
 export type RecordScopeSnapshot = { scopeKey:string; workspace:string; revision: number; root: Record<string, unknown>; collections: Record<string, { ids: string[]; rows: Record<string, Row> }> };
 const clone=<T>(v:T):T=>JSON.parse(JSON.stringify(v));
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);

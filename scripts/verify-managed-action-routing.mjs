@@ -128,6 +128,17 @@ for(const bridge of [false,true])await check(`MR-S05-save-read-coverage-${bridge
  const publishStart=source.indexOf("              if(pending.authorityOwner!==originalAuthority.current)throw new BrowserAuthorityError('browser-authority-confirmation-stale');"),publishEnd=source.indexOf('              lastCloudRevision.current =',publishStart);assert.ok(publishStart>=0&&publishEnd>publishStart);
  vm.runInContext(compile(source.slice(publishStart,publishEnd)),e);assert.equal(e.originalAuthority.current,x.state.binding);assert.equal(e.recordReadScope.current,bridge?'full':'home');
 });
+for(const revisionDelta of [0,1])await check(`MR-S06-linked-case-keeps-exact-tracking-coverage-${revisionDelta}`,async()=>{
+ const x=setup(),e=x.env;const scope={targets:[{collection:'internalControlCases',id:'case-a'}]};
+ const base={...x.base,internalControlCases:[{id:'case-a',statusLogs:[{id:'1'},{id:'2'},{id:'3'}]}],trackingItems:[{id:'source-a',vesselId:'v1',linkState:'active',linkedCaseId:'case-a'}]};
+ Object.assign(e,recordScopeFunctions,{base,token:{config:x.state.config},pending:{authority:x.state.binding,authorityOwner:x.state.binding},actorUserId:'actor-a',identityGeneration:1,isCurrent:()=>true,configIoCoordinator:ref({isCurrent:()=>true})});
+ e.recordReadScope.current=scope;
+ e.fetchCloudDataRpc=async(_c,_signal,_confirmed,s)=>{x.state.reads.push(copy(s));const r=copy(base);r.revision+=revisionDelta;if(s.trackingVesselIds?.includes('v1'))r.trackingItems.push({id:'sibling',vesselId:'v1'});return r;};
+ const start=source.indexOf('              const commandConfig='),end=source.indexOf('              const pendingActorIsCurrent=',start);
+ vm.runInContext(compile(`${source.slice(start,end)}globalThis.commandRead=readCommandBase;`),e);
+ const remote=await e.commandRead(x.state.config);e.assertRemoteExtendsDurableHistory('raw-identity',base,remote,x.state.binding);
+ assert.deepEqual(remote.trackingItems,base.trackingItems,'a close must not import unrelated same-vessel sources into the comparison');assert.deepEqual(x.state.reads,[scope]);
+});
 function member(options={}){
  const x=setup(options),e=x.env;
  Object.assign(e,{taskOpenRequests:ref({isCurrent:()=>true}),clearBlockedTaskLock:()=>{},setTaskReadOnlyData:()=>{},setTaskReadOnlyReason:()=>{},taskLockIsAuthorized:()=>true,

@@ -176,6 +176,22 @@ try{
   if(rewritten)untouched(x);else assert.ok(appDataContentEqual(x.state.publications.at(-1),full));
   pass('BOOT-SCOPE04-legacy-'+mode+'-'+(rewritten?'rewritten-rejected':'exact-confirmed'));
  }
+ // A dirty case restored from exact editor coverage must not read a vessel-wide
+ // tracking list that was never part of its confirmed baseline.
+ for(const mode of ['open-tab','reload','rediscovery']){
+  const {runTrackingCommand,prefillTrackingCase}=await server.ssrLoadModule('/src/tracking/trackingWorkflow.ts');
+  const owner=base.users.find(u=>u.role==='owner'),vessel=base.vessels[0],ctx={actorId:owner.id,at:base.updatedAt,operationId:'test-create'};
+  const source={id:'source-a',kind:'supply',vesselId:vessel.id,referenceNo:'F-TEST',description:'test',applicationDate:'2026-01-15',urgency:'normal',progress:'pending',expectedDate:'2026-10-01',deliveryStatus:'not-delivered',isClosed:false,statusLogs:[]};
+  let linked=runTrackingCommand(structuredClone(base),{type:'create',items:[source]},ctx);
+  const item=prefillTrackingCase(linked,linked.trackingItems[0],'case-a').item;
+  linked=runTrackingCommand(linked,{type:'sync',items:[{id:source.id,expectedUpdatedAt:ctx.at,item}]},{...ctx,operationId:'test-link'});
+  const confirmed=recovery.parseConfirmedCloudBase(recovery.serializeConfirmedCloudBase(historyIdentity,linked),historyIdentity);
+  assert.equal(confirmed?.trackingItems?.length,1,'valid normalized fixture');
+  const local=runTrackingCommand(confirmed,{type:'lifecycle',action:'close',date:'2026-11-19',targets:[{entry:'internal-control',id:item.id,expectedUpdatedAt:ctx.at}]},{...ctx,operationId:'test-close'});
+  const scope={targets:[{collection:'internalControlCases',id:item.id}]};
+  let ready=mode!=='rediscovery';x=await setup({binding:records,persistedReadScope:scope,confirmedBase:confirmed,local:mode==='open-tab'?confirmed:local,authority:()=>{if(!ready)throw new Error('transient');return records;},business:s=>{const result=structuredClone(confirmed);if(s.trackingVesselIds?.includes(vessel.id))result.trackingItems.push({...result.trackingItems[0],id:'unrelated'});return result;}});await x.finish();
+  x.context.liveData.current=local;ready=true;await x.context.syncLatest();assert.equal(x.state.submissions.length,1,`${mode}: ${x.state.status}`);assert.ok(x.state.submissions[0].trackingItems[0].isClosed&&x.state.submissions[0].internalControlCases.find(c=>c.id===item.id)?.closedDate==='2026-11-19');assert.equal(x.state.submissions[0].trackingItems.length,1);assert.ok(x.state.businessReads.every(r=>!r.scope.trackingVesselIds?.length));pass('BOOT-SCOPE06-dirty-exact-tracking-'+mode);
+ }
  const summarizedReports=structuredClone(base);summarizedReports.agendaReports=[{...base.agendaReports[0],id:'summary-only',snapshot:undefined,__recordSnapshotAvailable:true}];
  assert.ok(!scopes.recordRecoveryReadScope(summarizedReports,summarizedReports).targets?.some(t=>t.collection==='agendaReports'),'an undefined normalized snapshot must not promote a report summary');
  pass('BOOT-SCOPE05-undefined-snapshot-is-not-loaded-detail');

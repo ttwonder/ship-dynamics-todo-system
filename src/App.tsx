@@ -15,7 +15,7 @@ import type { TrackingSubmission } from './tracking/trackingUiTypes';
 import { calculateTrackingStatistics, type TrackingStatisticsQuery } from './tracking/trackingStatistics';
 import { trackingStatisticsSummary } from './tracking/trackingStatisticsReport';
 import { resolveStatisticsVessels, statisticsVesselCatalog, type StatisticsVesselScope } from './tracking/trackingStatisticsScope';
-import { isMorningRecordScope, buildRecordScopePatch, cleanRecordHomeCacheMatches, recordRecoveryReadScope, unionRecordScopes, recordScopeKey, type RecordReadScope } from './cloudRecordScopes';
+import { isMorningRecordScope, buildRecordScopePatch, cleanRecordHomeCacheMatches, expandChangedRecordHistoryScope, recordRecoveryReadScope, unionRecordScopes, recordScopeKey, type RecordReadScope } from './cloudRecordScopes';
 import { CloudBlockPatchConfirmedRefreshError, CloudBlockPatchOutcomeUnknownError, runCloudBlockPatchWithReceipt } from './cloudBlockReceipt';
 import { appDataContentEqual, CloudRebaseConflictError, prepareCloudSyncSnapshot, rebaseDisjointAppData } from './cloudRebase';
 import { mergeConfirmedCloudSnapshot } from './cloudConfirmedMerge';
@@ -951,7 +951,7 @@ export default function App() {
                 // Hydrate changed targets before the unchanged B/L/R guard;
                 // never merge a summary as though it were a complete history.
                 for(let attempt=0;snapshot;attempt++){
-                  const expanded=unionRecordScopes(commandReadScope,recordRecoveryReadScope(base,snapshot));
+                  const expanded=expandChangedRecordHistoryScope(commandReadScope,base,snapshot);
                   if(recordScopeKey(expanded)===recordScopeKey(commandReadScope))return snapshot;
                   if(attempt>=3)throw new CloudRebaseConflictError(['相關項目在讀取完整歷程期間持續變動，請稍後再試']);
                   if(!isCurrent()||identitySessionGeneration.current!==identityGeneration||liveCurrentUserId.current!==actorUserId||!configIoCoordinator.current.isCurrent(token,getSupabaseConfig()))throw new StaleAsyncConfigError();
@@ -1221,9 +1221,10 @@ export default function App() {
       const floor=Math.max(durableCloudRevisionFloors.current.get(historyIdentity)??-1,base?.revision??-1);
       // Discover source before interpreting persisted history; dirty old global
       // intent may expand coverage, but never changes the connection or source.
-      const inferredReadScope=authorityConfig(config,binding).readMode==='scoped-v1'&&trustedLocalIdentity&&base&&(!appDataContentEqual(data,base)||(base.trackingItems?.length || 0)>0)?recordRecoveryReadScope(base,data):recordReadScope.current;
       const savedReadScope=base&&trustedLocalIdentity?parseConfirmedCloudReadScope(localStorage.getItem(CLOUD_CONFIRMED_BASE_KEY),historyIdentity):null;
-      let readScope=authorityConfig(config,binding).readMode==='scoped-v1'&&savedReadScope?(appDataContentEqual(data,base!)?savedReadScope:unionRecordScopes(savedReadScope,inferredReadScope)):inferredReadScope;
+      let readScope=authorityConfig(config,binding).readMode==='scoped-v1'&&trustedLocalIdentity&&base
+        ?savedReadScope??((!appDataContentEqual(data,base)||base.trackingItems?.length)?recordRecoveryReadScope(base,data):recordReadScope.current)
+        :recordReadScope.current;
       let remote=await readBoundCloudData(config,binding,undefined,undefined,readScope);
       // Older confirmed envelopes did not retain coverage. A normalized linked
       // history cannot always be collapsed back to the SQL home summary. Adopt
@@ -4902,9 +4903,10 @@ export default function App() {
           const base=parseConfirmedCloudBase(localStorage.getItem(CLOUD_CONFIRMED_BASE_KEY),historyIdentity);
           const floor=Math.max(durableCloudRevisionFloors.current.get(historyIdentity)??-1,base?.revision??-1);
           const trusted=trustedMatchingCloudIdentity(cachedCloudIdentity,syncIdentity);
-          const inferredScope=authorityConfig(config,binding).readMode==='scoped-v1'&&trusted&&base&&(!appDataContentEqual(liveData.current,base)||(base.trackingItems?.length||0)>0)?recordRecoveryReadScope(base,liveData.current):recordReadScope.current;
           const savedReadScope=base&&trusted?parseConfirmedCloudReadScope(localStorage.getItem(CLOUD_CONFIRMED_BASE_KEY),historyIdentity):null;
-          let scope=authorityConfig(config,binding).readMode==='scoped-v1'&&savedReadScope?(appDataContentEqual(liveData.current,base!)?savedReadScope:unionRecordScopes(savedReadScope,inferredScope)):inferredScope;
+          let scope=authorityConfig(config,binding).readMode==='scoped-v1'&&trusted&&base
+            ?savedReadScope??((!appDataContentEqual(liveData.current,base)||base.trackingItems?.length)?recordRecoveryReadScope(base,liveData.current):recordReadScope.current)
+            :recordReadScope.current;
           let snapshot=await readBoundCloudData(config,binding,undefined,undefined,scope);
           if(!savedReadScope&&authorityConfig(config,binding).readMode==='scoped-v1'&&trusted&&base&&snapshot&&snapshot.revision===base.revision&&appDataContentEqual(liveData.current,base)&&!appDataContentEqual(base,snapshot)&&!cleanRecordHomeCacheMatches(liveData.current,base,snapshot)){
             const retainedScope=recordRecoveryReadScope(base,liveData.current);
@@ -4923,7 +4925,7 @@ export default function App() {
       if(remote&&syncBinding&&authorityConfig(syncConfig,syncBinding).readMode==='scoped-v1'&&recoveryBase&&!appDataContentEqual(liveData.current,recoveryBase)){
         // Changed home previews can slide old history out of their bounded window.
         // Hydrate those targets before the unchanged append-only B/L/R guard.
-        const scope=unionRecordScopes(syncReadScope,recordRecoveryReadScope(recoveryBase,remote));
+        const scope=expandChangedRecordHistoryScope(syncReadScope,recoveryBase,remote);
         if(JSON.stringify(scope)!==JSON.stringify(syncReadScope)){
           syncReadScope=scope;
           const binding=syncBinding;
