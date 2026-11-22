@@ -17,6 +17,7 @@ const first={snapshot,attempt:null,serverTime:at,nextScheduledAt:'2026-11-12T23:
 const state=first;
 let holdRead=false,qa,browser,ws,sessionId,id=0,failure,forceCount=0;
 const held=[],pending=new Map(),wait=ms=>new Promise(r=>setTimeout(r,ms));
+const blockedFonts=[]; let checkingBrief=false;
 async function until(test,label,timeout=25000){const end=Date.now()+timeout;while(Date.now()<end){if(await test())return;await wait(60);}throw new Error('Timeout '+label);}
 function call(method,params={},session=sessionId){return new Promise((resolve,reject)=>{const n=++id,timer=setTimeout(()=>{pending.delete(n);reject(new Error('CDP timeout '+method));},20000);pending.set(n,{resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}});ws.send(JSON.stringify({id:n,method,params,...(session?{sessionId:session}:{})}));});}
 async function evaluate(expression){const r=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw new Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value;}
@@ -51,6 +52,7 @@ try{
    if(m.method==='Page.javascriptDialogOpening'){evidence.errors.push('Unexpected dialog: '+m.params.message);void call('Page.handleJavaScriptDialog',{accept:false},m.sessionId);}
    if(m.method==='Fetch.requestPaused')void(async()=>{
      const request=m.params,url=new URL(request.request.url),req={requestId:request.requestId,sessionId:m.sessionId};
+     if(checkingBrief && (request.resourceType==='Font'||/fleet-brief-pdf|fleetBriefPdf-|\.(?:woff2?|ttf|otf)(?:\.|$)/i.test(url.pathname))){blockedFonts.push(url.pathname);await call('Fetch.failRequest',{requestId:req.requestId,errorReason:'BlockedByClient'},m.sessionId);return;}
      if(url.origin!==qa.origin){evidence.blockedExternal.push(url.origin);await call('Fetch.failRequest',{requestId:req.requestId,errorReason:'BlockedByClient'},m.sessionId);return;}
      if(url.pathname==='/rest/v1/rpc/read_ship_fleet_risk_v1'){assert.equal(request.request.method,'POST');assert.equal(request.request.postData,'{}');if(holdRead)held.push(req);else await fulfill(req);return;}
      // Exercise the production bundle (npm run build), not Vite's dev websocket.
@@ -81,16 +83,24 @@ try{
  await until(()=>evaluate("document.querySelectorAll('.ship-card .fleet-risk-card-badge').length===5&&Boolean(document.querySelector('[data-dashboard-vessel-id=qa-v1] [data-risk=HRS]'))"),'original dashboard grades');
  assert.equal(evidence.riskReads.length,1,'One authenticated shared read, no per-card requests');
  const businessBefore=await qa.read(),metricsStart=qa.metrics.length;
- await click('重點摘要');
- await until(async()=>{const err=await evaluate("document.querySelector('.fleet-brief-dialog [role=alert]')?.textContent");if(err)throw Error(err);return evaluate("!!document.querySelector('dialog a[download]')");},'PDF preview',120000);
- assert.equal(await evaluate('window.__qaPrints||0'),0);assert.deepEqual(evidence.downloads||[],[]);assert.deepEqual(fs.readdirSync(output).filter(x=>x.endsWith('.pdf')),[]);
- const blobUrl=await evaluate("document.querySelector('dialog a[download]').href");assert.ok(blobUrl.startsWith('blob:'));
- const pdfInfo=await evaluate("(async()=>{const b=await(await fetch(document.querySelector('dialog a[download]').href)).blob();return [b.type,b.size,await b.slice(0,5).text()]})()");assert.equal(pdfInfo[0],'application/pdf');assert.equal(pdfInfo[2],'%PDF-');assert.equal(evidence.riskReads.length,2,'opening the brief reads the shared list again');
- await wait(1500);await screen('preview');await activate("document.querySelector('dialog a[download]')");await until(()=>fs.readdirSync(output).filter(f=>f.endsWith('.pdf')).length===1,'manual save');assert.equal(evidence.downloads.length,1);
- await click('關閉');assert.equal(await evaluate(`fetch(${JSON.stringify(blobUrl)}).then(()=>true,()=>false)`),false);
+ checkingBrief=true;
+ const titleBefore=await evaluate('document.title'), clickedAt=performance.now();await click('重點摘要');
+ await until(()=>evaluate("document.querySelector('dialog .fleet-brief-paper')?.innerText.includes('核對塢修工程清單與備件到貨日期。')"),'read authorized report with fonts blocked',5000);
+ evidence.clickToObservedReadableMs=Math.round(performance.now()-clickedAt);
+ assert.equal(await evaluate('window.__qaPrints||0'),0);assert.deepEqual(evidence.downloads||[],[]);assert.equal(evidence.riskReads.length,2);
+ assert.deepEqual(blockedFonts,[]);assert.equal(await evaluate("document.querySelectorAll('dialog .fleet-brief-paper table').length"),7);
+ assert.equal(await evaluate("document.querySelector('dialog [download], dialog object')===null"),true);
+ const lamps=await evaluate("Array.from(document.querySelectorAll('dialog [data-lamp]'),n=>n.dataset.lamp)");
+ for(const grade of ['HRS','SRS','LRS','unknown','high','medium'])assert.ok(lamps.includes(grade),grade);
+ await screen('preview');await click('列印／另存 PDF');assert.equal(await evaluate('window.__qaPrints'),1);
+ assert.match(await evaluate('document.title'),/^船隊重點摘要_/);
+ const {data:pdf}=await call('Page.printToPDF',{preferCSSPageSize:true,printBackground:true,displayHeaderFooter:false});
+ fs.writeFileSync(path.join(output,'native-brief.pdf'),Buffer.from(pdf,'base64'));
+ await evaluate("window.dispatchEvent(new Event('afterprint'))");assert.equal(await evaluate('document.title'),titleBefore);
+ await click('關閉');assert.equal(await evaluate("!!document.querySelector('.fleet-brief-paper')"),false);
  holdRead=true;await click('重點摘要');await until(()=>held.length===1,'held new capture');await click('關閉');holdRead=false;await fulfill(held.shift());await tick();assert.equal(await evaluate("!!document.querySelector('.fleet-brief-dialog')"),false);
  assert.deepEqual(await qa.read(),businessBefore);assert.ok(!qa.metrics.slice(metricsStart).some(x=>/apply_|save_|delete_|import_/.test(x.rpc)));assert.deepEqual(evidence.errors,[]);assert.deepEqual(evidence.blockedExternal,[]);assert.equal(forceCount,0);
- evidence.cases.push('real board -> frozen PDF blob: zero downloads/print before Save, one real manual download, close revokes URL, late read cannot reopen, unchanged business records');evidence.status='PASS';
+ evidence.fontOrPdfEngineRequests=blockedFonts;assert.deepEqual(blockedFonts,[]);assert.deepEqual(evidence.downloads||[],[]);evidence.cases.push('original board -> colored system-font report, no PDF engine/font requests, one explicit print, CDP native PDF, cancellation, no business mutation');evidence.status='PASS';
 }catch(error){failure=error;evidence.status='FAIL';evidence.error=error.message;try{evidence.body=await evaluate('document.body.innerText');await screen('failure');}catch{}console.error(error.stack);}
 finally{
  evidence.metrics=qa?.metrics||[];evidence.forceCount=forceCount;

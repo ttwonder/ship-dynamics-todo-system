@@ -9,4 +9,39 @@
 .fleet-brief-message { padding:1rem; }
 .fleet-brief-text { overflow:auto; padding:.75rem; }
 .fleet-brief-text table { border-collapse:collapse; width:100%; }
-.fleet-brief-text :is(th,td) { border:1px solid #a5b1c0; text-align:left; padding:.25rem; vertical-align:top; white-space:pre-wrap; overflow-wrap:anywhere; }
+.fleet-brief-dialog, .fleet-brief-paper { font-family:"Microsoft JhengHei","PingFang TC",system-ui,sans-serif; }
+.brief-scroll { min-height:0; overflow:auto; }
+.fleet-brief-paper { padding:14px; color:#233844; background:white; line-height:1.45; }
+.fleet-brief-paper .brief-mast { display:flex; justify-content:space-between; align-items:baseline; padding-bottom:5px; border-bottom:2px solid #73b6af; color:#174957; }
+.fleet-brief-paper .brief-mast h2 {font-size:1.35em;}
+.fleet-brief-paper .brief-notice {margin:6px 0;color:#435d69;}
+.fleet-brief-paper section { --section-ink:#086d70; --section-fill:#dbf3f0; margin:9px 0 0; }
+.fleet-brief-paper [data-theme=australia] {--section-ink:#3e6b47;--section-fill:#e4f1df;}
+.fleet-brief-paper [data-theme=china] {--section-ink:#315f92;--section-fill:#e1edfb;}
+.fleet-brief-paper [data-theme=dock] {--section-ink:#64528c;--section-fill:#ede7f7;}
+.fleet-brief-paper [data-theme=control] {--section-ink:#785373;--section-fill:#f5e8f2;}
+.fleet-brief-paper [data-theme=task] {--section-ink:#31667c;--section-fill:#e1f2f7;}
+.fleet-brief-paper [data-theme=hrs] {--section-ink:#904a50;--section-fill:#fae9e7;}
+.fleet-brief-paper table { width:100%; table-layout:fixed; border-collapse:collapse; }
+.fleet-brief-paper :is(th,td) { position:static; text-align:left; border:1px solid #bbcdd1; vertical-align:top; padding:3px 5px; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:inherit; color:inherit; background:#fff; }
+.fleet-brief-paper th {color:var(--section-ink);background:var(--section-fill);font-weight:bold;}
+.fleet-brief-paper th.brief-section-name {border:0;border-left:4px solid var(--section-ink);background:white;}
+.fleet-brief-paper tbody tr:nth-child(even) td {background:#f7fafb;}
+.brief-grade svg {vertical-align:-1px;margin-right:4px;}
+.brief-grade[data-lamp=HRS] svg,.brief-grade[data-lamp=high] svg {color:#d94941;}
+.brief-grade[data-lamp=SRS] svg,.brief-grade[data-lamp=medium] svg {color:#e8b238;}
+.brief-grade[data-lamp=LRS] svg {color:#36a16a;}
+.brief-grade[data-lamp=urgent] svg {color:#a82441;}
+.brief-grade[data-lamp=unknown] svg {color:#858e97;}
+@media screen and (max-width:760px) {.fleet-brief-paper table {min-width:760px;}}
+@page fleet-brief {size:A4 landscape;margin:8mm;}
+@media print {
+  html:has(body > .fleet-brief-dialog[open]),body:has(> .fleet-brief-dialog[open]) {page:fleet-brief;display:block!important;height:auto!important;overflow:visible!important;margin:0!important;padding:0!important;}
+  body:has(> .fleet-brief-dialog[open]) > :not(.fleet-brief-dialog) {display:none!important;}
+  body > .fleet-brief-dialog[open] {page:fleet-brief;display:block!important;position:static!important;inset:auto!important;min-width:0!important;width:auto!important;max-width:none!important;height:auto!important;max-height:none!important;border:0!important;margin:0!important;padding:0!important;overflow:visible!important;box-shadow:none!important;}
+  .fleet-brief-dialog::backdrop,.fleet-brief-dialog > header,.fleet-brief-dialog .fleet-brief-message {display:none!important;}
+  .fleet-brief-dialog .brief-scroll,.fleet-brief-paper {display:block;overflow:visible!important;padding:0;}
+  .fleet-brief-paper {font-size:14pt;line-height:1.32;print-color-adjust:exact;-webkit-print-color-adjust:exact;}
+  .fleet-brief-paper table,.fleet-brief-paper tbody,.fleet-brief-paper tr,.fleet-brief-paper td {break-inside:auto;}
+  .fleet-brief-paper thead {display:table-header-group;break-inside:avoid;}
+}
