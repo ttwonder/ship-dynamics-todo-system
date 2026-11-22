@@ -25,8 +25,31 @@ const [height, width] = PageSizes.A4;
 const margin = 24, available = width - 2 * margin;
 const bodyTop = 58, bodyEnd = height - 40;
 const size = 14, leading = 21, padX = 5, padY = 3;
-const ink = rgb(0.09, 0.16, 0.22), navy = rgb(0.11, 0.25, 0.35);
-const border = rgb(0.65, 0.72, 0.76), pale = rgb(0.95, 0.97, 0.98);
+const hex = (n:number) => rgb((n>>>16)/255, ((n>>>8)&255)/255, (n&255)/255);
+const ink = hex(0x233844), navy = hex(0x174957), muted = hex(0x536b75);
+const border = hex(0xbbcdd1), pale = hex(0xf7fafb), white = rgb(1,1,1);
+const pair = (foreground:number, background:number) => ({ink:hex(foreground),fill:hex(background)});
+const themes = {
+  gulf:pair(0x086d70,0xdbf3f0), australia:pair(0x3e6b47,0xe4f1df), china:pair(0x315f92,0xe1edfb),
+  dock:pair(0x64528c,0xede7f7), control:pair(0x785373,0xf5e8f2), task:pair(0x31667c,0xe1f2f7), hrs:pair(0x904a50,0xfae9e7),
+} satisfies Record<NonNullable<Section['theme']>,ReturnType<typeof pair>>;
+const lights = {
+  HRS:pair(0x983632,0xd94941), SRS:pair(0x775515,0xe8b238), LRS:pair(0x256744,0x36a16a),
+  unknown:pair(0x55616b,0x929aa3), urgent:pair(0x821f39,0xa82441),
+};
+type Light = (typeof lights)[keyof typeof lights];
+const dotInset = 14;
+function cellLight(section:Section, i:number, text:string):Light|undefined {
+  const kind=section.columns[i].kind;
+  if ((section.theme==='control'||section.theme==='task') && kind==='level')
+    return text==='急'?lights.urgent:text==='高'?lights.HRS:text==='中'?lights.SRS:undefined;
+  // Only the structured risk cell or system-generated first line of primary
+  // remarks is eligible. A mention of HRS in an operator's note is not a grade.
+  const primary=section.theme==='gulf'||section.theme==='australia'||section.theme==='china'||section.theme==='dock';
+  const grade=kind==='risk' ? text : primary && kind==='note' && text.startsWith('Tokyo MOU：') ? text.slice('Tokyo MOU：'.length) : '';
+  const value=grade.split(/[｜\n]/,1)[0];
+  return value==='HRS'||value==='SRS'||value==='LRS'?lights[value]:value==='未知（未取得）'?lights.unknown:undefined;
+}
 const sum = (v: number[]) => v.reduce((a, b) => a + b, 0);
 const tallest = (cells: string[][]) => cells.reduce((n, cell) => Math.max(n, cell.length), 1);
 const rowHeight = (lines: number) => 2 * padY + leading * lines;
@@ -46,7 +69,7 @@ function typesetter(font: PDFFont) {
     return width * pt;
   };
   const supported = new Set(font.getCharacterSet());
-  function wrap(text: string, room: number, pt = size) {
+  function wrap(text: string, room: number, pt = size, firstInset = 0) {
     const lines: string[] = [];
     for (const paragraph of text.replace(/\t/g, '    ').split(/\r\n|[\n\r\u2028\u2029]/u)) {
       const chars = Array.from(paragraph);
@@ -59,7 +82,8 @@ function typesetter(font: PDFFont) {
         // Find the largest fitting prefix without ever measuring the entire tail
         // of an unbounded paragraph. Widths use the very same font as PDF text.
         const left = chars.length - start;
-        const fits = (n: number) => measure(chars.slice(start, start + n).join(''), pt) <= room;
+        const lineRoom=room-(lines.length===0?firstInset:0);
+        const fits = (n: number) => measure(chars.slice(start, start + n).join(''), pt) <= lineRoom;
         let lo = 0, hi = Math.min(16, left);
         while (fits(hi)) {
           lo = hi;
@@ -133,46 +157,63 @@ export async function buildFleetBriefPdf(report: FleetBriefReport): Promise<Blob
   };
   function newPage() {
     page = doc.addPage([width, height]); y = bodyTop;
-    draw(title, margin, 39, 22, navy);
-    if (dateLines.length === 1) draw(report.date, width - margin - measure(report.date), 38);
-    page.drawLine({start:{x:margin, y:height-48}, end:{x:width-margin, y:height-48}, color:navy, thickness:1});
+    // A small three-stroke wake replaces the heavy navy masthead rule.
+    for(const [i,w] of [21,15,9].entries()) page.drawRectangle({x:margin+i*3,y:height-25-i*5,width:w,height:2.5,color:i===0?themes.gulf.ink:hex(0x78b9b3)});
+    draw(title, margin+30, 39, 22, navy);
+    if (dateLines.length === 1) {
+      const w=measure(report.date);
+      page.drawRectangle({x:width-margin-w-16,y:height-44,width:w+16,height:24,color:hex(0xeaf5f4)});
+      draw(report.date,width-margin-w-8,37,size,navy);
+    }
+    page.drawLine({start:{x:margin,y:height-49},end:{x:width-margin,y:height-49},color:border,thickness:.65});
     const folio = `第 ${doc.getPageCount()} 頁`;
-    draw(folio, width - margin - measure(folio), height - 17, size, navy);
+    draw(folio, width - margin - measure(folio), height - 17, size, muted);
   }
   newPage();
   for (const text of [dateLines.length > 1 ? report.date : '', report.notice].filter(Boolean)) {
     for (const line of wrap(text, available)) {
       if (y + leading > bodyEnd) newPage();
-      draw(line, margin, y + 16); y += leading;
+      draw(line, margin, y + 16,size,muted); y += leading;
     }
     y += 6;
   }
-  function band(widths: number[], cells: string[][], start: number, n: number, header: boolean, stripe = false) {
+  function band(theme:ReturnType<typeof pair>, widths: number[], cells: string[][], start: number, n: number, header: boolean, stripe = false, markers:(Light|undefined)[] = []) {
     let x = margin;
     widths.forEach((w, i) => {
-      page.drawRectangle({x, y:height-y-rowHeight(n), width:w, height:rowHeight(n), borderWidth:0.55,
-        borderColor:border, color:header ? navy : stripe ? pale : rgb(1, 1, 1)});
-      for (let k = 0; k < n; k++) draw(cells[i][start+k], x+padX, y+padY+16+k*leading, size, header ? rgb(1,1,1) : ink);
+      page.drawRectangle({x, y:height-y-rowHeight(n), width:w, height:rowHeight(n), borderWidth:.5,
+        borderColor:border, color:header ? theme.fill : stripe ? pale : white});
+      for (let k = 0; k < n; k++) {
+        const baseline=y+padY+16+k*leading, marker=start+k===0?markers[i]:undefined;
+        if(marker){
+          const center={x:x+padX+5,y:height-baseline+5};
+          page.drawCircle({...center,size:marker===lights.urgent?3:4.2,color:marker.fill});
+          if(marker===lights.urgent)page.drawCircle({...center,size:5.2,borderColor:marker.ink,borderWidth:1});
+        }
+        draw(cells[i][start+k], x+padX+(marker?dotInset:0),baseline,size,marker?.ink??(header?theme.ink:ink));
+      }
       x += w;
     });
     y += rowHeight(n);
   }
   for (const section of report.sections) {
+    const theme=themes[section.theme??'gulf'];
     const widths = columnWidths(section, measure);
     const headings = section.columns.map((c, i) => wrap(c.label, widths[i] - 2 * padX));
     function heading(continued: boolean, firstLines = 1) {
-      const lines = wrap(section.title + (continued ? '（續）' : ''), available, 16);
+      const lines = wrap(section.title + (continued ? '（續）' : ''), available-12, 16);
       const headerHeight = lines.length * 24 + (widths.length ? rowHeight(tallest(headings)) : 0);
       const fitsFresh = headerHeight + rowHeight(firstLines) <= bodyEnd-bodyTop;
       const needed = headerHeight + rowHeight(fitsFresh ? firstLines : 1);
       if (needed > bodyEnd-bodyTop) throw new Error('摘要表頭超出一頁，無法完整排列。');
       if (y + needed > bodyEnd) newPage();
-      for (const line of lines) { draw(line, margin, y+18, 16, navy); y += 24; }
-      if (widths.length) band(widths, headings, 0, tallest(headings), true);
+      page.drawRectangle({x:margin,y:height-y-19,width:4,height:15,color:theme.ink});
+      for (const line of lines) { draw(line, margin+11, y+18, 16, theme.ink); y += 24; }
+      if (widths.length) band(theme,widths, headings, 0, tallest(headings), true);
     }
     for (const [index, row] of section.rows.entries()) {
       if (row.length > widths.length) throw new Error('摘要資料欄數與表頭不符。');
-      const cells = widths.map((w, i) => wrap(row[i] ?? '', w - 2 * padX));
+      const markers=widths.map((_,i)=>cellLight(section,i,row[i]??''));
+      const cells = widths.map((w, i) => wrap(row[i] ?? '', w - 2 * padX,size,markers[i]?dotInset:0));
       const total = tallest(cells);
       if (index === 0) heading(false,total);
       else if (y + rowHeight(total) > bodyEnd && rowHeight(total)+rowHeight(tallest(headings))+24 <= bodyEnd-bodyTop) {
@@ -182,10 +223,10 @@ export async function buildFleetBriefPdf(report: FleetBriefReport): Promise<Blob
         let capacity = Math.floor((bodyEnd - y - 2 * padY) / leading);
         if (capacity < 1) { newPage(); heading(true); capacity = Math.floor((bodyEnd - y - 2 * padY) / leading); }
         const n = Math.min(capacity, total - offset);
-        band(widths, cells, offset, n, false, index % 2 === 1); offset += n;
+        band(theme,widths, cells, offset, n, false, index % 2 === 1,markers); offset += n;
       }
     }
-    if (!section.rows.length) { heading(false); band([available], [['無符合項目']], 0, 1, false); }
+    if (!section.rows.length) { heading(false); band(theme,[available], [['無符合項目']], 0, 1, false); }
     y += 10;
   }
   return new Blob([new Uint8Array(await doc.save())], { type: 'application/pdf' });

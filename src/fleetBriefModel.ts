@@ -34,8 +34,8 @@ const missing = '未提供';
 const priorityOrder = ['急','高','中'];
 
 function openItems(input: FleetBriefInput, vessels: readonly Vessel[]): Section[] {
-  const itemSection = (title: string) => section(title, column('關注程度','level'), column('事項內容','content'));
-  const cases = itemSection('重點關注：未結內控（中／高／急）'), tasks = itemSection('重點關注：未結要事（中／高／急）');
+  const itemSection = (title: string, theme: 'control'|'task') => ({...section(title, column('關注程度','level'), column('事項內容','content')),theme});
+  const cases = itemSection('重點關注：未結內控（中／高／急）','control'), tasks = itemSection('重點關注：未結要事（中／高／急）','task');
   const names = new Map(vessels.map(v => [v.id,vesselSelectionDisplayName(v)]));
   const casesById = new Map<string,InternalControlCase>(), casesByTask = new Map<string,InternalControlCase[]>();
   for (const item of input.internalControlCases) {
@@ -106,8 +106,11 @@ function primarySection(title: string, dock = false): Section {
 }
 
 export function buildFleetBriefReport(input: FleetBriefInput): FleetBriefReport {
-  const groups = regions.map(region => primarySection(`${region}船舶`)), drydock = primarySection('塢修船舶',true);
+  const regionalThemes = {'波斯灣':'gulf','澳洲':'australia','中國':'china'} as const;
+  const groups = regions.map(region => ({...primarySection(`${region}船舶`),theme:regionalThemes[region]})), drydock = primarySection('塢修船舶',true);
+  drydock.theme = 'dock';
   const hrs = section('重點關注：高風險船舶（HRS）',column('Tokyo MOU 風險','risk'),column('目前位置／ETB','port'),column('下一港／ETA','port'),column('備註','note'));
+  hrs.theme = 'hrs';
   const active = new Map<string,Vessel>();
   for (const vessel of input.vessels) {
     if (!vessel.isActive || active.has(vessel.id)) continue;
