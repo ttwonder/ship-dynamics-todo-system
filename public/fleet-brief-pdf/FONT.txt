@@ -1,0 +1,14 @@
+Fleet brief PDF font: Noto Sans CJK TC, static Regular.
+© 2014–2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+Licensed under SIL Open Font License 1.1; see OFL.txt.
+
+Upstream: https://github.com/notofonts/noto-cjk/blob/165c01b46ea533872e002e0785ff17e44f6d97d8/Sans/Variable/TTF/NotoSansCJKtc-VF.ttf
+Upstream SHA-256: 6b40dd16cf1b73b5a7a0ed2472d641b60e3e85e87211abd20009f67d841425da
+Static derivative: remove Hangul mappings, retain other Unicode mappings, instantiate
+wght=400, pad glyf to 4 bytes for valid fontkit subset loca offsets (fontTools 4.60.1).
+Static TTF SHA-256: 1fb8c870b683c2a18bf0c0f593c766bfff99c588f4eb4325150a7fe3bdf1d8eb
+PDF transport derivative (scripts/verify-fleet-brief-pdf.font.py, fontTools 4.60.1):
+distinct glyph IDs for cmap aliases, identical outlines and metrics, 4-byte glyf
+padding. TTF SHA-256: 28545a101abf6c4750256b59c730a147d4f34dad6625d02ebfb4c8008c08c95e
+Lossless gzip (level 9, mtime=0). Inflate once before subsetting.
+Gzip SHA-256: 02cb974fca367ba6c04c13711765e07b10a8cc0985e059ca5c1b21775bdf633c

@@ -796,7 +796,14 @@ export default function NormalizedApp() {
           if (!vessel) return;
           void run(() => controller.setManualAttention(vessel, manualAttentionLevel || null));
         }}
-        onStartMeeting={() => setTab('meetings')} onOpenReport={() => setTab('reports')}
+        briefScopeKey={authorizationEpoch||user.id} onPrepareFleetBrief={async(stillOpen,readRisk)=>{
+          const [{buildFleetBriefReport},{captureFleetRiskReport},{taipeiDateKey},riskRead]=await Promise.all([
+            import('./fleetBriefModel'),import('./fleetRisk/reportRisk'),import('./taipeiTime'),readRisk()]);
+          if(!stillOpen()||!permission('exportReports'))throw new Error('資料範圍已變更，請重新開啟。');
+          const capturedAt=new Date().toISOString();
+          return {report:buildFleetBriefReport({date:taipeiDateKey(capturedAt),capturedAt,vessels:visibleVessels,
+            tasks:visibleTasks,internalControlCases:visibleCases,risk:captureFleetRiskReport(data.vessels,riskRead)}),isCurrent:stillOpen};
+        }} onStartMeeting={() => setTab('meetings')} onOpenReport={() => setTab('reports')}
         onTaskMetric={mode => setTab(mode === 'open' ? 'tasks' : 'tasks')}
         onOpenBatchManagedVessels={() => {
           const ids = batchSelected.filter(id => visibleVesselIds.has(id));

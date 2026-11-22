@@ -1,0 +1,12 @@
+.fleet-brief-dialog { box-sizing:border-box; width:min(96vw,1280px); max-width:96vw; max-height:94vh; max-height:94dvh; padding:0; color:#233149; background:#fff; border:1px solid #b5c2ce; border-radius:10px; box-shadow:0 12px 54px #20314c44; }
+.fleet-brief-dialog::backdrop { background:#19263883; }
+.fleet-brief-dialog[open] { display:flex; flex-direction:column; }
+.fleet-brief-dialog header,.fleet-brief-dialog header>div:last-child { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.fleet-brief-dialog header { flex:none; justify-content:space-between; padding:.65rem .9rem; border-bottom:1px solid #cbd4de; }
+.fleet-brief-dialog h2 { margin:0; font-size:1.15rem; }
+.fleet-brief-dialog a.btn { text-decoration:none; }
+.fleet-brief-object { display:block; width:100%; height:78vh; height:78dvh; min-height:0; border:0; }
+.fleet-brief-message { padding:1rem; }
+.fleet-brief-text { overflow:auto; padding:.75rem; }
+.fleet-brief-text table { border-collapse:collapse; width:100%; }
+.fleet-brief-text :is(th,td) { border:1px solid #a5b1c0; text-align:left; padding:.25rem; vertical-align:top; white-space:pre-wrap; overflow-wrap:anywhere; }
