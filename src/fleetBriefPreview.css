@@ -25,6 +25,7 @@
 .fleet-brief-paper table { width:100%; table-layout:fixed; border-collapse:collapse; }
 .fleet-brief-paper :is(th,td) { position:static; text-align:left; border:1px solid #bbcdd1; vertical-align:top; padding:3px 5px; white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:inherit; color:inherit; background:#fff; }
 .fleet-brief-paper th {color:var(--section-ink);background:var(--section-fill);font-weight:bold;}
+.fleet-brief-paper th.brief-etd-heading {padding-inline:1px;}
 .fleet-brief-paper th.brief-section-name {border:0;border-left:4px solid var(--section-ink);background:white;}
 .fleet-brief-paper tbody tr:nth-child(even) td {background:#f7fafb;}
 .brief-grade svg {vertical-align:-1px;margin-right:4px;}

@@ -1,11 +1,11 @@
 /** Operational location fields are free text, not a geocoder. Keep these positive
- * port/area aliases bounded. In particular SA/AE/IR/OM alone do not establish
+ * port/area aliases bounded. In particular SA/AE/IR alone do not establish
  * which coast, and e.g. Portland or Newcastle alone do not establish Australia. */
 export type BriefRegion = '波斯灣' | '澳洲' | '中國';
 
 const areas: Record<BriefRegion, { latin: RegExp; han: RegExp }> = {
   波斯灣: {
-    // Sohar is explicitly part of this operational group, not a rule for all Oman.
+
     latin: /\b(?:persian gulf|arabian gulf|sohar|ras (?:tanura|tannura|laffan)|juaymah|jubail|dammam|al ahmadi|mina al ahmadi|mina abdullah|shuaiba|shuwaikh|al zour|kuwait|qatar|bahrain|doha|mesaieed|umm said|sitra|mina salman|dubai|jebel ali|abu dhabi|ruwais|das island|zirku island|umm qasr|basrah?|kharg island|bandar (?:abbas|imam khomeini)|bushehr|asaluyeh|assaluyeh)\b/i,
     han: /波斯灣|波斯湾|阿拉伯灣|阿拉伯湾|科威特|卡達|卡塔爾|卡塔尔|巴林|杜哈|多哈|杜拜|迪拜|阿布達比|阿布扎比|朱拜勒|達曼|达曼|拉斯坦努拉|傑貝阿里|杰贝阿里/,
   },
@@ -19,8 +19,16 @@ const areas: Record<BriefRegion, { latin: RegExp; han: RegExp }> = {
   },
 };
 
-// These Gulf coasts are unambiguous. For countries with multiple coasts only
-// accept explicit Gulf ports (including the compact or space-separated LOCODE).
+// Additional operational coverage, not a geographical redefinition of the Gulf.
+// For Red Sea countries with another coast, match the port, not the country.
+const gulfVicinity = [
+  /\b(?:fujairah|fujayrah|fujeirah|fujaira|oman|muscat|matrah|muttrah|mina al fahal|salalah|duqm|khasab|qalhat|shinas|sohar|suhar|port sultan qaboos)\b/i,
+  /富[加查吉賈](?:伊)?拉|富查伊哈|阿曼|馬斯喀特|马斯喀特|塞拉萊|塞拉莱|薩拉拉|萨拉拉|杜庫姆|杜库姆|蘇哈爾|苏哈尔/,
+  /\b(?:red sea ports?|jeddah|jiddah|yanbu(?:['’]? al bahr)?|jizan|jazan|gizan|duba|dhuba|rabigh|king abdullah port|shuqaiq|neom port|port of neom|aqaba|aqabah|eilat|elat|suez(?!\s+canal)|(?:ain|ayn|ein) (?:el |al )?so[kh]*na|adabiya[h]?|safaga|hurghada|sharm (?:el |al )?sheikh|nuweiba|el quseir|marsa alam|port sudan|suakin|sawakin|massawa|mitsiwa|assab|aseb|hodeidah|hodeida|hudaydah|hudaidah|hod[eai]idah|salif|saleef|ras isa|mokha|mukha|mocha)\b/i,
+  /[紅红]海(?:內|内|沿岸)?港|吉[達达]|[延彥彦揚扬]布|吉[贊赞]港|吉[瓚瓒]港|阿卜杜拉國王港|阿卜杜拉国王港|亞喀巴|亚喀巴|埃拉特|[蘇苏]伊士(?:港|$)|艾因(?:蘇赫納|苏赫纳)|薩法加|萨法加|[蘇苏]丹港|[薩萨]瓦金|馬薩瓦|马萨瓦|阿薩布|阿萨布|荷[臺台]達|荷[臺台]达|荷[臺台]德|荷[臺台]第|霍[臺台]達|霍[臺台]达|摩卡港/,
+  /\b(?:OM|OM(?:MCT|SLL|DQM|SOH|KHS|FAH|QAL)|AE\s?FJR|SA\s?(?:JED|YNB|GIZ|DHU|KAC)|EG\s?(?:SUZ|SOK|SGA|HRG)|JO\s?AQJ|IL\s?ETH|SD\s?(?:PZU|SWN)|ER\s?(?:MSW|ASA)|YE\s?(?:HOD|SAL|MOK))\b/i,
+];
+// Compact or space-separated LOCODEs for the Gulf itself.
 const gulfCodes = /\b(?:OM\s?SOH|AE\s?(?:JEA|DXB|AUH|RUW)|SA\s?(?:RTA|JUB|DMM)|IR\s?(?:BND|BIK|BUZ)|(?:KW|QA|BH|IQ)(?:\s?[A-Z2-9]{3})?)\b/;
 
 export function matchesBriefRegion(region: BriefRegion, location: string): boolean {
@@ -32,6 +40,7 @@ export function matchesBriefRegion(region: BriefRegion, location: string): boole
   if (region === '中國') text = text.replace(/\b(?:south|east) china sea\b|\btaiwan\s*[,(/-]?\s*(?:province of china|republic of china)|\brepublic of china\s*\(taiwan\)/gi, '').replace(/南中國海|南中国海|東中國海|东中国海/g, '');
   const {latin, han} = areas[region];
   if (latin.test(text) || han.test(text)) return true;
+  if (region==='波斯灣' && gulfVicinity.some(alias=>alias.test(text))) return true;
   // A standalone ISO code qualifies, but a random five-letter word (e.g. AUDIO)
   // is not a UN/LOCODE. Allow only known port suffixes in the compact spelling.
   return region === '波斯灣' ? gulfCodes.test(text)

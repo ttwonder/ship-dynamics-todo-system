@@ -1,4 +1,4 @@
-export type FleetBriefColumnKind = 'vessel' | 'risk' | 'port' | 'note' | 'level' | 'content';
+export type FleetBriefColumnKind = 'vessel' | 'risk' | 'port' | 'note' | 'level' | 'content' | 'published';
 export interface FleetBriefSection {
   theme?: 'gulf' | 'australia' | 'china' | 'dock' | 'control' | 'task' | 'hrs';
   title: string;

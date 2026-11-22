@@ -36,6 +36,7 @@ try{
    initial.vessels=names.map((name,i)=>{const v=structuredClone(catalog[0]);return {...v,id:'qa-v'+(i+1),fullName:name,name:'測試船'+['甲','乙','丙','丁','戊'][i],shortName:'DEMO '+(i+1),position:{...v.position,navigationStatus:i===0?'航行中':'停泊',location:['Jebel Ali','Port Hedland','Shanghai','船塢','At Sea'][i],nextPort:['Shanghai','Port Hedland','Qingdao','Singapore','Rotterdam'][i],manualRemark:'示範資料，非實際船舶動態。',etb:'2026-11-13T09:00',eta:'2026-11-14T08:00'},note:{...v.note,captain:'示範船長',chiefOfficer:'示範大副',chiefEngineer:'示範輪機長',firstEngineer:'示範大管輪',statusSupplement:'',subsequentDynamics:'',recentDynamics:i===0?'代理已確認文件收訖；下一次會議請回報完成情況。':'待代理確認作業窗口。',statusList:i===3?['drydock/repiar']:[]},assignedUserIds:[],delegateManagers:[],weeklyAttention:[]}});
    const c={...structuredClone(initial.internalControlCases[0]),id:'demo-c',vesselId:'qa-v2',linkedTaskId:undefined,syncToTask:false,priority:'高',description:'核對塢修工程清單與備件到貨日期。',status:'已向廠商索取更新交期。'};
    const t={...structuredClone(initial.tasks[0]),id:'demo-t',vesselId:'qa-v3',vesselIds:['qa-v3'],internalControlCaseId:undefined,isInternalControl:false,sourceType:'morning',priority:'中',description:'確認下一港靠泊窗口，收到代理回覆後更新行程。',status:'待代理回覆。'};
+   c.createdAt='2026-09-17T18:34:00Z';
    initial.internalControlCases=[c];initial.tasks=[t];initial.meetings=[];initial.agendaReports=[];
  }});
  // Replace the inherited QA-prefixed port label with an unambiguous synthetic route.
@@ -87,6 +88,16 @@ try{
  const titleBefore=await evaluate('document.title'), clickedAt=performance.now();await click('重點摘要');
  await until(()=>evaluate("document.querySelector('dialog .fleet-brief-paper')?.innerText.includes('核對塢修工程清單與備件到貨日期。')"),'read authorized report with fonts blocked',5000);
  evidence.clickToObservedReadableMs=Math.round(performance.now()-clickedAt);
+ evidence.shares=await evaluate(`Object.fromEntries(Array.from(document.querySelectorAll('.fleet-brief-paper section'),s=>{const cells=[...s.querySelectorAll('th[scope=col]')],w=cells.reduce((n,c)=>n+c.getBoundingClientRect().width,0);return [s.dataset.theme,cells.map(c=>+(100*c.getBoundingClientRect().width/w).toFixed(2))]}))`);
+ const before={gulf:[2.66,16.88,13.29,13.22,10.63,5.32,38],australia:[2.35,14.93,11.75,13.63,14.63,4.7,38],china:[2.35,16.25,11.77,12.25,14.66,4.71,38],dock:[2.52,16.7,12.6,12.54,8.82,8.82,38]}; // measured on 94350da, same original UI and fixture
+ for(const [theme,old] of Object.entries(before)){
+   const now=evidence.shares[theme];assert.ok(Math.abs(now[2]/old[2]-2)<.02,theme+': double crew');
+   for(const j of [1,3,5])assert.ok(now[j]<old[j]&&now[j]>.75*old[j],theme+': moderately narrower');
+   assert.ok(now[6]>=Math.max(...now)-.05,theme+': retain wide remarks');
+ }
+ assert.ok(Math.abs(evidence.shares.control[0]*3-24.4)<.1);assert.equal(evidence.shares.task.length,3);
+ console.log('Measured column shares (%)',JSON.stringify(evidence.shares));
+ assert.ok(await evaluate("document.querySelector('.fleet-brief-paper [data-theme=control]').innerText.includes('2026/09/18 02:34')"),'report must show original publication time');
  assert.equal(await evaluate('window.__qaPrints||0'),0);assert.deepEqual(evidence.downloads||[],[]);assert.equal(evidence.riskReads.length,2);
  assert.deepEqual(blockedFonts,[]);assert.equal(await evaluate("document.querySelectorAll('dialog .fleet-brief-paper table').length"),7);
  assert.equal(await evaluate("document.querySelector('dialog [download], dialog object')===null"),true);

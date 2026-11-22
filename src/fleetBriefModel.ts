@@ -9,6 +9,7 @@ import { appearsInSingleVesselTasks } from './taskAttention';
 import { itineraryOperationalScheduleValue, type ItineraryOperationalFeedRecord } from './itinerary/itineraryOperationalProjection';
 import { resolveItineraryTimeZone, type ItineraryRow } from './itinerary/itineraryTypes';
 import { formatScheduleDisplay } from './scheduleTime';
+import { formatTaipeiDateTime } from './taipeiTime';
 import { vesselSelectionDisplayName } from './vesselDisplay';
 import { matchesBriefRegion, type BriefRegion } from './fleetBriefRegions';
 
@@ -32,9 +33,10 @@ function section(title: string, ...columns: Column[]): Section {
 }
 const missing = '未提供';
 const priorityOrder = ['急','高','中'];
+const published = (createdAt:string) => /^\d{4}-\d\d-\d\d$/.test(createdAt) ? createdAt.replace(/-/g,'/') : formatTaipeiDateTime(createdAt,false,missing);
 
 function openItems(input: FleetBriefInput, vessels: readonly Vessel[]): Section[] {
-  const itemSection = (title: string, theme: 'control'|'task') => ({...section(title, column('關注程度','level'), column('事項內容','content')),theme});
+  const itemSection = (title: string, theme: 'control'|'task') => ({...section(title, column('關注程度','level'), ...(theme==='control'?[column('發佈時間（台北）','published')]:[]), column('事項內容','content')),theme});
   const cases = itemSection('重點關注：未結內控（中／高／急）','control'), tasks = itemSection('重點關注：未結要事（中／高／急）','task');
   const names = new Map(vessels.map(v => [v.id,vesselSelectionDisplayName(v)]));
   const casesById = new Map<string,InternalControlCase>(), casesByTask = new Map<string,InternalControlCase[]>();
@@ -43,7 +45,7 @@ function openItems(input: FleetBriefInput, vessels: readonly Vessel[]): Section[
     casesById.set(item.id,item);
     if (item.linkedTaskId) casesByTask.set(item.linkedTaskId,[...(casesByTask.get(item.linkedTaskId) || []),item]);
     if (!item.isClosed && priorityOrder.includes(item.priority)) {
-      cases.rows.push([names.get(item.vesselId)!, item.priority, richTextToPlainText(item.description) || missing]);
+      cases.rows.push([names.get(item.vesselId)!, item.priority, published(item.createdAt), richTextToPlainText(item.description) || missing]);
     }
   }
   const seen = new Set<string>();
@@ -57,7 +59,7 @@ function openItems(input: FleetBriefInput, vessels: readonly Vessel[]): Section[
       if ((task.internalControlCaseId && casesById.get(task.internalControlCaseId)?.vesselId === id)
         || casesByTask.get(task.id)?.some(item => item.vesselId === id)) continue;
       const target = task.isInternalControl ? cases : tasks;
-      target.rows.push([name, task.priority, richTextToPlainText(task.description) || missing]);
+      target.rows.push([name, task.priority, ...(task.isInternalControl?[published(task.createdAt)]:[]), richTextToPlainText(task.description) || missing]);
     }
   }
   for (const group of [cases,tasks]) group.rows.sort((a,b)=>priorityOrder.indexOf(a[1])-priorityOrder.indexOf(b[1]));
@@ -108,6 +110,7 @@ function primarySection(title: string, dock = false): Section {
 export function buildFleetBriefReport(input: FleetBriefInput): FleetBriefReport {
   const regionalThemes = {'波斯灣':'gulf','澳洲':'australia','中國':'china'} as const;
   const groups = regions.map(region => ({...primarySection(`${region}船舶`),theme:regionalThemes[region]})), drydock = primarySection('塢修船舶',true);
+  groups[regions.indexOf('波斯灣')].title='波斯灣及周邊船舶（含富加拉、阿曼及紅海港口）';
   drydock.theme = 'dock';
   const hrs = section('重點關注：高風險船舶（HRS）',column('Tokyo MOU 風險','risk'),column('目前位置／ETB','port'),column('下一港／ETA','port'),column('備註','note'));
   hrs.theme = 'hrs';

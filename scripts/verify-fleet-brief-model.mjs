@@ -36,13 +36,13 @@ test('classifies only current/next location, once per region and active vessel',
   assert.deepEqual(names(report, '塢修'), []);
   assert.equal(report.date, date);
 });
-test('operational aliases and basis; country outside the Gulf and previous Australia do not qualify',()=>{
+test('operational aliases including Oman, not previous Australia',()=>{
   const locations = [['','HAYPOINT'],['鯨魚圈','麥寮'],['煙台','Singapore'],['At sea','SOHAR'],['Arabian Sea','Muscat, OM'],['At sea','麥寮'],['South China Sea','Singapore'],['Oman','Fujairah'],['Singapore','CNTAO'],['註地','KW'],['','AUPHE']];
   const vessels = locations.map(([here,next],i)=>vessel(String(i),here,next));
   for(const ship of vessels) ship.position.lastPort = 'Port Hedland';
   const report = build({vessels});
   assert.deepEqual(names(report,'澳洲'),['測試0 TEST 0','測試10 TEST 10']);
-  assert.deepEqual(names(report,'波斯灣'),['測試3 TEST 3','測試9 TEST 9']);
+  assert.deepEqual(names(report,'波斯灣'),['測試3 TEST 3','測試4 TEST 4','測試7 TEST 7','測試9 TEST 9']);
   assert.deepEqual(names(report,'中國'),['測試1 TEST 1','測試2 TEST 2','測試8 TEST 8']);
   assert.match(section(report,'波斯灣').rows[0].join(' '),/正前往/);
   assert.match(section(report,'中國').rows[0].join(' '),/目前在/);
@@ -52,6 +52,18 @@ test('ambiguous text, origins and offshore seas alone do not imply a current por
   const vessels = misleading.map((s,i)=>vessel(String(i),s,'Singapore'));
   const report = build({vessels});
   for(const region of ['中國','澳洲','波斯灣']) assert.deepEqual(names(report,region),[]);
+});
+test('Fujairah, Oman and Red Sea ports count on current or next call, never by ship name',()=>{
+  const ports=['富加拉','FUJAIRAH, UAE','AEFJR','Fujayrah','OMAN','阿曼','Muscat','SALALAH','OM DQM','Jeddah','沙烏地吉達','SAJED','Yanbu','蘇丹港','Port Sudan','Ain Sokhna','Aqaba','Eilat','Massawa','Hodeidah','EGSUZ','紅海港口'];
+  const ship=(here,next)=>vessel('ORIENT',here,next,{name:'亞善',fullName:'FPMC C ORIENT'});
+  for(const port of ports) for(const [here,next] of [['At sea',port],[port,'Singapore']]){
+    assert.deepEqual(names(build({vessels:[ship(here,next)]}),'波斯灣'),['亞善 FPMC C ORIENT'],[here,next].join(' → '));
+  }
+  const v=ship('At sea','Singapore');v.position.lastPort='Fujairah';v.note.recentDynamics='下下航次 Jeddah';
+  for(const port of ['Singapore','Alexandria, Egypt','Port Said','Aden, Yemen','At sea (from Fujairah)','Romania']){
+    v.position.nextPort=port;assert.deepEqual(names(build({vessels:[v]}),'波斯灣'),[],port);
+  }
+  const cross=build({vessels:[ship('Fujairah','Shanghai')]});assert.deepEqual(names(cross,'波斯灣'),[]);assert.deepEqual(names(cross,'中國'),['亞善 FPMC C ORIENT']);
 });
 test('empty or repeated vessel scope stays bounded even with wider captures and tasks',()=>{
   const a=vessel('A','At sea','HAYPOINT');
@@ -95,6 +107,13 @@ test('shows scoped shared Tokyo grades, per-ship acquisition and last-good notic
 });
 const task = (id, vesselId, priority, description, extra = {}) => ({id,vesselId,priority,description,status:'',isClosed:false,sourceType:'manual',...extra});
 const control = (id,vesselId,priority,description,extra={})=>({id,vesselId,priority,description,status:'',isClosed:false,...extra});
+test('only open controls show their own publication time (Taipei); never substitute report/update time',()=>{
+  const clocks={reportDate:'2030-03-11',updatedAt:'2030-03-12T10:13:14Z'};
+  const r=build({vessels:[vessel('A','','')],internalControlCases:[control('c','A','急','獨立案件',{...clocks,createdAt:'2030-01-02T17:23:00Z',linkedTaskId:'mirror'}),control('old','A','中','缺少時間',clocks)],tasks:[task('t','A','高','任務來源',{...clocks,isInternalControl:true,createdAt:'2030-01-08T06:41:00Z'}),task('mirror','A','高','鏡像',{createdAt:clocks.updatedAt})]});
+  const s=section(r,'內控'), i=s.columns.findIndex(c=>c.label.includes('發佈時間'));
+  assert.notEqual(i,-1);assert.deepEqual(s.rows.map(row=>row[i]),['2030/01/03 01:23','2030/01/08 14:41','未提供']);
+  assert.ok(s.rows.every(row=>row.length===s.columns.length));assert.equal(section(r,'要事').columns.length,3);
+});
 test('full open case/task text; per-vessel closure and identity-based mirrors only',()=>{
   const vessels = ['A','B'].map(id=>vessel(id,'',''));
   const long = '長文'.repeat(650), desc = `<p>${long}</p><p>完&amp;整</p>`;
