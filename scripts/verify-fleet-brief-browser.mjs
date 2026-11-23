@@ -37,6 +37,7 @@ try{
    const c={...structuredClone(initial.internalControlCases[0]),id:'demo-c',vesselId:'qa-v2',linkedTaskId:undefined,syncToTask:false,priority:'高',description:'核對塢修工程清單與備件到貨日期。',status:'已向廠商索取更新交期。'};
    const t={...structuredClone(initial.tasks[0]),id:'demo-t',vesselId:'qa-v3',vesselIds:['qa-v3'],internalControlCaseId:undefined,isInternalControl:false,sourceType:'morning',priority:'中',description:'確認下一港靠泊窗口，收到代理回覆後更新行程。',status:'待代理回覆。'};
    c.createdAt='2026-09-17T18:34:00Z';
+   t.createdAt='2026-09-20T16:47:00Z';
    initial.internalControlCases=[c];initial.tasks=[t];initial.meetings=[];initial.agendaReports=[];
  }});
  // Replace the inherited QA-prefixed port label with an unambiguous synthetic route.
@@ -97,7 +98,10 @@ try{
    for(const j of [1,3,5])assert.ok(now[j]<old[j]&&now[j]>.75*old[j],theme+': moderately narrower');
    assert.ok(now[6]>=Math.max(...now)-.05,theme+': retain wide remarks');
  }
- assert.ok(Math.abs(evidence.shares.control[0]*3-24.4)<.1);assert.equal(evidence.shares.task.length,3);
+ assert.ok(Math.abs(evidence.shares.control[0]*3-24.4)<.1);assert.equal(evidence.shares.control.length,4);
+ assert.deepEqual(evidence.shares.task,evidence.shares.control,'all task columns follow the control table');
+ assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('.fleet-brief-paper .brief-section-name'),n=>n.textContent).slice(0,3)"),['涉及波斯灣及周邊船舶','涉及澳洲船舶','涉及中國船舶']);
+ assert.equal(await evaluate("document.querySelector('.fleet-brief-paper [data-theme=task] tbody tr td:nth-child(3)').innerText.trim()"),'2026/09/21 00:47');
  console.log('Measured column shares (%)',JSON.stringify(evidence.shares));
  assert.ok(await evaluate("document.querySelector('.fleet-brief-paper [data-theme=control]').innerText.includes('2026/09/18 02:34')"),'report must show original publication time');
  assert.equal(await evaluate('window.__qaPrints||0'),0);assert.deepEqual(evidence.downloads||[],[]);assert.equal(evidence.riskReads.length,2);
@@ -110,6 +114,7 @@ try{
  await call('Emulation.setEmulatedMedia',{media:'print'});
  const edges=theme=>evaluate(`Array.from(document.querySelectorAll('.fleet-brief-paper [data-theme=${theme}] th[scope=col]'),n=>n.getBoundingClientRect().right)`);
  const gulfEdges=await edges('gulf');assert.equal(gulfEdges.length,7);assert.deepEqual(gulfEdges,await edges('australia'),'printed column boundaries must align');
+ const controlEdges=await edges('control');assert.equal(controlEdges.length,4);assert.deepEqual(await edges('task'),controlEdges,'printed task and control boundaries must align');
  const {data:pdf}=await call('Page.printToPDF',{preferCSSPageSize:true,printBackground:true,displayHeaderFooter:false});
  await call('Emulation.setEmulatedMedia',{media:''});
  fs.writeFileSync(path.join(output,'native-brief.pdf'),Buffer.from(pdf,'base64'));

@@ -35,7 +35,7 @@ function widths(s:FleetBriefSection) {
   const reserved=count?(s.columns.length-Number(published>=0)<=3?66:38):0;
   const shares=weights.map((w,i)=>i===published?0:w?w/total*(100-reserved):reserved/count);
   const ship=s.columns.findIndex(c=>c.kind==='vessel');
-  if(s.theme==='control' && published>=0 && ship>=0){
+  if(published>=0 && ship>=0){
     shares[ship]/=3; shares[published]=shares[ship]*2;
   }
   const crew=s.columns.findIndex(c=>c.label==='主要船員'), port=s.columns.findIndex(c=>c.label==='港口／位置');
@@ -51,13 +51,20 @@ function widths(s:FleetBriefSection) {
   return shares.map(w=>`${w}%`);
 }
 export function FleetBriefPaper({report}:{report:FleetBriefReport}) {
-  // The Gulf and Australia tables have the same schema. Align their column
-  // boundaries to Australia's existing layout, without mixing either table's rows.
+  // Share column boundaries, never rows: Australia is the reference for Gulf,
+  // and open controls are the reference for open tasks.
   const australia=report.sections.find(s=>s.theme==='australia');
   const australianWidths=australia && widths(australia);
+  const control=report.sections.find(s=>s.theme==='control');
+  const controlWidths=control && widths(control);
+  function sectionWidths(s:FleetBriefSection) {
+    if ((s.theme==='gulf'||s.theme==='australia') && australianWidths) return australianWidths;
+    if ((s.theme==='task'||s.theme==='control') && controlWidths) return controlWidths;
+    return widths(s);
+  }
   return <article className="fleet-brief-paper" lang="zh-Hant"><div className="brief-mast"><h2>船隊重點摘要</h2><time>{report.date}</time></div>
     <p className="brief-notice">{report.notice}</p>{report.sections.map(s=><section key={s.title} data-theme={s.theme}>
-      <table><colgroup>{((s.theme==='gulf'||s.theme==='australia') && australianWidths ? australianWidths : widths(s)).map((w,i)=><col key={i} style={{width:w}}/>)}</colgroup>
+      <table><colgroup>{sectionWidths(s).map((w,i)=><col key={i} style={{width:w}}/>)}</colgroup>
         <thead><tr><th className="brief-section-name" colSpan={s.columns.length}>{s.title}</th></tr><tr>{s.columns.map((c,i)=><th scope="col" key={i} className={c.label==='ETD'?'brief-etd-heading':undefined}>{c.label}</th>)}</tr></thead>
         <tbody>{s.rows.length?s.rows.map((row,i)=><tr key={i}>{s.columns.map((_,j)=><Cell key={j} col={j} section={s} value={row[j]??''}/>)}</tr>):<tr><td colSpan={s.columns.length}>無符合項目</td></tr>}</tbody>
       </table></section>)}</article>;

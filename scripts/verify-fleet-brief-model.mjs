@@ -30,6 +30,8 @@ test('classifies only current/next location, once per region and active vessel',
   c.note.recentDynamics = 'previously Dubai; drydock/repair planned in China';
   const d = vessel('D', 'AUPHE', 'Jebel Ali', {isActive:false});
   const report = build({vessels:[a,b,c,d]});
+  assert.deepEqual(report.sections.slice(0,3).map(s=>s.title),['涉及波斯灣及周邊船舶','涉及澳洲船舶','涉及中國船舶']);
+  assert.match(report.notice,/富加拉、阿曼及紅海港口/);
   assert.deepEqual(names(report, '中國'), ['測試A TEST A']);
   assert.deepEqual(names(report, '波斯灣'), [], 'current Gulf must not duplicate an Australian destination');
   assert.deepEqual(names(report, '澳洲'), ['測試B TEST B']);
@@ -107,12 +109,18 @@ test('shows scoped shared Tokyo grades, per-ship acquisition and last-good notic
 });
 const task = (id, vesselId, priority, description, extra = {}) => ({id,vesselId,priority,description,status:'',isClosed:false,sourceType:'manual',...extra});
 const control = (id,vesselId,priority,description,extra={})=>({id,vesselId,priority,description,status:'',isClosed:false,...extra});
-test('only open controls show their own publication time (Taipei); never substitute report/update time',()=>{
+test('open controls show their own publication time (Taipei); never substitute report/update time',()=>{
   const clocks={reportDate:'2030-03-11',updatedAt:'2030-03-12T10:13:14Z'};
   const r=build({vessels:[vessel('A','','')],internalControlCases:[control('c','A','急','獨立案件',{...clocks,createdAt:'2030-01-02T17:23:00Z',linkedTaskId:'mirror'}),control('old','A','中','缺少時間',clocks)],tasks:[task('t','A','高','任務來源',{...clocks,isInternalControl:true,createdAt:'2030-01-08T06:41:00Z'}),task('mirror','A','高','鏡像',{createdAt:clocks.updatedAt})]});
   const s=section(r,'內控'), i=s.columns.findIndex(c=>c.label.includes('發佈時間'));
   assert.notEqual(i,-1);assert.deepEqual(s.rows.map(row=>row[i]),['2030/01/03 01:23','2030/01/08 14:41','未提供']);
-  assert.ok(s.rows.every(row=>row.length===s.columns.length));assert.equal(section(r,'要事').columns.length,3);
+  assert.ok(s.rows.every(row=>row.length===s.columns.length));assert.deepEqual(section(r,'要事').rows,[]);
+});
+test('open tasks use the control columns and their own publication time, not report/update time',()=>{
+  const clocks={reportDate:'2030-03-11',updatedAt:'2030-03-12T10:13:14Z'};
+  const r=build({vessels:[vessel('A','','')],tasks:[task('a','A','急','跨日要事',{...clocks,createdAt:'2030-01-13T18:47:00Z'}),task('b','A','高','僅有日期',{...clocks,createdAt:'2030-01-11'}),task('c','A','中','時間不詳',clocks)]});
+  const s=section(r,'要事');assert.deepEqual(s.columns,section(r,'內控').columns);
+  assert.deepEqual(s.rows.map(row=>row.slice(2)),[['2030/01/14 02:47','跨日要事'],['2030/01/11','僅有日期'],['未提供','時間不詳']]);
 });
 test('full open case/task text; per-vessel closure and identity-based mirrors only',()=>{
   const vessels = ['A','B'].map(id=>vessel(id,'',''));
