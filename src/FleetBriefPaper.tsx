@@ -51,9 +51,13 @@ function widths(s:FleetBriefSection) {
   return shares.map(w=>`${w}%`);
 }
 export function FleetBriefPaper({report}:{report:FleetBriefReport}) {
+  // The Gulf and Australia tables have the same schema. Align their column
+  // boundaries to Australia's existing layout, without mixing either table's rows.
+  const australia=report.sections.find(s=>s.theme==='australia');
+  const australianWidths=australia && widths(australia);
   return <article className="fleet-brief-paper" lang="zh-Hant"><div className="brief-mast"><h2>船隊重點摘要</h2><time>{report.date}</time></div>
     <p className="brief-notice">{report.notice}</p>{report.sections.map(s=><section key={s.title} data-theme={s.theme}>
-      <table><colgroup>{widths(s).map((w,i)=><col key={i} style={{width:w}}/>)}</colgroup>
+      <table><colgroup>{((s.theme==='gulf'||s.theme==='australia') && australianWidths ? australianWidths : widths(s)).map((w,i)=><col key={i} style={{width:w}}/>)}</colgroup>
         <thead><tr><th className="brief-section-name" colSpan={s.columns.length}>{s.title}</th></tr><tr>{s.columns.map((c,i)=><th scope="col" key={i} className={c.label==='ETD'?'brief-etd-heading':undefined}>{c.label}</th>)}</tr></thead>
         <tbody>{s.rows.length?s.rows.map((row,i)=><tr key={i}>{s.columns.map((_,j)=><Cell key={j} col={j} section={s} value={row[j]??''}/>)}</tr>):<tr><td colSpan={s.columns.length}>無符合項目</td></tr>}</tbody>
       </table></section>)}</article>;

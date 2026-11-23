@@ -89,7 +89,9 @@ try{
  await until(()=>evaluate("document.querySelector('dialog .fleet-brief-paper')?.innerText.includes('核對塢修工程清單與備件到貨日期。')"),'read authorized report with fonts blocked',5000);
  evidence.clickToObservedReadableMs=Math.round(performance.now()-clickedAt);
  evidence.shares=await evaluate(`Object.fromEntries(Array.from(document.querySelectorAll('.fleet-brief-paper section'),s=>{const cells=[...s.querySelectorAll('th[scope=col]')],w=cells.reduce((n,c)=>n+c.getBoundingClientRect().width,0);return [s.dataset.theme,cells.map(c=>+(100*c.getBoundingClientRect().width/w).toFixed(2))]}))`);
- const before={gulf:[2.66,16.88,13.29,13.22,10.63,5.32,38],australia:[2.35,14.93,11.75,13.63,14.63,4.7,38],china:[2.35,16.25,11.77,12.25,14.66,4.71,38],dock:[2.52,16.7,12.6,12.54,8.82,8.82,38]}; // measured on 94350da, same original UI and fixture
+ assert.deepEqual(evidence.shares.gulf,evidence.shares.australia,'all seven Gulf columns follow the unchanged Australian table');
+ assert.equal(evidence.shares.gulf.length,7);
+ const before={australia:[2.35,14.93,11.75,13.63,14.63,4.7,38],china:[2.35,16.25,11.77,12.25,14.66,4.71,38],dock:[2.52,16.7,12.6,12.54,8.82,8.82,38]}; // measured on 94350da, same original UI and fixture
  for(const [theme,old] of Object.entries(before)){
    const now=evidence.shares[theme];assert.ok(Math.abs(now[2]/old[2]-2)<.02,theme+': double crew');
    for(const j of [1,3,5])assert.ok(now[j]<old[j]&&now[j]>.75*old[j],theme+': moderately narrower');
@@ -105,7 +107,11 @@ try{
  for(const grade of ['HRS','SRS','LRS','unknown','high','medium'])assert.ok(lamps.includes(grade),grade);
  await screen('preview');await click('列印／另存 PDF');assert.equal(await evaluate('window.__qaPrints'),1);
  assert.match(await evaluate('document.title'),/^船隊重點摘要_/);
+ await call('Emulation.setEmulatedMedia',{media:'print'});
+ const edges=theme=>evaluate(`Array.from(document.querySelectorAll('.fleet-brief-paper [data-theme=${theme}] th[scope=col]'),n=>n.getBoundingClientRect().right)`);
+ const gulfEdges=await edges('gulf');assert.equal(gulfEdges.length,7);assert.deepEqual(gulfEdges,await edges('australia'),'printed column boundaries must align');
  const {data:pdf}=await call('Page.printToPDF',{preferCSSPageSize:true,printBackground:true,displayHeaderFooter:false});
+ await call('Emulation.setEmulatedMedia',{media:''});
  fs.writeFileSync(path.join(output,'native-brief.pdf'),Buffer.from(pdf,'base64'));
  await evaluate("window.dispatchEvent(new Event('afterprint'))");assert.equal(await evaluate('document.title'),titleBefore);
  await click('關閉');assert.equal(await evaluate("!!document.querySelector('.fleet-brief-paper')"),false);
