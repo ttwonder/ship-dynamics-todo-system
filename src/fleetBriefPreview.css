@@ -43,6 +43,7 @@
   .fleet-brief-dialog::backdrop,.fleet-brief-dialog > header,.fleet-brief-dialog .fleet-brief-message {display:none!important;}
   .fleet-brief-dialog .brief-scroll,.fleet-brief-paper {display:block;overflow:visible!important;padding:0;}
   .fleet-brief-paper {font-size:14pt;line-height:1.32;print-color-adjust:exact;-webkit-print-color-adjust:exact;}
+  .fleet-brief-paper section[data-theme=control] {break-before:page;}
   .fleet-brief-paper table,.fleet-brief-paper tbody,.fleet-brief-paper tr,.fleet-brief-paper td {break-inside:auto;}
   .fleet-brief-paper thead {display:table-header-group;break-inside:avoid;}
 }

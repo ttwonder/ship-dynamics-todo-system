@@ -112,6 +112,7 @@ try{
  await screen('preview');await click('列印／另存 PDF');assert.equal(await evaluate('window.__qaPrints'),1);
  assert.match(await evaluate('document.title'),/^船隊重點摘要_/);
  await call('Emulation.setEmulatedMedia',{media:'print'});
+ assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('.fleet-brief-paper section')).filter(s=>getComputedStyle(s).breakBefore==='page').map(s=>s.dataset.theme)"),['control'],'only open internal controls force a new printed page, not HRS or open tasks');
  const edges=theme=>evaluate(`Array.from(document.querySelectorAll('.fleet-brief-paper [data-theme=${theme}] th[scope=col]'),n=>n.getBoundingClientRect().right)`);
  const gulfEdges=await edges('gulf');assert.equal(gulfEdges.length,7);assert.deepEqual(gulfEdges,await edges('australia'),'printed column boundaries must align');
  const controlEdges=await edges('control');assert.equal(controlEdges.length,4);assert.deepEqual(await edges('task'),controlEdges,'printed task and control boundaries must align');

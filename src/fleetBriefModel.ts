@@ -140,5 +140,5 @@ export function buildFleetBriefReport(input: FleetBriefInput): FleetBriefReport 
       [`Tokyo MOU：${grade}`,notes].filter(Boolean).join('\n')]);
   }
   const notice = `${fleetRiskReportSource(input.risk,false)} HRS＝高風險、SRS＝標準風險、LRS＝低風險。區域按正前往、目前在擇一列出；塢修另列。波斯灣及周邊含富加拉、阿曼及紅海港口。最近 PSC 檢查與 CII 僅依已記錄備註，不由風險等級推算。`;
-  return {date:input.date,notice,sections:[...groups,drydock,...openItems(input,[...active.values()]),hrs]};
+  return {date:input.date,notice,sections:[...groups,hrs,drydock,...openItems(input,[...active.values()])]};
 }

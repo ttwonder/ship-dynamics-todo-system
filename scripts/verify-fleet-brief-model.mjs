@@ -31,6 +31,7 @@ test('classifies only current/next location, once per region and active vessel',
   const d = vessel('D', 'AUPHE', 'Jebel Ali', {isActive:false});
   const report = build({vessels:[a,b,c,d]});
   assert.deepEqual(report.sections.slice(0,3).map(s=>s.title),['涉及波斯灣及周邊船舶','涉及澳洲船舶','涉及中國船舶']);
+  assert.deepEqual(report.sections.map(s=>s.theme),['gulf','australia','china','hrs','dock','control','task']);
   assert.match(report.notice,/富加拉、阿曼及紅海港口/);
   assert.deepEqual(names(report, '中國'), ['測試A TEST A']);
   assert.deepEqual(names(report, '波斯灣'), [], 'current Gulf must not duplicate an Australian destination');
